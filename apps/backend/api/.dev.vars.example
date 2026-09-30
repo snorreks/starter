@@ -1,0 +1,44 @@
+# Worker environment.
+#
+# Copy to `.dev.vars` for local development:
+#
+#   cp .dev.vars.example .dev.vars
+#
+# `.dev.vars` is gitignored. This file is the only one that carries variable
+# names, and every value below is either empty or a local development default.
+#
+# For a deployed Worker, set these with `wrangler secret put NAME` rather than
+# committing anything. `BETTER_AUTH_SECRET` is the only value the application
+# cannot do without; locally it falls back to a development value with a warning,
+# and remotely the Worker refuses to start without it.
+
+# Session signing secret. Required in production.
+# Locally this falls back to a development value so `bun run dev:api` works on a
+# fresh clone with no setup.
+BETTER_AUTH_SECRET=""
+
+# Public base URL of this API, used by Better Auth to build callback URLs.
+# Must match where the client will reach it, or sign-in redirects somewhere wrong.
+BETTER_AUTH_URL="http://127.0.0.1:8787"
+
+# Comma-separated origins permitted to send credentialed requests.
+#
+# An allowlist, not a wildcard: a prefix or suffix match would accept
+# `evil-example.com` for `example.com`. Add yours here, one per entry, no spaces.
+#
+# The Tauri webview origins (`tauri://localhost`, `http://tauri.localhost`) are
+# already permitted and do not need to be listed.
+TRUSTED_ORIGINS="http://127.0.0.1:5173,http://localhost:5173"
+
+# Sign-in attempts allowed per period. Defaults to 10, which is production-sane.
+# Raise it for a test run that creates many accounts; do not disable it — a
+# rate-limit bypass is not normal in a test environment either.
+AUTH_RATE_LIMIT_MAX=""
+
+# Build identifier, injected at deploy time so a log line can be traced to the
+# artifact that produced it. Unset locally; the log registry reports "dev".
+RELEASE=""
+
+# Set by the test harnesses (the integration suite and the Playwright preflight)
+# to prove a Worker on a shared port is *this* run's Worker. Leave empty.
+TEST_RUN_ID=""

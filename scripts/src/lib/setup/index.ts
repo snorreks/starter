@@ -9,7 +9,7 @@
 // secret. Every step is safe to run twice.
 
 import { spawnSync } from 'node:child_process';
-import { chmodSync, existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import { chmodSync, copyFileSync, existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { REPO_ROOT } from '../guards/boundary.ts';
 
@@ -112,6 +112,22 @@ const writeIfAbsent = (path: string, contents: string, mode?: number): boolean =
 };
 
 /**
+ * Copy a committed example into place, if the destination does not exist.
+ *
+ * Never overwrites. A developer's `.dev.vars` holds their own
+ * `BETTER_AUTH_SECRET`, and a setup script that silently replaced it would
+ * invalidate every session they have.
+ */
+const copyIfAbsent = (from: string, to: string): boolean => {
+  if (existsSync(to) || !existsSync(from)) {
+    return false;
+  }
+  mkdirSync(join(to, '..'), { recursive: true });
+  copyFileSync(from, to);
+  return true;
+};
+
+/**
  * The status marker for one toolchain check.
  *
  * A named helper rather than an inline nested ternary: three outcomes folded
@@ -151,6 +167,16 @@ export const runSetup = (): number => {
   }
   if (writeIfAbsent(join(REPO_ROOT, 'apps/frontend/client/.env'), LOCAL_ENV)) {
     created.push('apps/frontend/client/.env');
+  }
+  // The Worker reads `.dev.vars`, not `.env` — a different filename for the
+  // different runtime, which is Wrangler's convention rather than an accident.
+  if (
+    copyIfAbsent(
+      join(REPO_ROOT, 'apps/backend/api/.dev.vars.example'),
+      join(REPO_ROOT, 'apps/backend/api/.dev.vars'),
+    )
+  ) {
+    created.push('apps/backend/api/.dev.vars (from the example; local defaults)');
   }
 
   process.stdout.write('\nSetup\n');
