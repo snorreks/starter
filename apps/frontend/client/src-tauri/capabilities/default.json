@@ -1,0 +1,21 @@
+{
+  "//": [
+    "The complete set of what this webview may ask the shell to do.",
+    "",
+    "Tauri 2 requires every permission to be listed here; anything not listed is",
+    "denied. That is the point of the file — an empty capabilities directory",
+    "means a shell that cannot be reached from the page at all, which is the",
+    "correct starting point for a template.",
+    "",
+    "Only the log plugin is granted. It is the one native capability the template",
+    "uses: the client forwards its structured events to the API, and this lets the",
+    "native side do the same. Nothing here opens a file, a shell, a port or a",
+    "browser window."
+  ],
+  "identifier": "default",
+  "windows": ["main"],
+  "permissions": [
+    "core:default",
+    "log:default"
+  ]
+}

@@ -1,0 +1,51 @@
+# apps/frontend/client/src-tauri/Cargo.toml
+#
+# The native shell.
+#
+# Deliberately minimal. It provides a window, a secure context, and native log
+# capture — nothing else. Every plugin in this file is a capability the template
+# actually exercises, because an unused plugin in a template is an unused attack
+# surface that the next person has to audit instead of delete.
+
+[package]
+# Neutral. A template's identifier must not name the project it came from: it is
+# written into every user's bundle id, their install path, and their signing
+# identity, and changing it after the first release is not free.
+name = "starter"
+version = "0.1.0"
+description = "A Bun + SvelteKit + Cloudflare starter, wrapped for desktop and mobile."
+authors = ["you"]
+edition = "2021"
+rust-version = "1.77"
+
+# The library target, so the same code can be built as a mobile app library as
+# well as a desktop binary. See `src/lib.rs`.
+[lib]
+name = "starter_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+# Structured native logs, forwarded to the same NDJSON file the other log
+# producers write, so one `bun run logs` covers the app and the Worker.
+tauri-plugin-log = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[features]
+# Enabled by `tauri dev`, not in a shipped build. A custom protocol that serves
+# the frontend is only correct against a built bundle.
+custom-protocol = ["tauri/custom-protocol"]
+
+[profile.release]
+codegen-units = 1
+lto = true
+opt-level = "s"
+panic = "abort"
+# Smaller binary. A debug-symbol full build of this shell is roughly 300MB, which
+# is a poor first impression for anyone who runs `cargo build --release` to check
+# it compiles.
+strip = true

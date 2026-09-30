@@ -144,3 +144,7 @@ desktop.ini
 # =============================================================================
 .direnv/
 .envrc.local
+
+# Rust build output for the native shell. `src-tauri/.gitignore` covers its own
+# directory; this is belt-and-braces for anyone building from the repo root.
+apps/frontend/client/src-tauri/target/
