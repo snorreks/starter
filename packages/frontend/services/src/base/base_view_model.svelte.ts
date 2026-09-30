@@ -10,7 +10,7 @@
 // `.svelte.ts` file. That is the whole reason for the suffix: these classes are
 // only deeply reactive because the Svelte compiler processes this file.
 
-import { StaleGuard } from '@starter/utils';
+import { MutationGuard, StaleGuard } from '@starter/utils';
 import {
   BaseFrontendClass,
   type BaseFrontendClassInterface,
@@ -54,8 +54,27 @@ export abstract class BaseViewModel<Options extends BaseViewModelOptions = BaseV
    *
    * This is what stops a slow earlier request from overwriting a newer result.
    * A screen that does not use it must justify why it cannot race.
+   *
+   * It guards *loads*. Writes go through `_mutations`, because a write needs a
+   * different answer: "you may not start this" rather than "ignore your result".
    */
   protected readonly _requests = new StaleGuard();
+
+  /**
+   * Tracks in-flight writes and whether this ViewModel has been released.
+   *
+   * Two things it fixes that a boolean cannot:
+   *
+   *   * A write that completes after `dispose()` used to assign into a released
+   *     ViewModel. `begin()` returns null once disposed, so the command refuses
+   *     instead of starting.
+   *   * `isMutating` used to be cleared by the first of several overlapping
+   *     mutations. It is now derived from a count.
+   *
+   * A screen's optimistic rollback belongs here too — see `_optimistic` in
+   * `NotesViewModel` — so that the two halves of a write are disposed together.
+   */
+  protected readonly _mutations = new MutationGuard();
 
   /** Cleanups from `$effect.root`, run on dispose. */
   #effectCleanups: Array<() => void> = [];
@@ -86,12 +105,52 @@ export abstract class BaseViewModel<Options extends BaseViewModelOptions = BaseV
     this.#effectCleanups.push($effect.root(fn));
   }
 
+  /** True once `dispose()` has run. Commands must not start work after this. */
+  protected get _disposed(): boolean {
+    return this._mutations.disposed;
+  }
+
+  /** True while at least one write is in flight. Derived, so it cannot lie. */
+  get isMutating(): boolean {
+    return this._mutations.busy;
+  }
+
+  /**
+   * Run a write with lifecycle accounting.
+   *
+   * Refuses when the ViewModel is disposed, and always ends the mutation — so
+   * `isMutating` cannot be left stuck on by a path that throws before reaching
+   * its own `finally`.
+   */
+  protected async _runMutation(
+    write: (signal: AbortSignal) => Promise<unknown>,
+  ): Promise<boolean> {
+    const handle = this._mutations.begin();
+
+    if (handle === null) {
+      this.debug('refusing a mutation: this ViewModel has been disposed');
+      return false;
+    }
+
+    try {
+      await write(handle.signal);
+      return true;
+    } catch (error) {
+      this.showErrorNotification(error);
+      return false;
+    } finally {
+      this._mutations.end();
+    }
+  }
+
   override async dispose(): Promise<void> {
     this.__mounted = false;
 
-    // Abort in-flight requests first, so a response landing after teardown
-    // cannot write into a dead ViewModel.
+    // Order matters. Loads are aborted first so a response cannot write into a
+    // ViewModel that is being released, then writes are refused and aborted for
+    // the same reason, then effect roots are torn down.
     this._requests.cancelAll();
+    this._mutations.dispose();
 
     for (const cleanup of this.#effectCleanups) {
       cleanup();
