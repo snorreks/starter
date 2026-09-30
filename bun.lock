@@ -145,6 +145,14 @@
     "scripts": {
       "name": "@starter/scripts",
       "version": "0.1.0",
+      "dependencies": {
+        "@starter/logger": "workspace:*",
+        "@starter/schemas": "workspace:*",
+        "@starter/utils": "workspace:*",
+      },
+      "devDependencies": {
+        "wrangler": "4.142.0",
+      },
     },
   },
   "trustedDependencies": [

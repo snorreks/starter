@@ -1,0 +1,41 @@
+$schema: 'https://moonrepo.dev/schemas/v2/project.json'
+
+type: 'application'
+language: 'typescript'
+platform: 'node'
+source: './src'
+
+implicitDependencies:
+  - logger
+  - schemas
+  - utils
+
+tasks:
+  typecheck:
+    template: '@starter/typescript-library'
+  lint:
+    template: '@starter/typescript-library'
+  format:
+    template: '@starter/typescript-library'
+  fix:
+    template: '@starter/typescript-library'
+  test:
+    template: '@starter/typescript-library'
+  validate:
+    template: '@starter/typescript-library'
+  build:
+    command: 'echo'
+    args: ['no build step (TypeScript source)']
+    local: true
+  guard:
+    command: 'bun'
+    args: ['run', 'src/lib/guards/run_guards.ts']
+    inputs:
+      - '@group(sources)'
+    local: true
+  guard-whole-repo:
+    command: 'bun'
+    args: ['run', 'src/lib/guards/run_guards.ts', '--whole-repo']
+    inputs:
+      - '@group(sources)'
+    local: true
