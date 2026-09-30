@@ -1,177 +1,40 @@
-// scripts/src/setup/index.ts
+// scripts/src/setup/setup.ts
 //
-//   bun run setup            # idempotent: safe to re-run
-//   bun run setup:doctor     # report what is and is not available
+//   bun run setup          # idempotent; safe on every directory entry
+//   bun run setup:doctor   # report capabilities, and what this host cannot do
 //
-// Setup does three things and refuses to do a fourth: check the toolchain,
-// create local gitignore'd state, and print what is missing. It never
-// overwrites an existing file, never contacts a service, and never needs a
-// secret. Every step is safe to run twice.
+// What setup does, and what it deliberately refuses to do:
+//
+//   * verifies the pinned toolchain and says what is missing
+//   * creates local gitignored defaults, never overwriting an existing file
+//   * installs the Playwright browsers that match the *locked* version
+//   * records a readiness fingerprint so the next run is a hash comparison
+//
+// It never contacts a service, never reads a credential, and never overwrites
+// anything a developer may have edited. "Idempotent" is load-bearing: `.envrc`
+// calls this on directory entry, so it runs on every `cd`.
 
 import { spawnSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import {
   chmodSync,
   copyFileSync,
   existsSync,
   mkdirSync,
   readFileSync,
+  rmSync,
   writeFileSync,
 } from 'node:fs';
 import { join } from 'node:path';
-import { API_DIR, REPO_ROOT } from '../shared/paths.ts';
-import { playwrightBin, wranglerBin } from '../shared/tools.ts';
+import { API_DIR, CLIENT_DIR, REPO_ROOT } from '../shared/paths.ts';
+import { playwrightBin } from '../shared/tools.ts';
+import { inspect, type Report } from './doctor.ts';
+import { declaredPlaywrightVersion, readPins } from './pins.ts';
 
-export interface Check {
-  name: string;
-  required: boolean;
-  ok: boolean;
-  detail: string;
-  remedy?: string;
-}
+export { inspect, type Report } from './doctor.ts';
+export { checkMirrors, readPins } from './pins.ts';
 
-const versionOf = (command: string, args: readonly string[] = ['--version']): string | null => {
-  const result = spawnSync(command, [...args], { encoding: 'utf8' });
-  if (result.error !== undefined || result.status !== 0) {
-    return null;
-  }
-  return (result.stdout ?? result.stderr ?? '').split('\n')[0]?.trim() ?? null;
-};
-
-/**
- * The required toolchain.
- *
- * `node` is required, and it is required *with a reason stated*: `wrangler dev` is
- * a Node program that spawns workerd, so without Node the Worker never starts and
- * both `test:integration` and `e2e` sit in a four-minute readiness timeout that
- * reads like a hang. Reporting "node missing (optional)" was wrong in the other
- * direction too — it let a lane that cannot work look fine.
- */
-export const REQUIRED = [
-  {
-    name: 'bun',
-    check: () => versionOf('bun'),
-    remedy: 'Install Bun: https://bun.sh',
-  },
-  { name: 'git', check: () => versionOf('git'), remedy: 'Install git.' },
-  {
-    name: 'node',
-    check: () => versionOf('node'),
-    remedy:
-      'Install Node 22+. `wrangler dev` is a Node program, so without it the Worker ' +
-      'never starts and `bun run test:integration` / `bun run e2e` time out after ' +
-      'four minutes. On Nix: nix-shell -p nodejs.',
-  },
-] as const;
-
-/**
- * Optional tools, reported but never blocking.
- *
- * Where the repository pins the tool itself, the pinned copy is reported rather than
- * whatever is on PATH — see `scripts/src/shared/tools.ts` for why a global wrangler is
- * not the same thing as this project's wrangler.
- */
-export const OPTIONAL = [
-  {
-    name: 'wrangler',
-    check: () => {
-      const bin = wranglerBin();
-      if (bin === null) {
-        return null;
-      }
-      return versionOf(bin);
-    },
-    why: 'Local Cloudflare Workers + D1',
-    remedy: 'Run `bun install` — wrangler is a pinned dependency of apps/backend/api.',
-  },
-  { name: 'sops', check: () => versionOf('sops', ['--version']), why: 'Secret encryption' },
-  { name: 'age', check: () => versionOf('age', ['--version']), why: 'Secret encryption' },
-  { name: 'cargo', check: () => versionOf('cargo'), why: 'Tauri desktop builds' },
-  { name: 'direnv', check: () => versionOf('direnv', ['--version']), why: '.envrc loading' },
-  {
-    name: 'playwright',
-    check: () => (playwrightBin() === null ? null : 'installed'),
-    why: 'Browser tests and E2E',
-    remedy:
-      'Run `bunx playwright install --with-deps chromium`. Note the browser also needs ' +
-      'system shared libraries; on NixOS the stock Linux build does not run.',
-  },
-] as const;
-
-/**
- * One thing this repository verifies that a version string cannot.
- *
- * The API's Wrangler config must exist and name its D1 migrations directory. A
- * missing `database_id` is expected in a template — the operator provisions it —
- * so this checks structure, not completeness.
- */
-export const WORKER_CONFIG_CHECK = (): Check => {
-  const config = join(API_DIR, 'wrangler.jsonc');
-  if (!existsSync(config)) {
-    return {
-      name: 'wrangler.jsonc',
-      required: true,
-      ok: false,
-      detail: 'missing',
-      remedy: `Restore ${config}.`,
-    };
-  }
-
-  const text = readFileSync(config, 'utf8');
-  const hasDb = /"d1_databases"/.test(text);
-  const hasMigrationsDir = /"migrations_dir"/.test(text);
-
-  return {
-    name: 'wrangler.jsonc',
-    required: true,
-    ok: hasDb && hasMigrationsDir,
-    detail: hasDb && hasMigrationsDir ? 'D1 binding and migrations_dir present' : 'incomplete',
-    ...(hasDb && hasMigrationsDir
-      ? {}
-      : { remedy: 'It must name a d1_databases binding and its migrations_dir.' }),
-  };
-};
-
-export interface Report {
-  checks: Check[];
-  ok: boolean;
-  missingRequired: string[];
-}
-
-export const inspect = (): Report => {
-  const checks: Check[] = [];
-
-  for (const tool of REQUIRED) {
-    const version = tool.check();
-    checks.push({
-      name: tool.name,
-      required: true,
-      ok: version !== null,
-      detail: version ?? 'not found',
-      ...(version === null ? { remedy: tool.remedy } : {}),
-    });
-  }
-
-  checks.push(WORKER_CONFIG_CHECK());
-
-  for (const tool of OPTIONAL) {
-    const version = tool.check();
-    checks.push({
-      name: tool.name,
-      required: false,
-      ok: version !== null,
-      detail: version ?? 'not found (optional)',
-      ...(version === null && 'remedy' in tool && tool.remedy !== undefined
-        ? { remedy: tool.remedy }
-        : {}),
-    });
-  }
-
-  const missingRequired = checks
-    .filter((check) => check.required && !check.ok)
-    .map((check) => check.name);
-
-  return { checks, ok: missingRequired.length === 0, missingRequired };
-};
+const STATE_DIR = join(REPO_ROOT, '.wrangler', 'setup');
 
 const LOCAL_ENV = `# Local environment. Gitignored. Never contains a real secret.
 # Every value here is a development default, so a fresh clone runs with no setup.
@@ -182,6 +45,7 @@ PUBLIC_API_BASE_URL=
 PUBLIC_API_PORT=8787
 `;
 
+/** Create a file only if it is absent. Never overwrites. */
 const writeIfAbsent = (path: string, contents: string, mode?: number): boolean => {
   if (existsSync(path)) {
     return false;
@@ -210,18 +74,185 @@ const copyIfAbsent = (from: string, to: string): boolean => {
   return true;
 };
 
+// ── Readiness fingerprint ────────────────────────────────────────────────────
+
 /**
- * The status marker for one toolchain check.
+ * A hash of everything whose change should invalidate setup.
  *
- * A named helper rather than an inline nested ternary: three outcomes folded
- * into one expression reads correctly only if you already know the precedence,
- * and the two call sites that use it disagreed on spacing before.
+ * The files, not their contents' mtimes: a `git checkout` rewrites mtimes without
+ * changing what is installed, and a fingerprint that moved on every branch switch
+ * would re-run `bun install` for nothing.
+ *
+ * What is deliberately *not* in it: the toolchain's installed state. That is
+ * checked separately, by looking for the files themselves — see
+ * `cachesStillExist`. A hash cannot tell you a browser was deleted.
  */
-export const statusMark = (check: Check): string => {
+const fingerprint = (root = REPO_ROOT): string => {
+  const inputs = [
+    'bun.lock',
+    'package.json',
+    'config/toolchain.json',
+    'apps/e2e/package.json',
+    join('apps', 'frontend', 'client', 'package.json'),
+    join('apps', 'backend', 'api', 'package.json'),
+  ];
+
+  const hash = createHash('sha256');
+  hash.update(process.platform);
+
+  for (const relative of inputs) {
+    const path = join(root, relative);
+    hash.update(relative);
+    hash.update(existsSync(path) ? readFileSync(path) : 'absent');
+  }
+
+  return hash.digest('hex').slice(0, 16);
+};
+
+/**
+ * Verify a cached fingerprint still describes reality.
+ *
+ * Two independent ways the cache goes stale without the hash changing:
+ *
+ *   * the browser directory was removed (`rm -rf ~/.cache/ms-playwright`)
+ *   * `node_modules` was reinstalled without the workspace lock changing
+ *
+ * So readiness is the hash *and* the tools being present. Checking only the hash
+ * is what makes a "cached" setup command lie after someone clears a cache.
+ */
+const cachesStillExist = (): boolean => {
+  const playwright = playwrightBin();
+  if (playwright === null) {
+    // No workspace Playwright at all: `bun install` has not run, so the cached
+    // fingerprint is describing a checkout that does not exist.
+    return false;
+  }
+
+  const browserRoot = process.env.PLAYWRIGHT_BROWSERS_PATH;
+  if (browserRoot === undefined || browserRoot === '') {
+    // Nothing to verify beyond the binary. Accept: the browser may legitimately
+    // not be installed on a headless machine that only runs unit tests.
+    return true;
+  }
+
+  return existsSync(browserRoot);
+};
+
+export interface SetupOutcome {
+  /** True when nothing had to be done. */
+  cached: boolean;
+  /** Files created this run. */
+  created: string[];
+  /** Steps that ran. Empty when cached. */
+  performed: string[];
+  report: Report;
+}
+
+/**
+ * Perform setup, or prove it is already done.
+ *
+ * Split from `runSetup` so a test can assert on the decision rather than on
+ * stdout — "was it cached" is the property that matters, and it is invisible in
+ * printed output unless a step says so.
+ */
+export const performSetup = (options: { force?: boolean; quiet?: boolean } = {}): SetupOutcome => {
+  const report = inspect();
+  const stampPath = join(STATE_DIR, 'ready');
+  const current = fingerprint();
+
+  const cached =
+    !options.force &&
+    existsSync(stampPath) &&
+    readFileSync(stampPath, 'utf8').trim() === current &&
+    cachesStillExist();
+
+  if (cached) {
+    return { cached: true, created: [], performed: [], report };
+  }
+
+  const created: string[] = [];
+  const performed: string[] = [];
+  const log = (line: string): void => {
+    if (!options.quiet) {
+      process.stdout.write(`${line}\n`);
+    }
+  };
+
+  // A required capability missing means setup cannot complete. Say which, and stop
+  // before writing anything: a half-prepared checkout is harder to reason about
+  // than an unprepared one.
+  if (!report.ok) {
+    return { cached: false, created: [], performed: ['aborted'], report };
+  }
+
+  // 1. Dependencies. `--frozen-lockfile` so setup cannot silently update the
+  //    lockfile; a developer who changed a dependency has already run install.
+  if (!existsSync(join(REPO_ROOT, 'node_modules', '.bin')) && !options.force) {
+    const install = spawnSync('bun', ['install', '--frozen-lockfile'], {
+      cwd: REPO_ROOT,
+      stdio: options.quiet ? 'ignore' : 'inherit',
+    });
+    performed.push('bun install');
+    if (install.status !== 0) {
+      return { cached: false, created, performed, report };
+    }
+  }
+
+  // 2. Local defaults.
+  if (writeIfAbsent(join(REPO_ROOT, '.env'), LOCAL_ENV)) {
+    created.push('.env (local defaults only)');
+  }
+  if (writeIfAbsent(join(CLIENT_DIR, '.env'), LOCAL_ENV)) {
+    created.push('apps/frontend/client/.env');
+  }
+  // The Worker reads `.dev.vars`, not `.env` — a different filename for the
+  // different runtime, which is Wrangler's convention rather than an accident.
+  if (copyIfAbsent(join(API_DIR, '.dev.vars.example'), join(API_DIR, '.dev.vars'))) {
+    created.push('apps/backend/api/.dev.vars (from the example; local defaults)');
+  }
+
+  // 3. Browsers matching the locked Playwright version.
+  //
+  //    Skipped when a Nix store Chromium is provided, because Playwright's own
+  //    download does not run there and would leave a broken browser in the cache.
+  const nixBrowser = process.env.PLAYWRIGHT_BROWSERS_PATH?.startsWith('/nix/store') ?? false;
+  const playwright = playwrightBin();
+
+  if (playwright !== null && !nixBrowser && !options.quiet) {
+    const pins = readPins();
+    const browsers = 'error' in pins ? ['chromium'] : [...pins.playwright.browsers];
+
+    for (const browser of browsers) {
+      log(`  installing playwright ${declaredPlaywrightVersion() ?? '?'} browser: ${browser}`);
+      const installed = spawnSync(playwright, ['install', browser], {
+        cwd: REPO_ROOT,
+        stdio: 'inherit',
+      });
+      if (installed.status !== 0) {
+        process.stderr.write(
+          `Could not install the ${browser} browser.\n` +
+            'The browser lane and E2E will not run. Everything else works.\n',
+        );
+        performed.push(`playwright install ${browser} (failed)`);
+        break;
+      }
+      performed.push(`playwright install ${browser}`);
+    }
+  } else if (nixBrowser) {
+    log(`  using the Nix-provided Chromium at ${process.env.PLAYWRIGHT_BROWSERS_PATH}`);
+  }
+
+  mkdirSync(STATE_DIR, { recursive: true });
+  writeFileSync(stampPath, `${current}\n`);
+
+  return { cached: false, created, performed, report };
+};
+
+export const statusMark = (check: Report['checks'][number]): string => {
   if (check.ok) {
     return '  ok  ';
   }
-  return check.required ? ' MISS ' : '  --  ';
+  return check.severity === 'required' ? ' MISS ' : '  --  ';
 };
 
 /** Render a report for a person. Shared by `setup` and `doctor`. */
@@ -230,51 +261,54 @@ export const renderReport = (report: Report): string =>
     .map((check) => `${statusMark(check)} ${check.name.padEnd(12)} ${check.detail}`)
     .join('\n');
 
-export const runSetup = (): number => {
-  const report = inspect();
+export const runSetup = (args: readonly string[] = []): number => {
+  const force = args.includes('--force');
+  const quiet = args.includes('--quiet');
+  const outcome = performSetup({ force, quiet });
 
-  process.stdout.write('Toolchain\n');
-  for (const check of report.checks) {
-    // A named helper rather than a nested ternary: three outcomes in one
-    // expression reads correctly only if you already know the precedence.
-    const mark = statusMark(check);
-    process.stdout.write(`${mark} ${check.name.padEnd(10)} ${check.detail}\n`);
+  if (outcome.cached) {
+    if (!quiet) {
+      process.stdout.write('Toolchain\n');
+      process.stdout.write(`${renderReport(outcome.report)}\n`);
+      process.stdout.write('\nSetup\n  ok    already prepared (nothing to do)\n');
+    }
+    return outcome.report.ok ? 0 : 1;
   }
 
-  if (!report.ok) {
+  process.stdout.write('Toolchain\n');
+  process.stdout.write(`${renderReport(outcome.report)}\n`);
+
+  if (!outcome.report.ok) {
     process.stderr.write(
-      `\nMissing required tools: ${report.missingRequired.join(', ')}\n` +
-        'Install them, then re-run `bun run setup`.\n',
+      `\nMissing required capabilities: ${outcome.report.missingRequired.join(', ')}\n` +
+        'Nothing was written. Fix these, then re-run `bun run setup`.\n',
     );
+    for (const check of outcome.report.checks) {
+      if (!check.ok && check.severity === 'required' && check.remedy) {
+        process.stderr.write(`  ${check.name}: ${check.remedy}\n`);
+      }
+    }
     return 1;
   }
 
-  // Idempotent local state. Everything written here is gitignored.
-  const created: string[] = [];
-  if (writeIfAbsent(join(REPO_ROOT, '.env'), LOCAL_ENV)) {
-    created.push('.env (local defaults only)');
-  }
-  if (writeIfAbsent(join(REPO_ROOT, 'apps/frontend/client/.env'), LOCAL_ENV)) {
-    created.push('apps/frontend/client/.env');
-  }
-  // The Worker reads `.dev.vars`, not `.env` — a different filename for the
-  // different runtime, which is Wrangler's convention rather than an accident.
-  if (
-    copyIfAbsent(
-      join(REPO_ROOT, 'apps/backend/api/.dev.vars.example'),
-      join(REPO_ROOT, 'apps/backend/api/.dev.vars'),
-    )
-  ) {
-    created.push('apps/backend/api/.dev.vars (from the example; local defaults)');
-  }
-
   process.stdout.write('\nSetup\n');
-  if (created.length === 0) {
-    process.stdout.write('  ok    nothing to do (already set up)\n');
+  for (const step of outcome.performed) {
+    process.stdout.write(`  ran   ${step}\n`);
+  }
+  if (outcome.created.length === 0) {
+    process.stdout.write('  ok    local defaults already present\n');
   } else {
-    for (const path of created) {
+    for (const path of outcome.created) {
       process.stdout.write(`  new   ${path}\n`);
     }
+  }
+
+  const unavailable = outcome.report.unavailable;
+  if (unavailable.length > 0) {
+    process.stdout.write(
+      `\nNot available on this host: ${unavailable.join(', ')}\n` +
+        '  Those lanes cannot run here. See docs/platforms.md for what each needs.\n',
+    );
   }
 
   process.stdout.write(
@@ -287,4 +321,7 @@ export const runSetup = (): number => {
   return 0;
 };
 
-
+/** Remove the readiness stamp, so the next setup re-checks rather than trusting it. */
+export const invalidateSetupCache = (root = REPO_ROOT): void => {
+  rmSync(join(root, '.wrangler', 'setup', 'ready'), { force: true });
+};
