@@ -137,14 +137,14 @@ git grep -cI -E 'ghp_|sk-[A-Za-z0-9]{20,}|sbp_|AKIA|BEGIN.*PRIVATE KEY' || echo 
 # a real scanner, not a grep
 gitleaks detect --source . --no-git --redact
 
-# nothing inherited remains
-git grep -in 'aikami\|emberwatch' -- . ':!docs/starter-extraction.md' || echo clean
+# no identifier from the source project survives.
+# This line is itself one of the names it searches for, hence the exclusion.
+git grep -in 'aikami\|emberwatch\|BearlySleeping' -- . ':!docs/rename-checklist.md' || echo clean
 ```
 
-The last one has one expected hit by design: `docs/starter-extraction.md` records
-where this came from. That is provenance, and it belongs in the repository — but it
-is the one place the original project's name appears, so it is the one place to
-review if you would rather it did not.
+The last one should print nothing. Neither the provenance record nor this file
+names the source repository: the first records *what* was kept and removed, and
+this one records only that there is nothing to find.
 
 ## 8. Optional: Moon, CI, direnv
 
