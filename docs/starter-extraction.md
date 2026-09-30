@@ -94,15 +94,31 @@ Guard for the publish step: the newly created repository's id must not be
 - [x] Whole-workspace typecheck green
 
 ### Phase 5–12 — Remaining
-- [ ] Tauri shell (capabilities, CSP, no sidecars, mobile path documented)
-- [ ] Scripts: setup, db, logs family, deploy dry-run, guards, contract runner
-- [ ] `.pi`: settings, skills, extensions (incl. log tool), prompts
-- [ ] Tests: unit, real Svelte browser, Worker/D1 integration, Playwright E2E
-- [ ] Visual fixtures + honest vision-review status
+- [x] Tauri shell (capabilities, CSP, no sidecars, mobile path documented)
+      — `cargo check` passes against real GTK/WebKitGTK. Mobile *builds* need the
+      Android NDK and Xcode, neither present here, so the desktop path is the one
+      verified. `cargo clippy` is not installed.
+- [x] Scripts: setup, db, logs family, deploy dry-run, guards, contract runner
+      — 130 unit tests. Note the log CLI was silently gitignored until Rule 4
+      existed; see the guard's docstring.
+- [x] `.pi`: settings, skills, extensions (incl. log tool), prompts
+      — 17 tests over the log tool's argv builder.
+- [x] Tests: unit, real Svelte browser, Worker/D1 integration, Playwright E2E
+      — 361 unit / 15 browser / 17 e2e / 12 integration.
+- [x] Visual fixtures + honest vision-review status
+      — four real screens captured; vision inspection reports as SKIPPED with a
+      reason, never as a pass.
 - [ ] CI workflow
-- [ ] Documentation set
+- [ ] Documentation set — `docs/lint.md` written; the rest outstanding.
 - [ ] Verification sweep + publication audit
 - [ ] Publish `snorreks/starter`
+
+### Lint and format
+`biome.json` was written for Biome 1.x and had never run: six keys did not exist
+in 2.5, and a config that fails to deserialize reports nothing, which reads like
+"no lint problems". Migrated; `bun run lint` and `bun run format` are both clean
+on 183 files. Two rules are off because they cannot be satisfied honestly — see
+`docs/lint.md`, which records why and what to watch.
 
 ## Keep / refactor / delete
 
