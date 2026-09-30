@@ -16,10 +16,11 @@
     "format": "biome format src",
     "fix": "biome check --write src --error-on-warnings",
     "typecheck": "tsgo --noEmit",
-    "test": "bun run test:prepare && bun test",
+    "test": "bun test",
     "test:prepare": "bun run scripts/ensure_local_d1.ts",
     "test:unit": "bun test",
-    "db:migrate": "bun run --cwd ../.. scripts/src/lib/db/migrate.ts --local"
+    "db:migrate": "bun run --cwd ../.. scripts/src/lib/db/migrate.ts --local",
+    "test:integration": "bun test tests/worker_integration.test.ts"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "5.20260929.1",

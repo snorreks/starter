@@ -19,6 +19,13 @@ export type ApiEnv = {
   BETTER_AUTH_SECRET?: string;
   /** Extra trusted origins, comma separated. */
   TRUSTED_ORIGINS?: string;
+  /**
+   * Identity a test harness passes in and /api/health echoes back, so the
+   * harness can prove it reached its own Worker rather than a stale listener.
+   */
+  TEST_RUN_ID?: string;
+  /** Sign-in attempts allowed per minute per IP. Default 10. */
+  AUTH_RATE_LIMIT_MAX?: string;
   /** Minimum level a log event must meet to be stored. */
   LOG_LEVEL?: string;
   /** Build identifier attached to every log event. Injected by the deploy step. */

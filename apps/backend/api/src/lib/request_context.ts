@@ -1,30 +1,20 @@
 // apps/backend/api/src/lib/request_context.ts
 //
-// Per-request identity, bindings and database handle.
+// Per-request identity.
 //
-// The rule this module exists to enforce: **request identity and bindings are
-// explicitly scoped, never module-level mutable state.** The inherited pattern
-// was a `let _env` plus `setEnvForRequest(env)` on a module singleton. It looks
-// equivalent to a parameter and is not: a Worker isolate handles many concurrent
-// requests, and the last caller wins for all of them. The resulting bug — a
-// user occasionally reading another user's data — is rare, timing-dependent,
-// and indistinguishable from an authorization bug while you are debugging it.
+// This is the half that genuinely varies per request, and it is therefore the
+// half that must never be shared. Everything here is built fresh from the
+// `Request` in hand and returned; nothing is stored.
 //
-// Elysia's `resolve` runs once per request and merges its result into that
-// request's handler context, so the database handle and the verified user
-// travel with the request that owns them and cannot be read out of order.
+// The contrast with `container.ts` is the point: bindings are isolate-stable and
+// live in a container; the caller's identity is not, and does not.
 
-import { accounts, sessions, users } from '@starter/database';
-import { createBetterAuth, type BetterAuthInstance } from '@starter/auth';
+import { sessions } from '@starter/database';
 import { createLogger, type ConsoleLogger } from '@starter/logger';
+import { createId } from '@starter/utils';
 import { lt } from 'drizzle-orm';
-import { drizzle, type DrizzleD1Database } from 'drizzle-orm/d1';
-import { parseTrustedOrigins } from '@starter/schemas/registry';
-import type { ApiEnv } from '../env.ts';
-import { resolveAuthSecret } from '../env.ts';
-import { getWorkerEnv } from './worker_env.ts';
-
-type Schema = { users: typeof users; sessions: typeof sessions; accounts: typeof accounts };
+import { status } from 'elysia';
+import type { Container } from './container.ts';
 
 export type RequestUser = {
   id: string;
@@ -33,37 +23,11 @@ export type RequestUser = {
 };
 
 export type RequestContext = {
-  /** Bindings for *this* request. */
-  env: ApiEnv;
-  /** Drizzle handle bound to this request's D1. */
-  db: DrizzleD1Database<Schema>;
-  /** Null for anonymous requests. Never a client-asserted value. */
+  /** The verified caller, or null. Never a client-asserted value. */
   user: RequestUser | null;
-  /** Correlation id: the incoming `x-trace-id`, or a generated one. */
   traceId: string;
   logger: ConsoleLogger;
-  auth: BetterAuthInstance;
-};
-
-const schema: Schema = { users, sessions, accounts };
-
-/**
- * Better Auth is expensive to construct and is stateless with respect to a
- * request, so one instance per isolate is correct. What must not be cached here
- * is anything derived from a request.
- */
-let authInstance: BetterAuthInstance | undefined;
-
-export const getAuthForRequest = (env: ApiEnv): BetterAuthInstance => {
-  authInstance ??= createBetterAuth(drizzle(env.DB, { schema }), {
-    baseURL: env.BETTER_AUTH_URL ?? 'http://localhost:8787',
-    secret: resolveAuthSecret(
-      env,
-      env.BETTER_AUTH_URL !== undefined && !env.BETTER_AUTH_URL.includes('localhost'),
-    ),
-    trustedOrigins: parseTrustedOrigins(env.TRUSTED_ORIGINS),
-  });
-  return authInstance;
+  container: Container;
 };
 
 /**
@@ -73,62 +37,45 @@ export const getAuthForRequest = (env: ApiEnv): BetterAuthInstance => {
  * request body, from a client-controlled header, or from a decoded-but-
  * unverified JWT would all be forgeable; this call is not.
  */
-const resolveUser = async (env: ApiEnv, headers: Headers): Promise<RequestUser | null> => {
-  const session = await getAuthForRequest(env).api.getSession({ headers });
+const resolveUser = async (
+  container: Container,
+  headers: Headers,
+): Promise<RequestUser | null> => {
+  const session = await container.auth.api.getSession({ headers });
   if (!session?.user) {
     return null;
   }
   return { id: session.user.id, email: session.user.email, name: session.user.name };
 };
 
-export const buildRequestContext = async (request: Request): Promise<RequestContext> => {
-  const env = getWorkerEnv(request);
-  const isLocal = env.BETTER_AUTH_URL === undefined || env.BETTER_AUTH_URL.includes('localhost');
-  const traceId =
-    request.headers.get('x-trace-id') ?? `tr_${crypto.randomUUID().replace(/-/g, '').slice(0, 16)}`;
-
-  return {
-    env,
-    db: drizzle(env.DB, { schema }),
-    user: await resolveUser(env, request.headers),
-    traceId,
-    auth: getAuthForRequest(env),
-    logger: createLogger({
-      app: 'api',
-      environment: isLocal ? 'local' : 'production',
-      source: 'worker',
-      release: env.RELEASE ?? 'dev',
-      logLevel: 'INFO',
-      // The platform already captures console output. A second local write
-      // would double-count every line and slow the isolate down for nothing.
-      silent: true,
-    }),
-  };
-};
+export const buildRequestContext = async (
+  request: Request,
+  container: Container,
+): Promise<RequestContext> => ({
+  user: await resolveUser(container, request.headers),
+  traceId: request.headers.get('x-trace-id') ?? createId('tr', 16),
+  container,
+  logger: createLogger({
+    app: 'api',
+    environment: container.isLocal ? 'local' : 'production',
+    source: 'worker',
+    release: container.env.RELEASE ?? 'dev',
+    logLevel: 'INFO',
+    // The platform captures console output. A second local write would
+    // double-count every line and slow the isolate for nothing.
+    silent: true,
+  }),
+});
 
 /**
- * Why routes call this directly instead of using an Elysia `resolve` hook.
+ * 401 for an anonymous request. One place, so the shape cannot drift.
  *
- * `resolve` was tried and removed. Two reasons, both practical:
- *
- *   1. Its type injection does not survive a context of this shape — a handler
- *      destructured `{ requestContext }` and TypeScript reported the property as
- *      absent, with no useful diagnostic. Working around it needs a cast, and a
- *      cast in the place that establishes request identity is exactly the wrong
- *      place to have one.
- *   2. Building the context at the top of each handler makes the property this
- *      module exists to guarantee *visible*: you can read that the database
- *      handle and the verified user come from the request in hand, and cannot
- *      be reached through some shared holder.
- *
- * Cost: `buildRequestContext` runs once per request either way. `getWorkerEnv`
- * memoizes on the request object, so a handler that needs it twice does not
- * rebuild it.
+ * Uses Elysia's `status()` helper rather than a hand-built `Response`: a raw
+ * Response bypasses the declared response schema, and the union Elysia then
+ * infers no longer matches the 401 entry every route declares.
  */
-
-/** 401 for an anonymous request. One place, so the shape cannot drift. */
-export const unauthorized = (): Response =>
-  Response.json({ error: 'unauthorized', message: 'Sign in to continue.' }, { status: 401 });
+export const unauthorized = () =>
+  status(401, { error: 'unauthorized', message: 'Sign in to continue.' });
 
 /**
  * Delete expired sessions. Exposed as a maintenance route, not on a timer.
@@ -137,8 +84,8 @@ export const unauthorized = (): Response =>
  * carries no row count, and reporting "0 rows removed" after a successful
  * delete would be a small lie in an operational log.
  */
-export const purgeExpiredSessions = async (db: RequestContext['db']): Promise<number> => {
-  const expired = await db
+export const purgeExpiredSessions = async (container: Container): Promise<number> => {
+  const expired = await container.db
     .select({ id: sessions.id })
     .from(sessions)
     .where(lt(sessions.expiresAt, new Date()));
@@ -147,6 +94,6 @@ export const purgeExpiredSessions = async (db: RequestContext['db']): Promise<nu
     return 0;
   }
 
-  await db.delete(sessions).where(lt(sessions.expiresAt, new Date()));
+  await container.db.delete(sessions).where(lt(sessions.expiresAt, new Date()));
   return expired.length;
 };

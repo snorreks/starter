@@ -2,47 +2,73 @@
 //
 // Client log ingestion.
 //
-// Four things this endpoint is careful about, each of which is a real abuse or
-// leak vector:
+// Five things this endpoint is careful about, each an abuse or leak vector:
 //
 //   1. **Client-reported context is not identity.** Anything the browser claims
 //      about itself arrives under `clientReported` and is stored as a label. The
 //      verified user id comes from the session, never from the payload — a
-//      client that could choose its own `userId` would be able to plant
-//      misleading entries in another user's log history.
+//      client that could choose its own `userId` could plant misleading entries
+//      in another user's log history.
 //   2. **Redaction happens before storage**, not after retrieval.
-//   3. **Rate limiting is per session and per IP**, because this is the one
+//   3. **Rate limiting** is per session and per IP: this is the one
 //      unauthenticated-reachable write path in the API.
 //   4. **A failure to store never fails the request.** Telemetry that breaks the
 //      product is worse than telemetry that is missing.
+//   5. **The body is size-capped by the router**, before parsing.
+//
+// Validation is Elysia's job, via the `body` schema, exactly as it is for the
+// notes routes. Reading the body by hand — `await request.text()` — does not
+// work reliably here: by the time a handler runs, the router may already hold
+// the stream, and `request.text()` then fails with "Body is not valid JSON" for
+// a perfectly valid payload.
 
 import { redactValue } from '@starter/logger';
-import { Elysia, t } from 'elysia';
-import { LogEventSchema, type LogEvent } from '@starter/schemas/logging';
+import { Elysia, status, t } from 'elysia';
+import type { Static } from '@sinclair/typebox';
+import {
+  ClientReportedContextSchema,
+  LogEventSchema,
+  type ClientReportedContext,
+  type LogEvent,
+} from '@starter/schemas/logging';
+import type { Container } from './container.ts';
 import { buildRequestContext, type RequestContext } from './request_context.ts';
 
-const MAX_BODY_BYTES = 16 * 1024;
+/** Hard ceiling on one submission. Rejected before parsing. */
+export const MAX_BODY_BYTES = 16 * 1024;
+
 const WINDOW_MS = 60_000;
 const MAX_EVENTS_PER_WINDOW = 60;
+const SWEEP_INTERVAL_MS = 5_000;
 
-export type TelemetryResult = {
-  status: number;
-  body: Record<string, unknown>;
-};
+/**
+ * One submitted record.
+ *
+ * The event fields plus the self-asserted context. Modelled explicitly rather
+ * than as `LogEvent & { clientReported }` because the router validates
+ * `additionalProperties: false`, and the point is to admit exactly one extra
+ * field — the one that is explicitly labelled as unverified.
+ */
+const IngestRecordSchema = t.Intersect([
+  LogEventSchema,
+  t.Object({ clientReported: t.Optional(ClientReportedContextSchema) }),
+]);
+
+const IngestBodySchema = t.Union([IngestRecordSchema, t.Array(IngestRecordSchema)]);
 
 /**
  * Fixed-window counter.
  *
- * Deliberately in-memory: it is a per-isolate best-effort brake, not an
- * accounting system. A Worker isolate is ephemeral and there is no shared state
- * here, so this is honestly documented as approximate — a determined caller
- * gets a new isolate. A durable limiter is a real requirement only once this
- * endpoint is reachable at scale.
+ * Deliberately in-memory: a best-effort brake, not an accounting system. A
+ * Worker isolate is ephemeral and there is no shared state here, so this is
+ * honestly approximate — a determined caller gets a new isolate. A durable
+ * limiter becomes a real requirement only once this endpoint is reachable at
+ * scale, and that is a decision to make with data rather than in advance.
  */
 const hits = new Map<string, { count: number; resetAt: number }>();
 
 const rateLimitKey = (context: RequestContext, ip: string | null): string =>
-  `${context.user?.id ?? `ip:${ip ?? 'unknown'}`}`;
+  context.user?.id ?? `ip:${ip ?? 'unknown'}`;
 
 export const isRateLimited = (key: string, now = Date.now()): boolean => {
   const entry = hits.get(key);
@@ -65,95 +91,71 @@ const sweep = (now: number): void => {
   }
 };
 
-export const handleTelemetry = async (request: Request, context: RequestContext): Promise<TelemetryResult> => {
-  const now = Date.now();
-  if (now % 5_000 < 1_000) {
-    sweep(now);
-  }
+export type IngestRecord = Static<typeof IngestRecordSchema>;
 
-  const ip = request.headers.get('cf-connecting-ip');
-  if (isRateLimited(rateLimitKey(context, ip))) {
-    return { status: 429, body: { error: 'rate_limited', message: 'Too many log events.' } };
-  }
+/**
+ * Store one parsed record.
+ *
+ * Split from the route so it can be unit-tested with no HTTP involved.
+ */
+export const storeRecord = (record: IngestRecord, context: RequestContext): void => {
+  const { clientReported, ...event } = record;
 
-  const declaredLength = Number(request.headers.get('content-length') ?? '0');
-  if (declaredLength > MAX_BODY_BYTES) {
-    return { status: 413, body: { error: 'too_large', message: 'Log event is too large.' } };
-  }
-
-  let payload: unknown;
-  try {
-    const text = await request.text();
-    if (text.length > MAX_BODY_BYTES) {
-      return { status: 413, body: { error: 'too_large', message: 'Log event is too large.' } };
-    }
-    payload = JSON.parse(text);
-  } catch {
-    return { status: 400, body: { error: 'bad_request', message: 'Body is not valid JSON.' } };
-  }
-
-  const records = Array.isArray(payload) ? payload : [payload];
-  const accepted: string[] = [];
-  const rejected: number[] = [];
-
-  records.forEach((record, index) => {
-    const parsed = LogEventSchema.safeParse(record);
-    if (!parsed.success) {
-      rejected.push(index);
-      return;
-    }
-
-    const event: LogEvent = parsed.data;
-
-    // Client-reported identity is demoted, then redacted with everything else.
-    const reported = (record as { clientReported?: unknown }).clientReported;
-    const stored = {
-      ...event,
-      // A browser cannot be trusted to name the user it is acting for.
-      userId: context.user?.id,
-      sessionId: context.user === null ? event.sessionId : undefined,
-      data: redactValue(event.data) as Record<string, unknown> | undefined,
-      ...(reported === undefined
-        ? {}
-        : { data: { clientReported: redactValue(reported) } }),
-    };
-
-    // Round 1 stores to the platform's log stream via console, which is what
-    // `wrangler tail` and the provider's own log product both index. Writing to
-    // a D1 table was considered and rejected: it would need its own retention
-    // policy, its own index, and a migration, for a capability the platform
-    // already provides.
-    context.logger.write({
-      logLevel: stored.level,
-      logType: stored.level === 'ERROR' ? 'error' : 'info',
-      event: stored.event,
-      message: stored.message,
-      traceId: context.traceId,
-      ...(stored.userId === undefined ? {} : { userId: stored.userId }),
-    });
-
-    accepted.push(stored.event);
-  });
-
-  return {
-    status: 202,
-    body: { accepted: accepted.length, rejected: rejected.length },
+  // The browser's claim about who it is is demoted to a labelled field, and the
+  // verified id comes from the session. A client cannot choose whose log
+  // history its events land in.
+  const stored: LogEvent = {
+    ...event,
+    userId: context.user?.id,
+    data: redactValue(
+      clientReported === undefined
+        ? event.data
+        : { ...event.data, clientReported: clientReported as ClientReportedContext },
+    ) as Record<string, unknown> | undefined,
   };
+
+  // Round 1 writes to the platform's own log stream via the logger, which is
+  // what `wrangler tail` and the provider's Logs product both index. A D1 table
+  // was considered and rejected: it would need its own retention policy, its
+  // own index, and a migration, for a capability the platform already provides.
+  context.logger.write({
+    logLevel: stored.level,
+    logType: stored.level === 'ERROR' ? 'error' : 'info',
+    event: stored.event,
+    message: stored.message,
+    traceId: context.traceId,
+    ...(stored.userId === undefined ? {} : { userId: stored.userId }),
+  });
 };
 
-/** The ingest route. */
-export const telemetryRoutes = () =>
+export const telemetryRoutes = (container: Container) =>
   new Elysia({ name: 'starter/telemetry' }).post(
     '/api/telemetry',
-    async ({ request }) => {
-      const requestContext = await buildRequestContext(request);
-      const result = await handleTelemetry(request, requestContext);
-      return Response.json(result.body, { status: result.status });
+    async ({ request, body }) => {
+      const context = await buildRequestContext(request, container);
+
+      const now = Date.now();
+      if (now % SWEEP_INTERVAL_MS < 1_000) {
+        sweep(now);
+      }
+
+      if (isRateLimited(rateLimitKey(context, request.headers.get('cf-connecting-ip')))) {
+        return status(429, { error: 'rate_limited', message: 'Too many log events.' });
+      }
+
+      const records = Array.isArray(body) ? body : [body];
+      for (const record of records) {
+        storeRecord(record, context);
+      }
+
+      return status(202, { accepted: records.length, rejected: 0 });
     },
     {
+      body: IngestBodySchema,
+      bodyLimit: MAX_BODY_BYTES,
       response: {
         202: t.Object({ accepted: t.Number(), rejected: t.Number() }),
-        400: t.Object({ error: t.String(), message: t.String() }),
+        // Emitted by the router's own validation, not by the handler.
         413: t.Object({ error: t.String(), message: t.String() }),
         429: t.Object({ error: t.String(), message: t.String() }),
       },

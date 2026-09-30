@@ -9,28 +9,32 @@
 // and "works on the web, unreachable from Tauri" is a bad property for a
 // foundation to have.
 //
-// CORS is implemented inline rather than with `@elysiajs/cors` for one reason:
-// the trusted-origin allowlist comes from a Worker variable, and a plugin's
-// static config is evaluated before any request exists. Thirty readable lines
-// that can read the request's own env beat a plugin that cannot.
+// CORS is implemented inline rather than with a plugin for one reason: the
+// trusted-origin allowlist comes from a Worker binding, and a plugin's static
+// config is evaluated before any binding exists. Thirty readable lines that can
+// read the container beat a plugin that cannot.
 
 import { createLogger } from '@starter/logger';
 import { isTrustedOrigin, parseTrustedOrigins } from '@starter/schemas/registry';
 import { Elysia } from 'elysia';
-import { getWorkerEnv } from './lib/worker_env.ts';
+import { type Container, getContainer } from './lib/container.ts';
 import { notesRoutes } from './lib/notes.ts';
 import { telemetryRoutes } from './lib/telemetry.ts';
-import { buildRequestContext, getAuthForRequest } from './lib/request_context.ts';
+import { buildRequestContext, unauthorized } from './lib/request_context.ts';
 
 const CORS_ALLOWED_HEADERS = 'content-type, authorization, x-trace-id';
 
 /**
- * Worker-level logger.
+ * Worker-level logger, for failures that happen outside any container.
  *
- * Separate from the per-request logger in `requestContext` because `onError`
- * runs for requests whose context never resolved — a failure to read the D1
- * binding, a bad origin. Using the per-request logger there would mean logging
- * through a context that does not exist.
+ * Separate from the per-request logger because `onError` also runs for requests
+ * whose container could not be built — a missing D1 binding is precisely such a
+ * case, and logging through a context that does not exist would throw again.
+ *
+ * `silent` is false in local development on purpose: a silent logger means a
+ * 500 with an empty body is undebuggable, which is exactly what happened here
+ * before this was changed. In deployed environments the platform captures
+ * console output, so a second write would only double-count.
  */
 const apiLogger = createLogger({
   app: 'api',
@@ -38,8 +42,7 @@ const apiLogger = createLogger({
   source: 'worker',
   release: 'dev',
   logLevel: 'INFO',
-  // The platform captures console output; a second write double-counts it.
-  silent: true,
+  silent: process.env.NODE_ENV === 'production',
 });
 
 /** Answer a CORS preflight, or `undefined` to let the request continue. */
@@ -69,21 +72,6 @@ const preflightFor = (request: Request, allowed: boolean): Response | undefined 
   });
 };
 
-/**
- * Trusted origins, tolerating a missing D1 binding.
- *
- * A request can fail before the binding exists (a misconfigured Worker, a harness
- * without bindings). Rejecting the origin there is the safe answer, and it must
- * not throw a second, less useful error on top of the first.
- */
-const tryTrustedOrigins = (request: Request): string[] => {
-  try {
-    return parseTrustedOrigins(getWorkerEnv(request).TRUSTED_ORIGINS);
-  } catch {
-    return [];
-  }
-};
-
 /** Add CORS headers to a real response. */
 const withCors = (response: Response, origin: string | null, allowed: boolean): Response => {
   if (origin === null || !allowed) {
@@ -97,8 +85,12 @@ const withCors = (response: Response, origin: string | null, allowed: boolean): 
   return new Response(response.body, { status: response.status, headers });
 };
 
-export const createApi = () =>
-  new Elysia({ aot: false })
+export const createApi = (container: Container) => {
+  const trustedOrigins = parseTrustedOrigins(container.env.TRUSTED_ORIGINS);
+  const originAllowed = (origin: string | null): boolean =>
+    isTrustedOrigin(origin ?? '', trustedOrigins);
+
+  return new Elysia({ aot: false })
     .onError(({ error, code, request }) => {
       // Log the detail, return something the caller can act on. A stack trace
       // or an internal message in a response body is a disclosure bug.
@@ -134,52 +126,74 @@ export const createApi = () =>
       );
     })
 
-    .onRequest(async ({ request }) => {
-      // Read the binding directly rather than through a resolved context: this
-      // hook also runs for requests that never reach a route, including ones
-      // that fail precisely because the binding is missing.
-      const allowed = isTrustedOrigin(
-        request.headers.get('origin') ?? '',
-        tryTrustedOrigins(request),
-      );
-      const preflight = preflightFor(request, allowed);
-      if (preflight) {
-        return preflight;
-      }
-      return undefined;
+    .onRequest(({ request }) => {
+      const preflight = preflightFor(request, originAllowed(request.headers.get('origin')));
+      return preflight ?? undefined;
     })
 
     .onAfterHandle(({ request, response }) => {
       const origin = request.headers.get('origin');
-      const allowed = isTrustedOrigin(origin ?? '', tryTrustedOrigins(request));
-      // `onAfterHandle` sees whatever the handler returned, which may not be a
-      // Response (Elysia also allows a plain object it will serialise later).
-      return response instanceof Response ? withCors(response, origin, allowed) : response;
+      return response instanceof Response
+        ? withCors(response, origin, originAllowed(origin))
+        : response;
     })
 
-    .get('/api/health', () => ({ ok: true, service: 'api' }))
+    // Reports the effective (non-secret) configuration. Operators and tests
+    // both need to answer "what is this deployment actually set to" without
+    // reading wrangler config and guessing; it contains no secret material.
+    /**
+     * Liveness, plus the effective (non-secret) configuration.
+     *
+     * `testRunId` exists for one reason: a harness that starts a Worker on a
+     * port has to be able to prove it is talking to *its* Worker. A stale
+     * listener on the same port answers `/api/health` just as readily, and a
+     * readiness probe that only checks for a 200 will happily run a whole suite
+     * against the wrong process — passing, and proving nothing. Echoing an
+     * identifier the harness supplied turns that into an actual check.
+     */
+    .get('/api/health', () => ({
+      ok: true,
+      service: 'api',
+      environment: container.isLocal ? 'local' : 'production',
+      authRateLimitMax: container.env.AUTH_RATE_LIMIT_MAX ?? '10 (default)',
+      trustedOriginCount: trustedOrigins.length,
+      ...(container.env.TEST_RUN_ID === undefined
+        ? {}
+        : { testRunId: container.env.TEST_RUN_ID }),
+    }))
 
     .get('/api/whoami', async ({ request }) => {
-      const { user } = await buildRequestContext(request);
-      return (
-        user ??
-        Response.json({ error: 'unauthorized', message: 'Sign in to continue.' }, { status: 401 })
-      );
+      const { user } = await buildRequestContext(request, container);
+      return user ?? unauthorized();
     })
+
+    // Registered before the auth mount, which must stay last.
+    .use(telemetryRoutes(container))
+    .use(notesRoutes(container))
 
     /**
      * Better Auth's own fetch handler.
      *
-     * Mounted as a raw `Request -> Response` handler so it receives the body
-     * untouched: Elysia's JSON body parser would otherwise consume the stream
-     * first and Better Auth would see an empty body on every sign-in.
+     * MUST stay the last thing registered in this chain. Two Elysia 1.4
+     * behaviours make that load-bearing, and both fail silently:
      *
-     * It reads its own bindings from the request, because a mounted fetch
-     * handler is not a route handler and does not receive a resolved context.
+     *  1. `.mount()` on a plain function **drops every route registered after
+     *     it**. The app answers `/api/health` and `/api/auth/*` and 404s
+     *     everything else, with no warning. Keeping the mount last means
+     *     nothing follows it.
+     *
+     *  2. The alternative — `.all('/api/auth/*', handler, { parse: () => ({ raw: true }) })`
+     *     — does compose in order, but the `parse` sentinel is not scoped to the
+     *     route: it leaked to routes registered afterwards and left their
+     *     request bodies unparsed, so `/api/telemetry` reported "Body is not
+     *     valid JSON" for a perfectly valid payload.
+     *
+     * `.mount()` is therefore the lesser of two silent failure modes, and the
+     * ordering is the guard. Re-verify both if Elysia is upgraded.
      */
     .mount('/api/auth', async (request: Request) => {
       try {
-        return getAuthForRequest(getWorkerEnv(request)).handler(request);
+        return await container.auth.handler(request);
       } catch (error) {
         apiLogger.error('auth.unavailable', {
           message: error instanceof Error ? error.message : String(error),
@@ -189,10 +203,23 @@ export const createApi = () =>
           { status: 503 },
         );
       }
-    })
+    });
+};
 
-    .use(telemetryRoutes())
-    .use(notesRoutes());
+/**
+ * The Worker entry point.
+ *
+ * `env` arrives as the second argument to `fetch` in workerd and is never
+ * exposed on `globalThis` or `process.env` — verified on the local runtime. It
+ * is passed straight into `getContainer`, which memoizes per binding set, and
+ * the app is then built against that container. Nothing is stored in a module
+ * variable.
+ */
+export const worker = {
+  fetch(request: Request, env: unknown): Promise<Response> {
+    return createApi(getContainer(env)).handle(request);
+  },
+};
 
-export const api = createApi();
-export default api;
+export type { Container };
+export default worker;
