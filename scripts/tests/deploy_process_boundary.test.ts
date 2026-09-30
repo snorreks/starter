@@ -14,9 +14,9 @@
 
 import { afterEach, describe, expect, test } from 'bun:test';
 import { DEPLOYMENT_CONFIG } from '@starter/schemas';
-import { type ProcessRunner, setProcessRunner } from '../cloudflare/wrangler.ts';
-import type { ConfigCheck } from '../deploy/configure.ts';
-import { executePlan, main, parseDeployArgs, planDeploy } from '../deploy/deploy.ts';
+import { type ProcessRunner, setProcessRunner } from '../src/cloudflare/wrangler.ts';
+import type { ConfigCheck } from '../src/deploy/configure.ts';
+import { executePlan, main, parseDeployArgs, planDeploy } from '../src/deploy/deploy.ts';
 
 const READY: ConfigCheck = { ok: true, problems: [], notices: [] };
 

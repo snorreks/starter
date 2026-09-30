@@ -25,7 +25,7 @@ import {
   type StageAdapter,
   type StageEvidence,
   type StageOutcome,
-} from '../contracts/runner.ts';
+} from '../src/contracts/runner.ts';
 
 const T0 = 1_760_000_000_000;
 const REVISION = 'rev-under-test';

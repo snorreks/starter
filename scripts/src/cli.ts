@@ -1,4 +1,4 @@
-// scripts/src/index.ts
+// scripts/src/cli.ts
 //
 // Command router. `bun run scripts -- <command>` dispatches here, and every
 // package.json script points at its own entry file directly.

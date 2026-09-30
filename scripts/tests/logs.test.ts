@@ -13,13 +13,13 @@
 import { describe, expect, test } from 'bun:test';
 import { Value } from '@sinclair/typebox/value';
 import { type LogEvent, LogEventSchema } from '@starter/schemas';
-import { parseArgs, toQuery } from '../commands/logs.ts';
-import { buildHistoricalRequest, MAX_TAIL_MS } from '../logs/cloudflare_adapter.ts';
-import { parseDuration } from '../logs/duration.ts';
-import { buildFilter, buildLogpushFilter } from '../logs/filter.ts';
-import { parseNdjson } from '../logs/local_file_adapter.ts';
-import { capabilitiesFor, resolveLogAdapter } from '../logs/registry.ts';
-import type { LogQuery } from '../logs/types.ts';
+import { parseArgs, toQuery } from '../src/commands/logs.ts';
+import { buildHistoricalRequest, MAX_TAIL_MS } from '../src/logs/cloudflare_adapter.ts';
+import { parseDuration } from '../src/logs/duration.ts';
+import { buildFilter, buildLogpushFilter } from '../src/logs/filter.ts';
+import { parseNdjson } from '../src/logs/local_file_adapter.ts';
+import { capabilitiesFor, resolveLogAdapter } from '../src/logs/registry.ts';
+import type { LogQuery } from '../src/logs/types.ts';
 
 // ── Fixtures ─────────────────────────────────────────────────────────────────
 
