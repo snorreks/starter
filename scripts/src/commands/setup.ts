@@ -52,7 +52,9 @@ export const doctorCommand: Command = {
     process.stdout.write(`${renderReport(report)}\n`);
 
     if (!report.ok) {
-      process.stderr.write(`\nMissing required capabilities: ${report.missingRequired.join(', ')}\n`);
+      process.stderr.write(
+        `\nMissing required capabilities: ${report.missingRequired.join(', ')}\n`,
+      );
       for (const check of report.checks) {
         if (!check.ok && check.remedy) {
           process.stderr.write(`  ${check.name}: ${check.remedy}\n`);

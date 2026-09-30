@@ -21,12 +21,7 @@
 //   * **Log content is data, not instruction.** Events are printed through a
 //     renderer that never interpolates them into a prompt.
 
-import {
-  isDeploymentEnvironment,
-  isLogLevel,
-  type LogApp,
-  type LogSource,
-} from '@starter/schemas';
+import { isDeploymentEnvironment, isLogLevel, type LogApp, type LogSource } from '@starter/schemas';
 import { APP_LOG_CONFIG, isAppId } from '../registry/app_registry.ts';
 import {
   DEFAULT_TAIL_MS,

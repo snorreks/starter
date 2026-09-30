@@ -12,11 +12,7 @@ import type {
   LogQueryResult,
   LogSource,
 } from '@starter/schemas/logging';
-import type {
-  AppId,
-  LogAdapterCapabilities,
-  LogAdapterKind,
-} from '../registry/app_registry.ts';
+import type { AppId, LogAdapterCapabilities, LogAdapterKind } from '../registry/app_registry.ts';
 
 /**
  * A *threshold*, not a project level.

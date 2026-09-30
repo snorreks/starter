@@ -20,8 +20,10 @@ import {
   guardNoLeftovers,
   guardRequestState,
   guardSourceIsTracked,
+  guardVersionMirrors,
   guardWorkspaceBoundary,
 } from '../src/guards/boundary.ts';
+import { REPO_ROOT } from '../src/shared/paths.ts';
 
 const created: string[] = [];
 
@@ -293,5 +295,113 @@ describe('source-is-tracked', () => {
     });
 
     expect(guardSourceIsTracked(root).violations).toHaveLength(1);
+  });
+});
+
+describe('version-mirrors', () => {
+  // The drift below is not hypothetical: `.bun-version` said 1.4.0 while CI
+  // pinned 1.4.2, and CI's `bun install --frozen-lockfile` failed with a message
+  // about the lockfile that named nothing useful. Neither file was wrong alone.
+  const pins = (bun: string): string => `{"bun":"${bun}","playwright":{"browsers":["chromium"]}}`;
+
+  test('accepts a mirror that agrees with the pin', () => {
+    const root = makeTree({
+      'config/toolchain.json': pins('1.4.2'),
+      '.bun-version': '1.4.2\n',
+    });
+
+    expect(guardVersionMirrors(root).violations).toEqual([]);
+  });
+
+  test('rejects the exact drift that shipped: .bun-version behind CI', () => {
+    const root = makeTree({
+      'config/toolchain.json': pins('1.4.2'),
+      '.bun-version': '1.4.0\n',
+    });
+
+    const violations = guardVersionMirrors(root).violations;
+    expect(violations).toHaveLength(1);
+    expect(violations[0].file).toBe('.bun-version');
+    // The message must name the version, since the whole point is that the
+    // original failure named only the lockfile.
+    expect(violations[0].message).toContain('1.4.0');
+    expect(violations[0].message).toContain('1.4.2');
+  });
+
+  test('reports a missing pin file rather than passing silently', () => {
+    // A guard that returns zero violations because it found nothing to read is
+    // the failure mode this whole suite exists to prevent.
+    const root = makeTree({ '.bun-version': '1.4.2\n' });
+
+    expect(guardVersionMirrors(root).violations).toHaveLength(1);
+  });
+
+  test('reports unparseable JSON rather than passing silently', () => {
+    const root = makeTree({
+      'config/toolchain.json': '{ not json',
+      '.bun-version': '1.4.2\n',
+    });
+
+    expect(guardVersionMirrors(root).violations.length).toBeGreaterThan(0);
+  });
+
+  test('tolerates trailing whitespace in the mirror', () => {
+    // Editors and generators add a newline. Treating that as drift would train
+    // people to ignore the guard, which is how a real drift goes unnoticed.
+    const root = makeTree({
+      'config/toolchain.json': pins('1.4.2'),
+      '.bun-version': '  1.4.2  \n',
+    });
+
+    expect(guardVersionMirrors(root).violations).toEqual([]);
+  });
+
+  // GitHub Actions cannot read a file into a workflow-level `env:`, so CI holds a
+  // literal. That makes it a second source of truth, and it is the one that was
+  // already wrong when the pin said 1.4.0.
+  const workflow = (version: string | null): string =>
+    version === null
+      ? 'jobs:\n  check:\n    runs-on: ubuntu-latest\n'
+      : `env:\n  BUN_VERSION: '${version}'\n`;
+
+  test('accepts a CI literal that agrees with the pin', () => {
+    const root = makeTree({
+      'config/toolchain.json': pins('1.4.2'),
+      '.bun-version': '1.4.2\n',
+      '.github/workflows/ci.yml': workflow('1.4.2'),
+    });
+
+    expect(guardVersionMirrors(root).violations).toEqual([]);
+  });
+
+  test('rejects a CI literal that disagrees with the pin', () => {
+    const root = makeTree({
+      'config/toolchain.json': pins('1.4.2'),
+      '.bun-version': '1.4.2\n',
+      '.github/workflows/ci.yml': workflow('1.4.0'),
+    });
+
+    const violations = guardVersionMirrors(root).violations;
+    expect(violations).toHaveLength(1);
+    expect(violations[0].file).toBe('.github/workflows/ci.yml');
+    expect(violations[0].message).toContain('1.4.0');
+  });
+
+  test('reports a workflow that pins no Bun version at all', () => {
+    // Silence is not agreement. A workflow with no BUN_VERSION installs whatever
+    // the runner defaults to, which is exactly the floating toolchain the pin
+    // exists to prevent.
+    const root = makeTree({
+      'config/toolchain.json': pins('1.4.2'),
+      '.bun-version': '1.4.2\n',
+      '.github/workflows/ci.yml': workflow(null),
+    });
+
+    expect(guardVersionMirrors(root).violations).toHaveLength(1);
+  });
+
+  test('the live repository agrees with itself', () => {
+    // The fixture cases prove the rule; this proves the rule is currently met.
+    expect(guardVersionMirrors(REPO_ROOT).violations).toEqual([]);
   });
 });

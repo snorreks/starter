@@ -122,9 +122,7 @@ export abstract class BaseViewModel<Options extends BaseViewModelOptions = BaseV
    * `isMutating` cannot be left stuck on by a path that throws before reaching
    * its own `finally`.
    */
-  protected async _runMutation(
-    write: (signal: AbortSignal) => Promise<unknown>,
-  ): Promise<boolean> {
+  protected async _runMutation(write: (signal: AbortSignal) => Promise<unknown>): Promise<boolean> {
     const handle = this._mutations.begin();
 
     if (handle === null) {

@@ -141,25 +141,22 @@ export const tailCloudflare = async (query: LogQuery): Promise<LogQueryResult> =
   const budgetMs = Math.min(query.followBudgetMs ?? DEFAULT_TAIL_MS, MAX_TAIL_MS);
   let printed = 0;
 
-  const code = await streamWrangler(
-    ['tail', worker, '--format', 'json', '--status', 'error'],
-    {
-      timeoutMs: budgetMs,
-      // A live stream has no index, so the predicate runs here, on the client.
-      // docs/logs.md says so rather than implying the provider filtered it.
-      onStdout: (line) => {
-        const event = parseEnvelopeEvent(line);
-        if (event === null) {
-          return;
-        }
-        if (decision.predicate?.(event) === true) {
-          printed += 1;
-          process.stdout.write(`${JSON.stringify(event)}\n`);
-        }
-      },
-      onStderr: (line) => process.stderr.write(`${line}\n`),
+  const code = await streamWrangler(['tail', worker, '--format', 'json', '--status', 'error'], {
+    timeoutMs: budgetMs,
+    // A live stream has no index, so the predicate runs here, on the client.
+    // docs/logs.md says so rather than implying the provider filtered it.
+    onStdout: (line) => {
+      const event = parseEnvelopeEvent(line);
+      if (event === null) {
+        return;
+      }
+      if (decision.predicate?.(event) === true) {
+        printed += 1;
+        process.stdout.write(`${JSON.stringify(event)}\n`);
+      }
     },
-  );
+    onStderr: (line) => process.stderr.write(`${line}\n`),
+  });
 
   const elapsed = `after ${Math.round(budgetMs / 1000)}s`;
 

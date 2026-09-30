@@ -41,4 +41,3 @@ export const renderSummary = (results: readonly CheckResult[]): string => {
 
   return lines.join('\n');
 };
-

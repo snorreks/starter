@@ -216,7 +216,9 @@ describe('buildObservabilityQuery', () => {
   });
 
   test('emits no clause for a level of DEBUG', () => {
-    expect(buildObservabilityQuery({ ...baseQuery, level: 'DEBUG' }, undefined).filter).toBeUndefined();
+    expect(
+      buildObservabilityQuery({ ...baseQuery, level: 'DEBUG' }, undefined).filter,
+    ).toBeUndefined();
   });
 
   test('returns an empty request when nothing needs narrowing', () => {
@@ -248,16 +250,16 @@ describe('buildHistoricalRequest', () => {
   });
 
   test('the historical adapter narrows by verified user id', () => {
-  // The refusal for a live tail happens where the *resolved* adapter is consulted
-  // — `buildFilter` against `capabilitiesFor('wrangler-tail')`, asserted above.
-  // Here the point is the opposite: this path does narrow, so `--uid` is honoured
-  // rather than silently dropped from the provider request.
-  const request = buildHistoricalRequest({ ...baseQuery, uid: 'user_verified' });
-  expect(request.ok).toBe(true);
-  if (request.ok) {
-    expect(request.request.filter).toContain('userId = "user_verified"');
-  }
-});
+    // The refusal for a live tail happens where the *resolved* adapter is consulted
+    // — `buildFilter` against `capabilitiesFor('wrangler-tail')`, asserted above.
+    // Here the point is the opposite: this path does narrow, so `--uid` is honoured
+    // rather than silently dropped from the provider request.
+    const request = buildHistoricalRequest({ ...baseQuery, uid: 'user_verified' });
+    expect(request.ok).toBe(true);
+    if (request.ok) {
+      expect(request.request.filter).toContain('userId = "user_verified"');
+    }
+  });
 });
 
 // ── Registry / capability honesty ────────────────────────────────────────────

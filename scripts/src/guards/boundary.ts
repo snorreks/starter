@@ -13,24 +13,25 @@
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { join, relative } from 'node:path';
 
-export type Violation = {
+export interface Violation {
   rule: string;
   file: string;
   line: number;
   message: string;
-};
+}
 
-export type GuardResult = {
+export interface GuardResult {
   id: string;
   label: string;
   /** Always false: these are invariants, not ratchets. */
   baselineCount: 0;
   violations: Violation[];
-};
+}
 
 // Shared with every other module, so there is one answer to "where is the repo".
 // See scripts/src/shared/paths.ts for why this is not recomputed here.
 import { REPO_ROOT } from '../shared/paths.ts';
+import { checkMirrors } from '../setup/pins.ts';
 
 export { REPO_ROOT };
 
@@ -87,17 +88,31 @@ const linesOf = (file: string): string[] => readFileSync(file, 'utf8').split('\n
 export type Layer = 'shared' | 'backend' | 'frontend' | 'client' | 'api' | 'tool';
 
 export const layerOf = (relativePath: string): Layer | null => {
-  if (relativePath.startsWith('packages/shared/')) return 'shared';
-  if (relativePath.startsWith('packages/backend/')) return 'backend';
-  if (relativePath.startsWith('packages/frontend/')) return 'frontend';
+  if (relativePath.startsWith('packages/shared/')) {
+    return 'shared';
+  }
+  if (relativePath.startsWith('packages/backend/')) {
+    return 'backend';
+  }
+  if (relativePath.startsWith('packages/frontend/')) {
+    return 'frontend';
+  }
   // The two apps are separate layers. Treating `apps/` as one layer let the API
   // import `@starter/ui` — Svelte component code — into a Worker, where it would
   // compile and then fail at runtime, or drag `svelte/internal` into a bundle
   // that has no DOM.
-  if (relativePath.startsWith('apps/frontend/')) return 'client';
-  if (relativePath.startsWith('apps/backend/')) return 'api';
-  if (relativePath.startsWith('apps/')) return null;
-  if (relativePath.startsWith('scripts/') || relativePath.startsWith('.pi/')) return 'tool';
+  if (relativePath.startsWith('apps/frontend/')) {
+    return 'client';
+  }
+  if (relativePath.startsWith('apps/backend/')) {
+    return 'api';
+  }
+  if (relativePath.startsWith('apps/')) {
+    return null;
+  }
+  if (relativePath.startsWith('scripts/') || relativePath.startsWith('.pi/')) {
+    return 'tool';
+  }
   return null;
 };
 
@@ -401,7 +416,12 @@ export const guardSourceIsTracked = (root = REPO_ROOT): GuardResult => {
   };
 };
 
-type IgnoreRule = { raw: string; regex: RegExp; negated: boolean; line: number };
+interface IgnoreRule {
+  raw: string;
+  regex: RegExp;
+  negated: boolean;
+  line: number;
+}
 
 /** Parse `.gitignore` into matchable rules, skipping blanks and comments. */
 const readIgnoreRules = (root: string): IgnoreRule[] => {
@@ -537,6 +557,42 @@ export const guardRegistryIsValid = (root = REPO_ROOT): GuardResult => {
   };
 };
 
+// ── Rule 6 — version mirrors agree with the pins ──────────────────────────────
+
+/**
+ * Rule 6 — every generated version mirror matches `config/toolchain.json`.
+ *
+ * The drift this catches already happened: `.bun-version` said 1.4.0 while CI
+ * pinned 1.4.2, and the symptom was `bun install --frozen-lockfile` failing in
+ * CI with an error about the lockfile that named nothing useful. Neither file
+ * was wrong on its own, and no type system covers two text files.
+ *
+ * `config/toolchain.json` claims a guard enforces this. Until it did, the claim
+ * was false in the one file whose subject is not repeating unverified claims, so
+ * the check is here and `checkMirrors` is what it calls.
+ *
+ * Textual, for the same reason as Rule 5: it must work on a checkout where
+ * nothing is installed, and it must be able to report a pin file that is itself
+ * unparseable.
+ */
+export const guardVersionMirrors = (root = REPO_ROOT): GuardResult => {
+  const label = 'Version mirrors agree with config/toolchain.json';
+
+  const drifts = checkMirrors(root);
+
+  return {
+    id: 'version-mirrors',
+    label,
+    baselineCount: 0,
+    violations: drifts.map((drift) => ({
+      rule: 'version-mirrors',
+      file: drift.mirror,
+      line: 1,
+      message: `${drift.mirror} is ${drift.found ?? 'missing'}, expected ${drift.expected}.\n  ${drift.reason}`,
+    })),
+  };
+};
+
 /**
  * The guard set, each paired with the id it reports under.
  *
@@ -549,4 +605,5 @@ export const ALL_GUARDS = [
   { id: 'no-leftovers', run: guardNoLeftovers },
   { id: 'source-is-tracked', run: guardSourceIsTracked },
   { id: 'registry-valid', run: guardRegistryIsValid },
+  { id: 'version-mirrors', run: guardVersionMirrors },
 ] as const;

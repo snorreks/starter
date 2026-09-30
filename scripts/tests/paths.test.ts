@@ -20,7 +20,14 @@
 import { describe, expect, test } from 'bun:test';
 import { existsSync, statSync } from 'node:fs';
 import { basename, dirname } from 'node:path';
-import { API_DIR, CLIENT_DIR, DATABASE_DIR, E2E_DIR, PI_DIR, REPO_ROOT } from '../src/shared/paths.ts';
+import {
+  API_DIR,
+  CLIENT_DIR,
+  DATABASE_DIR,
+  E2E_DIR,
+  PI_DIR,
+  REPO_ROOT,
+} from '../src/shared/paths.ts';
 
 describe('repository paths', () => {
   test('REPO_ROOT is a directory named after the repository', () => {

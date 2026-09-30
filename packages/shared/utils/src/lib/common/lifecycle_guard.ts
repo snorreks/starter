@@ -139,7 +139,10 @@ export class OptimisticUpdate<Item extends { id: string }> {
    * here, or assigned in the same state transition, for the staleness check to
    * hold — so this returns the list rather than only a predicate.
    */
-  apply(current: readonly Item[], ids: readonly string[]): {
+  apply(
+    current: readonly Item[],
+    ids: readonly string[],
+  ): {
     list: Item[];
     receipt: OptimisticReceipt<Item>;
   } {
