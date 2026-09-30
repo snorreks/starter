@@ -1,4 +1,4 @@
-// scripts/src/lib/guards/guards.test.ts
+// scripts/tests/guards.test.ts
 //
 // The guards, tested against fixtures rather than against the repository.
 //
@@ -9,7 +9,7 @@
 //
 // The `source-is-tracked` cases are not hypothetical. An unanchored `logs/`
 // pattern in `.gitignore` silently excluded all eight files of
-// `scripts/src/lib/logs/` — the log CLI and its 31 tests — while `git status`
+// `scripts/src/logs/` — the log adapters and their tests — while `git status`
 // stayed clean and every test passed. That is what Rule 4 exists to catch.
 
 import { afterAll, describe, expect, test } from 'bun:test';

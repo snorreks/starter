@@ -1,4 +1,4 @@
-// scripts/src/lib/logs/cli.ts
+// scripts/src/commands/logs.ts
 //
 // The one log command family.
 //
@@ -22,24 +22,24 @@
 //     renderer that never interpolates them into a prompt.
 
 import {
-  APP_LOG_CONFIG,
-  isAppId,
   isDeploymentEnvironment,
   isLogLevel,
   type LogApp,
   type LogSource,
 } from '@starter/schemas';
+import { APP_LOG_CONFIG, isAppId } from '../registry/app_registry.ts';
 import {
   DEFAULT_TAIL_MS,
   MAX_TAIL_MS,
   queryCloudflareHistory,
   tailCloudflare,
 } from '../logs/cloudflare_adapter.ts';
-import { describeDurationUnits } from '../logs/duration.ts';
+import { describeDurationUnits, parseDuration } from '../logs/duration.ts';
 import { buildFilter } from '../logs/filter.ts';
 import { readAllLocal, readLocal } from '../logs/local_file_adapter.ts';
 import { capabilitiesFor, resolveLogAdapter } from '../logs/registry.ts';
 import type { FlagDoc, LogQuery, LogQueryResult } from '../logs/types.ts';
+import type { Command } from '../shared/command.ts';
 
 const HARD_LIMIT_CAP = 500;
 
@@ -60,7 +60,7 @@ const FLAG_DOCS: readonly FlagDoc[] = [
     flag: '--uid',
     arg: '<user-id>',
     description: 'Filter by a server-verified user id.',
-    adapters: ['local-file', 'cloudflare-logpush'],
+    adapters: ['local-file', 'cloudflare-observability'],
   },
   {
     flag: '--since',
@@ -213,10 +213,23 @@ export const toQuery = (
     return { ok: false, message: '--limit must be a positive number.' };
   }
 
+  const follow = readBool(parsed.flags, '--follow');
   const duration = readString(parsed.flags, '--duration');
-  if (readBool(parsed.flags, '--follow') && duration === undefined) {
-    // Not an error: a sensible default exists. But say so in the help, which
-    // it does. Bounded either way.
+
+  // Parsed here rather than in the adapter so a typo is a usage error at the
+  // command line, and so the adapter receives a number it cannot forget to bound.
+  let followBudgetMs: number | undefined;
+  if (follow) {
+    if (duration !== undefined) {
+      const parsedDuration = parseDuration(duration);
+      if (parsedDuration === null) {
+        return {
+          ok: false,
+          message: `--duration must be a number followed by s, m, h, d or w (got "${duration}").`,
+        };
+      }
+      followBudgetMs = Math.min(parsedDuration.ms, MAX_TAIL_MS);
+    }
   }
 
   return {
@@ -235,8 +248,9 @@ export const toQuery = (
         ? {}
         : { since: readString(parsed.flags, '--since') as string }),
       ...(limit === undefined ? {} : { limit: Math.min(limit, HARD_LIMIT_CAP) }),
-      follow: readBool(parsed.flags, '--follow'),
+      follow,
       ...(duration === undefined ? {} : { duration }),
+      ...(followBudgetMs === undefined ? {} : { followBudgetMs }),
       json: readBool(parsed.flags, '--json'),
     },
   };
@@ -287,12 +301,9 @@ export const runQuery = async (query: LogQuery): Promise<LogQueryResult[]> => {
   }
 
   if (query.follow === true) {
-    const { result } = tailCloudflare(query, (event) => {
-      // Live events go to stdout as they arrive. The final result object is
-      // returned too, so `--json` still produces one document.
-      process.stdout.write(`${JSON.stringify(event)}\n`);
-    });
-    return [result];
+    // Live events go to stdout as they arrive. The final result object comes back
+    // too, so `--json` still produces exactly one document at the end.
+    return [await tailCloudflare(query)];
   }
 
   return [await queryCloudflareHistory(query)];
@@ -389,9 +400,13 @@ export const main = async (argv: readonly string[]): Promise<number> => {
   return worst;
 };
 
-if (import.meta.main) {
-  process.exitCode = await main(process.argv.slice(2));
-}
+/** Dispatcher descriptor. The argv work above is the whole implementation. */
+export const logsCommand: Command = {
+  name: 'logs',
+  summary: 'read, follow and filter log events',
+  usage: 'logs <client|api|all> [--mode local|staging|production] [filters]',
+  run: main,
+};
 
 export type { LogApp };
 export { APP_LOG_CONFIG };

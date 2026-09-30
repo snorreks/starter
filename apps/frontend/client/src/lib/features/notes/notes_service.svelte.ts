@@ -1,4 +1,4 @@
-// apps/frontend/client/src/lib/services/notes_service.svelte.ts
+// apps/frontend/client/src/lib/features/notes/notes_service.svelte.ts
 //
 // Transport + caching for notes. The *only* place that knows the notes HTTP
 // shape.
@@ -15,7 +15,7 @@
 
 import type { Note, NoteCreate, NoteUpdate } from '@starter/schemas/notes';
 import { BaseClass } from '@starter/utils';
-import { type ApiClient, apiClient } from './api_client.ts';
+import { type ApiClient, apiClient } from '#lib/services/api_client.ts';
 
 export class NotesService extends BaseClass {
   readonly #api: ApiClient;

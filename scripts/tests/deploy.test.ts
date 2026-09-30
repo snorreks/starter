@@ -1,4 +1,4 @@
-// scripts/src/lib/deploy/deploy.test.ts
+// scripts/src/deploy/deploy.test.ts
 //
 // Deploy planning, with nothing deployed.
 //
@@ -19,7 +19,7 @@
 // built and inspected here, while the refusal path is tested on its own terms.
 
 import { afterEach, describe, expect, test } from 'bun:test';
-import { DEPLOYMENT_CONFIG } from '@starter/schemas';
+import { DEPLOYMENT_CONFIG } from '../src/registry/app_registry.ts';
 import type { ConfigCheck } from '../src/deploy/configure.ts';
 import { type DeployTarget, parseDeployArgs, planDeploy, type Step } from '../src/deploy/deploy.ts';
 

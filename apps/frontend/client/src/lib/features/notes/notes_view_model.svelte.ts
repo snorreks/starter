@@ -1,4 +1,4 @@
-// apps/frontend/client/src/lib/views/notes/notes_view_model.svelte.ts
+// apps/frontend/client/src/lib/features/notes/notes_view_model.svelte.ts
 //
 // The reference ViewModel for this starter. Read this before adding a screen.
 //
@@ -18,7 +18,7 @@
 import { BaseViewModel } from '@starter/frontend-services/base';
 import type { Note, NoteCreate, NoteUpdate } from '@starter/schemas/notes';
 import { toAppError } from '@starter/utils';
-import { type NotesService, notesService } from '#lib/services/notes_service.svelte.ts';
+import { type NotesService, notesService } from './notes_service.svelte.ts';
 
 /**
  * One status, not four booleans.

@@ -1,4 +1,4 @@
-// apps/frontend/client/src/lib/stubs/tauri_stub.ts
+// apps/frontend/client/src/lib/platform/tauri_stub.ts
 //
 // Replaces every `@tauri-apps/*` import in browser builds (see vite.config.ts).
 //

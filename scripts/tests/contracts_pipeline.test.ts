@@ -1,4 +1,4 @@
-// scripts/src/lib/contract/pipeline.test.ts
+// scripts/src/contracts/pipeline.test.ts
 //
 // Deterministic lifecycle coverage.
 //

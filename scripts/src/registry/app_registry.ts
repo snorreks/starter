@@ -1,29 +1,38 @@
-// packages/shared/schemas/src/registry/app_registry.ts
+// scripts/src/registry/app_registry.ts
 //
-// THE single project registry.
+// THE single project registry, for the tooling.
 //
-// Deployment tooling, the `logs` CLI and the Pi log wrapper all read this file.
-// Nothing else is allowed to hold its own app -> worker / app -> bucket map;
-// a duplicated map is how a staging query silently hits production.
+// It lives here rather than in `@starter/schemas` because almost none of it is a
+// contract: `DEPLOYMENT_CONFIG` names Cloudflare Workers and D1 databases, and
+// `APP_LOG_CONFIG` says which log adapter serves which environment. No browser
+// bundle, no Worker and no request ever reads those. Shipping them from the
+// portable schema package meant every frontend build carried deployment topology
+// it had no use for, and it made "is this a contract or is this configuration?"
+// unanswerable from the import site.
+//
+// What stays in `@starter/schemas` is what actually crosses a wire or a runtime
+// boundary: `log_event.ts`, `note.ts`, `session.ts`, and the Tauri/CORS origin
+// policy in `@starter/schemas/registry`, which the client and the API must agree
+// on exactly.
 //
 // Three rules this file exists to enforce:
-//   1. No inherited resource ids. Worker names, bucket names and D1 database
-//      ids are *per-user placeholders* that a new project must fill in.
+//   1. No inherited resource ids. Worker names, bucket names and D1 database ids
+//      are per-user placeholders that a new project must fill in.
 //   2. Capabilities are declared, not assumed. An adapter that cannot filter by
 //      user id says so here, and the CLI returns `capability_unsupported`
 //      instead of quietly returning everything.
-//   3. Environment -> adapter mapping is explicit, so "local" can never be
-//      served by a Cloudflare code path that needs credentials.
+//   3. Environment -> adapter mapping is explicit, so "local" can never be served
+//      by a code path that needs remote credentials.
 
 import { type Static, Type } from '@sinclair/typebox';
-import type { DeploymentEnvironment } from '../logging/log_event.ts';
+import type { DeploymentEnvironment } from '@starter/schemas/logging';
 
 /** How a given app's logs are obtained in a given environment. */
 export const LOG_ADAPTER_KINDS = [
   /** Structured NDJSON written to a local file by the dev processes. */
   'local-file',
-  /** Cloudflare Logpush historical query via the provider's query API. */
-  'cloudflare-logpush',
+  /** Historical query through the Cloudflare Workers Observability API. */
+  'cloudflare-observability',
   /** Bounded live tail via `wrangler tail`. Live only, no history. */
   'wrangler-tail',
   /** Browser/native events forwarded to the API's telemetry endpoint. */
@@ -33,8 +42,8 @@ export const LOG_ADAPTER_KINDS = [
 export type LogAdapterKind = (typeof LOG_ADAPTER_KINDS)[number];
 
 /**
- * What an adapter can actually do. The CLI checks these before building a
- * filter, so an unsupported flag is a clear error and never a silent no-op.
+ * What an adapter can actually do. The CLI checks these before building a filter,
+ * so an unsupported flag is a clear error and never a silent no-op.
  */
 export const LogAdapterCapabilitiesSchema = Type.Object(
   {
@@ -54,7 +63,7 @@ export type LogAdapterCapabilities = Static<typeof LogAdapterCapabilitiesSchema>
 /** One adapter kind. Written out so TypeBox receives a real tuple. */
 const AdapterKindSchema = Type.Union([
   Type.Literal('local-file'),
-  Type.Literal('cloudflare-logpush'),
+  Type.Literal('cloudflare-observability'),
   Type.Literal('wrangler-tail'),
   Type.Literal('client-forward'),
 ]);
@@ -87,10 +96,10 @@ export const AppLogConfigSchema = Type.Object(
     /**
      * environment -> ordered adapter preference. The first entry is the one used.
      *
-     * Spelled as an explicit object rather than `Type.Record` with a union key:
-     * a Record over a union key collapses the value type to `never` in TypeBox
-     * v1, which turns a typo in one environment's adapter list into a confusing
-     * error far from its cause.
+     * Spelled as an explicit object rather than `Type.Record` with a union key: a
+     * Record over a union key collapses the value type to `never` in TypeBox v1,
+     * which turns a typo in one environment's adapter list into a confusing error
+     * far from its cause.
      */
     adapters: Type.Object(
       {
@@ -127,7 +136,7 @@ export const DEPLOYMENT_CONFIG_SCHEMA = Type.Object(
       },
       { additionalProperties: false },
     ),
-    /** Optional R2 bucket for user uploads. Round 1: optional capability. */
+    /** Optional R2 bucket for user uploads. This round: optional capability. */
     r2BucketNames: Type.Object(
       {
         uploads: Type.Union([Type.String(), Type.Null()]),
@@ -135,8 +144,8 @@ export const DEPLOYMENT_CONFIG_SCHEMA = Type.Object(
       { additionalProperties: false },
     ),
     /**
-     * Custom domains. Empty by default; the starter never assumes a domain it
-     * does not control, and `deploy:configure` is how a user sets these.
+     * Custom domains. Empty by default; the starter never assumes a domain it does
+     * not control, and `configure --provision` is how a user sets these.
      */
     customDomains: Type.Object(
       {
@@ -178,12 +187,12 @@ const LOCAL_FILE: LogAdapterCapabilities = {
   cursor: false,
 };
 
-const LOGPUSH: LogAdapterCapabilities = {
+const OBSERVABILITY: LogAdapterCapabilities = {
   historicalQuery: true,
   liveTail: false,
-  // Cloudflare Logpush indexes the structured JSON payload, so a user id that
-  // the *server* wrote is filterable. Events the browser self-reported are not
-  // treated as verified here; see `resolveUserFilter` in the logs adapter.
+  // The Workers Observability query indexes the structured JSON payload, so a user
+  // id the *server* wrote is filterable. Events the browser self-reported are not
+  // treated as verified here; see `buildFilter`.
   userIdFilter: true,
   traceIdFilter: true,
   cursor: true,
@@ -192,7 +201,9 @@ const LOGPUSH: LogAdapterCapabilities = {
 const WRANGLER_TAIL: LogAdapterCapabilities = {
   historicalQuery: false,
   liveTail: true,
-  // `wrangler tail` is a live event stream with no index: it cannot filter.
+  // `wrangler tail` is a live event stream with no index, so it cannot filter
+  // provider-side. A bounded client-side filter is still applied after the stream
+  // is read, and docs/logs.md says which filtering happens where.
   userIdFilter: false,
   traceIdFilter: false,
   cursor: false,
@@ -209,9 +220,9 @@ const CLIENT_FORWARD: LogAdapterCapabilities = {
 };
 
 /**
- * Per-app log topology. Note the asymmetry, which is deliberate and honest:
- * the API can be read historically from Cloudflare; the *browser*'s logs are
- * not server logs by default and are only available where a forwarder runs.
+ * Per-app log topology. Note the asymmetry, which is deliberate and honest: the API
+ * can be read historically from Cloudflare; the *browser's* logs are not server
+ * logs by default and are only available where a forwarder runs.
  */
 export const APP_LOG_CONFIG: Record<AppId, AppLogConfig> = {
   client: {
@@ -221,8 +232,8 @@ export const APP_LOG_CONFIG: Record<AppId, AppLogConfig> = {
     adapters: {
       // In dev the browser writes NDJSON through the Vite logging middleware.
       local: ['local-file'],
-      // Browser events reach the provider only if client telemetry forwarding
-      // is enabled for the deployment, which round 1 does not enable.
+      // Browser events reach the provider only if client telemetry forwarding is
+      // enabled for the deployment, which this round does not enable.
       staging: [],
       production: [],
     },
@@ -234,10 +245,10 @@ export const APP_LOG_CONFIG: Record<AppId, AppLogConfig> = {
     sources: ['worker'],
     adapters: {
       local: ['local-file'],
-      staging: ['cloudflare-logpush', 'wrangler-tail'],
-      production: ['cloudflare-logpush', 'wrangler-tail'],
+      staging: ['cloudflare-observability', 'wrangler-tail'],
+      production: ['cloudflare-observability', 'wrangler-tail'],
     },
-    capabilities: [LOCAL_FILE, LOGPUSH, WRANGLER_TAIL],
+    capabilities: [LOCAL_FILE, OBSERVABILITY, WRANGLER_TAIL],
   },
 };
 
@@ -253,8 +264,8 @@ export const resolveLogAdapter = (
     return {
       unsupported:
         `No log adapter is configured for app "${app}" in environment "${environment}". ` +
-        `Browser and native events are not server logs: they only exist in an ` +
-        `environment where client telemetry forwarding is enabled.`,
+        'Browser and native events are not server logs: they only exist in an ' +
+        'environment where client telemetry forwarding is enabled.',
     };
   }
 
@@ -262,12 +273,12 @@ export const resolveLogAdapter = (
 };
 
 /** Every adapter kind -> its declared capabilities. */
-const ADAPTER_CAPABILITIES = {
+const ADAPTER_CAPABILITIES: Record<LogAdapterKind, LogAdapterCapabilities> = {
   'local-file': LOCAL_FILE,
-  'cloudflare-logpush': LOGPUSH,
+  'cloudflare-observability': OBSERVABILITY,
   'wrangler-tail': WRANGLER_TAIL,
   'client-forward': CLIENT_FORWARD,
-} as const satisfies Record<LogAdapterKind, LogAdapterCapabilities>;
+};
 
 /**
  * Capabilities of a specific adapter kind.
@@ -275,6 +286,18 @@ const ADAPTER_CAPABILITIES = {
  * The `logs` CLI consults this *before* building a filter. `wrangler-tail`
  * declaring `userIdFilter: false` is what turns `--uid` into a
  * `capability_unsupported` error rather than an unbounded event dump.
+ *
+ * Throws for an unrecognised kind. A `?? DEFAULT_CAPABILITIES` here would hand
+ * back a permissive set for an adapter nobody described, and the CLI would then
+ * build a filter the adapter cannot apply — the exact silent-no-op this table
+ * exists to prevent.
  */
-export const capabilitiesFor = (kind: LogAdapterKind): LogAdapterCapabilities =>
-  ADAPTER_CAPABILITIES[kind];
+export const capabilitiesFor = (kind: LogAdapterKind): LogAdapterCapabilities => {
+  const capabilities = ADAPTER_CAPABILITIES[kind];
+  if (capabilities === undefined) {
+    throw new Error(
+      `Unknown log adapter kind "${String(kind)}". Declared kinds: ${LOG_ADAPTER_KINDS.join(', ')}.`,
+    );
+  }
+  return capabilities;
+};

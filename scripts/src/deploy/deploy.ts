@@ -1,4 +1,4 @@
-// scripts/src/lib/deploy/index.ts
+// scripts/src/deploy/index.ts
 //
 // Deploy application code to Cloudflare Workers.
 //
@@ -25,7 +25,8 @@
 //     words out and defaulting to "both" turns `--app clientt` into a production
 //     deploy of the wrong app.
 
-import { DEPLOYMENT_CONFIG, type DeploymentEnvironment } from '@starter/schemas';
+import type { DeploymentEnvironment } from '@starter/schemas';
+import { DEPLOYMENT_CONFIG } from '../registry/app_registry.ts';
 import {
   API_DIR,
   CLIENT_DIR,
@@ -56,6 +57,16 @@ export type Plan =
 
 export const VALID_TARGETS: readonly DeployTarget[] = ['api', 'client'];
 const VALID_ENVIRONMENTS: readonly DeploymentEnvironment[] = ['staging', 'production'];
+
+/**
+ * Exit codes, so a caller can distinguish "you typed it wrong" from "this project
+ * is not configured" from "it deployed".
+ */
+export const EXIT = {
+  ok: 0,
+  notConfigured: 1,
+  usage: 2,
+} as const;
 
 /** Flags that take a value. Anything else must be a boolean flag or an error. */
 const VALUE_FLAGS = new Set(['--env']);
@@ -301,7 +312,8 @@ export const planDeploy = (
   return { ok: true, steps, notices };
 };
 
-const renderPlan = (plan: Extract<Plan, { ok: true }>, environment: string): string => {
+/** Render a built plan for a person. The same text the process boundary compares against. */
+export const renderPlan = (plan: Extract<Plan, { ok: true }>, environment: string): string => {
   const lines = [`Deploy plan (${environment})`, ''];
   for (const [index, step] of plan.steps.entries()) {
     lines.push(`  ${index + 1}. ${step.description}`);
@@ -352,24 +364,31 @@ export const executePlan = (
   return { code: 0 };
 };
 
+/**
+ * CLI entry point.
+ *
+ * Parses argv, builds the plan once, and either prints it or executes it. Dry run
+ * and execution consume the same `Plan` object — the property the deploy tests
+ * assert at the process boundary.
+ */
 export const main = (argv: readonly string[]): number => {
   const parsed = parseDeployArgs(argv);
 
   if (!parsed.ok) {
     process.stderr.write(`${parsed.errors.join('\n')}\n\n${usageText()}\n`);
-    return 2;
+    return EXIT.usage;
   }
 
   if (parsed.help) {
     process.stdout.write(`${usageText()}\n`);
-    return 0;
+    return EXIT.ok;
   }
 
   const plan = planDeploy(parsed.targets, parsed.environment);
 
   if (!plan.ok) {
     process.stderr.write(`${plan.reason}\n${plan.remedy}\n`);
-    return 1;
+    return EXIT.notConfigured;
   }
 
   if (parsed.json) {
@@ -386,18 +405,18 @@ export const main = (argv: readonly string[]): number => {
         2,
       )}\n`,
     );
-    return 0;
+    return EXIT.ok;
   }
 
   if (parsed.dryRun) {
     process.stdout.write(`${renderPlan(plan, parsed.environment)}\n`);
     process.stdout.write('\nDry run: nothing was changed.\n');
-    return 0;
+    return EXIT.ok;
   }
 
   if (!wranglerAvailable()) {
     process.stderr.write('wrangler is not available. Run `bun install` first.\n');
-    return 1;
+    return EXIT.notConfigured;
   }
 
   return executePlan(plan, parsed.environment, argv).code;
@@ -409,3 +428,4 @@ if (import.meta.main) {
 
 export type { DeploymentEnvironment, ProcessRunner };
 export { setProcessRunner };
+export { wranglerAvailable } from '../cloudflare/wrangler.ts';

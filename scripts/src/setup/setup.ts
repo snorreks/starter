@@ -1,4 +1,4 @@
-// scripts/src/lib/setup/index.ts
+// scripts/src/setup/index.ts
 //
 //   bun run setup            # idempotent: safe to re-run
 //   bun run setup:doctor     # report what is and is not available
@@ -67,7 +67,7 @@ export const REQUIRED = [
  * Optional tools, reported but never blocking.
  *
  * Where the repository pins the tool itself, the pinned copy is reported rather than
- * whatever is on PATH — see `scripts/src/lib/tools.ts` for why a global wrangler is
+ * whatever is on PATH — see `scripts/src/shared/tools.ts` for why a global wrangler is
  * not the same thing as this project's wrangler.
  */
 export const OPTIONAL = [
@@ -217,12 +217,18 @@ const copyIfAbsent = (from: string, to: string): boolean => {
  * into one expression reads correctly only if you already know the precedence,
  * and the two call sites that use it disagreed on spacing before.
  */
-const statusMark = (check: Check): string => {
+export const statusMark = (check: Check): string => {
   if (check.ok) {
     return '  ok  ';
   }
   return check.required ? ' MISS ' : '  --  ';
 };
+
+/** Render a report for a person. Shared by `setup` and `doctor`. */
+export const renderReport = (report: Report): string =>
+  report.checks
+    .map((check) => `${statusMark(check)} ${check.name.padEnd(12)} ${check.detail}`)
+    .join('\n');
 
 export const runSetup = (): number => {
   const report = inspect();
@@ -281,17 +287,4 @@ export const runSetup = (): number => {
   return 0;
 };
 
-export const main = (args: readonly string[]): number => {
-  if (args.includes('--doctor')) {
-    const report = inspect();
-    for (const check of report.checks) {
-      process.stdout.write(`${statusMark(check)}${check.name.padEnd(10)} ${check.detail}\n`);
-    }
-    return report.ok ? 0 : 1;
-  }
-  return runSetup();
-};
 
-if (import.meta.main) {
-  process.exitCode = main(process.argv.slice(2));
-}

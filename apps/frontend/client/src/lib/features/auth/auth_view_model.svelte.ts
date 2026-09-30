@@ -1,4 +1,4 @@
-// apps/frontend/client/src/lib/views/auth/auth_view_model.svelte.ts
+// apps/frontend/client/src/lib/features/auth/auth_view_model.svelte.ts
 //
 // Sign-in / sign-up.
 //

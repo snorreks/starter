@@ -34,7 +34,7 @@ import { fileURLToPath } from 'node:url';
 const BUILD_DIR = fileURLToPath(new URL('../build', import.meta.url));
 
 /**
- * The marker string in `src/lib/stubs/tauri_stub.ts`.
+ * The marker string in `src/lib/platform/tauri_stub.ts`.
  *
  * If that file's message changes, this check stops being able to tell a stubbed
  * bundle from a real one — and would then report success on a native build that is
@@ -90,7 +90,7 @@ const readIfPresent = (path: string): string | null => {
 /** Whether this repository's stub still carries the marker this check looks for. */
 export const stubMarkerIntact = (): boolean => {
   const stub = readIfPresent(
-    fileURLToPath(new URL('../src/lib/stubs/tauri_stub.ts', import.meta.url)),
+    fileURLToPath(new URL('../src/lib/platform/tauri_stub.ts', import.meta.url)),
   );
   return stub?.includes(STUB_MARKER);
 };
@@ -111,7 +111,7 @@ export const checkBundle = (mode: BuildMode, dir: string = BUILD_DIR): BundlePro
       {
         code: 'stub_marker_missing',
         message:
-          'The Tauri stub marker string was not found in src/lib/stubs/tauri_stub.ts, so this ' +
+          'The Tauri stub marker string was not found in src/lib/platform/tauri_stub.ts, so this ' +
           'check cannot distinguish a stubbed bundle from a real one.',
         remedy: `Restore the phrase "${STUB_MARKER}" in the stub's error message, or update STUB_MARKER here.`,
       },

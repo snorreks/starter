@@ -64,12 +64,12 @@ tasks:
       - '@group(sources)'
   guard:
     command: 'bun'
-    args: ['run', 'src/lib/guards/run_guards.ts']
+    args: ['run', 'src/cli.ts', 'guard']
     inputs:
       - '@group(sources)'
   guard-whole-repo:
     command: 'bun'
-    args: ['run', 'src/lib/guards/run_guards.ts', '--whole-repo']
+    args: ['run', 'src/cli.ts', 'guard', '--whole-repo']
     inputs:
       - '@group(sources)'
   validate:

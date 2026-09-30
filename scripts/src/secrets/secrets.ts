@@ -1,4 +1,4 @@
-// scripts/src/lib/secrets/index.ts
+// scripts/src/secrets/index.ts
 //
 //   bun run secrets:encrypt -- <file>...
 //   bun run secrets:decrypt -- <file>...
@@ -127,6 +127,3 @@ export const main = (args: readonly string[]): number => {
   return 0;
 };
 
-if (import.meta.main) {
-  process.exitCode = main(process.argv.slice(2));
-}

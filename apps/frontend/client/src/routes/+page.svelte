@@ -7,8 +7,8 @@
 -->
 <script lang="ts">
 import { sessionService, sessionState } from '#lib/services/session_service.svelte';
-import { NotesView } from '#lib/views/notes';
-import { getNotesViewModel } from '#lib/views/notes/notes_composition';
+import { NotesView } from '#lib/features/notes';
+import { getNotesViewModel } from '#lib/features/notes/notes_composition';
 import { goto } from '$app/navigation';
 
 const viewModel = getNotesViewModel();

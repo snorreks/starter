@@ -1,6 +1,6 @@
-// apps/frontend/client/src/lib/views/notes/notes_composition.ts
+// apps/frontend/client/src/lib/features/notes/notes_composition.ts
 //
-// Wiring. The only module in the feature allowed to import `#lib/services`.
+// Wiring: the feature's one seam on its dependencies.
 //
 // This separation is the point of the convention. A ViewModel that imports the
 // service registry cannot be constructed with a fake, so every test of a
@@ -11,7 +11,7 @@
 // It is also the single place to change when a screen's dependencies change:
 // one file, not every ViewModel.
 
-import { type NotesService, notesService } from '#lib/services/notes_service.svelte.ts';
+import { type NotesService, notesService } from './notes_service.svelte.ts';
 import { createNotesViewModel, type NotesViewModel } from './notes_view_model.svelte.ts';
 
 export interface NotesComposition {

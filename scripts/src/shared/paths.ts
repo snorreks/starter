@@ -8,13 +8,13 @@
 //   * `new URL(..., import.meta.url).pathname` percent-encodes, so a checkout
 //     under a directory containing a space resolves to a nonexistent location and
 //     the failure looks like a missing config file rather than a path bug.
-//   * Getting the depth wrong is silent. `../../../..` from `scripts/src/lib`
+//   * Getting the depth wrong is silent. `../../../..` from `scripts/src/shared`
 //     is the *parent* of the repository, and every path built from it is wrong
 //     in a way that reads as "no migrations found" or "no wrangler.jsonc".
 
 import { fileURLToPath } from 'node:url';
 
-// `scripts/src/lib/` -> three levels up is the repository root.
+// `scripts/src/shared/` -> three levels up is the repository root.
 //
 // `at()` strips the trailing separator `fileURLToPath` adds for a directory URL,
 // so a string comparison against another module's path is meaningful.

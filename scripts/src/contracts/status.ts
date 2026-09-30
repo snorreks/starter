@@ -1,4 +1,4 @@
-// scripts/src/lib/contract/status.ts
+// scripts/src/contracts/status.ts
 //
 // What contracts exist, and what state their runs are in. Read-only.
 //
@@ -68,7 +68,3 @@ export const main = (): number => {
   }
   return 0;
 };
-
-if (import.meta.main) {
-  process.exitCode = main();
-}

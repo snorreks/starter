@@ -1,4 +1,4 @@
-// scripts/src/lib/guards/boundary.ts
+// scripts/src/guards/boundary.ts
 //
 // Hard-invariant boundary checks.
 //
@@ -29,7 +29,7 @@ export type GuardResult = {
 };
 
 // Shared with every other module, so there is one answer to "where is the repo".
-// See scripts/src/lib/paths.ts for why this is not recomputed here.
+// See scripts/src/shared/paths.ts for why this is not recomputed here.
 import { REPO_ROOT } from '../shared/paths.ts';
 
 export { REPO_ROOT };
@@ -300,7 +300,7 @@ export const guardNoLeftovers = (root = REPO_ROOT): GuardResult => {
     // patterns being searched for.
     if (
       /\.(test|spec)\.tsx?$/.test(relativePath) ||
-      relativePath.startsWith('scripts/src/lib/guards/')
+      relativePath.startsWith('scripts/src/guards/')
     ) {
       continue;
     }
@@ -324,7 +324,7 @@ export const guardNoLeftovers = (root = REPO_ROOT): GuardResult => {
  *
  * This exists because the failure is invisible. `.gitignore`'s `logs/` pattern
  * was meant for a log output directory, but git applies an unanchored pattern at
- * every depth, so it also matched `scripts/src/lib/logs/` — eight files,
+ * every depth, so it also matched `scripts/src/logs/` — eight files,
  * including the whole log CLI and its 31 tests, that passed locally and were
  * never committed. Nothing warned about it: `git status` was clean, the suite
  * was green, and the feature was simply absent from the repository.
@@ -486,7 +486,7 @@ const firstMatchingRule = (
  */
 export const guardRegistryIsValid = (root = REPO_ROOT): GuardResult => {
   const violations: Violation[] = [];
-  const registryFile = join(root, 'packages/shared/schemas/src/registry/app_registry.ts');
+  const registryFile = join(root, 'scripts/src/registry/app_registry.ts');
 
   if (!existsSync(registryFile)) {
     return {

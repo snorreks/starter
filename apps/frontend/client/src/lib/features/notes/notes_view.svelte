@@ -9,7 +9,8 @@
   is a compile error in exactly one place rather than a silently blank screen.
 -->
 <script lang="ts">
-import { BaseViewModelContainer, EmptyState, ErrorState, NoteCard, Spinner } from '@starter/ui';
+import { BaseViewModelContainer, EmptyState, ErrorState, Spinner } from '@starter/ui';
+import NoteCard from './note_card.svelte';
 import NoteForm from './note_form.svelte';
 import type { NotesViewModel } from './notes_view_model.svelte.ts';
 

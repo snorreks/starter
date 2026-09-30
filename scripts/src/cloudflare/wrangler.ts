@@ -1,4 +1,4 @@
-// scripts/src/lib/cloudflare/wrangler.ts
+// scripts/src/cloudflare/wrangler.ts
 //
 // The only place that shells out to Wrangler.
 //
@@ -17,7 +17,8 @@
 //      actually ran was `wrangler wrangler deploy`, which fails with a message
 //      that names neither the plan nor the cause.
 
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
+import { killTree } from '@starter/utils/process';
 import { API_DIR, CLIENT_DIR, REPO_ROOT } from '../shared/paths.ts';
 import { missingToolMessage, wranglerBin } from '../shared/tools.ts';
 
@@ -115,6 +116,11 @@ export const requireRemoteConsent = (
   return { allowed: true };
 };
 
+/** Optional per-call options, for commands that need to bound or observe output. */
+export interface RunOptions {
+  cwd?: string;
+}
+
 /**
  * How a wrangler invocation is executed. Injectable so tests can observe argv at
  * the process boundary instead of asserting on a constant array.
@@ -151,6 +157,99 @@ export const runWrangler = (
     return 1;
   }
   return runner.run(bin, wranglerArgs, { cwd: options.cwd ?? REPO_ROOT });
+};
+
+/** How a streaming invocation is executed. Separate from `ProcessRunner` because
+ * it is asynchronous and line-oriented, and a synchronous runner cannot express
+ * "read each line as it arrives, stop after N milliseconds". */
+export interface StreamRunner {
+  run(
+    command: string,
+    args: readonly string[],
+    options: { cwd: string; timeoutMs: number },
+    handlers: { onStdout: (line: string) => void; onStderr: (line: string) => void },
+  ): Promise<number>;
+}
+
+const defaultStreamRunner: StreamRunner = {
+  run: (command, args, options, handlers) =>
+    new Promise<number>((resolve) => {
+      const child = spawn(command, [...args], {
+        cwd: options.cwd,
+        stdio: ['ignore', 'pipe', 'pipe'],
+      });
+
+      // Lines are split here rather than by the caller, so a partial final line
+      // still reaches the handler instead of being buffered forever waiting for a
+      // newline that never comes.
+      const lineSplitter =
+        (emit: (line: string) => void) =>
+        (chunk: Buffer): void => {
+          for (const line of chunk.toString('utf8').split('\n')) {
+            if (line.trim() !== '') {
+              emit(line);
+            }
+          }
+        };
+
+      child.stdout?.on('data', lineSplitter(handlers.onStdout));
+      child.stderr?.on('data', lineSplitter(handlers.onStderr));
+
+      const timer = setTimeout(() => {
+        // Kill the tree, not just wrangler: workerd is its child and would
+        // otherwise keep the port. Reported as failure by the resolved code.
+        if (child.pid !== undefined) {
+          killTree(child.pid, { graceMs: 200, attempts: 10 });
+        }
+      }, options.timeoutMs);
+
+      child.on('error', (error) => {
+        clearTimeout(timer);
+        handlers.onStderr(error.message);
+        resolve(1);
+      });
+
+      child.on('exit', (code) => {
+        clearTimeout(timer);
+        resolve(code ?? 1);
+      });
+    }),
+};
+
+let streamRunner: StreamRunner = defaultStreamRunner;
+
+export const setStreamRunner = (next: StreamRunner | null): void => {
+  streamRunner = next ?? defaultStreamRunner;
+};
+
+/**
+ * Run wrangler as a bounded stream.
+ *
+ * `wranglerArgs` must NOT include the `wrangler` token, for the same reason as
+ * `runWrangler`: this function supplies the binary.
+ *
+ * Always resolves — the timeout is enforced here rather than by the caller
+ * remembering to, because a forgotten `--follow` that holds a port breaks the next
+ * command the way an unbounded dev server does.
+ */
+export const streamWrangler = (
+  wranglerArgs: readonly string[],
+  options: { cwd?: string; timeoutMs: number } & {
+    onStdout: (line: string) => void;
+    onStderr: (line: string) => void;
+  },
+): Promise<number> => {
+  const bin = wranglerBin();
+  if (bin === null) {
+    options.onStderr(missingToolMessage('wrangler', 'apps/backend/api'));
+    return Promise.resolve(1);
+  }
+  return streamRunner.run(
+    bin,
+    wranglerArgs,
+    { cwd: options.cwd ?? REPO_ROOT, timeoutMs: options.timeoutMs },
+    { onStdout: options.onStdout, onStderr: options.onStderr },
+  );
 };
 
 /**

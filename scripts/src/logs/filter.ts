@@ -1,4 +1,4 @@
-// scripts/src/lib/logs/filter.ts
+// scripts/src/logs/filter.ts
 //
 // Query -> adapter-agnostic predicate.
 //
@@ -104,35 +104,48 @@ export const buildFilter = (
   return { ok: true, predicate, since };
 };
 
+/** The query the Workers Observability endpoint accepts. */
+export interface ObservabilityQuery {
+  /** ISO timestamp lower bound, when `--since` narrowed the window. */
+  since?: string;
+  /** Free-form filter over the indexed JSON fields. */
+  filter?: string;
+}
+
 /**
- * Build the Cloudflare Logpush filter fragment for the fields the provider
- * indexes.
+ * Build the provider-side filter for the fields the Observability index covers.
  *
- * Returned separately from the predicate so a provider query and the local scan
- * can share the same semantics. Returns `null` when the query needs no
- * server-side narrowing.
+ * Returned separately from the predicate so the provider request and the local
+ * scan share one set of semantics, and so the predicate still runs afterwards: a
+ * provider filter that is wrong must not be able to present itself as a filtered
+ * result.
+ *
+ * Returns an empty object rather than `null` when no narrowing is needed, so a
+ * caller can spread it into a request body without a conditional.
  */
-export const buildLogpushFilter = (query: LogQuery, since: number | undefined): string | null => {
+export const buildObservabilityQuery = (
+  query: LogQuery,
+  since: number | undefined,
+): ObservabilityQuery => {
   const clauses: string[] = [];
 
   if (since !== undefined) {
-    // Logpush timestamps arrive as `_time` in nanoseconds.
-    clauses.push(`_time >= "${new Date(Date.now() - since).toISOString()}"`);
+    clauses.push(`timestamp >= "${new Date(Date.now() - since).toISOString()}"`);
   }
   if (query.level !== undefined && query.level !== 'DEBUG') {
-    clauses.push(`jsonPayload.level >= "${query.level}"`);
+    clauses.push(`level >= "${toThreshold(query.level)}"`);
   }
   if (query.source !== undefined) {
-    clauses.push(`jsonPayload.source = "${query.source}"`);
+    clauses.push(`source = "${query.source}"`);
   }
   if (query.trace !== undefined) {
-    clauses.push(`jsonPayload.traceId = "${query.trace}"`);
+    clauses.push(`traceId = "${query.trace}"`);
   }
   if (query.uid !== undefined) {
-    clauses.push(`jsonPayload.userId = "${query.uid}"`);
+    clauses.push(`userId = "${query.uid}"`);
   }
 
-  return clauses.length === 0 ? null : clauses.join(' AND ');
+  return clauses.length === 0 ? {} : { filter: clauses.join(' AND ') };
 };
 
 export { CLIENT_REPORTED_USER };

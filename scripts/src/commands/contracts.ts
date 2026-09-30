@@ -1,4 +1,4 @@
-// scripts/src/lib/contract/cli.ts
+// scripts/src/commands/contracts.ts
 //
 //   bun run contract new "<title>" [--mode standard|full]
 //   bun run contract run <path> [--dry-run] [--resume [runId]]
@@ -38,11 +38,16 @@ import {
   type StageOutcome,
 } from '../contracts/runner.ts';
 import { readContracts } from '../contracts/status.ts';
+import type { Command } from '../shared/command.ts';
 
 export const CONTRACTS_DIR = join(REPO_ROOT, 'docs/contracts');
 export const RUNS_DIR = join(REPO_ROOT, '.pi/contract-runs');
 
-export const EXIT = {
+// Named for this command's domain: `blocked` is a contract that cannot proceed,
+// not the same thing as `failed`. The shared EXIT in ../shared/command.ts uses
+// `failed` and `unavailable`; the numeric values are identical so a caller
+// wrapping either gets the same meaning from the same code.
+const EXIT = {
   ok: 0,
   blocked: 1,
   usage: 2,
@@ -376,6 +381,10 @@ export const main = async (args: readonly string[]): Promise<number> => {
   return EXIT.usage;
 };
 
-if (import.meta.main) {
-  process.exitCode = await main(process.argv.slice(2));
-}
+/** Dispatcher descriptor. The argv work above is the whole implementation. */
+export const contractCommand: Command = {
+  name: 'contract',
+  summary: 'create, run and inspect implementation contracts',
+  usage: 'contract new|run|status|list|cancel [options]',
+  run: main,
+};

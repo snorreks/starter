@@ -1,4 +1,4 @@
-// scripts/src/lib/contract/runner.ts
+// scripts/src/contracts/runner.ts
 //
 // The contract pipeline: a resumable, bounded state machine.
 //

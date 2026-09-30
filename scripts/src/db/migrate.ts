@@ -1,4 +1,4 @@
-// scripts/src/lib/db/migrate.ts
+// scripts/src/db/migrate.ts
 //
 // Apply Drizzle migrations to D1.
 //
@@ -12,7 +12,8 @@
 
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
-import { DEPLOYMENT_CONFIG, isDeploymentEnvironment } from '@starter/schemas';
+import { isDeploymentEnvironment } from '@starter/schemas';
+import { DEPLOYMENT_CONFIG } from '../registry/app_registry.ts';
 import { runWrangler, wranglerAvailable } from '../cloudflare/wrangler.ts';
 import { API_DIR, REPO_ROOT } from '../shared/paths.ts';
 
@@ -156,6 +157,3 @@ export const main = (args: readonly string[]): number => {
   return runWrangler(plan.args, { cwd: REPO_ROOT });
 };
 
-if (import.meta.main) {
-  process.exitCode = main(process.argv.slice(2));
-}

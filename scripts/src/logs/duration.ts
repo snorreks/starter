@@ -1,4 +1,4 @@
-// scripts/src/lib/logs/duration.ts
+// scripts/src/logs/duration.ts
 //
 // Duration parsing for `--since` and `--duration`.
 //

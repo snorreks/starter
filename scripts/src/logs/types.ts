@@ -1,4 +1,4 @@
-// scripts/src/lib/logs/types.ts
+// scripts/src/logs/types.ts
 //
 // Shared types for the log query family.
 //
@@ -7,14 +7,16 @@
 // from the transport.
 
 import type {
-  AppId,
   DeploymentEnvironment,
-  LogAdapterCapabilities,
-  LogAdapterKind,
   LogEvent,
   LogQueryResult,
   LogSource,
-} from '@starter/schemas';
+} from '@starter/schemas/logging';
+import type {
+  AppId,
+  LogAdapterCapabilities,
+  LogAdapterKind,
+} from '../registry/app_registry.ts';
 
 /**
  * A *threshold*, not a project level.
@@ -52,6 +54,14 @@ export interface LogQuery {
   follow?: boolean;
   /** Stop following after this long, e.g. `60s`. Required in practice. */
   duration?: string;
+  /**
+   * The follow session's budget in milliseconds, already parsed and clamped.
+   *
+   * A number rather than the `duration` string because the adapter enforces the
+   * bound itself: the caller does not get to decide whether `--follow` is
+   * unbounded.
+   */
+  followBudgetMs?: number;
   /** Emit machine-readable JSON. */
   json?: boolean;
 }

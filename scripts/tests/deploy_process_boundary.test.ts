@@ -1,4 +1,4 @@
-// scripts/src/lib/deploy/process_boundary.test.ts
+// scripts/src/deploy/process_boundary.test.ts
 //
 // The deploy command at its process boundary.
 //
@@ -13,10 +13,11 @@
 // gate is exercised with the credential absent and present.
 
 import { afterEach, describe, expect, test } from 'bun:test';
-import { DEPLOYMENT_CONFIG } from '@starter/schemas';
+import { DEPLOYMENT_CONFIG } from '../src/registry/app_registry.ts';
 import { type ProcessRunner, setProcessRunner } from '../src/cloudflare/wrangler.ts';
 import type { ConfigCheck } from '../src/deploy/configure.ts';
-import { executePlan, main, parseDeployArgs, planDeploy } from '../src/deploy/deploy.ts';
+import { executePlan, parseDeployArgs, planDeploy } from '../src/deploy/deploy.ts';
+import { deployCommand } from '../src/commands/deploy.ts';
 
 const READY: ConfigCheck = { ok: true, problems: [], notices: [] };
 
@@ -119,7 +120,7 @@ describe('the process boundary', () => {
     const { spawned, runner } = recordSpawns();
     setProcessRunner(runner);
 
-    const code = quiet(() => main(['clientt', '--env', 'production', '--yes']));
+    const code = quiet(() => deployCommand.run(['clientt', '--env', 'production', '--yes']));
 
     expect(code).toBe(2);
     expect(spawned).toEqual([]);
@@ -130,7 +131,7 @@ describe('the process boundary', () => {
     const { spawned, runner } = recordSpawns();
     setProcessRunner(runner);
 
-    const code = quiet(() => main(['api', '--env', 'local', '--yes']));
+    const code = quiet(() => deployCommand.run(['api', '--env', 'local', '--yes']));
 
     expect(code).toBe(2);
     expect(spawned).toEqual([]);
@@ -141,7 +142,7 @@ describe('the process boundary', () => {
     const { spawned, runner } = recordSpawns();
     setProcessRunner(runner);
 
-    const code = quiet(() => main(['api', '--forse', '--yes']));
+    const code = quiet(() => deployCommand.run(['api', '--forse', '--yes']));
 
     expect(code).toBe(2);
     expect(spawned).toEqual([]);
@@ -156,7 +157,7 @@ describe('the process boundary', () => {
     // The template provisions nothing, so `main` reaches the real
     // `inspectConfig()` and refuses before it has a plan. That refusal is the
     // correct outcome and the property under test is unchanged: nothing spawned.
-    const code = quiet(() => main(['api', '--env', 'production', '--dry-run']));
+    const code = quiet(() => deployCommand.run(['api', '--env', 'production', '--dry-run']));
 
     expect(code).not.toBe(0);
     expect(spawned).toEqual([]);
@@ -188,7 +189,7 @@ describe('the process boundary', () => {
     const { spawned, runner } = recordSpawns();
     setProcessRunner(runner);
 
-    const code = quiet(() => main(['api', '--env', 'production']));
+    const code = quiet(() => deployCommand.run(['api', '--env', 'production']));
 
     expect(code).toBe(1);
     expect(spawned).toEqual([]);
@@ -213,7 +214,7 @@ describe('the process boundary', () => {
     const { spawned, runner } = recordSpawns();
     setProcessRunner(runner);
 
-    const code = quiet(() => main(['api', '--env', 'production', '--yes']));
+    const code = quiet(() => deployCommand.run(['api', '--env', 'production', '--yes']));
 
     expect(code).toBe(1);
     expect(spawned).toEqual([]);

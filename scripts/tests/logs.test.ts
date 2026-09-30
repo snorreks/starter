@@ -1,4 +1,4 @@
-// scripts/src/lib/logs/logs.test.ts
+// scripts/src/logs/logs.test.ts
 //
 // Deterministic tests for the log family.
 //
@@ -16,7 +16,7 @@ import { type LogEvent, LogEventSchema } from '@starter/schemas';
 import { parseArgs, toQuery } from '../src/commands/logs.ts';
 import { buildHistoricalRequest, MAX_TAIL_MS } from '../src/logs/cloudflare_adapter.ts';
 import { parseDuration } from '../src/logs/duration.ts';
-import { buildFilter, buildLogpushFilter } from '../src/logs/filter.ts';
+import { buildFilter, buildObservabilityQuery } from '../src/logs/filter.ts';
 import { parseNdjson } from '../src/logs/local_file_adapter.ts';
 import { capabilitiesFor, resolveLogAdapter } from '../src/logs/registry.ts';
 import type { LogQuery } from '../src/logs/types.ts';
@@ -193,40 +193,71 @@ describe('buildFilter', () => {
 
 // ── Provider filter translation ──────────────────────────────────────────────
 
-describe('buildLogpushFilter', () => {
+describe('buildObservabilityQuery', () => {
   test('produces a clause per active filter, ANDed', () => {
-    const filter = buildLogpushFilter(
+    const request = buildObservabilityQuery(
       { ...baseQuery, level: 'ERROR', source: 'worker', trace: 'tr_2' },
       60_000,
     );
-    expect(filter).toContain('jsonPayload.level >= "ERROR"');
-    expect(filter).toContain('jsonPayload.source = "worker"');
-    expect(filter).toContain('jsonPayload.traceId = "tr_2"');
-    expect(filter?.match(/ AND /g)).toHaveLength(3);
+    expect(request.filter).toContain('level >= "ERROR"');
+    expect(request.filter).toContain('source = "worker"');
+    expect(request.filter).toContain('traceId = "tr_2"');
+    expect(request.filter?.match(/ AND /g)).toHaveLength(3);
+  });
+
+  test('narrows the window without emitting a Logpush `_time` clause', () => {
+    // The old translation emitted Logpush's `_time`/`jsonPayload.*` fields, which
+    // the Observability endpoint does not accept. A translation aimed at the wrong
+    // API fails only against the provider, so it is asserted here instead.
+    const request = buildObservabilityQuery({ ...baseQuery, level: 'ERROR' }, 60_000);
+    expect(request.filter).not.toContain('_time');
+    expect(request.filter).not.toContain('jsonPayload');
+    expect(request.filter).toContain('level >= "ERROR"');
   });
 
   test('emits no clause for a level of DEBUG', () => {
-    expect(buildLogpushFilter({ ...baseQuery, level: 'DEBUG' }, undefined)).toBeNull();
+    expect(buildObservabilityQuery({ ...baseQuery, level: 'DEBUG' }, undefined).filter).toBeUndefined();
   });
 
-  test('returns null when nothing needs narrowing', () => {
-    expect(buildLogpushFilter(baseQuery, undefined)).toBeNull();
+  test('returns an empty request when nothing needs narrowing', () => {
+    expect(buildObservabilityQuery(baseQuery, undefined)).toEqual({});
   });
 
   test('a user filter names the verified field, not client-reported data', () => {
-    const filter = buildLogpushFilter({ ...baseQuery, uid: 'user_verified' }, undefined);
-    expect(filter).toBe('jsonPayload.userId = "user_verified"');
-    expect(filter).not.toContain('clientReported');
+    const request = buildObservabilityQuery({ ...baseQuery, uid: 'user_verified' }, undefined);
+    expect(request.filter).toBe('userId = "user_verified"');
+    expect(request.filter).not.toContain('clientReported');
   });
 });
 
 describe('buildHistoricalRequest', () => {
-  test('is refused for a filter the provider cannot honour', () => {
-    // The historical path is Logpush, which *can* filter by user. This asserts
-    // the guard exists rather than the provider's behaviour.
-    const request = buildHistoricalRequest({ ...baseQuery, level: 'WARNING' });
+  test('carries the narrowing and the limit', () => {
+    // `uid` is narrowed server-side by the historical adapter, which is the one
+    // path where a verified user id is filterable.
+    const request = buildHistoricalRequest({
+      ...baseQuery,
+      mode: 'production',
+      level: 'WARNING',
+      uid: 'user_verified',
+    });
     expect(request.ok).toBe(true);
+    if (request.ok) {
+      expect(request.request.filter).toContain('userId = "user_verified"');
+      expect(request.limit).toBe(50);
+    }
   });
+
+  test('the historical adapter narrows by verified user id', () => {
+  // The refusal for a live tail happens where the *resolved* adapter is consulted
+  // — `buildFilter` against `capabilitiesFor('wrangler-tail')`, asserted above.
+  // Here the point is the opposite: this path does narrow, so `--uid` is honoured
+  // rather than silently dropped from the provider request.
+  const request = buildHistoricalRequest({ ...baseQuery, uid: 'user_verified' });
+  expect(request.ok).toBe(true);
+  if (request.ok) {
+    expect(request.request.filter).toContain('userId = "user_verified"');
+  }
+});
 });
 
 // ── Registry / capability honesty ────────────────────────────────────────────
@@ -252,7 +283,22 @@ describe('app registry', () => {
   });
 
   test('the live tail has a hard duration ceiling', () => {
-    expect(MAX_TAIL_MS).toBe(300_000);
+    // A `--follow` with no bound holds a wrangler process and its workerd child.
+    expect(MAX_TAIL_MS).toBe(15 * 60_000);
+  });
+
+  test('--duration is clamped to that ceiling before the adapter sees it', () => {
+    const parsed = parseArgs(['api', '--follow', '--duration', '1h']);
+    const query = toQuery(parsed);
+    expect(query.ok).toBe(true);
+    if (!query.ok) {
+      return;
+    }
+    expect(query.query.followBudgetMs).toBe(MAX_TAIL_MS);
+  });
+
+  test('an unparseable --duration is a usage error, not a silent default', () => {
+    expect(toQuery(parseArgs(['api', '--follow', '--duration', 'soon'])).ok).toBe(false);
   });
 });
 
