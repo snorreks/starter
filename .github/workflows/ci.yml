@@ -55,6 +55,14 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
+        with:
+          # Moon resolves the merge base against `main` to decide what is affected,
+          # and a pull-request checkout is a detached HEAD with a depth-1 history:
+          # `fatal: ambiguous argument 'main': unknown revision`. Every job failed
+          # on the first PR for this reason. A push to `main` passed only because
+          # checkout happened to create a local `main` there — the bug was latent,
+          # not absent. `fetch-depth: 0` is what Moon's own warning asks for.
+          fetch-depth: 0
 
       - uses: oven-sh/setup-bun@v2
         with:
@@ -92,6 +100,14 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
+        with:
+          # Moon resolves the merge base against `main` to decide what is affected,
+          # and a pull-request checkout is a detached HEAD with a depth-1 history:
+          # `fatal: ambiguous argument 'main': unknown revision`. Every job failed
+          # on the first PR for this reason. A push to `main` passed only because
+          # checkout happened to create a local `main` there — the bug was latent,
+          # not absent. `fetch-depth: 0` is what Moon's own warning asks for.
+          fetch-depth: 0
 
       - uses: oven-sh/setup-bun@v2
         with:
@@ -125,6 +141,14 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
+        with:
+          # Moon resolves the merge base against `main` to decide what is affected,
+          # and a pull-request checkout is a detached HEAD with a depth-1 history:
+          # `fatal: ambiguous argument 'main': unknown revision`. Every job failed
+          # on the first PR for this reason. A push to `main` passed only because
+          # checkout happened to create a local `main` there — the bug was latent,
+          # not absent. `fetch-depth: 0` is what Moon's own warning asks for.
+          fetch-depth: 0
 
       - uses: oven-sh/setup-bun@v2
         with:
@@ -145,6 +169,14 @@ jobs:
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
+        with:
+          # Moon resolves the merge base against `main` to decide what is affected,
+          # and a pull-request checkout is a detached HEAD with a depth-1 history:
+          # `fatal: ambiguous argument 'main': unknown revision`. Every job failed
+          # on the first PR for this reason. A push to `main` passed only because
+          # checkout happened to create a local `main` there — the bug was latent,
+          # not absent. `fetch-depth: 0` is what Moon's own warning asks for.
+          fetch-depth: 0
 
       - uses: oven-sh/setup-bun@v2
         with:

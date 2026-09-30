@@ -16,7 +16,8 @@
 # The architecture rules themselves are enforced by two independent mechanisms:
 #   - Biome, which checks import statements (docs/lint.md)
 #   - `bun run guard`, which checks layer membership, request state, gitignored
-#     source and registry self-consistency (scripts/src/lib/guards/boundary.ts)
+#     source, registry self-consistency and version mirrors
+#     (scripts/src/guards/boundary.ts)
 # Neither relies on this file, so a Moon upgrade cannot silently drop a rule.
 
 $schema: 'https://moonrepo.dev/schemas/v2/workspace.json'
@@ -47,4 +48,15 @@ projects:
 vcs:
   # `manager` was renamed to `client` in Moon 2.x.
   client: 'git'
-  defaultBranch: 'main'
+  # `origin/main`, not `main`. A pull-request checkout is a detached HEAD: it has
+  # no local `main`, so every job died with
+  #   fatal: ambiguous argument 'main': unknown revision or path not in the working tree
+  # before running a single test. The remote-tracking ref is the one ref
+  # `actions/checkout` always creates, and `git rev-parse origin/main` resolves in
+  # both a push and a pull-request checkout.
+  #
+  # `fetch-depth: 0` in ci.yml is still required — without it the merge base does
+  # not exist either — but on its own it is not sufficient, because a full clone
+  # still has `main` only as a remote ref. Both halves are needed; each was found
+  # by reproducing the failure locally rather than by reading the error once.
+  defaultBranch: 'origin/main'
