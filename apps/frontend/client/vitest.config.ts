@@ -96,7 +96,17 @@ export default defineConfig({
       enabled: true,
       provider: playwright(),
       headless: true,
-      instances: [{ browser: 'chromium' }],
+      instances: [
+        {
+          browser: 'chromium',
+          // The Nix dev shell sets `CHROMIUM_PATH`, because Playwright's own
+          // download links against a Linux libc NixOS does not provide under
+          // those names. Absent, Playwright uses its downloaded copy.
+          ...(process.env.CHROMIUM_PATH
+            ? { launch: { executablePath: process.env.CHROMIUM_PATH } }
+            : {}),
+        },
+      ],
     },
   },
 });
