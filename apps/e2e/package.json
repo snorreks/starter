@@ -3,5 +3,16 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "scripts": { "test": "bun test --pass-with-no-tests" }
+  "scripts": {
+    "test": "playwright test --config playwright.config.ts",
+    "test:headed": "playwright test --config playwright.config.ts --headed",
+    "capture-evidence": "bun run capture_evidence.ts",
+    "typecheck": "tsgo --noEmit",
+    "lint": "biome lint .",
+    "format": "biome format .",
+    "fix": "biome check --write . --error-on-warnings"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.63.0"
+  }
 }

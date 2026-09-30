@@ -108,10 +108,22 @@ export default defineConfig({
     },
   },
 
+  // The preview server needs the same proxy as the dev server, and it is a
+  // separate block because `vite preview` only serves static files — configure
+  // `server.proxy` alone and every `/api` request from a previewed build returns
+  // 404 from the static handler. The symptom is a sign-in form that reports
+  // "The request failed" against a Worker that is running and healthy.
   preview: {
     port: PORT.client,
     strictPort: true,
     host: '127.0.0.1',
+    proxy: {
+      '/api': {
+        target: `http://127.0.0.1:${PORT.api}`,
+        changeOrigin: false,
+        secure: false,
+      },
+    },
   },
 
   define: {

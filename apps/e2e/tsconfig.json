@@ -1,0 +1,30 @@
+{
+  "//": [
+    "Playwright loads this project with its own transpiler; this config exists so",
+    "`tsgo --noEmit` covers the specs and helpers like every other project. The",
+    "`types` entry is Playwright's test types plus bun, because capture_evidence.ts",
+    "is a plain Bun script."
+  ],
+  "compilerOptions": {
+    "target": "ES2023",
+    "module": "Preserve",
+    "moduleResolution": "bundler",
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "exactOptionalPropertyTypes": false,
+    "noEmit": true,
+    "skipLibCheck": true,
+    "resolveJsonModule": true,
+    "allowImportingTsExtensions": true,
+    "verbatimModuleSyntax": true,
+    "types": ["bun"],
+    "paths": {
+      "@starter/schemas": ["../../packages/shared/schemas/src/index.ts"],
+      "@starter/schemas/*": ["../../packages/shared/schemas/src/*"],
+      "@starter/logger": ["../../packages/shared/logger/src/index.ts"],
+      "@starter/utils": ["../../packages/shared/utils/src/index.ts"]
+    }
+  },
+  "include": ["**/*.ts"],
+  "exclude": ["node_modules", "test-results", "playwright-report"]
+}

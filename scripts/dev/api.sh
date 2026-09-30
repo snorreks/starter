@@ -15,9 +15,15 @@
 # this server also matches the shell that launched it — which kills the caller.
 set -uo pipefail
 
-cd "$(dirname "$0")/../.."   # apps/backend/api
-REPO_ROOT="$(cd ../.. && pwd)"
+# Resolve the repository root from this script's own location, before any cd, so
+# the result does not depend on the caller's working directory. Playwright starts
+# this with `cwd` set to the repo root; running it by hand from `apps/e2e` must
+# work identically.
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 API_DIR="$REPO_ROOT/apps/backend/api"
+
+cd "$REPO_ROOT"
 
 LOG_DIR="${STARTER_LOG_DIR:-/tmp/starter-logs}"
 LOG_FILE="$LOG_DIR/api.ndjson"
@@ -47,7 +53,23 @@ exec > >(tee -a "$LOG_FILE") 2>&1
 echo "API log -> $LOG_FILE"
 echo "  bun run logs api --mode local --follow"
 
-setsid bunx wrangler dev --port "$PORT" --local --config "$API_DIR/wrangler.jsonc" &
+# `--var NAME:value` rather than an exported environment variable: `wrangler dev`
+# only passes a value through to the Worker if it is given as a var, and the
+# Worker reads its configuration from its bindings. An exported shell variable is
+# visible to the wrangler process and invisible to the code it serves.
+#
+# Each is passed only when set, so an ordinary `bun run dev:api` does not carry a
+# stale run id or a test-only rate limit from a previous run.
+WRANGLER_VARS=()
+for name in TEST_RUN_ID AUTH_RATE_LIMIT_MAX TRUSTED_ORIGINS; do
+  if [ -n "${!name:-}" ]; then
+    WRANGLER_VARS+=(--var "${name}:${!name}")
+    echo "${name}: ${!name}"
+  fi
+done
+
+setsid bunx wrangler dev --port "$PORT" --local --config "$API_DIR/wrangler.jsonc" \
+  ${WRANGLER_VARS[@]+"${WRANGLER_VARS[@]}"} &
 echo $! > "$PIDFILE"
 
 wait
