@@ -7,20 +7,26 @@
 // keeps a ViewModel unit-testable: the test injects a recorder, and no
 // component has to be mounted to assert that an error was surfaced.
 
-import { BaseClass, type BaseClassInterface, type BaseClassOptions, type AppError, toAppError } from '@starter/utils';
+import {
+  type AppError,
+  BaseClass,
+  type BaseClassInterface,
+  type BaseClassOptions,
+  toAppError,
+} from '@starter/utils';
 
 /** A transient message shown to the user. */
-export type Snackbar = {
+export interface Snackbar {
   text: string;
   tone: 'info' | 'success' | 'error';
-};
+}
 
-export type DialogCapability = {
+export interface DialogCapability {
   showSnackbar(snackbar: Snackbar): void;
   confirm(options: { title: string; body: string; confirmLabel?: string }): Promise<boolean>;
   /** Route the user to sign-in, preserving where they were. */
   requestSignIn(): void;
-};
+}
 
 type GlobalWithDialogs = typeof globalThis & { __starterDialogs?: DialogCapability };
 
@@ -41,8 +47,11 @@ export type BaseFrontendClassOptions = BaseClassOptions;
 export type BaseFrontendClassInterface = BaseClassInterface;
 
 export abstract class BaseFrontendClass<
-  Options extends BaseFrontendClassOptions = BaseFrontendClassOptions,
-> extends BaseClass<Options> implements BaseFrontendClassInterface {
+    Options extends BaseFrontendClassOptions = BaseFrontendClassOptions,
+  >
+  extends BaseClass<Options>
+  implements BaseFrontendClassInterface
+{
   protected showSnackbar(text: string, tone: Snackbar['tone'] = 'info'): void {
     dialogs()?.showSnackbar({ text, tone });
   }
@@ -66,7 +75,10 @@ export abstract class BaseFrontendClass<
    * letting a rejection propagate — produces an unhandled promise rejection
    * that reads as a crash with no indication of which command failed.
    */
-  protected showErrorNotification(error: unknown, fallbackMessage = 'Something went wrong.'): AppError {
+  protected showErrorNotification(
+    error: unknown,
+    fallbackMessage = 'Something went wrong.',
+  ): AppError {
     const appError = toAppError(error, fallbackMessage);
 
     // A cancelled request is not a failure; reporting it trains users to

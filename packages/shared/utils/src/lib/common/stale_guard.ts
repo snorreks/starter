@@ -13,12 +13,12 @@
 //   - an `AbortSignal` per operation, so the superseded request is actually
 //     cancelled instead of merely ignored
 
-export type GuardedOperation = {
+export interface GuardedOperation {
   /** Current only for the most recent `begin()`. */
   token: number;
   /** Aborted as soon as a newer operation begins, or on `cancelAll()`. */
   signal: AbortSignal;
-};
+}
 
 export class StaleGuard {
   #generation = 0;

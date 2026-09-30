@@ -11,12 +11,12 @@
 // It is also the single place to change when a screen's dependencies change:
 // one file, not every ViewModel.
 
-import { notesService, type NotesService } from '#lib/services/notes_service.svelte.ts';
+import { type NotesService, notesService } from '#lib/services/notes_service.svelte.ts';
 import { createNotesViewModel, type NotesViewModel } from './notes_view_model.svelte.ts';
 
-export type NotesComposition = {
+export interface NotesComposition {
   notes?: NotesService;
-};
+}
 
 export const getNotesViewModel = (options: NotesComposition = {}): NotesViewModel =>
   createNotesViewModel({
@@ -25,4 +25,5 @@ export const getNotesViewModel = (options: NotesComposition = {}): NotesViewMode
   });
 
 /** The app-wide default. Prefer `getNotesViewModel` so the seam stays obvious. */
-export const defaultNotesViewModel = (): NotesViewModel => getNotesViewModel({ notes: notesService });
+export const defaultNotesViewModel = (): NotesViewModel =>
+  getNotesViewModel({ notes: notesService });

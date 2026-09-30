@@ -8,7 +8,7 @@
 // changed it. The failure is rare, non-reproducible, and looks like a bug in the
 // business logic. See src/lib/request_context.ts.
 
-export type ApiEnv = {
+export interface ApiEnv {
   /** D1 binding. Required: the API has no in-memory store. */
   DB: D1Database;
   /** Optional R2 bucket for user uploads. */
@@ -30,7 +30,7 @@ export type ApiEnv = {
   LOG_LEVEL?: string;
   /** Build identifier attached to every log event. Injected by the deploy step. */
   RELEASE?: string;
-};
+}
 
 export const AUTH_SECRET_PLACEHOLDER = 'development-only-not-a-secret';
 

@@ -20,15 +20,14 @@
 // anywhere, and a default that silently shipped images off the machine would be
 // a decision nobody made.
 
-import { chromium, type Browser, type Page } from '@playwright/test';
+import { type Browser, chromium, type Page } from '@playwright/test';
 import { clientBaseUrl } from './preflight.ts';
 import {
+  type EvidenceResult,
   ensureEvidenceDir,
   evidencePath,
-
   reportEvidence,
   visionConfigured,
-  type EvidenceResult,
 } from './visual.ts';
 
 /**
@@ -37,12 +36,20 @@ import {
  * Each one is a state a user actually reaches. A screenshot of a route that only
  * renders in a test would give false confidence.
  */
-const SCREENS: readonly { name: string; path: string; prepare?: (page: Page) => Promise<void> }[] = [
-  { name: 'login', path: '/login' },
-  { name: 'login-error', path: '/login', prepare: submitBadCredentials },
-  { name: 'notes-empty', path: '/', prepare: signIn },
-  { name: 'notes-populated', path: '/', prepare: async (page) => { await signIn(page); await seedNotes(page); } },
-];
+const SCREENS: readonly { name: string; path: string; prepare?: (page: Page) => Promise<void> }[] =
+  [
+    { name: 'login', path: '/login' },
+    { name: 'login-error', path: '/login', prepare: submitBadCredentials },
+    { name: 'notes-empty', path: '/', prepare: signIn },
+    {
+      name: 'notes-populated',
+      path: '/',
+      prepare: async (page) => {
+        await signIn(page);
+        await seedNotes(page);
+      },
+    },
+  ];
 
 async function signIn(page: Page): Promise<void> {
   await page.goto(`${clientBaseUrl}/login`);
@@ -65,7 +72,10 @@ async function seedNotes(page: Page): Promise<void> {
   const notes = [
     { title: 'Shopping list', body: 'Milk, bread, coffee' },
     { title: 'Reading', body: 'Finish the chapter on retrieval' },
-    { title: 'A rather long title that exercises how the card wraps when a note name runs on', body: 'x' },
+    {
+      title: 'A rather long title that exercises how the card wraps when a note name runs on',
+      body: 'x',
+    },
   ];
 
   for (const note of notes) {

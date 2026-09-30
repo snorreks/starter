@@ -9,13 +9,13 @@
 
 import { describe, expect, test } from 'bun:test';
 import {
+  createManifest,
   LIMITS,
   MODES,
-  createManifest,
   makeRunId,
+  type RunManifest,
   resumeManifest,
   runContract,
-  type RunManifest,
   type Stage,
   type StageAdapter,
   type StageOutcome,
@@ -92,7 +92,9 @@ describe('lifecycle', () => {
 
     expect(result.ok).toBe(true);
     expect(adapter.calls).toEqual(['prepare', 'implement', 'verify', 'accepted']);
-    if (!result.ok) return;
+    if (!result.ok) {
+      return;
+    }
     expect(result.manifest.state).toBe('accepted');
     expect(result.manifest.currentStage).toBeNull();
     expect(result.manifest.finishedAt).toBeDefined();
@@ -109,7 +111,9 @@ describe('lifecycle', () => {
     const result = await runContract(createManifest('C-2', 'standard', T0), adapter, frozenClock);
 
     expect(result.ok).toBe(true);
-    if (!result.ok) return;
+    if (!result.ok) {
+      return;
+    }
     expect(result.manifest.attempts.verify).toBe(2);
     expect(result.summaries.verify).toBe('passed on retry');
   });
@@ -122,7 +126,9 @@ describe('lifecycle', () => {
     const result = await runContract(createManifest('C-3', 'standard', T0), adapter, frozenClock);
 
     expect(result.ok).toBe(false);
-    if (result.ok) return;
+    if (result.ok) {
+      return;
+    }
     expect(result.manifest.state).toBe('blocked');
     expect(result.manifest.attempts.verify).toBe(LIMITS.maxAttemptsPerStage);
     expect(result.reason).toContain('not a pass');
@@ -136,7 +142,9 @@ describe('lifecycle', () => {
     const result = await runContract(createManifest('C-4', 'standard', T0), adapter, frozenClock);
 
     expect(result.ok).toBe(false);
-    if (result.ok) return;
+    if (result.ok) {
+      return;
+    }
     expect(result.manifest.attempts.implement).toBe(1);
     expect(result.reason).toContain('not retryable');
   });
@@ -146,7 +154,9 @@ describe('lifecycle', () => {
     const result = await runContract(createManifest('C-5', 'standard', T0), adapter, frozenClock);
 
     expect(result.ok).toBe(false);
-    if (result.ok) return;
+    if (result.ok) {
+      return;
+    }
     expect(result.manifest.state).toBe('blocked');
     expect(result.manifest.attempts.implement).toBe(LIMITS.maxAttemptsPerStage);
   });
@@ -159,10 +169,16 @@ describe('lifecycle', () => {
       return calls === 1 ? T0 : T0 + LIMITS.maxRunMs + 1;
     };
 
-    const result = await runContract(createManifest('C-6', 'standard', T0), scriptedAdapter({}), clock);
+    const result = await runContract(
+      createManifest('C-6', 'standard', T0),
+      scriptedAdapter({}),
+      clock,
+    );
 
     expect(result.ok).toBe(false);
-    if (result.ok) return;
+    if (result.ok) {
+      return;
+    }
     expect(result.reason).toContain('budget');
   });
 });
@@ -216,8 +232,10 @@ describe('authority', () => {
   test('the runner has no merge or deploy capability', async () => {
     // Guard against the shape of the feature, not just its absence: if a stage
     // list ever gains a publish step, this fails.
-    expect(Object.values(MODES).flat().some((stage) => /merge|deploy|publish|release/.test(stage))).toBe(
-      false,
-    );
+    expect(
+      Object.values(MODES)
+        .flat()
+        .some((stage) => /merge|deploy|publish|release/.test(stage)),
+    ).toBe(false);
   });
 });

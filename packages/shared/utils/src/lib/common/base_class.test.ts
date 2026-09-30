@@ -63,7 +63,7 @@ class SelfAssigning extends BaseClass {
 class OverridingWidget extends Widget {
   constructor(options: BaseClassOptions) {
     super(options);
-    (this as unknown as Record<string, unknown>)['greet'] = (): string => 'overridden';
+    (this as unknown as Record<string, unknown>).greet = (): string => 'overridden';
   }
 }
 
@@ -133,7 +133,9 @@ describe('BaseClass.create', () => {
   });
 
   test('does not trace an excluded method', () => {
-    const widget = Widget.create(options({ enableAutoDebug: true, excludeAutoDebugMethods: ['greet'] }));
+    const widget = Widget.create(
+      options({ enableAutoDebug: true, excludeAutoDebugMethods: ['greet'] }),
+    );
 
     expect(widget.greet('x')).toBe('hello x');
     expect(Object.hasOwn(widget, 'greet')).toBe(false);

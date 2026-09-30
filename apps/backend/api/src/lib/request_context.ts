@@ -10,25 +10,25 @@
 // live in a container; the caller's identity is not, and does not.
 
 import { sessions } from '@starter/database';
-import { createLogger, type ConsoleLogger } from '@starter/logger';
+import { type ConsoleLogger, createLogger } from '@starter/logger';
 import { createId } from '@starter/utils';
 import { lt } from 'drizzle-orm';
 import { status } from 'elysia';
 import type { Container } from './container.ts';
 
-export type RequestUser = {
+export interface RequestUser {
   id: string;
   email: string;
   name: string;
-};
+}
 
-export type RequestContext = {
+export interface RequestContext {
   /** The verified caller, or null. Never a client-asserted value. */
   user: RequestUser | null;
   traceId: string;
   logger: ConsoleLogger;
   container: Container;
-};
+}
 
 /**
  * Resolve the caller from the session cookie or the bearer token.
@@ -37,10 +37,7 @@ export type RequestContext = {
  * request body, from a client-controlled header, or from a decoded-but-
  * unverified JWT would all be forgeable; this call is not.
  */
-const resolveUser = async (
-  container: Container,
-  headers: Headers,
-): Promise<RequestUser | null> => {
+const resolveUser = async (container: Container, headers: Headers): Promise<RequestUser | null> => {
   const session = await container.auth.api.getSession({ headers });
   if (!session?.user) {
     return null;

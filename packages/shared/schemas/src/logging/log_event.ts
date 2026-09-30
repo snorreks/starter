@@ -13,7 +13,7 @@
 // iteration, and `_appUnionIsSynced`/`_levelUnionIsSynced` make the compiler
 // enforce that the two never drift.
 
-import { Type, type Static } from '@sinclair/typebox';
+import { type Static, Type } from '@sinclair/typebox';
 
 // -----------------------------------------------------------------------------
 // Severity
@@ -108,51 +108,54 @@ export const PROVIDER_SEVERITY_RANK: Record<ProviderLevel, number> = {
 // The event schema
 // -----------------------------------------------------------------------------
 
-export const LogEventSchema = Type.Object({
-  /** Epoch milliseconds. Assigned at capture time, not at render time. */
-  timestamp: Type.Number(),
-  app: Type.Union([
-    Type.Literal('client'),
-    Type.Literal('api'),
-    Type.Literal('scripts'),
-    Type.Literal('native'),
-  ]),
-  environment: Type.Union([
-    Type.Literal('local'),
-    Type.Literal('staging'),
-    Type.Literal('production'),
-  ]),
-  source: Type.Union([
-    Type.Literal('browser'),
-    Type.Literal('worker'),
-    Type.Literal('native'),
-    Type.Literal('cli'),
-  ]),
-  level: Type.Union([
-    Type.Literal('DEBUG'),
-    Type.Literal('INFO'),
-    Type.Literal('WARNING'),
-    Type.Literal('ERROR'),
-    Type.Literal('NONE'),
-  ]),
-  /** Stable machine-readable name, e.g. `notes.create`. */
-  event: Type.String({ minLength: 1, maxLength: 200 }),
-  /** Build identifier of the emitting artifact; the pivot for "which code?". */
-  release: Type.String({ minLength: 1, maxLength: 100 }),
-  /** Correlates a request across planes (Worker request id, fetch trace id). */
-  traceId: Type.Optional(Type.String({ maxLength: 200 })),
-  requestId: Type.Optional(Type.String({ maxLength: 200 })),
-  /**
-   * User id. On browser-forwarded events this is *client reported* and is sent
-   * under `clientReported` instead — see {@link TelemetryPayload}. The server
-   * never treats a self-asserted id as verified.
-   */
-  userId: Type.Optional(Type.String({ maxLength: 200 })),
-  sessionId: Type.Optional(Type.String({ maxLength: 200 })),
-  message: Type.Optional(Type.String({ maxLength: 4000 })),
-  /** Free-form, already redacted, size-bounded by the producer. */
-  data: Type.Optional(Type.Record(Type.String(), Type.Unknown())),
-}, { additionalProperties: false });
+export const LogEventSchema = Type.Object(
+  {
+    /** Epoch milliseconds. Assigned at capture time, not at render time. */
+    timestamp: Type.Number(),
+    app: Type.Union([
+      Type.Literal('client'),
+      Type.Literal('api'),
+      Type.Literal('scripts'),
+      Type.Literal('native'),
+    ]),
+    environment: Type.Union([
+      Type.Literal('local'),
+      Type.Literal('staging'),
+      Type.Literal('production'),
+    ]),
+    source: Type.Union([
+      Type.Literal('browser'),
+      Type.Literal('worker'),
+      Type.Literal('native'),
+      Type.Literal('cli'),
+    ]),
+    level: Type.Union([
+      Type.Literal('DEBUG'),
+      Type.Literal('INFO'),
+      Type.Literal('WARNING'),
+      Type.Literal('ERROR'),
+      Type.Literal('NONE'),
+    ]),
+    /** Stable machine-readable name, e.g. `notes.create`. */
+    event: Type.String({ minLength: 1, maxLength: 200 }),
+    /** Build identifier of the emitting artifact; the pivot for "which code?". */
+    release: Type.String({ minLength: 1, maxLength: 100 }),
+    /** Correlates a request across planes (Worker request id, fetch trace id). */
+    traceId: Type.Optional(Type.String({ maxLength: 200 })),
+    requestId: Type.Optional(Type.String({ maxLength: 200 })),
+    /**
+     * User id. On browser-forwarded events this is *client reported* and is sent
+     * under `clientReported` instead — see {@link TelemetryPayload}. The server
+     * never treats a self-asserted id as verified.
+     */
+    userId: Type.Optional(Type.String({ maxLength: 200 })),
+    sessionId: Type.Optional(Type.String({ maxLength: 200 })),
+    message: Type.Optional(Type.String({ maxLength: 4000 })),
+    /** Free-form, already redacted, size-bounded by the producer. */
+    data: Type.Optional(Type.Record(Type.String(), Type.Unknown())),
+  },
+  { additionalProperties: false },
+);
 
 export type LogEvent = Static<typeof LogEventSchema>;
 
@@ -194,12 +197,15 @@ export const SCHEMA_UNION_ASSERTIONS = [
  * self-reported identity for a verified one: `LogEvent.userId` is filled in by
  * the server from the session, and anything the client claims lands here.
  */
-export const ClientReportedContextSchema = Type.Object({
-  userId: Type.Optional(Type.String({ maxLength: 200 })),
-  sessionId: Type.Optional(Type.String({ maxLength: 200 })),
-  appVersion: Type.Optional(Type.String({ maxLength: 100 })),
-  platform: Type.Optional(Type.String({ maxLength: 100 })),
-  userAgent: Type.Optional(Type.String({ maxLength: 400 })),
-}, { additionalProperties: false });
+export const ClientReportedContextSchema = Type.Object(
+  {
+    userId: Type.Optional(Type.String({ maxLength: 200 })),
+    sessionId: Type.Optional(Type.String({ maxLength: 200 })),
+    appVersion: Type.Optional(Type.String({ maxLength: 100 })),
+    platform: Type.Optional(Type.String({ maxLength: 100 })),
+    userAgent: Type.Optional(Type.String({ maxLength: 400 })),
+  },
+  { additionalProperties: false },
+);
 
 export type ClientReportedContext = Static<typeof ClientReportedContextSchema>;

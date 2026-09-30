@@ -15,7 +15,16 @@ const OFFLINE_MESSAGE =
 
 export const installOfflineGuard = (): void => {
   globalThis.fetch = ((input: RequestInfo | URL) => {
-    const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+    // Not a ternary chain: the three cases are different enough that folding
+    // them together makes the middle case unreadable.
+    let url: string;
+    if (typeof input === 'string') {
+      url = input;
+    } else if (input instanceof URL) {
+      url = input.href;
+    } else {
+      url = input.url;
+    }
     return Promise.reject(new Error(`${OFFLINE_MESSAGE} (${url})`));
   }) as typeof fetch;
 };

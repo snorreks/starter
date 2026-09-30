@@ -5,12 +5,11 @@
 // have been attached. Keeping them separate means a bare `console`-style call
 // site never has to invent a release string.
 
-import type { LogEvent } from './log_event.ts';
-import type { LogLevel } from './log_event.ts';
+import type { LogEvent, LogLevel } from './log_event.ts';
 
 export type LogType = 'log' | 'debug' | 'info' | 'warn' | 'error';
 
-export type LogEntry = {
+export interface LogEntry {
   logLevel: LogLevel;
   logType: LogType;
   /** Optional already-formatted message. */
@@ -24,7 +23,7 @@ export type LogEntry = {
   sessionId?: string;
   /** Field names that must be redacted before this entry leaves the process. */
   redactedKeys?: readonly string[];
-};
+}
 
 /** A destination for log entries. Implementations must never throw. */
 export interface LogSink {
@@ -64,7 +63,7 @@ export type LogQueryStatus =
   | 'retrieval_failed'
   | 'unavailable';
 
-export type LogQueryResult = {
+export interface LogQueryResult {
   status: LogQueryStatus;
   events: LogEvent[];
   /** Human-readable explanation. Never contains credential material. */
@@ -76,4 +75,4 @@ export type LogQueryResult = {
   following?: boolean;
   /** Human-readable notes about retention, sampling or truncation. */
   limitations?: string[];
-};
+}

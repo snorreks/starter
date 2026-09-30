@@ -11,13 +11,19 @@
 // never reach: two separate accounts, each with real rows, and one account's id
 // substituted into the other's request.
 
-import { expect, test, type APIRequestContext, type Page } from '@playwright/test';
+import { type APIRequestContext, expect, type Page, test } from '@playwright/test';
 import { apiBaseUrl } from '../preflight.ts';
 
-type Account = { email: string; password: string };
+interface Account {
+  email: string;
+  password: string;
+}
 
 /** The list endpoint returns whole notes, not just ids. */
-type NoteListBody = { notes: { id: string; title: string; body: string }[]; serverTime: number };
+interface NoteListBody {
+  notes: { id: string; title: string; body: string }[];
+  serverTime: number;
+}
 
 const newAccount = (): Account => ({
   email: `e2e-${crypto.randomUUID()}@example.test`,
@@ -34,18 +40,12 @@ const signUpViaUi = async (page: Page, account: Account): Promise<void> => {
 };
 
 /** Register an account through the API and return its cookies. */
-const registerViaApi = async (
-  request: APIRequestContext,
-  account: Account,
-): Promise<void> => {
+const registerViaApi = async (request: APIRequestContext, account: Account): Promise<void> => {
   const response = await request.post(`${apiBaseUrl}/api/auth/sign-up/email`, {
     data: { email: account.email, password: account.password, name: 'E2E' },
   });
 
-  expect(
-    response.ok(),
-    `sign-up failed: ${response.status()} ${await response.text()}`,
-  ).toBe(true);
+  expect(response.ok(), `sign-up failed: ${response.status()} ${await response.text()}`).toBe(true);
 };
 
 const createNoteViaApi = async (
@@ -103,7 +103,7 @@ test.describe('authentication', () => {
 });
 
 test.describe('authorization across accounts', () => {
-  test("one account cannot read another's notes", async ({ request, browser }) => {
+  test("one account cannot read another's notes", async ({ browser }) => {
     // Two separate browser contexts so the two sessions cannot share cookies.
     const victim = newAccount();
     const attacker = newAccount();
@@ -130,7 +130,7 @@ test.describe('authorization across accounts', () => {
     }
   });
 
-  test("one account cannot delete another's note", async ({ request, browser }) => {
+  test("one account cannot delete another's note", async ({ browser }) => {
     const victim = newAccount();
     const attacker = newAccount();
 
@@ -159,7 +159,7 @@ test.describe('authorization across accounts', () => {
     }
   });
 
-  test("one account cannot edit another's note", async ({ request, browser }) => {
+  test("one account cannot edit another's note", async ({ browser }) => {
     const victim = newAccount();
     const attacker = newAccount();
 
@@ -172,10 +172,9 @@ test.describe('authorization across accounts', () => {
 
       await registerViaApi(attackerContext.request, attacker);
 
-      const response = await attackerContext.request.patch(
-        `${apiBaseUrl}/api/notes/${note.id}`,
-        { data: { title: 'Rewritten' } },
-      );
+      const response = await attackerContext.request.patch(`${apiBaseUrl}/api/notes/${note.id}`, {
+        data: { title: 'Rewritten' },
+      });
 
       expect([403, 404]).toContain(response.status());
 
@@ -247,7 +246,7 @@ test.describe('input the Worker must refuse', () => {
 
     const body = (await response.json()) as Record<string, unknown>;
 
-    expect(body['ok']).toBe(true);
+    expect(body.ok).toBe(true);
     // Anything resembling a credential in a health endpoint would be published
     // to whoever can reach it.
     const serialized = JSON.stringify(body).toLowerCase();

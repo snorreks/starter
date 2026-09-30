@@ -13,7 +13,7 @@
 
 import { isTauri } from '@starter/frontend-services/platform';
 
-export type ClientConfig = {
+export interface ClientConfig {
   apiBaseUrl: string;
   environment: 'local' | 'staging' | 'production';
   logLevel: 'DEBUG' | 'INFO' | 'WARNING' | 'ERROR' | 'NONE';
@@ -21,7 +21,7 @@ export type ClientConfig = {
   release: string;
   /** Where the client forwards structured events, if it forwards at all. */
   telemetryEndpoint: string | undefined;
-};
+}
 
 const readPublicEnv = (key: string): string | undefined => {
   const value = (import.meta.env as Record<string, string | undefined>)[key];

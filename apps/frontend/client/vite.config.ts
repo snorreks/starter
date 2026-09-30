@@ -18,12 +18,12 @@
 // `@starter/schemas/notes`), which is also what the workspace boundary guard
 // reads. An alias map would let a file name a package the guard cannot see.
 
+import { fileURLToPath } from 'node:url';
 import adapter from '@sveltejs/adapter-static';
 import { sveltekit } from '@sveltejs/kit/vite';
-import tailwindcss from '@tailwindcss/vite';
 import { vitePreprocess } from '@sveltejs/vite-plugin-svelte';
+import tailwindcss from '@tailwindcss/vite';
 import { defineConfig, type PluginOption } from 'vite';
-import { fileURLToPath } from 'node:url';
 
 const resolvePath = (relative: string) => fileURLToPath(new URL(relative, import.meta.url));
 

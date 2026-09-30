@@ -14,8 +14,8 @@
 // A browser cannot write a local file. That is why client events are read from
 // the Worker's file rather than from a client-owned one.
 
-import { readFile, readdir } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
+import { readdir, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { APP_LOG_CONFIG, type LogEvent } from '@starter/schemas';
 import { buildFilter } from './filter.ts';
@@ -84,7 +84,9 @@ export const discoverLocalFiles = async (): Promise<Record<string, string>> => {
   return found;
 };
 
-export type LocalTailHandle = { stop: () => void };
+export interface LocalTailHandle {
+  stop: () => void;
+}
 
 /**
  * Local historical read.
@@ -115,7 +117,9 @@ export const readLocal = async (
 
   const decision = buildFilter(query, capabilitiesFor('local-file'));
   if (!decision.ok) {
-    return { result: { status: 'capability_unsupported', events: [], message: decision.unsupported } };
+    return {
+      result: { status: 'capability_unsupported', events: [], message: decision.unsupported },
+    };
   }
 
   const contents = await readFile(path, 'utf8');
@@ -139,7 +143,8 @@ export const readLocal = async (
   // Follow: re-read on an interval until the duration elapses. Bounded by
   // construction — an unbounded follow would stream into a terminal forever.
   const startedAt = Date.now();
-  const durationMs = query.duration === undefined ? 60_000 : Number.parseInt(query.duration, 10) * 1000;
+  const durationMs =
+    query.duration === undefined ? 60_000 : Number.parseInt(query.duration, 10) * 1000;
   let offset = contents.length;
   const streamed: LogEvent[] = [];
   const seen = new Set<number>();
@@ -179,9 +184,7 @@ export const readLocal = async (
 };
 
 /** Every app's local logs, for `--app all`. */
-export const readAllLocal = async (
-  query: Omit<LogQuery, 'app'>,
-): Promise<LogQueryResult[]> => {
+export const readAllLocal = async (query: Omit<LogQuery, 'app'>): Promise<LogQueryResult[]> => {
   const apps = Object.keys(APP_LOG_CONFIG) as Array<LogQuery['app']>;
   const results: LogQueryResult[] = [];
 

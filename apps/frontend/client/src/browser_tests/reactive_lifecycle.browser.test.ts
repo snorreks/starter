@@ -11,13 +11,13 @@
 // No network and no server: services are faked, which is the point of the
 // composition seam.
 
-import { describe, expect, test } from 'vitest';
-import { flushSync } from 'svelte';
+import type { Note } from '@starter/schemas/notes';
 import { BaseViewModelContainer, ErrorState, NoteCard } from '@starter/ui';
 import { StaleGuard } from '@starter/utils';
-import { NotesViewModel } from '#lib/views/notes/notes_view_model.svelte.ts';
+import { flushSync } from 'svelte';
+import { describe, expect, test } from 'vitest';
 import type { NotesService } from '#lib/services/notes_service.svelte.ts';
-import type { Note } from '@starter/schemas/notes';
+import { NotesViewModel } from '#lib/views/notes/notes_view_model.svelte.ts';
 import { emptySnippet, mountInDocument } from './mount_helper.ts';
 
 const note = (overrides: Partial<Note> = {}): Note => ({
@@ -94,9 +94,7 @@ describe('StaleGuard', () => {
 
 describe('NotesViewModel reactivity', () => {
   test('status moves from loading to ready and exposes the list', async () => {
-    const viewModel = makeViewModel(
-      fakeNotesService({ list: () => Promise.resolve([note()]) }),
-    );
+    const viewModel = makeViewModel(fakeNotesService({ list: () => Promise.resolve([note()]) }));
 
     expect(viewModel.status.kind).toBe('loading');
 
@@ -128,7 +126,9 @@ describe('NotesViewModel reactivity', () => {
     flushSync();
 
     expect(viewModel.status.kind).toBe('error');
-    if (viewModel.status.kind !== 'error') return;
+    if (viewModel.status.kind !== 'error') {
+      return;
+    }
     expect(viewModel.status.message).toBeTruthy();
     expect(viewModel.status.retryable).toBe(true);
   });

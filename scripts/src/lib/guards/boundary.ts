@@ -108,9 +108,21 @@ export const layerOf = (relativePath: string): Layer | null => {
 const ALLOWED_IMPORTS: Record<string, readonly string[]> = {
   shared: ['@starter/schemas', '@starter/logger', '@starter/utils'],
   // Backend may use shared. Never frontend, never another app.
-  backend: ['@starter/schemas', '@starter/logger', '@starter/utils', '@starter/database', '@starter/auth'],
+  backend: [
+    '@starter/schemas',
+    '@starter/logger',
+    '@starter/utils',
+    '@starter/database',
+    '@starter/auth',
+  ],
   // Frontend may use shared. Never backend.
-  frontend: ['@starter/schemas', '@starter/logger', '@starter/utils', '@starter/ui', '@starter/frontend-services'],
+  frontend: [
+    '@starter/schemas',
+    '@starter/logger',
+    '@starter/utils',
+    '@starter/ui',
+    '@starter/frontend-services',
+  ],
   // The client app: frontend and shared. Never the database or auth packages —
   // `better-auth` and `drizzle-orm` are server libraries.
   client: [
@@ -210,7 +222,8 @@ export const guardWorkspaceBoundary = (root = REPO_ROOT): GuardResult => {
  */
 const REQUEST_STATE_PATTERNS: readonly { pattern: RegExp; message: string }[] = [
   {
-    pattern: /^\s*(?:export\s+)?let\s+\w*(?:env|request|user|currentUser|session|binding)\w*\s*[;:]/i,
+    pattern:
+      /^\s*(?:export\s+)?let\s+\w*(?:env|request|user|currentUser|session|binding)\w*\s*[;:]/i,
     message:
       'Module-level mutable request state. A Worker isolate handles many concurrent ' +
       'requests; the last writer wins for all of them.',
@@ -249,7 +262,12 @@ export const guardRequestState = (root = REPO_ROOT): GuardResult => {
     });
   }
 
-  return { id: 'request-state', label: 'No module-level request state', baselineCount: 0, violations };
+  return {
+    id: 'request-state',
+    label: 'No module-level request state',
+    baselineCount: 0,
+    violations,
+  };
 };
 
 // ── Rule 3 — no debug leftovers ──────────────────────────────────────────────
@@ -262,15 +280,24 @@ export const guardNoLeftovers = (root = REPO_ROOT): GuardResult => {
     // Anchored to a whole statement. An unanchored /\bdebugger\b/ also matches
     // this file's own pattern literal, which is how a guard ends up failing on
     // the source of the guard.
-    { pattern: /^\s*(?:await\s+)?debugger\s*;?\s*$/, message: 'A `debugger` statement is committed.' },
-    { pattern: /\bTODO\(remove\)|\bFIXME\(remove\)/, message: 'A removal marker that was never removed.' },
+    {
+      pattern: /^\s*(?:await\s+)?debugger\s*;?\s*$/,
+      message: 'A `debugger` statement is committed.',
+    },
+    {
+      pattern: /\bTODO\(remove\)|\bFIXME\(remove\)/,
+      message: 'A removal marker that was never removed.',
+    },
   ];
 
   for (const file of listSourceFiles(root)) {
     const relativePath = relative(root, file);
     // Tests may print, and the guards' own source necessarily contains the
     // patterns being searched for.
-    if (/\.(test|spec)\.tsx?$/.test(relativePath) || relativePath.startsWith('scripts/src/lib/guards/')) {
+    if (
+      /\.(test|spec)\.tsx?$/.test(relativePath) ||
+      relativePath.startsWith('scripts/src/lib/guards/')
+    ) {
       continue;
     }
     linesOf(file).forEach((text, index) => {
@@ -395,11 +422,17 @@ const readIgnoreRules = (root: string): IgnoreRule[] => {
       const withoutSlash = body.replace(/\/+$/, '').replace(/^\//, '');
       // `*` stops at a separator so `*.log` does not swallow a directory name,
       // and `**` spans directories.
+      //
+      // `**` becomes a placeholder before the generic `*` replacement runs, or
+      // that replacement would consume one star at a time and erase the
+      // distinction between `**` (any depth) and `*` (one segment). A space is
+      // the placeholder: it cannot occur in a gitignore path, and unlike the
+      // NUL escape it is not a control character.
       const source = withoutSlash
         .replace(/[.+^${}()|[\]\\]/g, '\\$&')
-        .replace(/\*\*/g, '\u0000')
+        .replace(/\*\*/g, ' ')
         .replace(/\*/g, '[^/]*')
-        .replace(/\u0000/g, '.*')
+        .replace(/ /g, '.*')
         .replace(/\?/g, '[^/]');
 
       // Unanchored patterns match at any depth: this is the behaviour that hid
@@ -417,7 +450,10 @@ const readIgnoreRules = (root: string): IgnoreRule[] => {
 };
 
 /** The last matching rule wins, as in git: a later `!` re-includes. */
-const firstMatchingRule = (relativePath: string, rules: readonly IgnoreRule[]): IgnoreRule | null => {
+const firstMatchingRule = (
+  relativePath: string,
+  rules: readonly IgnoreRule[],
+): IgnoreRule | null => {
   let winner: IgnoreRule | null = null;
   for (const rule of rules) {
     if (rule.regex.test(relativePath)) {
@@ -449,7 +485,12 @@ export const guardRegistryIsValid = (root = REPO_ROOT): GuardResult => {
   const registryFile = join(root, 'packages/shared/schemas/src/registry/app_registry.ts');
 
   if (!existsSync(registryFile)) {
-    return { id: 'registry-valid', label: 'Registries satisfy their schemas', baselineCount: 0, violations };
+    return {
+      id: 'registry-valid',
+      label: 'Registries satisfy their schemas',
+      baselineCount: 0,
+      violations,
+    };
   }
 
   const source = readFileSync(registryFile, 'utf8');
@@ -484,7 +525,12 @@ export const guardRegistryIsValid = (root = REPO_ROOT): GuardResult => {
     });
   }
 
-  return { id: 'registry-valid', label: 'Registries satisfy their schemas', baselineCount: 0, violations };
+  return {
+    id: 'registry-valid',
+    label: 'Registries satisfy their schemas',
+    baselineCount: 0,
+    violations,
+  };
 };
 
 /**

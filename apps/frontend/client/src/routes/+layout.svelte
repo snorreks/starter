@@ -3,43 +3,43 @@
   the dialog capability the base classes use for snackbars and confirmations.
 -->
 <script lang="ts">
-  import '@starter/ui/tokens.css';
-  import '../app.css';
-  import '#lib/runtime/logger';
-  import { setDialogCapabilities } from '@starter/frontend-services/base';
-  import { installNativeSessionBridge } from '#lib/services/native_session';
-  import type { Snippet } from 'svelte';
-  import { goto } from '$app/navigation';
-  import { sessionState, sessionService } from '#lib/services/session_service.svelte';
+import '@starter/ui/tokens.css';
+import '../app.css';
+import '#lib/runtime/logger';
+import { setDialogCapabilities } from '@starter/frontend-services/base';
+import { installNativeSessionBridge } from '#lib/services/native_session';
+import type { Snippet } from 'svelte';
+import { goto } from '$app/navigation';
+import { sessionState, sessionService } from '#lib/services/session_service.svelte';
 
-  type Props = { children: Snippet };
-  let { children }: Props = $props();
+type Props = { children: Snippet };
+let { children }: Props = $props();
 
-  // Dialog capability: the base classes reach user-facing dialogs through this
-  // object rather than importing the app's component tree, which is what keeps
-  // a ViewModel testable without mounting anything.
-  setDialogCapabilities({
-    showSnackbar: (snackbar) => {
-      // Round 1 has no toast system. Console output keeps the contract honest:
-      // a snackbar is requested, and the fact that no UI renders it is visible
-      // rather than silently swallowed. See docs/first-round-review.md.
-      console.info(`[snackbar:${snackbar.tone}] ${snackbar.text}`);
-    },
-    confirm: async () => window.confirm('Are you sure?'),
-    requestSignIn: () => {
-      void goto('/login');
-    },
-  });
+// Dialog capability: the base classes reach user-facing dialogs through this
+// object rather than importing the app's component tree, which is what keeps
+// a ViewModel testable without mounting anything.
+setDialogCapabilities({
+  showSnackbar: (snackbar) => {
+    // Round 1 has no toast system. Console output keeps the contract honest:
+    // a snackbar is requested, and the fact that no UI renders it is visible
+    // rather than silently swallowed. See docs/first-round-review.md.
+    console.info(`[snackbar:${snackbar.tone}] ${snackbar.text}`);
+  },
+  confirm: async () => window.confirm('Are you sure?'),
+  requestSignIn: () => {
+    void goto('/login');
+  },
+});
 
-  void installNativeSessionBridge();
+void installNativeSessionBridge();
 
-  let user = $state(sessionState.user);
-  $effect(() => sessionState.subscribe((next) => (user = next)));
+let user = $state(sessionState.user);
+$effect(() => sessionState.subscribe((next) => (user = next)));
 
-  async function signOut(): Promise<void> {
-    await sessionService.signOut();
-    await goto('/login');
-  }
+async function signOut(): Promise<void> {
+  await sessionService.signOut();
+  await goto('/login');
+}
 </script>
 
 <div class="shell">

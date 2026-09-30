@@ -19,7 +19,7 @@ import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { evidenceDir } from './preflight.ts';
 
-export type EvidenceResult = {
+export interface EvidenceResult {
   /** Files written, relative to the evidence directory. */
   captured: string[];
   /** Absolute directory they were written to. */
@@ -27,15 +27,15 @@ export type EvidenceResult = {
   /** Set when no vision model was available. Absent means it did run. */
   inspectionSkipped?: string;
   inspectionFindings?: VisionFinding[];
-};
+}
 
-export type VisionFinding = {
+export interface VisionFinding {
   fixture: string;
   /** What the model was asked to judge. */
   question: string;
   verdict: 'ok' | 'suspicious';
   note: string;
-};
+}
 
 export const ensureEvidenceDir = (): string => {
   const directory = evidenceDir();

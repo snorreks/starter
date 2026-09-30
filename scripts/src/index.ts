@@ -7,11 +7,11 @@
 // path, and so `--help` can list what actually exists rather than a hand-written
 // list that drifts.
 
-export type Command = {
+export interface Command {
   name: string;
   summary: string;
   run: (args: readonly string[]) => Promise<number> | number;
-};
+}
 
 export const main = async (args: readonly string[]): Promise<number> => {
   const [name, ...rest] = args;

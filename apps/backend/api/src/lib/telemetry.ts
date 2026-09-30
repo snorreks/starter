@@ -22,15 +22,15 @@
 // the stream, and `request.text()` then fails with "Body is not valid JSON" for
 // a perfectly valid payload.
 
-import { redactValue } from '@starter/logger';
-import { Elysia, status, t } from 'elysia';
 import type { Static } from '@sinclair/typebox';
+import { redactValue } from '@starter/logger';
 import {
-  ClientReportedContextSchema,
-  LogEventSchema,
   type ClientReportedContext,
+  ClientReportedContextSchema,
   type LogEvent,
+  LogEventSchema,
 } from '@starter/schemas/logging';
+import { Elysia, status, t } from 'elysia';
 import type { Container } from './container.ts';
 import { buildRequestContext, type RequestContext } from './request_context.ts';
 

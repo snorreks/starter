@@ -50,7 +50,7 @@ export const isRedactedKey = (key: string, extra: readonly string[] = []): boole
   return extra.some((candidate) => normalise(candidate) === normalised);
 };
 
-export type RedactOptions = {
+export interface RedactOptions {
   extraKeys?: readonly string[];
   /** Max depth walked before the value is summarized instead of copied. */
   maxDepth?: number;
@@ -58,7 +58,7 @@ export type RedactOptions = {
   maxEntries?: number;
   /** Max string length retained. */
   maxStringLength?: number;
-};
+}
 
 const DEFAULT_MAX_DEPTH = 6;
 const DEFAULT_MAX_ENTRIES = 50;
@@ -144,9 +144,7 @@ export const redactValue = (value: unknown, options: RedactOptions = {}): unknow
 
     try {
       if (Array.isArray(input)) {
-        const kept = input
-          .slice(0, maxEntries)
-          .map((entry) => walk(entry, depth + 1));
+        const kept = input.slice(0, maxEntries).map((entry) => walk(entry, depth + 1));
         if (input.length > maxEntries) {
           kept.push(`…${input.length - maxEntries} more`);
         }

@@ -6,7 +6,7 @@
 // `clientReported`, never as a top-level verified field. The server decides what
 // is actually verified; the client's claim is data about the client.
 
-import { type ClientReportedContext, type LogEvent } from '@starter/schemas/logging';
+import type { ClientReportedContext, LogEvent } from '@starter/schemas/logging';
 import type { TelemetryTransport } from './browser_logger.ts';
 
 export type TelemetryPayload = LogEvent & {
@@ -14,13 +14,13 @@ export type TelemetryPayload = LogEvent & {
   clientReported?: ClientReportedContext;
 };
 
-export type HttpTelemetryTransportOptions = {
+export interface HttpTelemetryTransportOptions {
   endpoint: string;
   /** Optional bearer token; the server still re-verifies the session. */
   getAuthToken?: () => string | undefined | Promise<string | undefined>;
   fetchImpl?: typeof fetch;
   context?: () => ClientReportedContext | undefined;
-};
+}
 
 export const createHttpTelemetryTransport = (
   options: HttpTelemetryTransportOptions,

@@ -8,10 +8,10 @@
 // request, merge anything, or deploy anything. The runner has no code path that
 // could do any of those, and this CLI does not call git or Wrangler at all.
 
-import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { REPO_ROOT } from '../guards/boundary.ts';
-import { MODES, type RunMode, createManifest, runContract, type StageOutcome } from './runner.ts';
+import { createManifest, MODES, type RunMode, runContract, type StageOutcome } from './runner.ts';
 
 export const CONTRACTS_DIR = join(REPO_ROOT, 'docs/contracts');
 const RUNS_DIR = join(REPO_ROOT, '.pi/contract-runs');
@@ -107,7 +107,9 @@ export const main = async (args: readonly string[]): Promise<number> => {
     }
 
     const manifest = createManifest('adhoc', 'standard', Date.now());
-    process.stdout.write(`Run ${manifest.runId}\nStages: ${manifest.plannedStages.join(' -> ')}\n\n`);
+    process.stdout.write(
+      `Run ${manifest.runId}\nStages: ${manifest.plannedStages.join(' -> ')}\n\n`,
+    );
 
     const result = await runContract(manifest, dryAdapter);
     if (!result.ok) {

@@ -19,14 +19,14 @@
 
 import { join } from 'node:path';
 
-export type RunIdentity = {
+export interface RunIdentity {
   /** Unique per Playwright invocation. */
   runId: string;
   apiBaseUrl: string;
   clientBaseUrl: string;
   apiPort: number;
   clientPort: number;
-};
+}
 
 export const CLIENT_PORT = Number(process.env.E2E_CLIENT_PORT ?? 4183);
 export const API_PORT = Number(process.env.E2E_API_PORT ?? 8788);
@@ -43,13 +43,16 @@ export const currentIdentity = (): RunIdentity => {
   return currentRun;
 };
 
-export type PreflightFailure = {
+export interface PreflightFailure {
   ok: false;
   reason: string;
   remedy: string;
-};
+}
 
-export type PreflightSuccess = { ok: true; runId: string };
+export interface PreflightSuccess {
+  ok: true;
+  runId: string;
+}
 
 /**
  * Verify the API is this run's API.

@@ -16,12 +16,12 @@
 import { describe, expect, test } from 'bun:test';
 import { Value } from '@sinclair/typebox/value';
 import {
+  NOTE_BODY_MAX_LENGTH,
+  NOTE_TITLE_MAX_LENGTH,
   NoteCreateSchema,
   NoteListSchema,
   NoteSchema,
   NoteUpdateSchema,
-  NOTE_BODY_MAX_LENGTH,
-  NOTE_TITLE_MAX_LENGTH,
   validateNoteInput,
 } from './note.ts';
 
@@ -116,9 +116,9 @@ describe('NoteCreateSchema', () => {
   });
 
   test('rejects client-supplied timestamps', () => {
-    expect(
-      accepts(NoteCreateSchema, { title: 'a', body: 'b', createdAt: 1, updatedAt: 1 }),
-    ).toBe(false);
+    expect(accepts(NoteCreateSchema, { title: 'a', body: 'b', createdAt: 1, updatedAt: 1 })).toBe(
+      false,
+    );
   });
 
   test('rejects an empty title', () => {
@@ -181,14 +181,14 @@ describe('validateNoteInput', () => {
     // without the client reimplementing the rule.
     const errors = validateNoteInput({ title: '', body: 'b' });
 
-    expect(errors['title']).toBeTruthy();
-    expect(errors['body']).toBeUndefined();
+    expect(errors.title).toBeTruthy();
+    expect(errors.body).toBeUndefined();
   });
 
   test('reports an over-long title', () => {
     const errors = validateNoteInput({ title: 'a'.repeat(NOTE_TITLE_MAX_LENGTH + 1), body: '' });
 
-    expect(errors['title']).toBeTruthy();
+    expect(errors.title).toBeTruthy();
   });
 
   test('reports an over-long body', () => {
@@ -197,7 +197,7 @@ describe('validateNoteInput', () => {
       body: 'b'.repeat(NOTE_BODY_MAX_LENGTH + 1),
     });
 
-    expect(errors['body']).toBeTruthy();
+    expect(errors.body).toBeTruthy();
   });
 
   test('agrees with the schema on what is valid', () => {

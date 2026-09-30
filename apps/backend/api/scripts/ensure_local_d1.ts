@@ -8,6 +8,7 @@
 import { spawnSync } from 'node:child_process';
 import { existsSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
+
 // `import.meta.url` is the file's URL: four levels up from
 // apps/backend/api/scripts/ reaches the repository root.
 const REPO_ROOT = new URL('../../../../', import.meta.url).pathname.replace(/\/$/, '');

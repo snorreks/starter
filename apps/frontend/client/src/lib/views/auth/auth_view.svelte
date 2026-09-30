@@ -7,11 +7,11 @@
   a password manager.
 -->
 <script lang="ts">
-  import { Field } from '@starter/ui';
-  import type { AuthViewModel } from './auth_view_model.svelte.ts';
+import { Field } from '@starter/ui';
+import type { AuthViewModel } from './auth_view_model.svelte.ts';
 
-  type Props = { viewModel: AuthViewModel };
-  let { viewModel }: Props = $props();
+type Props = { viewModel: AuthViewModel };
+let { viewModel }: Props = $props();
 </script>
 
 <form

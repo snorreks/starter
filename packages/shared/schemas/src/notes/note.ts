@@ -8,46 +8,58 @@
 // mechanism, not a coercion mechanism: an unknown field is an error, never a
 // silently dropped value.
 
-import { Type, type Static } from '@sinclair/typebox';
+import { type Static, Type } from '@sinclair/typebox';
 import { NoteIdSchema, UserIdSchema } from '../common/ids.ts';
 
 export const NOTE_TITLE_MAX_LENGTH = 120;
 export const NOTE_BODY_MAX_LENGTH = 4000;
 
 /** A note exactly as the API returns it. */
-export const NoteSchema = Type.Object({
-  id: NoteIdSchema,
-  ownerId: UserIdSchema,
-  title: Type.String({ minLength: 1, maxLength: NOTE_TITLE_MAX_LENGTH }),
-  body: Type.String({ maxLength: NOTE_BODY_MAX_LENGTH }),
-  /** Epoch milliseconds. */
-  createdAt: Type.Number(),
-  updatedAt: Type.Number(),
-}, { additionalProperties: false });
+export const NoteSchema = Type.Object(
+  {
+    id: NoteIdSchema,
+    ownerId: UserIdSchema,
+    title: Type.String({ minLength: 1, maxLength: NOTE_TITLE_MAX_LENGTH }),
+    body: Type.String({ maxLength: NOTE_BODY_MAX_LENGTH }),
+    /** Epoch milliseconds. */
+    createdAt: Type.Number(),
+    updatedAt: Type.Number(),
+  },
+  { additionalProperties: false },
+);
 
 export type Note = Static<typeof NoteSchema>;
 
 /** Create payload. The server derives `ownerId` from the session, never the body. */
-export const NoteCreateSchema = Type.Object({
-  title: Type.String({ minLength: 1, maxLength: NOTE_TITLE_MAX_LENGTH }),
-  body: Type.String({ maxLength: NOTE_BODY_MAX_LENGTH }),
-}, { additionalProperties: false });
+export const NoteCreateSchema = Type.Object(
+  {
+    title: Type.String({ minLength: 1, maxLength: NOTE_TITLE_MAX_LENGTH }),
+    body: Type.String({ maxLength: NOTE_BODY_MAX_LENGTH }),
+  },
+  { additionalProperties: false },
+);
 
 export type NoteCreate = Static<typeof NoteCreateSchema>;
 
 /** Update payload. Omitted fields are left unchanged. */
-export const NoteUpdateSchema = Type.Object({
-  title: Type.Optional(Type.String({ minLength: 1, maxLength: NOTE_TITLE_MAX_LENGTH })),
-  body: Type.Optional(Type.String({ maxLength: NOTE_BODY_MAX_LENGTH })),
-}, { additionalProperties: false, minProperties: 1 });
+export const NoteUpdateSchema = Type.Object(
+  {
+    title: Type.Optional(Type.String({ minLength: 1, maxLength: NOTE_TITLE_MAX_LENGTH })),
+    body: Type.Optional(Type.String({ maxLength: NOTE_BODY_MAX_LENGTH })),
+  },
+  { additionalProperties: false, minProperties: 1 },
+);
 
 export type NoteUpdate = Static<typeof NoteUpdateSchema>;
 
-export const NoteListSchema = Type.Object({
-  notes: Type.Array(NoteSchema),
-  /** Echoed so a client can detect that its list is from a newer server. */
-  serverTime: Type.Number(),
-}, { additionalProperties: false });
+export const NoteListSchema = Type.Object(
+  {
+    notes: Type.Array(NoteSchema),
+    /** Echoed so a client can detect that its list is from a newer server. */
+    serverTime: Type.Number(),
+  },
+  { additionalProperties: false },
+);
 
 export type NoteList = Static<typeof NoteListSchema>;
 
@@ -55,9 +67,10 @@ export type NoteList = Static<typeof NoteListSchema>;
  * Domain rule kept next to the schema so the client can show the same message
  * the server would, without a round trip.
  */
-export const validateNoteInput = (
-  input: { title: string; body: string },
-): Record<string, string> => {
+export const validateNoteInput = (input: {
+  title: string;
+  body: string;
+}): Record<string, string> => {
   const errors: Record<string, string> = {};
   const title = input.title.trim();
 

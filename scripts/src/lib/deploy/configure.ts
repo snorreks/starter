@@ -12,15 +12,21 @@
 
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { DEPLOYMENT_CONFIG, type DeploymentEnvironment } from '@starter/schemas';
-import { API_DIR, CLIENT_DIR, captureWrangler, hasCloudflareCredential, runWrangler } from '../cloudflare/wrangler.ts';
+import {
+  API_DIR,
+  CLIENT_DIR,
+  captureWrangler,
+  hasCloudflareCredential,
+  runWrangler,
+} from '../cloudflare/wrangler.ts';
 
 const WRANGLER_CONFIG = `${API_DIR}/wrangler.jsonc`;
 
-export type ConfigCheck = {
+export interface ConfigCheck {
   ok: boolean;
   problems: string[];
   notices: string[];
-};
+}
 
 const stripJsonComments = (input: string): string =>
   input.replace(/^\s*\/\/.*$/gm, '').replace(/\/\*[\s\S]*?\*\//g, '');
@@ -31,9 +37,7 @@ export const inspectConfig = (): ConfigCheck => {
   const notices: string[] = [];
 
   if (!hasCloudflareCredential()) {
-    problems.push(
-      'No Cloudflare credential. Set CLOUDFLARE_API_TOKEN, or run `wrangler login`.',
-    );
+    problems.push('No Cloudflare credential. Set CLOUDFLARE_API_TOKEN, or run `wrangler login`.');
   }
 
   for (const [app, name] of Object.entries(DEPLOYMENT_CONFIG.workerNames)) {
@@ -60,9 +64,7 @@ export const inspectConfig = (): ConfigCheck => {
   }
 
   if (DEPLOYMENT_CONFIG.customDomains.api === null) {
-    notices.push(
-      'No custom domain configured. The API will be reachable at *.workers.dev only.',
-    );
+    notices.push('No custom domain configured. The API will be reachable at *.workers.dev only.');
   }
   if (DEPLOYMENT_CONFIG.r2BucketNames.uploads === null) {
     notices.push('No R2 upload bucket configured. That is fine: uploads are optional in round 1.');
@@ -110,9 +112,7 @@ export const provisionDatabase = (): number => {
 export const main = (args: readonly string[]): number => {
   if (args.includes('--check') || args.includes('--dry-run')) {
     const check = inspectConfig();
-    process.stdout.write(
-      `Cloudflare configuration: ${check.ok ? 'complete' : 'incomplete'}\n`,
-    );
+    process.stdout.write(`Cloudflare configuration: ${check.ok ? 'complete' : 'incomplete'}\n`);
     for (const problem of check.problems) {
       process.stdout.write(`  problem: ${problem}\n`);
     }
@@ -147,6 +147,5 @@ if (import.meta.main) {
   process.exitCode = main(process.argv.slice(2));
 }
 
-export { CLIENT_DIR, WRANGLER_CONFIG };
 export type { DeploymentEnvironment };
-export { runWrangler };
+export { CLIENT_DIR, runWrangler, WRANGLER_CONFIG };

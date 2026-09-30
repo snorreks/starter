@@ -6,7 +6,7 @@
   deliberate default: it keeps a template's first screens readable, and the
   utility path stays available for whoever wants it.
 */
-@import '@starter/ui/tokens.css';
+@import "@starter/ui/tokens.css";
 
 html,
 body {

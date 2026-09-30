@@ -6,25 +6,25 @@
   responsibility, the logic belongs in a ViewModel behind it.
 -->
 <script lang="ts">
-  import { NotesView } from '#lib/views/notes';
-  import { getNotesViewModel } from '#lib/views/notes/notes_composition';
-  import { sessionState, sessionService } from '#lib/services/session_service.svelte';
-  import { goto } from '$app/navigation';
+import { NotesView } from '#lib/views/notes';
+import { getNotesViewModel } from '#lib/views/notes/notes_composition';
+import { sessionState, sessionService } from '#lib/services/session_service.svelte';
+import { goto } from '$app/navigation';
 
-  const viewModel = getNotesViewModel();
+const viewModel = getNotesViewModel();
 
-  // Resolve the session before deciding what to render, so a signed-in user
-  // never sees a flash of the sign-in prompt.
-  let resolving = $state(true);
-  void sessionService.refresh().finally(() => {
-    resolving = false;
-  });
+// Resolve the session before deciding what to render, so a signed-in user
+// never sees a flash of the sign-in prompt.
+let resolving = $state(true);
+void sessionService.refresh().finally(() => {
+  resolving = false;
+});
 
-  $effect(() => {
-    if (!resolving && !sessionState.isAuthenticated) {
-      void goto('/login');
-    }
-  });
+$effect(() => {
+  if (!resolving && !sessionState.isAuthenticated) {
+    void goto('/login');
+  }
+});
 </script>
 
 {#if resolving}

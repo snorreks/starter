@@ -9,15 +9,15 @@
   is a compile error in exactly one place rather than a silently blank screen.
 -->
 <script lang="ts">
-  import { BaseViewModelContainer, EmptyState, ErrorState, NoteCard, Spinner } from '@starter/ui';
-  import type { NotesViewModel } from './notes_view_model.svelte.ts';
-  import NoteForm from './note_form.svelte';
+import { BaseViewModelContainer, EmptyState, ErrorState, NoteCard, Spinner } from '@starter/ui';
+import type { NotesViewModel } from './notes_view_model.svelte.ts';
+import NoteForm from './note_form.svelte';
 
-  type Props = {
-    viewModel: NotesViewModel;
-  };
+type Props = {
+  viewModel: NotesViewModel;
+};
 
-  let { viewModel }: Props = $props();
+let { viewModel }: Props = $props();
 </script>
 
 <BaseViewModelContainer {viewModel} element="section" id="notes-screen">

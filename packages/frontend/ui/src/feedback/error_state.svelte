@@ -7,22 +7,22 @@
   write is the failure mode this component exists to prevent.
 -->
 <script lang="ts">
-  type Props = {
-    title?: string;
-    message: string;
-    /** False when a retry would deterministically fail (e.g. 403). */
-    retryable?: boolean;
-    onRetry?: () => void;
-    testId?: string;
-  };
+type Props = {
+  title?: string;
+  message: string;
+  /** False when a retry would deterministically fail (e.g. 403). */
+  retryable?: boolean;
+  onRetry?: () => void;
+  testId?: string;
+};
 
-  let {
-    title = 'Something went wrong',
-    message,
-    retryable = true,
-    onRetry,
-    testId = 'error-state',
-  }: Props = $props();
+let {
+  title = 'Something went wrong',
+  message,
+  retryable = true,
+  onRetry,
+  testId = 'error-state',
+}: Props = $props();
 </script>
 
 <div class="ui-error" role="alert" data-testid={testId}>

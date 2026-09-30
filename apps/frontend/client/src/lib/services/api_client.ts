@@ -14,18 +14,17 @@
 //   - a uniform error shape (`AppError`), so no screen parses a status code
 //   - one place to log, bound to a request id for correlation
 
-import { BaseClass } from '@starter/utils';
-import { AppError, errorTypeForStatus } from '@starter/utils';
 import type { ApiError, SessionUser } from '@starter/schemas/auth';
+import { AppError, BaseClass, errorTypeForStatus } from '@starter/utils';
 import { clientConfig } from '#lib/runtime/config.ts';
 
-export type ApiRequestOptions = {
+export interface ApiRequestOptions {
   method?: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
   body?: unknown;
   signal?: AbortSignal;
   /** Correlates this call with a log event. */
   traceId?: string;
-};
+}
 
 type TokenProvider = () => string | undefined;
 
@@ -94,9 +93,7 @@ export class ApiClient extends BaseClass {
   readonly #baseUrl: string;
   readonly #fetch: FetchLike;
 
-  constructor(
-    options: { baseUrl?: string; className?: string; fetch?: FetchLike } = {},
-  ) {
+  constructor(options: { baseUrl?: string; className?: string; fetch?: FetchLike } = {}) {
     super({ className: options.className ?? 'ApiClient' });
     this.#baseUrl = options.baseUrl ?? clientConfig.apiBaseUrl;
     // Defaults to the global at call time rather than at construction, so a test
@@ -145,10 +142,14 @@ export class ApiClient extends BaseClass {
 
     if (!response.ok) {
       const errorPayload = parsed as Partial<ApiError> | undefined;
-      throw new AppError(errorTypeForStatus(response.status), errorPayload?.message ?? 'The request failed.', {
-        status: response.status,
-        cause: parsed,
-      });
+      throw new AppError(
+        errorTypeForStatus(response.status),
+        errorPayload?.message ?? 'The request failed.',
+        {
+          status: response.status,
+          cause: parsed,
+        },
+      );
     }
 
     return parsed as T;
@@ -158,11 +159,19 @@ export class ApiClient extends BaseClass {
     return this.request<T>(path, { ...options, method: 'GET' });
   }
 
-  post<T>(path: string, body: unknown, options: Omit<ApiRequestOptions, 'method' | 'body'> = {}): Promise<T> {
+  post<T>(
+    path: string,
+    body: unknown,
+    options: Omit<ApiRequestOptions, 'method' | 'body'> = {},
+  ): Promise<T> {
     return this.request<T>(path, { ...options, method: 'POST', body });
   }
 
-  patch<T>(path: string, body: unknown, options: Omit<ApiRequestOptions, 'method' | 'body'> = {}): Promise<T> {
+  patch<T>(
+    path: string,
+    body: unknown,
+    options: Omit<ApiRequestOptions, 'method' | 'body'> = {},
+  ): Promise<T> {
     return this.request<T>(path, { ...options, method: 'PATCH', body });
   }
 
@@ -177,20 +186,26 @@ export class ApiClient extends BaseClass {
   }
 
   async signIn(email: string, password: string): Promise<SessionUser> {
-    const result = await this.post<{ user: SessionUser; token?: string }>('/api/auth/sign-in/email', {
-      email,
-      password,
-      returnHeaders: true,
-    });
+    const result = await this.post<{ user: SessionUser; token?: string }>(
+      '/api/auth/sign-in/email',
+      {
+        email,
+        password,
+        returnHeaders: true,
+      },
+    );
     return result.user;
   }
 
   async signUp(input: { email: string; password: string; name: string }): Promise<SessionUser> {
-    const result = await this.post<{ user: SessionUser; token?: string }>('/api/auth/sign-up/email', {
-      email: input.email,
-      password: input.password,
-      name: input.name,
-    });
+    const result = await this.post<{ user: SessionUser; token?: string }>(
+      '/api/auth/sign-up/email',
+      {
+        email: input.email,
+        password: input.password,
+        name: input.name,
+      },
+    );
     return result.user;
   }
 

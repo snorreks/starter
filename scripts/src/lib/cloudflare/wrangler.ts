@@ -33,10 +33,7 @@ export type RemoteConsent = { allowed: true } | { allowed: false; reason: string
  * single reason the deploy tooling cannot surprise anyone: a mutation needs an
  * explicit opt-in that only a human running the command can give.
  */
-export const requireRemoteConsent = (
-  target: string,
-  args: readonly string[],
-): RemoteConsent => {
+export const requireRemoteConsent = (target: string, args: readonly string[]): RemoteConsent => {
   if (!hasCloudflareCredential()) {
     return {
       allowed: false,

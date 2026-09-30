@@ -20,8 +20,14 @@
 
 import { afterEach, describe, expect, test } from 'bun:test';
 import { DEPLOYMENT_CONFIG } from '@starter/schemas';
-import { parseEnvironment, parseTargets, planDeploy, type DeployTarget, type Step } from './index.ts';
 import type { ConfigCheck } from './configure.ts';
+import {
+  type DeployTarget,
+  parseEnvironment,
+  parseTargets,
+  planDeploy,
+  type Step,
+} from './index.ts';
 
 /** A configuration that passes every check. */
 const READY: ConfigCheck = { ok: true, problems: [], notices: [] };
@@ -91,7 +97,9 @@ describe('planDeploy: refusal', () => {
     const plan = planDeploy(['api'], 'production');
 
     expect(plan.ok).toBe(false);
-    if (plan.ok) return;
+    if (plan.ok) {
+      return;
+    }
     expect(plan.reason).toBeTruthy();
     expect(plan.remedy).toContain('deploy:configure');
   });
@@ -103,7 +111,9 @@ describe('planDeploy: refusal', () => {
       notices: [],
     });
 
-    if (plan.ok) throw new Error('expected a refusal');
+    if (plan.ok) {
+      throw new Error('expected a refusal');
+    }
 
     // The user should not have to re-run `deploy:configure --check` to find out
     // which of five things is wrong.
@@ -116,7 +126,9 @@ describe('planDeploy: refusal', () => {
     const plan = planDeploy(['api'], 'staging', READY);
 
     expect(plan.ok).toBe(false);
-    if (plan.ok) return;
+    if (plan.ok) {
+      return;
+    }
 
     // Naming the target is what makes the message actionable.
     expect(plan.reason).toContain('"api"');

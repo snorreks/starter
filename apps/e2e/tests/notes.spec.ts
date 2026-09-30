@@ -16,7 +16,7 @@
 //   It is NOT a place to test that a button renders. `apps/frontend/client` has a
 //   real-browser lane for that, which runs in under a second instead of a minute.
 
-import { expect, test, type Page } from '@playwright/test';
+import { expect, type Page, test } from '@playwright/test';
 
 /**
  * A fresh account.

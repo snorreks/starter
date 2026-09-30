@@ -12,7 +12,7 @@
 // reports the wrong app is worse than one that reports a generic one, because
 // the first gets trusted in a triage that the second would have prompted.
 
-import { type LogApp, type DeploymentEnvironment, type LogSource } from '@starter/schemas/logging';
+import type { DeploymentEnvironment, LogApp, LogSource } from '@starter/schemas/logging';
 import { ConsoleLogger } from './console_logger.ts';
 import { resolveRelease } from './event_log.ts';
 

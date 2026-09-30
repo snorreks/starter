@@ -4,14 +4,9 @@
   "compilerOptions": {
     "target": "ES2023",
     "module": "ESNext",
-    "lib": [
-      "ES2023"
-    ],
+    "lib": ["ES2023"],
     "moduleResolution": "Bundler",
-    "types": [
-      "node",
-      "bun"
-    ],
+    "types": ["node", "bun"],
     "sourceMap": true,
     "strict": true,
     "noImplicitAny": true,

@@ -8,14 +8,14 @@
 // fails with "Cannot read properties of undefined (reading 'appendChild')" — an
 // error that says nothing useful about the component under test.
 
-import { flushSync, mount, unmount, type Component, type Snippet } from 'svelte';
+import { type Component, flushSync, mount, type Snippet, unmount } from 'svelte';
 
-export type Mounted = {
+export interface Mounted {
   /** The element the component was mounted into. */
   target: HTMLElement;
   /** Unmount and remove the target from the document. */
   destroy(): void;
-};
+}
 
 /**
  * An empty children snippet.

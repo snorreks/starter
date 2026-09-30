@@ -17,13 +17,7 @@
 // contract does not authorise publishing its result, and the runner has no code
 // path that could.
 
-export const STAGES = [
-  'prepare',
-  'write',
-  'implement',
-  'verify',
-  'accepted',
-] as const;
+export const STAGES = ['prepare', 'write', 'implement', 'verify', 'accepted'] as const;
 
 export type Stage = (typeof STAGES)[number];
 
@@ -43,7 +37,7 @@ export const MODES: Record<RunMode, readonly Stage[]> = {
   full: ['prepare', 'write', 'implement', 'verify', 'accepted'],
 };
 
-export type RunManifest = {
+export interface RunManifest {
   runId: string;
   contractId: string;
   mode: RunMode;
@@ -58,7 +52,7 @@ export type RunManifest = {
   finishedAt?: number;
   /** Free-form notes. Never used to make a decision. */
   notes: string[];
-};
+}
 
 /** Bounds. Every one of these is a number, not a policy string. */
 export const LIMITS = {
@@ -82,9 +76,9 @@ export type StageOutcome =
  * The runner cannot tell the difference, which is the point: the lifecycle under
  * test is the lifecycle that runs.
  */
-export type StageAdapter = {
+export interface StageAdapter {
   runStage(stage: Stage, manifest: RunManifest): Promise<StageOutcome>;
-};
+}
 
 export type RunResult =
   | { ok: true; manifest: RunManifest; summaries: Record<string, string> }

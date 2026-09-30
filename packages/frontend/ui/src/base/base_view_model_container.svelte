@@ -12,94 +12,91 @@
   happened, let `initialize()` settle, and dispose exactly once afterwards.
 -->
 <script lang="ts">
-  import type { BaseViewModelInterface } from '@starter/frontend-services/base';
-  import type { Snippet } from 'svelte';
-  import { untrack } from 'svelte';
-  import type { HTMLAttributes } from 'svelte/elements';
-  import Spinner from '../feedback/spinner.svelte';
+import type { BaseViewModelInterface } from '@starter/frontend-services/base';
+import type { Snippet } from 'svelte';
+import { untrack } from 'svelte';
+import type { HTMLAttributes } from 'svelte/elements';
+import Spinner from '../feedback/spinner.svelte';
 
-  type Props = HTMLAttributes<HTMLElement> & {
-    viewModel: BaseViewModelInterface;
-    /** Test id. Defaults to the ViewModel's class name. */
-    id?: string;
-    /** Label announced while the loading state is shown. */
-    loadingLabel?: string;
-    children: Snippet;
-    element?: 'div' | 'footer' | 'header' | 'main' | 'section' | 'article' | 'aside' | 'nav';
-  };
+type Props = HTMLAttributes<HTMLElement> & {
+  viewModel: BaseViewModelInterface;
+  /** Test id. Defaults to the ViewModel's class name. */
+  id?: string;
+  /** Label announced while the loading state is shown. */
+  loadingLabel?: string;
+  children: Snippet;
+  element?: 'div' | 'footer' | 'header' | 'main' | 'section' | 'article' | 'aside' | 'nav';
+};
 
-  let {
-    viewModel,
-    id,
-    loadingLabel = 'Loading',
-    children,
-    class: className,
-    element = 'div',
-    ...attributes
-  }: Props = $props();
+let {
+  viewModel,
+  id,
+  loadingLabel = 'Loading',
+  children,
+  class: className,
+  element = 'div',
+  ...attributes
+}: Props = $props();
 
-  // Initialization and disposal are fire-and-forget, so a rejection would
-  // otherwise surface as an unhandled rejection naming no component.
-  const reportLifecycleFailure = (
-    phase: 'initialize' | 'dispose',
-    instance: BaseViewModelInterface,
-    error: unknown,
-  ): void => {
-    console.error(
-      `[BaseViewModelContainer] ${phase}() failed for "${instance.className}"`,
-      error,
-    );
-  };
+// Initialization and disposal are fire-and-forget, so a rejection would
+// otherwise surface as an unhandled rejection naming no component.
+const reportLifecycleFailure = (
+  phase: 'initialize' | 'dispose',
+  instance: BaseViewModelInterface,
+  error: unknown,
+): void => {
+  console.error(`[BaseViewModelContainer] ${phase}() failed for "${instance.className}"`, error);
+};
 
-  $effect(() => {
-    const instance = viewModel;
+$effect(() => {
+  const instance = viewModel;
 
-    // Depend on the `viewModel` prop only. If this effect tracked reactive
-    // state that `initialize()` writes, the instance would dispose and
-    // re-initialize itself in a loop.
-    return untrack(() => {
-      // An instance already owned elsewhere (a panel its parent retains across
-      // tab switches) is left alone: one owner at a time.
-      if (instance.__mounted) {
+  // Depend on the `viewModel` prop only. If this effect tracked reactive
+  // state that `initialize()` writes, the instance would dispose and
+  // re-initialize itself in a loop.
+  return untrack(() => {
+    // An instance already owned elsewhere (a panel its parent retains across
+    // tab switches) is left alone: one owner at a time.
+    if (instance.__mounted) {
+      return;
+    }
+    instance.__mounted = true;
+
+    let stillMounted = true;
+    let initializeSettled = false;
+    let disposed = false;
+
+    const disposeOnce = (): void => {
+      if (disposed) {
         return;
       }
-      instance.__mounted = true;
+      disposed = true;
+      instance.__mounted = false;
+      void instance.dispose().catch((error: unknown) => {
+        reportLifecycleFailure('dispose', instance, error);
+      });
+    };
 
-      let stillMounted = true;
-      let initializeSettled = false;
-      let disposed = false;
-
-      const disposeOnce = (): void => {
-        if (disposed) {
-          return;
-        }
-        disposed = true;
-        instance.__mounted = false;
-        void instance.dispose().catch((error: unknown) => {
-          reportLifecycleFailure('dispose', instance, error);
-        });
-      };
-
-      void instance
-        .initialize()
-        .catch((error: unknown) => {
-          reportLifecycleFailure('initialize', instance, error);
-        })
-        .finally(() => {
-          initializeSettled = true;
-          if (!stillMounted) {
-            disposeOnce();
-          }
-        });
-
-      return () => {
-        stillMounted = false;
-        if (initializeSettled) {
+    void instance
+      .initialize()
+      .catch((error: unknown) => {
+        reportLifecycleFailure('initialize', instance, error);
+      })
+      .finally(() => {
+        initializeSettled = true;
+        if (!stillMounted) {
           disposeOnce();
         }
-      };
-    });
+      });
+
+    return () => {
+      stillMounted = false;
+      if (initializeSettled) {
+        disposeOnce();
+      }
+    };
   });
+});
 </script>
 
 <svelte:element

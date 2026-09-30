@@ -13,12 +13,12 @@
 
 import { ALL_GUARDS, type GuardResult, REPO_ROOT } from './boundary.ts';
 
-export type GuardReport = {
+export interface GuardReport {
   passed: boolean;
   total: number;
   failing: number;
   guards: GuardResult[];
-};
+}
 
 export const runAll = (only?: string): GuardReport => {
   const selected =

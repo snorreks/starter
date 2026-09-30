@@ -71,7 +71,10 @@ export const AUTH_RATE_LIMIT_MAX = '500';
  * client runs on its own port, so it has to be named here explicitly — a
  * wildcard would defeat the point of an allowlist.
  */
-export const TRUSTED_ORIGINS = [`http://127.0.0.1:${CLIENT_PORT}`, `http://localhost:${CLIENT_PORT}`];
+export const TRUSTED_ORIGINS = [
+  `http://127.0.0.1:${CLIENT_PORT}`,
+  `http://localhost:${CLIENT_PORT}`,
+];
 
 export default defineConfig({
   testDir: './tests',

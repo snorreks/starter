@@ -4,15 +4,16 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "lint": "biome lint extensions scripts",
-    "format": "biome format extensions scripts",
-    "fix": "biome check --write extensions scripts --error-on-warnings",
+    "lint": "biome lint extensions",
+    "format": "biome format extensions",
+    "fix": "biome check --write extensions --error-on-warnings",
     "typecheck": "tsgo --noEmit",
     "test": "bun test extensions"
   },
   "devDependencies": {
     "@earendil-works/pi-agent-core": "^0.87.1",
     "@earendil-works/pi-coding-agent": "^0.87.1",
-    "@types/bun": "1.4.2"
+    "@types/bun": "1.4.2",
+    "typebox": "1.3.27"
   }
 }

@@ -13,9 +13,9 @@ import type { LogEvent, LogLevel, LogSink } from '@starter/schemas/logging';
 import { ConsoleLogger } from './console_logger.ts';
 import { type LogContext, toLogEvent } from './event_log.ts';
 
-export type TelemetryTransport = {
+export interface TelemetryTransport {
   send(event: LogEvent): void;
-};
+}
 
 export type BrowserLoggerOptions = LogContext & {
   logLevel?: LogLevel;

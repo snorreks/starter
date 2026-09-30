@@ -16,6 +16,7 @@ import { Value } from '@sinclair/typebox/value';
 import {
   APP_IDS,
   APP_LOG_CONFIG,
+  type AppId,
   AppLogConfigSchema,
   capabilitiesFor,
   DEPLOYMENT_CONFIG,
@@ -23,7 +24,6 @@ import {
   isAppId,
   LOG_ADAPTER_KINDS,
   resolveLogAdapter,
-  type AppId,
 } from './index.ts';
 
 const ENVIRONMENTS = ['local', 'staging', 'production'] as const;
@@ -145,7 +145,9 @@ describe('resolveLogAdapter', () => {
     const result = resolveLogAdapter('client', 'production');
 
     expect('kind' in result).toBe(false);
-    if ('kind' in result) return;
+    if ('kind' in result) {
+      return;
+    }
 
     expect(result.unsupported).toContain('client');
     expect(result.unsupported).toContain('production');
@@ -155,7 +157,9 @@ describe('resolveLogAdapter', () => {
   test('the refusal names both the app and the environment', () => {
     // So a message pasted into an issue is actionable on its own.
     const result = resolveLogAdapter('client', 'staging');
-    if ('kind' in result) throw new Error('expected a refusal');
+    if ('kind' in result) {
+      throw new Error('expected a refusal');
+    }
 
     expect(result.unsupported).toContain('client');
     expect(result.unsupported).toContain('staging');

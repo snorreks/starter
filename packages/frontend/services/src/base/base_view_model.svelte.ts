@@ -10,12 +10,12 @@
 // `.svelte.ts` file. That is the whole reason for the suffix: these classes are
 // only deeply reactive because the Svelte compiler processes this file.
 
+import { StaleGuard } from '@starter/utils';
 import {
   BaseFrontendClass,
   type BaseFrontendClassInterface,
   type BaseFrontendClassOptions,
 } from './base_frontend_class.ts';
-import { StaleGuard } from '@starter/utils';
 
 export type BaseViewModelOptions = BaseFrontendClassOptions & {
   /** Show the full-screen loading state from the first paint. */
@@ -40,9 +40,10 @@ export type BaseViewModelInterface = BaseFrontendClassInterface & {
   initialize(): Promise<void>;
 };
 
-export abstract class BaseViewModel<
-  Options extends BaseViewModelOptions = BaseViewModelOptions,
-> extends BaseFrontendClass<Options> implements BaseViewModelInterface {
+export abstract class BaseViewModel<Options extends BaseViewModelOptions = BaseViewModelOptions>
+  extends BaseFrontendClass<Options>
+  implements BaseViewModelInterface
+{
   __mounted = false;
 
   errorMessage = $state<string | undefined>(undefined);

@@ -4,7 +4,7 @@
   fine: a blank screen after a failed load is the worst possible outcome.
 -->
 <script lang="ts">
-  import { page } from '$app/state';
+import { page } from '$app/state';
 </script>
 
 <div class="route-error" role="alert">

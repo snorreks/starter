@@ -16,7 +16,7 @@ import {
   type UnsubscribeFunction,
 } from './listener.ts';
 
-export type BaseClassOptions = {
+export interface BaseClassOptions {
   /**
    * Display name, used as the log prefix and as the test id. Required so that
    * every instance is identifiable in a log without stack inspection.
@@ -31,12 +31,12 @@ export type BaseClassOptions = {
   enableAutoDebug?: boolean;
   /** Method names to exclude from tracing (high-frequency call sites). */
   excludeAutoDebugMethods?: readonly string[];
-};
+}
 
-export type BaseClassInterface = {
+export interface BaseClassInterface {
   readonly className: string;
   dispose(): Promise<void>;
-};
+}
 
 /** Never traced: logging itself, plus the lifecycle hooks. */
 const NEVER_TRACED_METHODS = new Set([
@@ -69,9 +69,7 @@ export abstract class BaseClass<Options extends BaseClassOptions = BaseClassOpti
    * constant, because a base class cannot import a framework's env module.
    */
   static isDevelopmentMode(): boolean {
-    const metaEnv = (
-      import.meta as unknown as { env?: Record<string, unknown> | undefined }
-    ).env;
+    const metaEnv = (import.meta as unknown as { env?: Record<string, unknown> | undefined }).env;
     if (metaEnv && typeof metaEnv === 'object' && 'DEV' in metaEnv) {
       return String(metaEnv.DEV) === 'true';
     }
@@ -93,7 +91,9 @@ export abstract class BaseClass<Options extends BaseClassOptions = BaseClassOpti
    * pristine object that Svelte proxies itself, correctly.
    */
   static create<O extends BaseClassOptions, T extends BaseClass<O>>(
-    this: new (options: O) => T,
+    this: new (
+      options: O,
+    ) => T,
     options: O,
   ): T {
     const instance = new this(options);

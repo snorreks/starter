@@ -25,13 +25,16 @@
 //   variable, so there is no mutable module state at all: if the isolate is torn
 //   down, the container goes with it and cannot outlive its bindings.
 
+import { type BetterAuthInstance, createBetterAuth } from '@starter/auth';
 import { accounts, deviceCodes, sessions, users } from '@starter/database';
-import { createBetterAuth, type BetterAuthInstance } from '@starter/auth';
-import { drizzle, type DrizzleD1Database } from 'drizzle-orm/d1';
 import { parseTrustedOrigins } from '@starter/schemas/registry';
+import { type DrizzleD1Database, drizzle } from 'drizzle-orm/d1';
 import type { ApiEnv } from '../env.ts';
 import { resolveAuthSecret } from '../env.ts';
 
+// A `type`, not an `interface`, on purpose: `DrizzleD1Database<T>` constrains T
+// to `Record<string, unknown>`, and an interface has no implicit index signature,
+// so an interface here fails to typecheck.
 type Schema = {
   users: typeof users;
   sessions: typeof sessions;
@@ -39,13 +42,13 @@ type Schema = {
   deviceCodes: typeof deviceCodes;
 };
 
-export type Container = {
+export interface Container {
   env: ApiEnv;
   db: DrizzleD1Database<Schema>;
   auth: BetterAuthInstance;
   /** True when this deployment is local, which relaxes the auth secret rule. */
   isLocal: boolean;
-};
+}
 
 const containers = new WeakMap<ApiEnv, Container>();
 

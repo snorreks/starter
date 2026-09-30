@@ -9,8 +9,8 @@
 import type {
   AppId,
   DeploymentEnvironment,
-  LogAdapterKind,
   LogAdapterCapabilities,
+  LogAdapterKind,
   LogEvent,
   LogQueryResult,
   LogSource,
@@ -26,10 +26,10 @@ import type {
  */
 export type QueryLevel = 'DEBUG' | 'INFO' | 'WARNING' | 'ERROR';
 
-export type { AppId, DeploymentEnvironment, LogAdapterKind, LogAdapterCapabilities };
+export type { AppId, DeploymentEnvironment, LogAdapterCapabilities, LogAdapterKind };
 
 /** Everything a query can be narrowed by. All fields are optional. */
-export type LogQuery = {
+export interface LogQuery {
   app: AppId;
   mode: DeploymentEnvironment;
   /** Minimum severity. `DEBUG` includes everything. */
@@ -54,19 +54,22 @@ export type LogQuery = {
   duration?: string;
   /** Emit machine-readable JSON. */
   json?: boolean;
-};
+}
 
-export type { LogQueryResult, LogEvent };
+export type { LogEvent, LogQueryResult };
 
 /** Parsed duration in milliseconds. */
-export type ParsedDuration = { ms: number; label: string };
+export interface ParsedDuration {
+  ms: number;
+  label: string;
+}
 
 /** One line of CLI help, so `--help` cannot drift from the implementation. */
-export type FlagDoc = {
+export interface FlagDoc {
   flag: string;
   /** Value placeholder. Empty for a boolean flag. */
   arg: string;
   description: string;
   /** Which adapters honour it. Empty means all. */
   adapters?: readonly LogAdapterKind[];
-};
+}

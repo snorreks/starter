@@ -11,14 +11,14 @@
 // account and is reported as unverified in docs/first-round-review.md.
 
 import { describe, expect, test } from 'bun:test';
-import { LogEventSchema, type LogEvent } from '@starter/schemas';
 import { Value } from '@sinclair/typebox/value';
+import { type LogEvent, LogEventSchema } from '@starter/schemas';
+import { parseArgs, toQuery } from './cli.ts';
+import { buildHistoricalRequest, MAX_TAIL_MS } from './cloudflare_adapter.ts';
 import { parseDuration } from './duration.ts';
 import { buildFilter, buildLogpushFilter } from './filter.ts';
-import { parseArgs, toQuery } from './cli.ts';
-import { capabilitiesFor, resolveLogAdapter } from './registry.ts';
-import { buildHistoricalRequest, MAX_TAIL_MS } from './cloudflare_adapter.ts';
 import { parseNdjson } from './local_file_adapter.ts';
+import { capabilitiesFor, resolveLogAdapter } from './registry.ts';
 import type { LogQuery } from './types.ts';
 
 // ── Fixtures ─────────────────────────────────────────────────────────────────
@@ -96,7 +96,9 @@ describe('buildFilter', () => {
   test('applies the level threshold', () => {
     const decision = buildFilter({ ...baseQuery, level: 'ERROR' }, capable);
     expect(decision.ok).toBe(true);
-    if (!decision.ok) return;
+    if (!decision.ok) {
+      return;
+    }
 
     const matched = FIXTURES.filter(decision.predicate);
     expect(matched.map((e) => e.event)).toEqual([
@@ -109,7 +111,9 @@ describe('buildFilter', () => {
   test('applies the trace filter', () => {
     const decision = buildFilter({ ...baseQuery, trace: 'tr_2' }, capable);
     expect(decision.ok).toBe(true);
-    if (!decision.ok) return;
+    if (!decision.ok) {
+      return;
+    }
 
     expect(FIXTURES.filter(decision.predicate).map((e) => e.event)).toEqual(['request.failed']);
   });
@@ -117,7 +121,9 @@ describe('buildFilter', () => {
   test('applies the source filter', () => {
     const decision = buildFilter({ ...baseQuery, source: 'browser' }, capable);
     expect(decision.ok).toBe(true);
-    if (!decision.ok) return;
+    if (!decision.ok) {
+      return;
+    }
 
     expect(FIXTURES.filter(decision.predicate).every((e) => e.source === 'browser')).toBe(true);
   });
@@ -125,7 +131,9 @@ describe('buildFilter', () => {
   test('applies the since window relative to now', () => {
     const decision = buildFilter({ ...baseQuery, since: '15m' }, capable);
     expect(decision.ok).toBe(true);
-    if (!decision.ok) return;
+    if (!decision.ok) {
+      return;
+    }
 
     // FIXTURES are timestamped relative to a fixed NOW, so compare against that.
     const predicate = decision.predicate;
@@ -145,7 +153,9 @@ describe('buildFilter', () => {
   test('matches a user only on a server-verified id', () => {
     const decision = buildFilter({ ...baseQuery, uid: 'user_spoofed' }, capable);
     expect(decision.ok).toBe(true);
-    if (!decision.ok) return;
+    if (!decision.ok) {
+      return;
+    }
 
     // The spoofed id lives under clientReported and must not match --uid.
     expect(FIXTURES.filter(decision.predicate)).toHaveLength(0);
@@ -154,7 +164,9 @@ describe('buildFilter', () => {
   test('matches a verified user id', () => {
     const decision = buildFilter({ ...baseQuery, uid: 'user_verified' }, capable);
     expect(decision.ok).toBe(true);
-    if (!decision.ok) return;
+    if (!decision.ok) {
+      return;
+    }
 
     expect(FIXTURES.filter(decision.predicate).map((e) => e.event)).toEqual(['request.failed']);
   });
@@ -162,7 +174,9 @@ describe('buildFilter', () => {
   test('refuses --uid when the adapter cannot filter by it', () => {
     const decision = buildFilter({ ...baseQuery, uid: 'u' }, capabilitiesFor('wrangler-tail'));
     expect(decision.ok).toBe(false);
-    if (decision.ok) return;
+    if (decision.ok) {
+      return;
+    }
     expect(decision.unsupported).toContain('cannot filter by user id');
   });
 
@@ -266,13 +280,23 @@ describe('parseNdjson', () => {
 
 describe('parseArgs / toQuery', () => {
   test('parses a documented invocation', () => {
-    const parsed = parseArgs(['client', '--mode', 'local', '--source', 'browser', '--level', 'debug']);
+    const parsed = parseArgs([
+      'client',
+      '--mode',
+      'local',
+      '--source',
+      'browser',
+      '--level',
+      'debug',
+    ]);
     expect(parsed.errors).toEqual([]);
     expect(parsed.app).toBe('client');
 
     const query = toQuery(parsed);
     expect(query.ok).toBe(true);
-    if (!query.ok) return;
+    if (!query.ok) {
+      return;
+    }
     expect(query.query.mode).toBe('local');
     expect(query.query.source).toBe('browser');
     expect(query.query.level).toBe('DEBUG');
@@ -282,7 +306,9 @@ describe('parseArgs / toQuery', () => {
     const parsed = parseArgs(['api', '--since=30m', '--limit=10']);
     const query = toQuery(parsed);
     expect(query.ok).toBe(true);
-    if (!query.ok) return;
+    if (!query.ok) {
+      return;
+    }
     expect(query.query.since).toBe('30m');
     expect(query.query.limit).toBe(10);
   });
@@ -291,7 +317,9 @@ describe('parseArgs / toQuery', () => {
     const parsed = parseArgs(['api', '--limit=99999']);
     const query = toQuery(parsed);
     expect(query.ok).toBe(true);
-    if (!query.ok) return;
+    if (!query.ok) {
+      return;
+    }
     expect(query.query.limit).toBe(500);
   });
 

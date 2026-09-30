@@ -6,29 +6,28 @@
   validation failure is invisible to a screen reader and to automated checks.
 -->
 <script lang="ts">
-  import type { Snippet } from 'svelte';
+import type { Snippet } from 'svelte';
 
-  type Props = {
-    id: string;
-    label: string;
-    /** Validation message. Present => field is marked invalid. */
-    error?: string;
-    hint?: string;
-    required?: boolean;
-    children: Snippet<[{ id: string; describedBy: string | undefined; invalid: boolean }]>;
-  };
+type Props = {
+  id: string;
+  label: string;
+  /** Validation message. Present => field is marked invalid. */
+  error?: string;
+  hint?: string;
+  required?: boolean;
+  children: Snippet<[{ id: string; describedBy: string | undefined; invalid: boolean }]>;
+};
 
-  let { id, label, error, hint, required = false, children }: Props = $props();
+let { id, label, error, hint, required = false, children }: Props = $props();
 
-  // `$derived`, not `const`: a plain `const` captures `id` once, so a field
-  // whose `id` changed would keep pointing its `aria-describedby` at the
-  // previous element — a broken accessibility link that no test would notice.
-  const errorId = $derived(`${id}-error`);
-  const hintId = $derived(`${id}-hint`);
-  const describedBy = $derived(
-    [error ? errorId : undefined, hint ? hintId : undefined].filter(Boolean).join(' ') ||
-      undefined,
-  );
+// `$derived`, not `const`: a plain `const` captures `id` once, so a field
+// whose `id` changed would keep pointing its `aria-describedby` at the
+// previous element — a broken accessibility link that no test would notice.
+const errorId = $derived(`${id}-error`);
+const hintId = $derived(`${id}-hint`);
+const describedBy = $derived(
+  [error ? errorId : undefined, hint ? hintId : undefined].filter(Boolean).join(' ') || undefined,
+);
 </script>
 
 <div class="ui-field" class:ui-field--invalid={Boolean(error)}>

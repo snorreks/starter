@@ -3,17 +3,17 @@
   next action, not a blank region the user has to interpret.
 -->
 <script lang="ts">
-  import type { Snippet } from 'svelte';
+import type { Snippet } from 'svelte';
 
-  type Props = {
-    title: string;
-    body?: string;
-    /** Test id, so E2E can assert the empty state without matching copy. */
-    testId?: string;
-    action?: Snippet;
-  };
+type Props = {
+  title: string;
+  body?: string;
+  /** Test id, so E2E can assert the empty state without matching copy. */
+  testId?: string;
+  action?: Snippet;
+};
 
-  let { title, body, testId = 'empty-state', action }: Props = $props();
+let { title, body, testId = 'empty-state', action }: Props = $props();
 </script>
 
 <div class="ui-empty" data-testid={testId}>

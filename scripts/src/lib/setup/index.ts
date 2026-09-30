@@ -8,18 +8,18 @@
 // overwrites an existing file, never contacts a service, and never needs a
 // secret. Every step is safe to run twice.
 
-import { existsSync, mkdirSync, writeFileSync, chmodSync } from 'node:fs';
-import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
+import { chmodSync, existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { REPO_ROOT } from '../guards/boundary.ts';
 
-export type Check = {
+export interface Check {
   name: string;
   required: boolean;
   ok: boolean;
   detail: string;
   remedy?: string;
-};
+}
 
 const versionOf = (command: string, args: readonly string[] = ['--version']): string | null => {
   const result = spawnSync(command, [...args], { encoding: 'utf8' });
@@ -31,7 +31,12 @@ const versionOf = (command: string, args: readonly string[] = ['--version']): st
 
 /** The required toolchain. Optional tools are reported but never block. */
 export const REQUIRED = [
-  { name: 'bun', minMajor: 1, check: () => versionOf('bun'), remedy: 'Install Bun: https://bun.sh' },
+  {
+    name: 'bun',
+    minMajor: 1,
+    check: () => versionOf('bun'),
+    remedy: 'Install Bun: https://bun.sh',
+  },
   { name: 'git', check: () => versionOf('git'), remedy: 'Install git.' },
   {
     name: 'node',
@@ -48,7 +53,11 @@ export const OPTIONAL = [
   { name: 'direnv', check: () => versionOf('direnv', ['--version']), why: '.envrc loading' },
 ] as const;
 
-export type Report = { checks: Check[]; ok: boolean; missingRequired: string[] };
+export interface Report {
+  checks: Check[];
+  ok: boolean;
+  missingRequired: string[];
+}
 
 export const inspect = (): Report => {
   const checks: Check[] = [];
@@ -102,12 +111,28 @@ const writeIfAbsent = (path: string, contents: string, mode?: number): boolean =
   return true;
 };
 
+/**
+ * The status marker for one toolchain check.
+ *
+ * A named helper rather than an inline nested ternary: three outcomes folded
+ * into one expression reads correctly only if you already know the precedence,
+ * and the two call sites that use it disagreed on spacing before.
+ */
+const statusMark = (check: Check): string => {
+  if (check.ok) {
+    return '  ok  ';
+  }
+  return check.required ? ' MISS ' : '  --  ';
+};
+
 export const runSetup = (): number => {
   const report = inspect();
 
   process.stdout.write('Toolchain\n');
   for (const check of report.checks) {
-    const mark = check.ok ? '  ok  ' : check.required ? ' MISS ' : '  --  ';
+    // A named helper rather than a nested ternary: three outcomes in one
+    // expression reads correctly only if you already know the precedence.
+    const mark = statusMark(check);
     process.stdout.write(`${mark} ${check.name.padEnd(10)} ${check.detail}\n`);
   }
 
@@ -151,10 +176,7 @@ export const main = (args: readonly string[]): number => {
   if (args.includes('--doctor')) {
     const report = inspect();
     for (const check of report.checks) {
-      process.stdout.write(
-        `${check.ok ? '  ok  ' : check.required ? ' MISS ' : '  --  '}` +
-          `${check.name.padEnd(10)} ${check.detail}\n`,
-      );
+      process.stdout.write(`${statusMark(check)}${check.name.padEnd(10)} ${check.detail}\n`);
     }
     return report.ok ? 0 : 1;
   }

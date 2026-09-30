@@ -18,15 +18,15 @@
 // the request in hand; the database handle belongs to the binding set.
 
 import { notes } from '@starter/database';
-import { createId } from '@starter/utils';
-import { and, desc, eq } from 'drizzle-orm';
-import { Elysia, status, t } from 'elysia';
 import {
   NoteCreateSchema,
   NoteListSchema,
   NoteSchema,
   NoteUpdateSchema,
 } from '@starter/schemas/notes';
+import { createId } from '@starter/utils';
+import { and, desc, eq } from 'drizzle-orm';
+import { Elysia, status, t } from 'elysia';
 import type { Container } from './container.ts';
 import { buildRequestContext, unauthorized } from './request_context.ts';
 

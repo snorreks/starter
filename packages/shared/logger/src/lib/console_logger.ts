@@ -16,6 +16,20 @@ const LEVEL_STYLE: Record<LogLevel, string> = {
   ERROR: 'color:#b91c1c;font-weight:600',
 };
 
+/**
+ * Console method per level.
+ *
+ * `Partial`, because `NONE` is a real `LogLevel` that means "log nothing" and has
+ * no method. A `Record<LogLevel, ...>` would force a meaningless entry for it, or
+ * an `as` cast, and either would hide the case that actually matters.
+ */
+const CONSOLE_METHODS: Partial<Record<LogLevel, (...data: unknown[]) => void>> = {
+  DEBUG: console.debug,
+  INFO: console.info,
+  WARNING: console.warn,
+  ERROR: console.error,
+};
+
 export class ConsoleLogger extends BaseLoggerService {
   readonly #context: LogContext;
   #silent: boolean;
@@ -48,14 +62,18 @@ export class ConsoleLogger extends BaseLoggerService {
 
       // Errors and warnings keep the full payload; debug/info are collapsed so
       // the console stays readable at DEBUG in a browser.
-      const renderer =
-        entry.logLevel === 'ERROR'
-          ? console.error
-          : entry.logLevel === 'WARNING'
-            ? console.warn
-            : entry.logLevel === 'DEBUG'
-              ? console.debug
-              : console.info;
+      //
+      // An explicit lookup rather than a nested ternary chain: three levels of
+      // `? :` to pick a method is the shape where a missing branch is invisible
+      // in review. `NONE` is a real LogLevel with no console method, so the
+      // lookup is typed as partial and the missing case handled rather than
+      // falling through to `info` — a level added later would otherwise crash
+      // on `renderer.call(undefined)`, turning a logging path into a failure.
+      const renderer = CONSOLE_METHODS[entry.logLevel];
+
+      if (renderer === undefined) {
+        return;
+      }
 
       renderer.call(console, `%c${entry.logLevel}`, style, ...body);
     }

@@ -13,7 +13,7 @@
 
 import { afterEach, describe, expect, test } from 'bun:test';
 import { DEPLOYMENT_CONFIG } from '@starter/schemas';
-import { parseTarget, planMigrate, type MigrateTarget } from './migrate.ts';
+import { type MigrateTarget, parseTarget, planMigrate } from './migrate.ts';
 
 const savedDatabaseId = DEPLOYMENT_CONFIG.d1DatabaseIds.api;
 
@@ -89,7 +89,9 @@ describe('planMigrate', () => {
     for (const target of ['staging', 'production'] as const) {
       const plan = planMigrate(target);
       expect(plan.ok).toBe(false);
-      if (plan.ok) continue;
+      if (plan.ok) {
+        continue;
+      }
       expect(plan.reason).toContain('D1 database id');
     }
   });
@@ -98,7 +100,9 @@ describe('planMigrate', () => {
     setDatabaseId(null);
 
     const plan = planMigrate('production');
-    if (plan.ok) throw new Error('expected a refusal');
+    if (plan.ok) {
+      throw new Error('expected a refusal');
+    }
 
     // Someone who reads only the error should not wonder whether it half-ran.
     expect(plan.remedy).toContain('Nothing has been changed');
@@ -154,7 +158,9 @@ describe('planMigrate', () => {
 
     for (const target of ['local', 'staging', 'production'] as const) {
       const plan = planMigrate(target);
-      if (plan.ok) expect(plan.target).toBe(target);
+      if (plan.ok) {
+        expect(plan.target).toBe(target);
+      }
     }
   });
 });

@@ -15,10 +15,10 @@
 // alone, which is why the aliases are spelled out here — resolution must not
 // depend on SvelteKit generating anything.
 
+import { fileURLToPath } from 'node:url';
 import { svelte } from '@sveltejs/vite-plugin-svelte';
 import { playwright } from '@vitest/browser-playwright';
 import { defineConfig } from 'vitest/config';
-import { fileURLToPath } from 'node:url';
 
 const src = (relative: string) => fileURLToPath(new URL(relative, import.meta.url));
 
@@ -35,20 +35,35 @@ const src = (relative: string) => fileURLToPath(new URL(relative, import.meta.ur
  */
 const packageAliases = [
   { find: /^@starter\/schemas\//, replacement: `${src('../../../packages/shared/schemas/src')}/` },
-  { find: /^@starter\/schemas$/, replacement: src('../../../packages/shared/schemas/src/index.ts') },
+  {
+    find: /^@starter\/schemas$/,
+    replacement: src('../../../packages/shared/schemas/src/index.ts'),
+  },
 
   // The logger's subpath exports point at `src/lib/*` rather than `src/*`, so
   // they need spelling out.
-  { find: /^@starter\/logger\/browser$/, replacement: src('../../../packages/shared/logger/src/lib/browser_logger.ts') },
-  { find: /^@starter\/logger\/file$/, replacement: src('../../../packages/shared/logger/src/lib/file_sink.ts') },
+  {
+    find: /^@starter\/logger\/browser$/,
+    replacement: src('../../../packages/shared/logger/src/lib/browser_logger.ts'),
+  },
+  {
+    find: /^@starter\/logger\/file$/,
+    replacement: src('../../../packages/shared/logger/src/lib/file_sink.ts'),
+  },
   { find: /^@starter\/logger\//, replacement: `${src('../../../packages/shared/logger/src')}/` },
   { find: /^@starter\/logger$/, replacement: src('../../../packages/shared/logger/src/index.ts') },
 
   { find: /^@starter\/utils\//, replacement: `${src('../../../packages/shared/utils/src')}/` },
   { find: /^@starter\/utils$/, replacement: src('../../../packages/shared/utils/src/index.ts') },
 
-  { find: /^@starter\/frontend-services\//, replacement: `${src('../../../packages/frontend/services/src')}/` },
-  { find: /^@starter\/frontend-services$/, replacement: src('../../../packages/frontend/services/src/index.ts') },
+  {
+    find: /^@starter\/frontend-services\//,
+    replacement: `${src('../../../packages/frontend/services/src')}/`,
+  },
+  {
+    find: /^@starter\/frontend-services$/,
+    replacement: src('../../../packages/frontend/services/src/index.ts'),
+  },
 
   { find: /^@starter\/ui\//, replacement: `${src('../../../packages/frontend/ui/src')}/` },
   { find: /^@starter\/ui$/, replacement: src('../../../packages/frontend/ui/src/index.ts') },

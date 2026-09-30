@@ -15,7 +15,7 @@
 //   3. Environment -> adapter mapping is explicit, so "local" can never be
 //      served by a Cloudflare code path that needs credentials.
 
-import { Type, type Static } from '@sinclair/typebox';
+import { type Static, Type } from '@sinclair/typebox';
 import type { DeploymentEnvironment } from '../logging/log_event.ts';
 
 /** How a given app's logs are obtained in a given environment. */
@@ -36,15 +36,18 @@ export type LogAdapterKind = (typeof LOG_ADAPTER_KINDS)[number];
  * What an adapter can actually do. The CLI checks these before building a
  * filter, so an unsupported flag is a clear error and never a silent no-op.
  */
-export const LogAdapterCapabilitiesSchema = Type.Object({
-  historicalQuery: Type.Boolean(),
-  liveTail: Type.Boolean(),
-  /** Can the provider filter by verified user id (not client-reported)? */
-  userIdFilter: Type.Boolean(),
-  traceIdFilter: Type.Boolean(),
-  /** Provider returns a resumable cursor. */
-  cursor: Type.Boolean(),
-}, { additionalProperties: false });
+export const LogAdapterCapabilitiesSchema = Type.Object(
+  {
+    historicalQuery: Type.Boolean(),
+    liveTail: Type.Boolean(),
+    /** Can the provider filter by verified user id (not client-reported)? */
+    userIdFilter: Type.Boolean(),
+    traceIdFilter: Type.Boolean(),
+    /** Provider returns a resumable cursor. */
+    cursor: Type.Boolean(),
+  },
+  { additionalProperties: false },
+);
 
 export type LogAdapterCapabilities = Static<typeof LogAdapterCapabilitiesSchema>;
 
@@ -59,71 +62,92 @@ const AdapterKindSchema = Type.Union([
 /** Ordered adapter preference for one environment. */
 const adapterListSchema = Type.Array(AdapterKindSchema);
 
-export const AppLogConfigSchema = Type.Object({
-  app: Type.String({ minLength: 1 }),
-  /**
-   * Wrangler worker name for this app. `null` means "not provisioned yet".
-   *
-   * Nullable rather than `''` on purpose: an empty string satisfies a
-   * `minLength: 1` check by not being one, so a `''` placeholder silently
-   * defeats the validation that was supposed to catch it — the registry shipped
-   * failing its own schema until this was fixed. `DEPLOYMENT_CONFIG` uses the
-   * same convention, so "not provisioned" reads the same everywhere.
-   */
-  workerName: Type.Union([Type.String({ minLength: 1 }), Type.Null()]),
-  /** Which producer sources can appear for this app. */
-  sources: Type.Array(
-    Type.Union([
-      Type.Literal('browser'),
-      Type.Literal('worker'),
-      Type.Literal('native'),
-      Type.Literal('cli'),
-    ]),
-  ),
-  /**
-   * environment -> ordered adapter preference. The first entry is the one used.
-   *
-   * Spelled as an explicit object rather than `Type.Record` with a union key:
-   * a Record over a union key collapses the value type to `never` in TypeBox
-   * v1, which turns a typo in one environment's adapter list into a confusing
-   * error far from its cause.
-   */
-  adapters: Type.Object({
-    local: adapterListSchema,
-    staging: adapterListSchema,
-    production: adapterListSchema,
-  }, { additionalProperties: false }),
-  capabilities: Type.Array(LogAdapterCapabilitiesSchema),
-}, { additionalProperties: false });
+export const AppLogConfigSchema = Type.Object(
+  {
+    app: Type.String({ minLength: 1 }),
+    /**
+     * Wrangler worker name for this app. `null` means "not provisioned yet".
+     *
+     * Nullable rather than `''` on purpose: an empty string satisfies a
+     * `minLength: 1` check by not being one, so a `''` placeholder silently
+     * defeats the validation that was supposed to catch it — the registry shipped
+     * failing its own schema until this was fixed. `DEPLOYMENT_CONFIG` uses the
+     * same convention, so "not provisioned" reads the same everywhere.
+     */
+    workerName: Type.Union([Type.String({ minLength: 1 }), Type.Null()]),
+    /** Which producer sources can appear for this app. */
+    sources: Type.Array(
+      Type.Union([
+        Type.Literal('browser'),
+        Type.Literal('worker'),
+        Type.Literal('native'),
+        Type.Literal('cli'),
+      ]),
+    ),
+    /**
+     * environment -> ordered adapter preference. The first entry is the one used.
+     *
+     * Spelled as an explicit object rather than `Type.Record` with a union key:
+     * a Record over a union key collapses the value type to `never` in TypeBox
+     * v1, which turns a typo in one environment's adapter list into a confusing
+     * error far from its cause.
+     */
+    adapters: Type.Object(
+      {
+        local: adapterListSchema,
+        staging: adapterListSchema,
+        production: adapterListSchema,
+      },
+      { additionalProperties: false },
+    ),
+    capabilities: Type.Array(LogAdapterCapabilitiesSchema),
+  },
+  { additionalProperties: false },
+);
 
 export type AppLogConfig = Static<typeof AppLogConfigSchema>;
 
-export const DEPLOYMENT_CONFIG_SCHEMA = Type.Object({
-  /**
-   * Cloudflare Worker names. `null` means "not provisioned yet" — the deploy
-   * dry-run reports that as an actionable error instead of inventing a target.
-   */
-  workerNames: Type.Object({
-    client: Type.Union([Type.String(), Type.Null()]),
-    api: Type.Union([Type.String(), Type.Null()]),
-  }, { additionalProperties: false }),
-  /** D1 database ids. Must be filled by the operator; never committed. */
-  d1DatabaseIds: Type.Object({
-    api: Type.Union([Type.String(), Type.Null()]),
-  }, { additionalProperties: false }),
-  /** Optional R2 bucket for user uploads. Round 1: optional capability. */
-  r2BucketNames: Type.Object({
-    uploads: Type.Union([Type.String(), Type.Null()]),
-  }, { additionalProperties: false }),
-  /**
-   * Custom domains. Empty by default; the starter never assumes a domain it
-   * does not control, and `deploy:configure` is how a user sets these.
-   */
-  customDomains: Type.Object({
-    client: Type.Union([Type.String(), Type.Null()]),
-    api: Type.Union([Type.String(), Type.Null()]),
-  }, { additionalProperties: false }),
-}, { additionalProperties: false });
+export const DEPLOYMENT_CONFIG_SCHEMA = Type.Object(
+  {
+    /**
+     * Cloudflare Worker names. `null` means "not provisioned yet" — the deploy
+     * dry-run reports that as an actionable error instead of inventing a target.
+     */
+    workerNames: Type.Object(
+      {
+        client: Type.Union([Type.String(), Type.Null()]),
+        api: Type.Union([Type.String(), Type.Null()]),
+      },
+      { additionalProperties: false },
+    ),
+    /** D1 database ids. Must be filled by the operator; never committed. */
+    d1DatabaseIds: Type.Object(
+      {
+        api: Type.Union([Type.String(), Type.Null()]),
+      },
+      { additionalProperties: false },
+    ),
+    /** Optional R2 bucket for user uploads. Round 1: optional capability. */
+    r2BucketNames: Type.Object(
+      {
+        uploads: Type.Union([Type.String(), Type.Null()]),
+      },
+      { additionalProperties: false },
+    ),
+    /**
+     * Custom domains. Empty by default; the starter never assumes a domain it
+     * does not control, and `deploy:configure` is how a user sets these.
+     */
+    customDomains: Type.Object(
+      {
+        client: Type.Union([Type.String(), Type.Null()]),
+        api: Type.Union([Type.String(), Type.Null()]),
+      },
+      { additionalProperties: false },
+    ),
+  },
+  { additionalProperties: false },
+);
 
 export type DeploymentConfig = Static<typeof DEPLOYMENT_CONFIG_SCHEMA>;
 

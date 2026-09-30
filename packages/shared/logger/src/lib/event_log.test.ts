@@ -9,7 +9,7 @@
 
 import { describe, expect, test } from 'bun:test';
 import { LOG_LEVELS, type LogEntry, type LogEvent } from '@starter/schemas/logging';
-import { toLogEvent, resolveRelease, type LogContext } from './event_log.ts';
+import { type LogContext, resolveRelease, toLogEvent } from './event_log.ts';
 import { MemoryLogSink } from './memory_sink.ts';
 import { Timer } from './timer.ts';
 
@@ -62,7 +62,10 @@ describe('toLogEvent', () => {
   });
 
   test('preserves the level and message', () => {
-    const event = toLogEvent(entry({ logLevel: 'ERROR', logType: 'error', message: 'boom' }), context);
+    const event = toLogEvent(
+      entry({ logLevel: 'ERROR', logType: 'error', message: 'boom' }),
+      context,
+    );
 
     expect(event.level).toBe('ERROR');
     expect(event.message).toContain('boom');

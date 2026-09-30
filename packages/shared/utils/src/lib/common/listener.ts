@@ -8,15 +8,15 @@
 export type Listener<T> = (payload: T) => void;
 export type UnsubscribeFunction = () => void;
 
-export type Observer<T> = {
+export interface Observer<T> {
   subscribe(listener: Listener<T>): UnsubscribeFunction;
   publish(payload: T): void;
-};
+}
 
-export type LiteObserver<T> = {
+export interface LiteObserver<T> {
   subscribe(listener: Listener<T>): void;
   publish(payload: T): void;
-};
+}
 
 /**
  * Multi-subscriber observer.

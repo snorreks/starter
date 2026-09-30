@@ -13,7 +13,7 @@
 // stayed clean and every test passed. That is what Rule 4 exists to catch.
 
 import { afterAll, describe, expect, test } from 'bun:test';
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import {
@@ -179,7 +179,9 @@ describe('no-leftovers', () => {
   });
 
   test('flags a bare debugger statement', () => {
-    const root = makeTree({ 'apps/backend/api/src/lib/notes.ts': 'export const a = () => {\n  debugger;\n};\n' });
+    const root = makeTree({
+      'apps/backend/api/src/lib/notes.ts': 'export const a = () => {\n  debugger;\n};\n',
+    });
 
     expect(guardNoLeftovers(root).violations).toHaveLength(1);
   });
@@ -188,7 +190,8 @@ describe('no-leftovers', () => {
     // An unanchored /\bdebugger\b/ matches this, and then the guard fails on its
     // own pattern literal.
     const root = makeTree({
-      'apps/backend/api/src/lib/notes.ts': "export const hint = 'set a debugger breakpoint here';\n",
+      'apps/backend/api/src/lib/notes.ts':
+        "export const hint = 'set a debugger breakpoint here';\n",
     });
 
     expect(guardNoLeftovers(root).violations).toEqual([]);
@@ -276,7 +279,9 @@ describe('source-is-tracked', () => {
   test('reports nothing when there is no .gitignore', () => {
     // A fresh copy is checked before `git init`; absence of the file is not a
     // violation.
-    const root = makeTree({ 'scripts/src/lib/logs/cli.ts': 'export const cli = (): void => {};\n' });
+    const root = makeTree({
+      'scripts/src/lib/logs/cli.ts': 'export const cli = (): void => {};\n',
+    });
 
     expect(guardSourceIsTracked(root).violations).toEqual([]);
   });

@@ -13,9 +13,9 @@
 // stateless apart from its in-flight request bookkeeping, so the two can never
 // disagree about what the user sees.
 
-import { BaseClass } from '@starter/utils';
 import type { Note, NoteCreate, NoteUpdate } from '@starter/schemas/notes';
-import { apiClient, type ApiClient } from './api_client.ts';
+import { BaseClass } from '@starter/utils';
+import { type ApiClient, apiClient } from './api_client.ts';
 
 export class NotesService extends BaseClass {
   readonly #api: ApiClient;

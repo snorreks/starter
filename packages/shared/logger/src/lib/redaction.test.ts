@@ -13,7 +13,7 @@
 // destroys the value of every log line while appearing to work.
 
 import { describe, expect, test } from 'bun:test';
-import { DEFAULT_REDACTED_KEYS, isRedactedKey, redactValue, REDACTED } from './redaction.ts';
+import { DEFAULT_REDACTED_KEYS, isRedactedKey, REDACTED, redactValue } from './redaction.ts';
 
 describe('isRedactedKey', () => {
   test('catches the obvious credential names', () => {
@@ -25,7 +25,15 @@ describe('isRedactedKey', () => {
   test('is insensitive to case and punctuation', () => {
     // Requests arrive as `Password`, `PASSWORD`, and `password_hash` from
     // different clients; all three are the same secret.
-    for (const key of ['PASSWORD', 'Password', 'passWord', 'password', 'API_KEY', 'api-key', 'Api Key']) {
+    for (const key of [
+      'PASSWORD',
+      'Password',
+      'passWord',
+      'password',
+      'API_KEY',
+      'api-key',
+      'Api Key',
+    ]) {
       expect(isRedactedKey(key)).toBe(true);
     }
   });
@@ -40,7 +48,13 @@ describe('isRedactedKey', () => {
   test('does not redact a field that merely mentions a word', () => {
     // These are the false positives that make redaction useless if you allow
     // them. `tokenCount` is a number a maintainer needs.
-    for (const key of ['tokenCount', 'passwordPolicy', 'authMethod', 'secretName', 'cookiePolicy']) {
+    for (const key of [
+      'tokenCount',
+      'passwordPolicy',
+      'authMethod',
+      'secretName',
+      'cookiePolicy',
+    ]) {
       expect(isRedactedKey(key)).toBe(false);
     }
   });
@@ -144,13 +158,13 @@ describe('redactValue', () => {
 
     const result = redactValue(cyclic) as Record<string, unknown>;
 
-    expect(result['name']).toBe('loop');
-    expect(result['self']).toBe('[circular]');
+    expect(result.name).toBe('loop');
+    expect(result.self).toBe('[circular]');
   });
 
   test('survives a cycle that does not include the root', () => {
     const inner: Record<string, unknown> = {};
-    inner['self'] = inner;
+    inner.self = inner;
     const outer = { a: inner, b: inner };
 
     expect(() => redactValue(outer)).not.toThrow();
@@ -191,15 +205,29 @@ describe('redactValue', () => {
   });
 
   test('handles the primitives that have no useful JSON form', () => {
+    // Named through a const, not an inline `fn() {}` property: a formatter is
+    // free to rewrite the latter, and the inferred function name then changes —
+    // which is precisely what this assertion reads.
+    const namedFunction = function redactMe() {};
+
     const result = redactValue({
       big: 10n,
-      fn: function named() {},
+      fn: namedFunction,
       sym: Symbol('tag'),
     }) as Record<string, unknown>;
 
-    expect(result['big']).toBe('10n');
-    expect(result['fn']).toBe('[function named]');
-    expect(result['sym']).toBe('Symbol(tag)');
+    expect(result.big).toBe('10n');
+    expect(result.fn).toBe('[function redactMe]');
+    expect(result.sym).toBe('Symbol(tag)');
+  });
+
+  test('never emits an empty function name', () => {
+    // "[function ]" tells a reader nothing about what was on the stack.
+    const result = redactValue({ fn: () => {} }) as { fn: string };
+
+    expect(result.fn.startsWith('[function ')).toBe(true);
+    expect(result.fn.endsWith(']')).toBe(true);
+    expect(result.fn.length).toBeGreaterThan('[function ]'.length);
   });
 
   test('passes null and undefined through unchanged', () => {
@@ -233,8 +261,8 @@ describe('redactValue', () => {
     }) as Record<string, unknown>;
 
     // They serialize to {} rather than throwing — lossy, but safe.
-    expect(result['map']).toEqual({});
-    expect(result['set']).toEqual({});
+    expect(result.map).toEqual({});
+    expect(result.set).toEqual({});
   });
 
   test('redacts a key that only differs by punctuation', () => {

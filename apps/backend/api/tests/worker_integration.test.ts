@@ -22,9 +22,9 @@
 //      the OS pick, and only processes this file started are ever stopped.
 
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
-import { spawn, type ChildProcess } from 'node:child_process';
+import { type ChildProcess, spawn } from 'node:child_process';
+import { existsSync, openSync, rmSync } from 'node:fs';
 import { createServer } from 'node:net';
-import { openSync, rmSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { createId } from '@starter/utils';
 import { MAX_BODY_BYTES } from '../src/lib/telemetry.ts';
@@ -65,7 +65,10 @@ const findFreePort = (): Promise<number> =>
     });
   });
 
-type Readiness = { ready: boolean; reason: string };
+interface Readiness {
+  ready: boolean;
+  reason: string;
+}
 
 /**
  * Wait until *our* Worker answers.
@@ -130,17 +133,23 @@ beforeAll(async () => {
   server = spawn(
     'bunx',
     [
-      'wrangler', 'dev',
-      '--port', String(port),
+      'wrangler',
+      'dev',
+      '--port',
+      String(port),
       '--local',
-      '--config', API_CONFIG,
-      '--var', `TEST_RUN_ID:${RUN_ID}`,
+      '--config',
+      API_CONFIG,
+      '--var',
+      `TEST_RUN_ID:${RUN_ID}`,
       // The sign-in rate limit is real and stays on. A test run creates an
       // account per case, which exceeds a production-sane per-minute budget, so
       // the budget is raised for the run rather than disabled — disabling it
       // would also stop this suite from exercising the limit's existence.
-      '--var', `AUTH_RATE_LIMIT_MAX:${AUTH_RATE_LIMIT_MAX}`,
-      '--var', 'BETTER_AUTH_SECRET:integration-test-secret-not-for-production-use',
+      '--var',
+      `AUTH_RATE_LIMIT_MAX:${AUTH_RATE_LIMIT_MAX}`,
+      '--var',
+      'BETTER_AUTH_SECRET:integration-test-secret-not-for-production-use',
     ],
     {
       cwd: API_DIR,
@@ -164,7 +173,11 @@ afterAll(() => {
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
-type Account = { email: string; password: string; cookie: string };
+interface Account {
+  email: string;
+  password: string;
+  cookie: string;
+}
 
 const signUp = async (label: string): Promise<Account> => {
   const email = `${label}-${createId('t', 8)}@example.invalid`;

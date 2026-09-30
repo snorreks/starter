@@ -78,7 +78,16 @@ export const planMigrate = (target: MigrateTarget): Plan => {
       ok: true,
       target,
       command: 'bunx',
-      args: ['wrangler', 'd1', 'migrations', 'apply', 'DB', '--local', '--config', join(API_DIR, 'wrangler.jsonc')],
+      args: [
+        'wrangler',
+        'd1',
+        'migrations',
+        'apply',
+        'DB',
+        '--local',
+        '--config',
+        join(API_DIR, 'wrangler.jsonc'),
+      ],
     };
   }
 
@@ -114,7 +123,9 @@ export const planMigrate = (target: MigrateTarget): Plan => {
 export const main = (args: readonly string[]): number => {
   const target = parseTarget(args);
   if (target === null) {
-    process.stderr.write('Specify exactly one target: --local, or --remote <staging|production>.\n');
+    process.stderr.write(
+      'Specify exactly one target: --local, or --remote <staging|production>.\n',
+    );
     return 2;
   }
 

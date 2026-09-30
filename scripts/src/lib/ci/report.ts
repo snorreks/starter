@@ -6,12 +6,12 @@
 // parsing across three log formats. This one takes a result and prints it, and
 // the caller decides what the exit code means.
 
-export type CheckResult = {
+export interface CheckResult {
   name: string;
   status: 'passed' | 'failed' | 'skipped' | 'blocked';
   detail?: string;
   evidence?: string;
-};
+}
 
 const ICON = { passed: '✅', failed: '❌', skipped: '⏭️', blocked: '🚫' } as const;
 

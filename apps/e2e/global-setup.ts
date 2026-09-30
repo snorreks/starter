@@ -16,8 +16,8 @@
 // If preflight fails, this throws: a failed setup aborts the run rather than
 // letting tests execute against an unverified API.
 
-import { apiBaseUrl, clientBaseUrl, recordIdentity, verifyApiIdentity } from './preflight.ts';
 import { TEST_RUN_ID } from './playwright.config.ts';
+import { apiBaseUrl, clientBaseUrl, recordIdentity, verifyApiIdentity } from './preflight.ts';
 
 export default async function globalSetup(): Promise<void> {
   process.stdout.write(`e2e run id: ${TEST_RUN_ID}\n`);

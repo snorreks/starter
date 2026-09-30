@@ -23,8 +23,7 @@ export const TAURI_WEBVIEW_ORIGINS = [
 
 const TAURI_ORIGIN_PATTERN = /^(tauri|https?):\/\/(localhost|tauri\.localhost)$/i;
 
-export const isTauriWebviewOrigin = (origin: string): boolean =>
-  TAURI_ORIGIN_PATTERN.test(origin);
+export const isTauriWebviewOrigin = (origin: string): boolean => TAURI_ORIGIN_PATTERN.test(origin);
 
 /**
  * Whether a browser origin may make credentialed requests to this API.

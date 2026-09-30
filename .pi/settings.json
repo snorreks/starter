@@ -1,0 +1,19 @@
+{
+  "//": [
+    "Project-local Pi settings. Loaded only after you trust this project.",
+    "",
+    "Every key here is a default, not a requirement. `pi config -l` edits this",
+    "file interactively; delete anything you do not want.",
+    "",
+    "The one setting worth understanding is `defaultProjectTrust`. It is `ask`,",
+    "not `always`: a repository can contain extensions that run code, and",
+    "trusting one on sight is how a template checkout becomes arbitrary code",
+    "execution. See the security note in docs/agent.md."
+  ],
+  "defaultThinkingLevel": "medium",
+  "defaultTools": ["read", "bash", "edit", "write", "grep", "find", "ls"],
+  "enableSkillCommands": true,
+  "extensions": ["./extensions"],
+  "skills": ["./skills"],
+  "prompts": ["./prompts"]
+}

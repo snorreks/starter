@@ -23,7 +23,7 @@ import { drizzleAdapter } from 'better-auth/adapters/drizzle';
 import { bearer } from 'better-auth/plugins/bearer';
 import { deviceAuthorization } from 'better-auth/plugins/device-authorization';
 
-export type BetterAuthEnv = {
+export interface BetterAuthEnv {
   /** Public base URL of the API, e.g. `http://localhost:8787` locally. */
   baseURL: string;
   /** Session signing secret. A Wrangler secret in deployed environments. */
@@ -39,12 +39,9 @@ export type BetterAuthEnv = {
    * a test pass, is a downgrade every time. `0` disables it deliberately.
    */
   rateLimitMax?: number;
-};
+}
 
-export const createBetterAuth = (
-  db: Parameters<typeof drizzleAdapter>[0],
-  env: BetterAuthEnv,
-) => {
+export const createBetterAuth = (db: Parameters<typeof drizzleAdapter>[0], env: BetterAuthEnv) => {
   return betterAuth({
     database: drizzleAdapter(db, { provider: 'sqlite', schema: betterAuthSchema }),
     baseURL: env.baseURL,

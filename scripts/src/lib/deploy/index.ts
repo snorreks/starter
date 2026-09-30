@@ -17,25 +17,25 @@ import { APP_LOG_CONFIG, DEPLOYMENT_CONFIG, type DeploymentEnvironment } from '@
 import {
   API_DIR,
   CLIENT_DIR,
-  REPO_ROOT,
   captureWrangler,
   hasCloudflareCredential,
+  REPO_ROOT,
   requireRemoteConsent,
   runWrangler,
   wranglerAvailable,
 } from '../cloudflare/wrangler.ts';
-import { inspectConfig, type ConfigCheck } from './configure.ts';
+import { type ConfigCheck, inspectConfig } from './configure.ts';
 
 export type DeployTarget = 'api' | 'client';
 
-export type Step = {
+export interface Step {
   target: DeployTarget;
   description: string;
   command: string;
   args: string[];
   /** Requires a remote mutation, so it needs explicit consent. */
   remote: boolean;
-};
+}
 
 export type Plan =
   | { ok: true; steps: Step[]; notices: string[] }
@@ -140,7 +140,10 @@ export const planDeploy = (
   return { ok: true, steps, notices };
 };
 
-const renderPlan = (plan: Extract<Plan, { ok: true }>, environment: DeploymentEnvironment): void => {
+const renderPlan = (
+  plan: Extract<Plan, { ok: true }>,
+  environment: DeploymentEnvironment,
+): void => {
   process.stdout.write(`Deploy plan (${environment})\n\n`);
   for (const [index, step] of plan.steps.entries()) {
     process.stdout.write(`  ${index + 1}. ${step.description}\n`);
@@ -241,7 +244,7 @@ export const main = (args: readonly string[]): number => {
     }
   }
 
-  process.stdout.write('\nDeployed. Verify with:\n  bun run logs api --mode ' + environment + '\n');
+  process.stdout.write(`\nDeployed. Verify with:\n  bun run logs api --mode ${environment}\n`);
   return 0;
 };
 
@@ -249,4 +252,4 @@ if (import.meta.main) {
   process.exitCode = main(process.argv.slice(2));
 }
 
-export { APP_LOG_CONFIG, DEPLOYMENT_CONFIG, hasCloudflareCredential, captureWrangler };
+export { APP_LOG_CONFIG, captureWrangler, DEPLOYMENT_CONFIG, hasCloudflareCredential };

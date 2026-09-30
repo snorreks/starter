@@ -1,0 +1,32 @@
+{
+  "//": [
+    "Pi loads extensions through jiti, so no build step is needed to run them.",
+    "This config exists so `tsgo --noEmit` typechecks them like every other",
+    "project, and so a mistyped ExtensionAPI call fails here rather than at",
+    "extension load with an opaque stack trace.",
+    "",
+    "`typebox` (1.x) rather than `@sinclair/typebox` (0.34) is a deliberate,",
+    "isolated exception to the one-TypeBox rule. Pi's registerTool() consumes a",
+    "TypeBox 1.x schema object; hand it a 0.34 object and it cannot read it. The",
+    "app uses @sinclair/typebox because that is what Elysia 1.4 validates with,",
+    "and importing Elysia's TypeBox is not an option for an extension that does",
+    "not touch the server. The two meet only here, at the agent boundary, so the",
+    "exception stops at this directory."
+  ],
+  "compilerOptions": {
+    "target": "ES2023",
+    "module": "Preserve",
+    "moduleResolution": "bundler",
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "noEmit": true,
+    "skipLibCheck": true,
+    "allowImportingTsExtensions": true,
+    "types": ["bun"],
+    "paths": {
+      "@starter/pi-types": ["./types.ts"]
+    }
+  },
+  "include": ["extensions/**/*.ts", "scripts/**/*.ts", "types.ts"],
+  "exclude": ["node_modules"]
+}

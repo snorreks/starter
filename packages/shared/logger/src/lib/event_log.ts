@@ -7,16 +7,16 @@
 // would eventually name the wrong one, and a log that misreports its origin is
 // worse than no log.
 
-import {
-  type DeploymentEnvironment,
-  type LogApp,
-  type LogEvent,
-  type LogEntry,
-  type LogSource,
+import type {
+  DeploymentEnvironment,
+  LogApp,
+  LogEntry,
+  LogEvent,
+  LogSource,
 } from '@starter/schemas/logging';
 import { redactValue } from './redaction.ts';
 
-export type LogContext = {
+export interface LogContext {
   app: LogApp;
   environment: DeploymentEnvironment;
   source: LogSource;
@@ -24,7 +24,7 @@ export type LogContext = {
   release: string;
   /** Extra field names to redact on top of the defaults. */
   extraRedactedKeys?: readonly string[];
-};
+}
 
 /** Release identifier: the injected build id, or an explicit dev marker. */
 export const resolveRelease = (injected?: string): string => {
@@ -49,7 +49,9 @@ export const toLogEvent = (entry: LogEntry, context: LogContext, ...data: unknow
     if (typeof value === 'string') {
       messageParts.push(value);
     } else {
-      messageParts.push(JSON.stringify(redactValue(value, { extraKeys: context.extraRedactedKeys })));
+      messageParts.push(
+        JSON.stringify(redactValue(value, { extraKeys: context.extraRedactedKeys })),
+      );
     }
   }
 

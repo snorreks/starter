@@ -8,7 +8,7 @@
 // immediately.
 
 import type { SessionUser } from '@starter/schemas/auth';
-import { apiClient, type ApiClient } from './api_client.ts';
+import { type ApiClient, apiClient } from './api_client.ts';
 
 class SessionState {
   #user = $state<SessionUser | null>(null);

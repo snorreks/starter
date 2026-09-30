@@ -8,7 +8,7 @@
 // place and the API checks a different constant is two sources of truth, and
 // they drift.
 
-import { type Static, type TSchema } from '@sinclair/typebox';
+import type { Static, TSchema } from '@sinclair/typebox';
 import { Value } from '@sinclair/typebox/value';
 import {
   BaseViewModel,
@@ -45,9 +45,12 @@ export type BaseFormViewModelInterface<FormSchema extends TSchema> = {
 } & BaseViewModelInterface;
 
 export abstract class BaseFormViewModel<
-  FormSchema extends TSchema,
-  Options extends BaseViewModelOptions = BaseViewModelOptions,
-> extends BaseViewModel<Options> implements BaseFormViewModelInterface<FormSchema> {
+    FormSchema extends TSchema,
+    Options extends BaseViewModelOptions = BaseViewModelOptions,
+  >
+  extends BaseViewModel<Options>
+  implements BaseFormViewModelInterface<FormSchema>
+{
   form = $state({} as Static<FormSchema>);
   isSubmitting = $state(false);
 

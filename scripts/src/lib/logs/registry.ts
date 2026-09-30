@@ -12,22 +12,17 @@
 
 import {
   APP_LOG_CONFIG,
-  DEPLOYMENT_CONFIG,
-  capabilitiesFor,
-  resolveLogAdapter,
   type AppId,
+  capabilitiesFor,
+  DEPLOYMENT_CONFIG,
   type DeploymentEnvironment,
   type LogAdapterCapabilities,
   type LogAdapterKind,
+  resolveLogAdapter,
 } from '@starter/schemas';
 
-export {
-  APP_LOG_CONFIG,
-  DEPLOYMENT_CONFIG,
-  capabilitiesFor,
-  resolveLogAdapter,
-};
 export type { AppId, DeploymentEnvironment, LogAdapterCapabilities, LogAdapterKind };
+export { APP_LOG_CONFIG, capabilitiesFor, DEPLOYMENT_CONFIG, resolveLogAdapter };
 
 /** Does this deployment have a Worker name configured at all? */
 export const isProvisioned = (app: AppId): boolean => {

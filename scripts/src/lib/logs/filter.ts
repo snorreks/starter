@@ -11,8 +11,8 @@
 // reported as `capability_unsupported` *before* any provider call — so an
 // unsupported flag never degrades into a silent full-dump.
 
-import type { LogEvent, LogQuery } from './types.ts';
 import { parseDuration } from './duration.ts';
+import type { LogEvent, LogQuery } from './types.ts';
 
 /** Field name carrying the forwarded client context, per TelemetryPayload. */
 const CLIENT_REPORTED_USER = 'clientReported.userId';
@@ -112,10 +112,7 @@ export const buildFilter = (
  * can share the same semantics. Returns `null` when the query needs no
  * server-side narrowing.
  */
-export const buildLogpushFilter = (
-  query: LogQuery,
-  since: number | undefined,
-): string | null => {
+export const buildLogpushFilter = (query: LogQuery, since: number | undefined): string | null => {
   const clauses: string[] = [];
 
   if (since !== undefined) {

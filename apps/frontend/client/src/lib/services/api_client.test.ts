@@ -12,8 +12,8 @@
 // test from depending on whether the global is replaceable.
 
 import { describe, expect, test } from 'bun:test';
-import { ApiClient, setApiTokenProvider, type FetchLike } from '#lib/services/api_client.ts';
-import { AppError, isAbortError, type AppErrorType } from '@starter/utils';
+import { AppError, type AppErrorType, isAbortError } from '@starter/utils';
+import { ApiClient, type FetchLike, setApiTokenProvider } from '#lib/services/api_client.ts';
 
 const jsonResponse = (body: unknown, status = 200): Response =>
   new Response(JSON.stringify(body), {

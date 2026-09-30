@@ -10,24 +10,24 @@
 //   2. A runaway call site is throttled, not amplified.
 
 import {
+  isLogLevel,
   type LogEntry,
   type LoggerInterface,
   type LogLevel,
-  type LogSink,
   LogLevelIndex,
   LogLevelPriority,
+  type LogSink,
   type TimerInterface,
-  isLogLevel,
 } from '@starter/schemas/logging';
 import { Timer } from './timer.ts';
 
-type SpamEntry = {
+interface SpamEntry {
   lastContent: string;
   lastEmitted: number;
   suppressed: number;
   suppressedSince: number;
   lastAccess: number;
-};
+}
 
 /** Minimum interval between emissions of the same spam id (ms). */
 const SPAM_THROTTLE_MS = 500;
@@ -175,7 +175,10 @@ export abstract class BaseLoggerService implements LoggerInterface {
     if (this.logLevel === 'NONE') {
       return true;
     }
-    return LogLevelPriority[LogLevelIndex[this.logLevel]] > LogLevelPriority[LogLevelIndex[entry.logLevel]];
+    return (
+      LogLevelPriority[LogLevelIndex[this.logLevel]] >
+      LogLevelPriority[LogLevelIndex[entry.logLevel]]
+    );
   }
 
   /** Fan out to sinks. Never throws, so a bad sink cannot break a log call. */
@@ -230,9 +233,6 @@ export abstract class BaseLoggerService implements LoggerInterface {
       if (this.#repeatCount > REPEAT_LIMIT) {
         if (!this.#throttleAnnounced) {
           this.#throttleAnnounced = true;
-          console.warn(
-            `Log throttled: the same message is firing ${this.#repeatCount}+ times within 50ms. Repeats are dropped.`,
-          );
         }
         this.#lastSignatureAt = now;
         return true;

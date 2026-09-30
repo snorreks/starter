@@ -6,7 +6,12 @@ import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { CONTRACTS_DIR } from './cli.ts';
 
-export type ContractRow = { id: string; file: string; type: string; status: string };
+export interface ContractRow {
+  id: string;
+  file: string;
+  type: string;
+  status: string;
+}
 
 const FIELD = (frontmatter: string, key: string): string => {
   const match = new RegExp(`^${key}:\\s*(.+)$`, 'm').exec(frontmatter);
@@ -37,15 +42,15 @@ export const main = (): number => {
   const rows = readContracts();
 
   if (rows.length === 0) {
-    process.stdout.write(
-      'No contracts yet.\nCreate one with: bun run contract new "<title>"\n',
-    );
+    process.stdout.write('No contracts yet.\nCreate one with: bun run contract new "<title>"\n');
     return 0;
   }
 
   process.stdout.write(`${rows.length} contract(s)\n\n`);
   for (const row of rows) {
-    process.stdout.write(`  ${row.id.padEnd(8)} ${row.type.padEnd(9)} ${row.status.padEnd(10)} ${row.file}\n`);
+    process.stdout.write(
+      `  ${row.id.padEnd(8)} ${row.type.padEnd(9)} ${row.status.padEnd(10)} ${row.file}\n`,
+    );
   }
   return 0;
 };

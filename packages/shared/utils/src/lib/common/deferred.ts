@@ -1,10 +1,10 @@
 // packages/shared/utils/src/lib/common/deferred.ts
 
-export type Deferred<T> = {
+export interface Deferred<T> {
   readonly promise: Promise<T>;
   resolve: (value: T | PromiseLike<T>) => void;
   reject: (reason?: unknown) => void;
-};
+}
 
 export const createDeferred = <T = void>(): Deferred<T> => {
   let resolve!: (value: T | PromiseLike<T>) => void;

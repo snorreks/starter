@@ -7,7 +7,10 @@
 // everything" or "show me nothing", and both look like a working command
 // returning no data.
 
-export type ParsedDuration = { ms: number; label: string };
+export interface ParsedDuration {
+  ms: number;
+  label: string;
+}
 
 const UNITS: Record<string, number> = {
   s: 1_000,

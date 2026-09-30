@@ -104,11 +104,7 @@
       "indexes": {
         "accounts_user_provider_account_idx": {
           "name": "accounts_user_provider_account_idx",
-          "columns": [
-            "user_id",
-            "provider_id",
-            "account_id"
-          ],
+          "columns": ["user_id", "provider_id", "account_id"],
           "isUnique": true
         }
       },
@@ -117,12 +113,8 @@
           "name": "accounts_user_id_users_id_fk",
           "tableFrom": "accounts",
           "tableTo": "users",
-          "columnsFrom": [
-            "user_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["user_id"],
+          "columnsTo": ["id"],
           "onDelete": "cascade",
           "onUpdate": "no action"
         }
@@ -224,16 +216,12 @@
       "indexes": {
         "device_codes_device_code_idx": {
           "name": "device_codes_device_code_idx",
-          "columns": [
-            "device_code"
-          ],
+          "columns": ["device_code"],
           "isUnique": true
         },
         "device_codes_user_code_idx": {
           "name": "device_codes_user_code_idx",
-          "columns": [
-            "user_code"
-          ],
+          "columns": ["user_code"],
           "isUnique": true
         }
       },
@@ -242,12 +230,8 @@
           "name": "device_codes_user_id_users_id_fk",
           "tableFrom": "device_codes",
           "tableTo": "users",
-          "columnsFrom": [
-            "user_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["user_id"],
+          "columnsTo": ["id"],
           "onDelete": "cascade",
           "onUpdate": "no action"
         }
@@ -308,17 +292,12 @@
       "indexes": {
         "notes_owner_id_idx": {
           "name": "notes_owner_id_idx",
-          "columns": [
-            "owner_id"
-          ],
+          "columns": ["owner_id"],
           "isUnique": false
         },
         "notes_owner_updated_idx": {
           "name": "notes_owner_updated_idx",
-          "columns": [
-            "owner_id",
-            "updated_at"
-          ],
+          "columns": ["owner_id", "updated_at"],
           "isUnique": false
         }
       },
@@ -327,12 +306,8 @@
           "name": "notes_owner_id_users_id_fk",
           "tableFrom": "notes",
           "tableTo": "users",
-          "columnsFrom": [
-            "owner_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["owner_id"],
+          "columnsTo": ["id"],
           "onDelete": "cascade",
           "onUpdate": "no action"
         }
@@ -406,9 +381,7 @@
       "indexes": {
         "sessions_token_unique": {
           "name": "sessions_token_unique",
-          "columns": [
-            "token"
-          ],
+          "columns": ["token"],
           "isUnique": true
         }
       },
@@ -417,12 +390,8 @@
           "name": "sessions_user_id_users_id_fk",
           "tableFrom": "sessions",
           "tableTo": "users",
-          "columnsFrom": [
-            "user_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["user_id"],
+          "columnsTo": ["id"],
           "onDelete": "cascade",
           "onUpdate": "no action"
         }
@@ -490,9 +459,7 @@
       "indexes": {
         "users_email_unique": {
           "name": "users_email_unique",
-          "columns": [
-            "email"
-          ],
+          "columns": ["email"],
           "isUnique": true
         }
       },

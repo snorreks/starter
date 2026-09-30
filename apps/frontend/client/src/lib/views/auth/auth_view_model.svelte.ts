@@ -7,19 +7,19 @@
 // cannot accept input the API will reject.
 
 import { BaseFormViewModel } from '@starter/frontend-services/base';
-import { goto } from '$app/navigation';
 import { SignInInputSchema, SignUpInputSchema } from '@starter/schemas/auth';
-import { sessionService, type SessionService } from '#lib/services/session_service.svelte.ts';
+import { type SessionService, sessionService } from '#lib/services/session_service.svelte.ts';
+import { goto } from '$app/navigation';
 
 export type AuthMode = 'sign-in' | 'sign-up';
 
-export type AuthViewModelOptions = {
+export interface AuthViewModelOptions {
   className?: string;
   session?: SessionService;
   /** Injectable so a test can assert navigation without a router. */
   navigate?: (path: string) => Promise<void> | void;
   mode?: AuthMode;
-};
+}
 
 export class AuthViewModel extends BaseFormViewModel<
   typeof SignInInputSchema,

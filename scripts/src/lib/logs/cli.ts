@@ -29,16 +29,16 @@ import {
   type LogApp,
   type LogSource,
 } from '@starter/schemas';
-import { capabilitiesFor, resolveLogAdapter } from './registry.ts';
-import { buildFilter } from './filter.ts';
-import { describeDurationUnits } from './duration.ts';
-import { readAllLocal, readLocal } from './local_file_adapter.ts';
 import {
   DEFAULT_TAIL_MS,
   MAX_TAIL_MS,
   queryCloudflareHistory,
   tailCloudflare,
 } from './cloudflare_adapter.ts';
+import { describeDurationUnits } from './duration.ts';
+import { buildFilter } from './filter.ts';
+import { readAllLocal, readLocal } from './local_file_adapter.ts';
+import { capabilitiesFor, resolveLogAdapter } from './registry.ts';
 import type { FlagDoc, LogQuery, LogQueryResult } from './types.ts';
 
 const HARD_LIMIT_CAP = 500;
@@ -50,7 +50,11 @@ const FLAG_DOCS: readonly FlagDoc[] = [
     description: 'Environment to read. Default: local.',
   },
   { flag: '--level', arg: 'DEBUG|INFO|WARNING|ERROR', description: 'Minimum severity.' },
-  { flag: '--source', arg: 'browser|worker|native|cli', description: 'Restrict to a producer source.' },
+  {
+    flag: '--source',
+    arg: 'browser|worker|native|cli',
+    description: 'Restrict to a producer source.',
+  },
   { flag: '--trace', arg: '<trace-id>', description: 'Correlate to one request.' },
   {
     flag: '--uid',
@@ -108,11 +112,11 @@ export const helpText = (): string => {
   ].join('\n');
 };
 
-export type ParsedArgs = {
+export interface ParsedArgs {
   app: 'client' | 'api' | 'all' | undefined;
   flags: Map<string, string | true>;
   errors: string[];
-};
+}
 
 const VALUE_FLAGS = new Set([
   '--mode',
@@ -275,9 +279,7 @@ export const runQuery = async (query: LogQuery): Promise<LogQueryResult[]> => {
   const resolution = resolveLogAdapter(query.app, query.mode);
 
   if ('unsupported' in resolution) {
-    return [
-      { status: 'capability_unsupported', events: [], message: resolution.unsupported },
-    ];
+    return [{ status: 'capability_unsupported', events: [], message: resolution.unsupported }];
   }
 
   if (resolution.kind === 'local-file') {
@@ -377,9 +379,7 @@ export const main = async (argv: readonly string[]): Promise<number> => {
     if (!result) {
       continue;
     }
-    results.push(
-      query.json === true ? renderJson(target, result) : renderHuman(target, result),
-    );
+    results.push(query.json === true ? renderJson(target, result) : renderHuman(target, result));
     if (result.status !== 'ok') {
       worst = Math.max(worst, 1);
     }
@@ -393,5 +393,5 @@ if (import.meta.main) {
   process.exitCode = await main(process.argv.slice(2));
 }
 
-export { APP_LOG_CONFIG };
 export type { LogApp };
+export { APP_LOG_CONFIG };

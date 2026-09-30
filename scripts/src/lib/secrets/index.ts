@@ -20,14 +20,14 @@ import { REPO_ROOT } from '../guards/boundary.ts';
 export const SOPS_CONFIG = join(REPO_ROOT, '.sops.yaml');
 export const RECIPIENTS_FILE = join(REPO_ROOT, '.age/recipients.txt');
 
-export type SecretsReport = {
+export interface SecretsReport {
   sopsAvailable: boolean;
   ageAvailable: boolean;
   configured: boolean;
   recipients: number;
   problems: string[];
   nextSteps: string[];
-};
+}
 
 const available = (command: string, args: readonly string[]): boolean =>
   spawnSync(command, [...args], { stdio: 'ignore' }).status === 0;

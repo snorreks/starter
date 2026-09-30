@@ -16,9 +16,9 @@
 // that something else also owns. The list here IS the list the view renders.
 
 import { BaseViewModel } from '@starter/frontend-services/base';
-import { toAppError } from '@starter/utils';
 import type { Note, NoteCreate, NoteUpdate } from '@starter/schemas/notes';
-import { notesService, type NotesService } from '#lib/services/notes_service.svelte.ts';
+import { toAppError } from '@starter/utils';
+import { type NotesService, notesService } from '#lib/services/notes_service.svelte.ts';
 
 /**
  * One status, not four booleans.
@@ -33,10 +33,10 @@ export type NotesStatus =
   | { kind: 'ready'; notes: Note[] }
   | { kind: 'error'; message: string; retryable: boolean };
 
-export type NotesViewModelOptions = {
+export interface NotesViewModelOptions {
   className?: string;
   notes?: NotesService;
-};
+}
 
 export class NotesViewModel extends BaseViewModel<{
   className: string;
@@ -188,10 +188,7 @@ export class NotesViewModel extends BaseViewModel<{
    * what exists. Patching local state instead would let a rejected write, a
    * concurrent edit, or a server-normalised field go unnoticed.
    */
-  async #mutate(
-    action: () => Promise<unknown>,
-    failureMessage: string,
-  ): Promise<boolean> {
+  async #mutate(action: () => Promise<unknown>, failureMessage: string): Promise<boolean> {
     this.isMutating = true;
     try {
       await action();

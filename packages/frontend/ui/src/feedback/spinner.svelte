@@ -4,13 +4,13 @@
   nothing at all.
 -->
 <script lang="ts">
-  type Props = {
-    /** Accessible name. Empty renders an aria-hidden decorative spinner. */
-    label?: string;
-    size?: 'sm' | 'md';
-  };
+type Props = {
+  /** Accessible name. Empty renders an aria-hidden decorative spinner. */
+  label?: string;
+  size?: 'sm' | 'md';
+};
 
-  let { label = '', size = 'md' }: Props = $props();
+let { label = '', size = 'md' }: Props = $props();
 </script>
 
 <span

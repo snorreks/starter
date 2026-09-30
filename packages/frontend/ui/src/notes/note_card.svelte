@@ -4,20 +4,20 @@
   would give the list two sources of truth for the same note.
 -->
 <script lang="ts">
-  import type { Note } from '@starter/schemas/notes';
-  import { formatAbsoluteTime, formatRelativeTime } from '@starter/frontend-services/platform';
-  import { previewText } from '@starter/utils';
+import type { Note } from '@starter/schemas/notes';
+import { formatAbsoluteTime, formatRelativeTime } from '@starter/frontend-services/platform';
+import { previewText } from '@starter/utils';
 
-  type Props = {
-    note: Note;
-    onEdit: (id: string) => void;
-    onDelete: (id: string) => void;
-  };
+type Props = {
+  note: Note;
+  onEdit: (id: string) => void;
+  onDelete: (id: string) => void;
+};
 
-  let { note, onEdit, onDelete }: Props = $props();
+let { note, onEdit, onDelete }: Props = $props();
 
-  let expanded = $state(false);
-  const hasBody = $derived(note.body.trim().length > 0);
+let expanded = $state(false);
+const hasBody = $derived(note.body.trim().length > 0);
 </script>
 
 <li class="note-card" data-testid="note-card" data-note-id={note.id}>

@@ -15,25 +15,19 @@
 //   - live tail: `wrangler tail <worker> --format json`, bounded by `--duration`
 
 import { spawn } from 'node:child_process';
-import {
-  buildFilter,
-  buildLogpushFilter,
-} from './filter.ts';
 import { parseDuration } from './duration.ts';
+import { buildFilter, buildLogpushFilter } from './filter.ts';
 import { APP_LOG_CONFIG, capabilitiesFor, prerequisiteFor, resolveLogAdapter } from './registry.ts';
-import type {
-  AppId,
-  DeploymentEnvironment,
-  LogEvent,
-  LogQuery,
-  LogQueryResult,
-} from './types.ts';
+import type { AppId, DeploymentEnvironment, LogEvent, LogQuery, LogQueryResult } from './types.ts';
 
 /** Hard ceiling on a live tail. A follow with no end is not a command. */
 export const MAX_TAIL_MS = 300_000;
 export const DEFAULT_TAIL_MS = 60_000;
 
-export type CloudflareAuth = { available: boolean; reason?: string };
+export interface CloudflareAuth {
+  available: boolean;
+  reason?: string;
+}
 
 /**
  * Is a Cloudflare credential available for this environment?
@@ -122,7 +116,9 @@ export const queryCloudflareHistory = async (query: LogQuery): Promise<LogQueryR
   };
 };
 
-export type TailHandle = { stop: () => void };
+export interface TailHandle {
+  stop: () => void;
+}
 
 /**
  * Bounded live tail via `wrangler tail`.
@@ -179,11 +175,9 @@ export const tailCloudflare = (
 
   const durationMs = Math.min(requested?.ms ?? DEFAULT_TAIL_MS, MAX_TAIL_MS);
 
-  const child = spawn(
-    'bunx',
-    ['wrangler', 'tail', worker, '--format', 'json'],
-    { stdio: ['ignore', 'pipe', 'pipe'] },
-  );
+  const child = spawn('bunx', ['wrangler', 'tail', worker, '--format', 'json'], {
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
 
   let buffer = '';
   const collected: LogEvent[] = [];

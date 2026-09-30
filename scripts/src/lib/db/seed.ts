@@ -33,9 +33,15 @@ export const main = (): number => {
   const result = spawnSync(
     'bunx',
     [
-      'wrangler', 'd1', 'execute', 'DB', '--local',
-      '--config', join(API_DIR, 'wrangler.jsonc'),
-      '--command', SEED_STATEMENTS.join('; '),
+      'wrangler',
+      'd1',
+      'execute',
+      'DB',
+      '--local',
+      '--config',
+      join(API_DIR, 'wrangler.jsonc'),
+      '--command',
+      SEED_STATEMENTS.join('; '),
     ],
     { stdio: 'inherit', cwd: REPO_ROOT },
   );

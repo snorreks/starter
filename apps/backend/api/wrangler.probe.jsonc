@@ -1,3 +1,0 @@
-{ "name": "envprobe", "compatibility_date": "2026-08-21", "compatibility_flags": ["nodejs_compat"],
-  "main": "envprobe.ts",
-  "d1_databases": [{ "binding": "DB", "database_name": "starter-api", "database_id": "probe" }] }
