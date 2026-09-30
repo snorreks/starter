@@ -17,7 +17,7 @@
 
 import { BaseViewModel } from '@starter/frontend-services/base';
 import type { Note, NoteCreate, NoteUpdate } from '@starter/schemas/notes';
-import { toAppError } from '@starter/utils';
+import { OptimisticUpdate, toAppError } from '@starter/utils';
 import { type NotesService, notesService } from './notes_service.svelte.ts';
 
 /**
@@ -47,8 +47,17 @@ export class NotesViewModel extends BaseViewModel<{
   status = $state<NotesStatus>({ kind: 'loading' });
   /** Id being edited, or null when the composer is creating. */
   editingId = $state<string | null>(null);
-  /** True while a create/update/delete round trip is in flight. */
-  isMutating = $state(false);
+
+  /**
+   * Ownership of optimistic list changes.
+   *
+   * One instance for the screen rather than one per delete, because a rollback
+   * has to be able to see that *another* delete already wrote the list. With a
+   * plain snapshot per call, two overlapping deletes each captured the list as it
+   * was before they started, so the loser's rollback put the winner's deleted row
+   * back. See `OptimisticUpdate`.
+   */
+  readonly #optimistic = new OptimisticUpdate<Note>();
 
   constructor(options: NotesViewModelOptions = {}) {
     super({
@@ -92,8 +101,19 @@ export class NotesViewModel extends BaseViewModel<{
    * `isCurrent` check rather than overwriting fresher state.
    */
   async load(): Promise<void> {
+    if (this._disposed) {
+      // A released ViewModel must not start new work. `cancelAll` covers an
+      // in-flight load; this covers one that has not begun.
+      return;
+    }
+
     const { token, signal } = this._requests.begin();
     this.status = { kind: 'loading' };
+
+    // A load replaces the list from the server, so any outstanding optimistic
+    // rollback is now stale: it would compare against its own snapshot and put
+    // back a row this load has already removed.
+    this.#optimistic.supersede();
 
     try {
       const notes = await this.#notes.list(signal);
@@ -132,44 +152,63 @@ export class NotesViewModel extends BaseViewModel<{
   }
 
   async createNote(input: NoteCreate): Promise<boolean> {
-    return this.#mutate(() => this.#notes.create(input), 'Could not save the note.');
+    return this.#mutate(() => this.#notes.create(input));
   }
 
   async updateNote(id: string, input: NoteUpdate): Promise<boolean> {
-    return this.#mutate(() => this.#notes.update(id, input), 'Could not update the note.');
+    return this.#mutate(() => this.#notes.update(id, input));
   }
 
   /**
    * Delete a note.
    *
-   * Removal is local-first so the list responds immediately, and the previous
-   * list is restored if the server rejects it. The alternative — waiting for the
-   * round trip — makes the UI feel broken on a slow connection, and a silent
-   * failure leaves the user believing a note is gone when it is not.
+   * Removal is local-first so the list responds immediately, and the row is
+   * restored if the server rejects it. The alternative — waiting for the round
+   * trip — makes the UI feel broken on a slow connection, and a silent failure
+   * leaves the user believing a note is gone when it is not.
+   *
+   * The rollback goes through `OptimisticUpdate`, so it reinserts *this* delete's
+   * row and yields to any other write that landed in the meantime. A snapshot
+   * restored unconditionally resurrects a row a concurrent delete already removed.
    */
   async deleteNote(id: string): Promise<boolean> {
-    const previous = this.status.kind === 'ready' ? this.status.notes : [];
-    const optimistic = previous.filter((note) => note.id !== id);
-
-    if (this.status.kind === 'ready') {
-      this.status = { kind: 'ready', notes: optimistic };
+    if (this.status.kind !== 'ready') {
+      // Nothing rendered to delete from. Refusing is right; inventing a list here
+      // would put a row back that the user never saw.
+      return false;
     }
-    this.isMutating = true;
+
+    const { list, receipt } = this.#optimistic.apply(this.status.notes, [id]);
+    this.status = { kind: 'ready', notes: list };
+
+    const handle = this._mutations.begin();
+    if (handle === null) {
+      // Disposed between the check above and here. Undo the optimistic removal so
+      // the released ViewModel is not left showing a row it never deleted.
+      this.status = { kind: 'ready', notes: receipt.rollback(list) };
+      return false;
+    }
 
     try {
       await this.#notes.remove(id);
+      receipt.commit();
+
+      if (this._disposed) {
+        return false;
+      }
+
       if (this.editingId === id) {
         this.editingId = null;
       }
       return true;
     } catch (error) {
-      if (this.status.kind === 'ready') {
-        this.status = { kind: 'ready', notes: previous };
+      if (!this._disposed && this.status.kind === 'ready') {
+        this.status = { kind: 'ready', notes: receipt.rollback(this.status.notes) };
       }
       this.showErrorNotification(error, 'Could not delete the note.');
       return false;
     } finally {
-      this.isMutating = false;
+      this._mutations.end();
     }
   }
 
@@ -182,24 +221,32 @@ export class NotesViewModel extends BaseViewModel<{
   }
 
   /**
-   * Run a mutation, then refresh from the server.
+   * Run a write, then refresh from the server.
    *
    * The refresh is the point: after any write the server is the authority on
    * what exists. Patching local state instead would let a rejected write, a
    * concurrent edit, or a server-normalised field go unnoticed.
+   *
+   * Lifecycle is the base class's job — `_runMutation` refuses once disposed and
+   * owns the in-flight count, so this method has no `finally` of its own to get
+   * wrong.
    */
-  async #mutate(action: () => Promise<unknown>, failureMessage: string): Promise<boolean> {
-    this.isMutating = true;
-    try {
-      await action();
-      await this.load();
-      return true;
-    } catch (error) {
-      this.showErrorNotification(error, failureMessage);
+  async #mutate(action: () => Promise<unknown>): Promise<boolean> {
+    const written = await this._runMutation(action);
+
+    if (!written) {
       return false;
-    } finally {
-      this.isMutating = false;
     }
+
+    // A disposal during the write must not trigger a fresh load on a released
+    // ViewModel; `load` would refuse anyway, but the guard is explicit here
+    // because the intent is different from "the write failed".
+    if (this._disposed) {
+      return false;
+    }
+
+    await this.load();
+    return !this._disposed;
   }
 }
 
