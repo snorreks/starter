@@ -25,14 +25,32 @@ export type MigrateTarget = 'local' | 'staging' | 'production';
 export const parseTarget = (args: readonly string[]): MigrateTarget | null => {
   const hasLocal = args.includes('--local');
   const remoteIndex = args.indexOf('--remote');
-  const remote = remoteIndex === -1 ? undefined : args[remoteIndex + 1];
 
-  if (hasLocal && remote !== undefined) {
-    return null;
-  }
-  if (remote === undefined) {
+  if (remoteIndex === -1) {
+    // No --remote at all: local, which is the safe destination. `--local` and no
+    // flag are the same request, so there is nothing to reconcile.
     return 'local';
   }
+
+  const remote = args[remoteIndex + 1];
+
+  // `--remote` with no value is a mistake. Previously this fell through to the
+  // "no --remote" branch and migrated *local*, so a typo'd invocation quietly did
+  // something other than what was asked — the opposite of what a mutating
+  // command should do with an unrecognised argument.
+  if (remote === undefined || remote.startsWith('-')) {
+    return null;
+  }
+
+  if (hasLocal) {
+    return null;
+  }
+
+  // `--remote local` is a contradiction, not a synonym for `--local`.
+  if (remote === 'local') {
+    return null;
+  }
+
   return isDeploymentEnvironment(remote) ? remote : null;
 };
 

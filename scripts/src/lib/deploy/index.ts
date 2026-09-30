@@ -24,7 +24,7 @@ import {
   runWrangler,
   wranglerAvailable,
 } from '../cloudflare/wrangler.ts';
-import { inspectConfig } from './configure.ts';
+import { inspectConfig, type ConfigCheck } from './configure.ts';
 
 export type DeployTarget = 'api' | 'client';
 
@@ -48,17 +48,31 @@ const VALID_TARGETS: readonly DeployTarget[] = ['api', 'client'];
  *
  * Exported so `--dry-run` and the test suite assert on the *same* plan. A
  * dry run that re-derives the commands is a dry run that can lie.
+ *
+ * `config` is injectable for one reason: the template provisions nothing, so
+ * `inspectConfig()` refuses in every test run. Without the seam, every assertion
+ * about the *contents* of a plan — the commands, the consent gate, the notices —
+ * would sit behind `if (plan.ok)` and never execute. Those tests would pass
+ * forever while checking nothing, which is the failure mode this parameter
+ * exists to remove.
  */
 export const planDeploy = (
   targets: readonly DeployTarget[],
   environment: DeploymentEnvironment,
+  config: ConfigCheck = inspectConfig(),
 ): Plan => {
-  const config = inspectConfig();
-
   if (!config.ok) {
     return {
       ok: false,
-      reason: 'Cloudflare is not configured for this project yet.',
+      // The specific problems, not just a headline. Someone fixing this has
+      // five things to check; making them run `deploy:configure --check`
+      // separately to find out which is the wrong division of labour.
+      reason: [
+        'Cloudflare is not configured for this project yet.',
+        ...(config.problems.length === 0
+          ? []
+          : ['', ...config.problems.map((problem) => `  - ${problem}`)]),
+      ].join('\n'),
       remedy:
         '  bun run deploy:configure -- --provision   # create what is missing\n' +
         '  bun run deploy:configure -- --check\n' +
@@ -68,13 +82,30 @@ export const planDeploy = (
 
   const notices = [...config.notices];
 
+  // `parseTargets` already filters argv, so this cannot trigger from the CLI —
+  // but `planDeploy` is exported, and a step built from an unvalidated string
+  // would be a wrangler command for a target this project does not have.
+  for (const target of targets) {
+    if (!VALID_TARGETS.includes(target)) {
+      return {
+        ok: false,
+        reason: `"${target}" is not a deploy target.`,
+        remedy: `Valid targets: ${VALID_TARGETS.join(', ')}.`,
+      };
+    }
+  }
+
   if (environment !== 'local') {
     for (const target of targets) {
       const workerName = DEPLOYMENT_CONFIG.workerNames[target];
       if (workerName === null) {
         return {
           ok: false,
-          reason: `No Worker name is configured for "${target}" in ${DEPLOYMENT_CONFIG.workerNames[target] === null ? 'any' : environment} environment.`,
+          // Names the environment that was actually requested. The previous
+          // ternary re-read the same value it had just tested, so it always
+          // printed "any environment" — telling someone who ran
+          // `--env staging` that the problem was not specific to staging.
+          reason: `No Worker name is configured for "${target}" in the ${environment} environment.`,
           remedy: 'Set workerNames in packages/shared/schemas/src/registry/app_registry.ts.',
         };
       }
@@ -125,11 +156,26 @@ const renderPlan = (plan: Extract<Plan, { ok: true }>, environment: DeploymentEn
 
 export const parseEnvironment = (args: readonly string[]): DeploymentEnvironment | null => {
   const index = args.indexOf('--env');
-  const value = index === -1 ? undefined : args[index + 1];
+
+  // No flag at all: default to staging, which is the safe direction for a
+  // command that changes live systems.
+  if (index === -1) {
+    return 'staging';
+  }
+
+  const value = args[index + 1];
+
+  // `--env` with no value, or `--env --dry-run`, is a mistake and is reported as
+  // one. Returning the default here would have silently deployed to staging
+  // because the user typed a flag with no argument.
+  if (value === undefined || value.startsWith('-')) {
+    return null;
+  }
+
   if (value === 'staging' || value === 'production' || value === 'local') {
     return value;
   }
-  return value === undefined ? 'staging' : null;
+  return null;
 };
 
 export const parseTargets = (args: readonly string[]): DeployTarget[] | null => {
