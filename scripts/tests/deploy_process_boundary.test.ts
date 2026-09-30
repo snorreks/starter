@@ -199,7 +199,7 @@ describe('the process boundary', () => {
   // `--yes`. So a developer at a prompt got a silent remote deploy.
   test('consent is not implied by an interactive terminal', async () => {
     tokenSet();
-    const { requireRemoteConsent } = await import('../cloudflare/wrangler.ts');
+    const { requireRemoteConsent } = await import('../src/cloudflare/wrangler.ts');
 
     // `interactive: true` is exactly what a TTY looks like.
     expect(requireRemoteConsent('api', [], true).allowed).toBe(false);
