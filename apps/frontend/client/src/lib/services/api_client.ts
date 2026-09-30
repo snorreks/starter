@@ -80,12 +80,28 @@ const parseBody = async (response: Response): Promise<unknown> => {
   }
 };
 
+/**
+ * The part of `fetch` this client actually uses.
+ *
+ * Narrower than `typeof fetch` on purpose. Bun adds `fetch.preconnect`, so
+ * `typeof fetch` means something different in the Bun unit lane than in a
+ * browser, and a fake built to satisfy it would need a cast to be correct.
+ * Naming the requirement instead makes the fake's shape exact.
+ */
+export type FetchLike = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
+
 export class ApiClient extends BaseClass {
   readonly #baseUrl: string;
+  readonly #fetch: FetchLike;
 
-  constructor(options: { baseUrl?: string; className?: string } = {}) {
+  constructor(
+    options: { baseUrl?: string; className?: string; fetch?: FetchLike } = {},
+  ) {
     super({ className: options.className ?? 'ApiClient' });
     this.#baseUrl = options.baseUrl ?? clientConfig.apiBaseUrl;
+    // Defaults to the global at call time rather than at construction, so a test
+    // that replaces `globalThis.fetch` before constructing still gets its fake.
+    this.#fetch = options.fetch ?? ((input, init) => fetch(input, init));
   }
 
   get baseUrl(): string {
@@ -107,7 +123,7 @@ export class ApiClient extends BaseClass {
 
     let response: Response;
     try {
-      response = await fetch(url, {
+      response = await this.#fetch(url, {
         method,
         headers: buildHeaders({ body, traceId }),
         ...(body === undefined ? {} : { body: JSON.stringify(body) }),

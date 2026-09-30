@@ -6,10 +6,22 @@
   "license": "MIT",
   "svelte": "./src/index.ts",
   "exports": {
-    ".": "./src/index.ts",
-    "./base": "./src/base/index.ts",
-    "./feedback": "./src/feedback/index.ts",
-    "./notes": "./src/notes/index.ts",
+    ".": {
+      "svelte": "./src/index.ts",
+      "default": "./src/index.ts"
+    },
+    "./base": {
+      "svelte": "./src/base/index.ts",
+      "default": "./src/base/index.ts"
+    },
+    "./feedback": {
+      "svelte": "./src/feedback/index.ts",
+      "default": "./src/feedback/index.ts"
+    },
+    "./notes": {
+      "svelte": "./src/notes/index.ts",
+      "default": "./src/notes/index.ts"
+    },
     "./tokens.css": "./src/tokens.css"
   },
   "scripts": {

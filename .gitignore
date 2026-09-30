@@ -24,7 +24,13 @@ dist/
 # =============================================================================
 # 3. Local runtime state
 # =============================================================================
-logs/
+# Log *output*, anchored to the repository root and to known output directories.
+# Unanchored, `logs/` also matches `scripts/src/lib/logs/` — which is source, and
+# would silently never be committed.
+#
+# See `scripts/src/lib/guards/boundary.ts`: a guard fails if this file ignores
+# anything under a `src/` directory.
+/logs/
 *.log
 pids/
 *.pid

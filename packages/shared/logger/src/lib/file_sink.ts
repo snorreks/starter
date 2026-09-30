@@ -1,11 +1,21 @@
 // packages/shared/logger/src/lib/file_sink.ts
 //
-// Appends NDJSON to a file. This is the local capture path that
-// `bun run logs --mode local` reads.
+// Node-only: appends NDJSON to a file.
 //
-// Writes are serialized through a promise chain: concurrent appends to the same
-// descriptor interleave and produce un-parseable lines, which would turn a
-// diagnostic tool into a source of misleading evidence.
+// Kept out of the package barrel on purpose — see src/index.ts.
+//
+// A **browser cannot write a local file**, which is worth stating plainly
+// because it is easy to assume otherwise. Local capture for browser events
+// therefore works like this:
+//
+//     browser  --POST /api/telemetry-->  Worker (wrangler dev)
+//                                          |
+//                                    stdout, redirected by
+//                                    \`bun run dev:api\` into
+//                                    /tmp/starter-logs/api.ndjson
+//
+// and `bun run logs --mode local` reads that file. This sink is for *Node-side*
+// producers — the CLI, tests, scripts.
 
 import { appendFile, mkdir } from 'node:fs/promises';
 import { dirname } from 'node:path';
@@ -27,6 +37,10 @@ export class NdjsonFileSink implements LogSink {
 
   write(entry: unknown): void {
     const line = `${JSON.stringify(entry)}\n`;
+
+    // Serialized through a promise chain: concurrent appends to one descriptor
+    // interleave and produce un-parseable lines, which would turn a diagnostic
+    // tool into a source of misleading evidence.
     this.#queue = this.#queue.then(async () => {
       if (this.#failed) {
         return;
@@ -35,8 +49,8 @@ export class NdjsonFileSink implements LogSink {
         await mkdir(dirname(this.#path), { recursive: true });
         await appendFile(this.#path, line, 'utf8');
       } catch {
-        // A failing log sink must never become a request failure. Stop trying so
-        // the failure cannot escalate into repeated write attempts.
+        // A failing log sink must never become a request failure. Stop trying,
+        // so the failure cannot escalate into repeated write attempts.
         this.#failed = true;
       }
     });
@@ -47,6 +61,7 @@ export class NdjsonFileSink implements LogSink {
     await this.#queue;
   }
 
+  /** Parse NDJSON, tolerating a truncated final line. */
   static parseNdjson(contents: string): LogEvent[] {
     const events: LogEvent[] = [];
     for (const line of contents.split('\n')) {
@@ -57,7 +72,7 @@ export class NdjsonFileSink implements LogSink {
       try {
         events.push(JSON.parse(trimmed) as LogEvent);
       } catch {
-        // A truncated final line is expected while a process is still writing.
+        // Expected while a producer is still writing.
       }
     }
     return events;

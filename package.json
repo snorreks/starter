@@ -17,7 +17,7 @@
   "scripts": {
     "moon": "moon",
     "dev": "moon run client:dev",
-    "dev:api": "moon run api:dev",
+    "dev:api": "bash scripts/dev/api.sh",
     "build": "moon run :build",
     "test": "moon run :test",
     "test:watch": "moon run :test -- --watch",

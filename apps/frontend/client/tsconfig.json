@@ -8,6 +8,10 @@
   ],
   "extends": "$app/tsconfig",
   "compilerOptions": {
+    // $app/types comes from the SvelteKit base; bun is added so the Bun unit
+    // lane (src/**/*.test.ts and its preload) is covered by this one program
+    // rather than by a second, separately-run check.
+    "types": ["$app/types", "bun"],
     "target": "ES2023",
     "lib": ["ES2023", "DOM", "DOM.Iterable"],
     "strict": true,
