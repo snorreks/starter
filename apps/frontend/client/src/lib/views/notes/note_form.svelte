@@ -6,8 +6,8 @@
   ViewModel state, because a draft that vanished on navigation would be a bug.
 -->
 <script lang="ts">
+import { type Note, validateNoteInput } from '@starter/schemas/notes';
 import { Field } from '@starter/ui';
-import { validateNoteInput, type Note } from '@starter/schemas/notes';
 import type { NotesViewModel } from './notes_view_model.svelte.ts';
 
 type Props = {

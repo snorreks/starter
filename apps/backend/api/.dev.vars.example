@@ -9,16 +9,32 @@
 #
 # For a deployed Worker, set these with `wrangler secret put NAME` rather than
 # committing anything. `BETTER_AUTH_SECRET` is the only value the application
-# cannot do without; locally it falls back to a development value with a warning,
-# and remotely the Worker refuses to start without it.
+# cannot do without.
 
-# Session signing secret. Required in production.
-# Locally this falls back to a development value so `bun run dev:api` works on a
-# fresh clone with no setup.
+# Which deployment this is. Required, and the only input that decides whether
+# development defaults are permitted.
+#
+# `bun run dev:api` passes this explicitly (--var DEPLOYMENT_ENV:local) and
+# wrangler.jsonc sets it for the local top-level environment, so a fresh clone
+# works with this file absent. A *deployed* Worker must set it to staging or
+# production; the Worker refuses to start if it is missing or unrecognised.
+#
+# It used to be inferred from BETTER_AUTH_URL — absent, or containing the
+# substring "localhost" — which meant a deploy that forgot BETTER_AUTH_URL was
+# classified as local and started with the development auth secret. Do not
+# reintroduce a hostname heuristic here.
+DEPLOYMENT_ENV="local"
+
+# Session signing secret.
+# Local: falls back to a development value so `bun run dev:api` works on a fresh
+# clone, and so does the literal value `development-only-not-a-secret`.
+# Remote: required, must be at least 32 characters, and the development
+# placeholder is rejected even when supplied explicitly.
 BETTER_AUTH_SECRET=""
 
 # Public base URL of this API, used by Better Auth to build callback URLs.
 # Must match where the client will reach it, or sign-in redirects somewhere wrong.
+# Required in every environment; must be https outside local.
 BETTER_AUTH_URL="http://127.0.0.1:8787"
 
 # Comma-separated origins permitted to send credentialed requests.

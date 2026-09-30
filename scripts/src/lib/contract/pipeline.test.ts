@@ -2,10 +2,15 @@
 //
 // Deterministic lifecycle coverage.
 //
-// This is the test that lets CI verify the contract pipeline without a model
-// provider, an API key, or a network. A fake adapter drives every branch:
+// This is the suite that lets CI verify the contract pipeline without a model
+// provider, an API key or a network. A scripted adapter drives every branch:
 // success, retry-then-success, exhausted retries, a non-retryable failure, an
 // adapter that throws, and resumption from a persisted manifest.
+//
+// Note the manifest shape: per-stage `status`, not a flat `attempts` map. The flat
+// map could not distinguish "tried and succeeded" from "tried and failed", and
+// resume treated both as done. `runner.test.ts` covers that regression directly;
+// this file covers the surrounding lifecycle.
 
 import { describe, expect, test } from 'bun:test';
 import {
@@ -18,19 +23,29 @@ import {
   runContract,
   type Stage,
   type StageAdapter,
+  type StageEvidence,
   type StageOutcome,
 } from './runner.ts';
 
 const T0 = 1_760_000_000_000;
+const REVISION = 'rev-under-test';
 
 /**
  * A clock frozen at the manifest's start time.
  *
- * Every test builds its manifest at `T0`; running it against the real wall
- * clock would place the run instantly past its budget. Determinism here is the
- * point, so the clock is part of the fixture.
+ * Every test builds its manifest at `T0`; running it against the real wall clock
+ * would place the run instantly past its budget. Determinism here is the point,
+ * so the clock is part of the fixture.
  */
 const frozenClock = (): number => T0;
+
+const passingEvidence = (): StageEvidence => ({
+  kind: 'verification',
+  command: 'bun run test:all',
+  exitCode: 0,
+  sourceRevision: REVISION,
+  recordedAt: T0,
+});
 
 /** An adapter that behaves exactly as told, and records what it was asked. */
 const scriptedAdapter = (
@@ -42,20 +57,48 @@ const scriptedAdapter = (
 
   return {
     calls,
-    async runStage(stage, manifest) {
+    async runStage(stage, _manifest) {
       calls.push(stage);
       if (options.throwOn === stage) {
         throw new Error(`adapter exploded during ${stage}`);
       }
-      const outcomes = script[stage];
-      if (outcomes === undefined) {
-        return { ok: true, summary: `${stage} ok` };
+      const scripted = script[stage];
+      if (scripted !== undefined) {
+        const index = cursors.get(stage) ?? 0;
+        cursors.set(stage, index + 1);
+        return scripted[index] ?? scripted[scripted.length - 1] ?? { ok: true, summary: 'ok' };
       }
-      const index = cursors.get(stage) ?? 0;
-      cursors.set(stage, index + 1);
-      void manifest;
-      return outcomes[index] ?? outcomes[outcomes.length - 1] ?? { ok: true, summary: 'ok' };
+      return {
+        ok: true,
+        summary: `${stage} ok`,
+        ...(stage === 'verify' ? { evidence: passingEvidence() } : {}),
+      };
     },
+  };
+};
+
+/** A manifest with some stages already proven. */
+const partwayThrough = (
+  contractId: string,
+  succeeded: readonly Stage[],
+  overrides: Partial<RunManifest> = {},
+): RunManifest => {
+  const base = createManifest(contractId, 'standard', T0, {
+    sourceRevision: REVISION,
+    ...overrides,
+  });
+  return {
+    ...base,
+    ...overrides,
+    state: 'in_progress',
+    stages: Object.fromEntries(
+      base.plannedStages.map((stage) => [
+        stage,
+        succeeded.includes(stage)
+          ? { stage, status: 'succeeded' as const, attempts: 1 }
+          : { stage, status: 'pending' as const, attempts: 0 },
+      ]),
+    ),
   };
 };
 
@@ -79,19 +122,29 @@ describe('modes', () => {
     expect(MODES.standard).toEqual(['prepare', 'implement', 'verify', 'accepted']);
   });
 
-  test('full mode is a superset that adds the write stage', () => {
-    expect(MODES.full).toContain('write');
-    expect(MODES.standard).not.toContain('write');
+  test('full mode is a superset that adds the design and review rounds', () => {
+    // Typed as Stage[] so a typo in the list is a type error rather than a runtime
+    // expectation that silently passes on a string.
+    const extra: readonly Stage[] = ['write', 'critique', 'review'];
+    for (const stage of extra) {
+      expect(MODES.full).toContain(stage);
+      expect(MODES.standard).not.toContain(stage);
+    }
   });
 });
 
 describe('lifecycle', () => {
-  test('standard mode runs its stages in order and accepts', async () => {
+  test('standard mode runs its work stages in order and accepts', async () => {
     const adapter = scriptedAdapter({});
-    const result = await runContract(createManifest('C-1', 'standard', T0), adapter, frozenClock);
+    const result = await runContract(
+      createManifest('C-1', 'standard', T0, { sourceRevision: REVISION }),
+      adapter,
+      frozenClock,
+    );
 
     expect(result.ok).toBe(true);
-    expect(adapter.calls).toEqual(['prepare', 'implement', 'verify', 'accepted']);
+    // `accepted` is a marker the runner sets, not a stage an adapter performs.
+    expect(adapter.calls).toEqual(['prepare', 'implement', 'verify']);
     if (!result.ok) {
       return;
     }
@@ -100,21 +153,45 @@ describe('lifecycle', () => {
     expect(result.manifest.finishedAt).toBeDefined();
   });
 
+  test('full mode performs every stage it declares', async () => {
+    const adapter = scriptedAdapter({});
+    const result = await runContract(
+      createManifest('C-1f', 'full', T0, { sourceRevision: REVISION }),
+      adapter,
+      frozenClock,
+    );
+
+    expect(result.ok).toBe(true);
+    expect(adapter.calls).toEqual([
+      'prepare',
+      'write',
+      'critique',
+      'implement',
+      'review',
+      'verify',
+    ]);
+  });
+
   test('retries a retryable failure and then succeeds', async () => {
     const adapter = scriptedAdapter({
       verify: [
         { ok: false, summary: 'flaky', retryable: true },
-        { ok: true, summary: 'passed on retry' },
+        { ok: true, summary: 'passed on retry', evidence: passingEvidence() },
       ],
     });
 
-    const result = await runContract(createManifest('C-2', 'standard', T0), adapter, frozenClock);
+    const result = await runContract(
+      createManifest('C-2', 'standard', T0, { sourceRevision: REVISION }),
+      adapter,
+      frozenClock,
+    );
 
     expect(result.ok).toBe(true);
     if (!result.ok) {
       return;
     }
-    expect(result.manifest.attempts.verify).toBe(2);
+    expect(result.manifest.stages.verify?.attempts).toBe(2);
+    expect(result.manifest.stages.verify?.status).toBe('succeeded');
     expect(result.summaries.verify).toBe('passed on retry');
   });
 
@@ -123,14 +200,19 @@ describe('lifecycle', () => {
       verify: [{ ok: false, summary: 'still broken', retryable: true }],
     });
 
-    const result = await runContract(createManifest('C-3', 'standard', T0), adapter, frozenClock);
+    const result = await runContract(
+      createManifest('C-3', 'standard', T0, { sourceRevision: REVISION }),
+      adapter,
+      frozenClock,
+    );
 
     expect(result.ok).toBe(false);
     if (result.ok) {
       return;
     }
     expect(result.manifest.state).toBe('blocked');
-    expect(result.manifest.attempts.verify).toBe(LIMITS.maxAttemptsPerStage);
+    expect(result.manifest.stages.verify?.attempts).toBe(LIMITS.maxAttemptsPerStage);
+    expect(result.manifest.stages.verify?.status).toBe('failed');
     expect(result.reason).toContain('not a pass');
   });
 
@@ -139,30 +221,38 @@ describe('lifecycle', () => {
       implement: [{ ok: false, summary: 'spec is wrong', retryable: false }],
     });
 
-    const result = await runContract(createManifest('C-4', 'standard', T0), adapter, frozenClock);
+    const result = await runContract(
+      createManifest('C-4', 'standard', T0, { sourceRevision: REVISION }),
+      adapter,
+      frozenClock,
+    );
 
     expect(result.ok).toBe(false);
     if (result.ok) {
       return;
     }
-    expect(result.manifest.attempts.implement).toBe(1);
+    expect(result.manifest.stages.implement?.attempts).toBe(1);
     expect(result.reason).toContain('not retryable');
   });
 
   test('treats an adapter that throws as a failed attempt, not a crash', async () => {
     const adapter = scriptedAdapter({}, { throwOn: 'implement' });
-    const result = await runContract(createManifest('C-5', 'standard', T0), adapter, frozenClock);
+    const result = await runContract(
+      createManifest('C-5', 'standard', T0, { sourceRevision: REVISION }),
+      adapter,
+      frozenClock,
+    );
 
     expect(result.ok).toBe(false);
     if (result.ok) {
       return;
     }
     expect(result.manifest.state).toBe('blocked');
-    expect(result.manifest.attempts.implement).toBe(LIMITS.maxAttemptsPerStage);
+    expect(result.manifest.stages.implement?.attempts).toBe(LIMITS.maxAttemptsPerStage);
+    expect(result.manifest.stages.implement?.status).toBe('failed');
   });
 
   test('stops at the run deadline', async () => {
-    // A clock that jumps past the budget on the first call.
     let calls = 0;
     const clock = (): number => {
       calls += 1;
@@ -170,7 +260,7 @@ describe('lifecycle', () => {
     };
 
     const result = await runContract(
-      createManifest('C-6', 'standard', T0),
+      createManifest('C-6', 'standard', T0, { sourceRevision: REVISION }),
       scriptedAdapter({}),
       clock,
     );
@@ -185,27 +275,54 @@ describe('lifecycle', () => {
 
 describe('resumption', () => {
   test('resumes at the first stage that has not succeeded', async () => {
-    // A manifest as persisted mid-run: prepare and implement done, verify not.
-    const interrupted: RunManifest = {
-      ...createManifest('C-7', 'standard', T0, 'run-fixed'),
-      state: 'in_progress',
-      attempts: { prepare: 1, implement: 1 },
-      currentStage: 'verify',
+    // prepare and implement are proven; verify is not.
+    const adapter = scriptedAdapter({});
+    const result = await runContract(
+      resumeManifest(partwayThrough('C-7', ['prepare', 'implement'])),
+      adapter,
+      frozenClock,
+    );
+
+    expect(adapter.calls).toEqual(['verify']);
+    expect(result.ok).toBe(true);
+    expect(result.manifest.state).toBe('accepted');
+  });
+
+  test('a stage that has attempts but no success is still run', async () => {
+    // The exact shape the old flat `attempts` map produced: a count with no
+    // outcome. It must not be mistaken for completion.
+    const stale: RunManifest = {
+      ...partwayThrough('C-7b', ['prepare']),
+      stages: {
+        prepare: { stage: 'prepare', status: 'succeeded', attempts: 1 },
+        implement: { stage: 'implement', status: 'failed', attempts: 2 },
+        verify: { stage: 'verify', status: 'pending', attempts: 0 },
+        accepted: { stage: 'accepted', status: 'pending', attempts: 0 },
+      },
     };
 
     const adapter = scriptedAdapter({});
-    const result = await runContract(resumeManifest(interrupted), adapter, frozenClock);
+    await runContract(resumeManifest(stale), adapter, frozenClock);
 
-    expect(adapter.calls).toEqual(['verify', 'accepted']);
-    expect(result.ok).toBe(true);
+    expect(adapter.calls).toEqual(['implement', 'verify']);
   });
 
   test('a fully completed resume does no work and stays accepted', async () => {
     const complete: RunManifest = {
-      ...createManifest('C-8', 'standard', T0, 'run-fixed'),
+      ...partwayThrough('C-8', ['prepare', 'implement', 'verify', 'accepted']),
       state: 'accepted',
-      attempts: { prepare: 1, implement: 1, verify: 1, accepted: 1 },
       currentStage: null,
+      stages: {
+        prepare: { stage: 'prepare', status: 'succeeded', attempts: 1 },
+        implement: { stage: 'implement', status: 'succeeded', attempts: 1 },
+        verify: {
+          stage: 'verify',
+          status: 'succeeded',
+          attempts: 1,
+          evidence: passingEvidence(),
+        },
+        accepted: { stage: 'accepted', status: 'succeeded', attempts: 1 },
+      },
     };
 
     const adapter = scriptedAdapter({});
@@ -226,12 +343,30 @@ describe('resumption', () => {
     expect(resumed.state).toBe('cancelled');
     expect(resumed.currentStage).toBeNull();
   });
+
+  test('resuming a dry run does not promote it to accepted', async () => {
+    const dry = createManifest('C-10', 'standard', T0, {
+      dryRun: true,
+      sourceRevision: REVISION,
+    });
+    const first = await runContract(dry, scriptedAdapter({}), frozenClock);
+    expect(first.manifest.state).toBe('dry_run');
+
+    // Resume again: the runner must refuse to treat a dry run as acceptance.
+    const second = await runContract(
+      resumeManifest(first.manifest),
+      scriptedAdapter({}),
+      frozenClock,
+    );
+    expect(second.ok).toBe(true);
+    expect(second.manifest.state).toBe('dry_run');
+  });
 });
 
 describe('authority', () => {
-  test('the runner has no merge or deploy capability', async () => {
-    // Guard against the shape of the feature, not just its absence: if a stage
-    // list ever gains a publish step, this fails.
+  test('the runner has no merge or deploy capability', () => {
+    // Guard the shape of the feature, not just its absence: if a stage list ever
+    // gains a publish step, this fails.
     expect(
       Object.values(MODES)
         .flat()

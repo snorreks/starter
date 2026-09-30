@@ -11,7 +11,12 @@
     "app uses @sinclair/typebox because that is what Elysia 1.4 validates with,",
     "and importing Elysia's TypeBox is not an option for an extension that does",
     "not touch the server. The two meet only here, at the agent boundary, so the",
-    "exception stops at this directory."
+    "exception stops at this directory.",
+    "",
+    "`extensions/` is Pi's discovery input and contains entrypoints only.",
+    "`lib/` holds helpers and `tests/` holds tests, because a module in",
+    "`extensions/` is loaded as an extension on every start. tests/pi_loader.test.ts",
+    "enforces that."
   ],
   "compilerOptions": {
     "target": "ES2023",
@@ -27,6 +32,6 @@
       "@starter/pi-types": ["./types.ts"]
     }
   },
-  "include": ["extensions/**/*.ts", "scripts/**/*.ts", "types.ts"],
-  "exclude": ["node_modules"]
+  "include": ["extensions/**/*.ts", "lib/**/*.ts", "tests/**/*.ts", "types.ts"],
+  "exclude": ["node_modules", "artifacts"]
 }

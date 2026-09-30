@@ -7,9 +7,9 @@
 // commands is a dry run that can lie — it would print something reassuring while
 // the real run does something else.
 //
-// Nothing here touches the network or a credential. The plan is a pure function
-// of the registry and the environment, which is the property that makes it
-// testable at all.
+// Nothing here touches the network or a credential. The plan is a pure function of
+// the registry and the environment, which is the property that makes it testable
+// at all.
 //
 // The `configCheck` fixture is the point of the file. The template provisions
 // nothing, so the real `inspectConfig()` refuses in every run; asserting plan
@@ -21,13 +21,7 @@
 import { afterEach, describe, expect, test } from 'bun:test';
 import { DEPLOYMENT_CONFIG } from '@starter/schemas';
 import type { ConfigCheck } from './configure.ts';
-import {
-  type DeployTarget,
-  parseEnvironment,
-  parseTargets,
-  planDeploy,
-  type Step,
-} from './index.ts';
+import { type DeployTarget, parseDeployArgs, planDeploy, type Step } from './index.ts';
 
 /** A configuration that passes every check. */
 const READY: ConfigCheck = { ok: true, problems: [], notices: [] };
@@ -47,8 +41,8 @@ afterEach(() => {
 /**
  * Name both Workers for the duration of `body`.
  *
- * A remote deploy is refused unless every requested target has a Worker name, so
- * a test about step *contents* has to provision one. Names are obviously fake and
+ * A remote deploy is refused unless every requested target has a Worker name, so a
+ * test about step *contents* has to provision one. Names are obviously fake and
  * are never used for anything but satisfying the gate.
  */
 const withWorkerNames = <T>(body: () => T): T => {
@@ -63,7 +57,7 @@ const withWorkerNames = <T>(body: () => T): T => {
 /** A plan that is guaranteed to be built, or the test fails loudly. */
 const planFor = (
   targets: readonly DeployTarget[],
-  environment: 'local' | 'staging' | 'production',
+  environment: 'staging' | 'production',
   config: ConfigCheck = READY,
 ): Step[] =>
   withWorkerNames(() => {
@@ -76,7 +70,7 @@ const planFor = (
 
 const planForFull = (
   targets: readonly DeployTarget[],
-  environment: 'local' | 'staging' | 'production',
+  environment: 'staging' | 'production',
   config: ConfigCheck = READY,
 ) =>
   withWorkerNames(() => {
@@ -87,7 +81,10 @@ const planForFull = (
     return plan;
   });
 
-const commandsOf = (steps: readonly Step[]): string[] =>
+/** The argv as it will be handed to the wrangler wrapper. */
+const argvOf = (steps: readonly Step[]): string[][] => steps.map((step) => [...step.args]);
+
+const argvTextOf = (steps: readonly Step[]): string[] =>
   steps.map((step) => [step.command, ...step.args].join(' '));
 
 describe('planDeploy: refusal', () => {
@@ -114,7 +111,6 @@ describe('planDeploy: refusal', () => {
     if (plan.ok) {
       throw new Error('expected a refusal');
     }
-
     // The user should not have to re-run `deploy:configure --check` to find out
     // which of five things is wrong.
     expect(plan.reason).toContain('D1 database id');
@@ -129,7 +125,6 @@ describe('planDeploy: refusal', () => {
     if (plan.ok) {
       return;
     }
-
     // Naming the target is what makes the message actionable.
     expect(plan.reason).toContain('"api"');
     expect(plan.remedy).toContain('workerNames');
@@ -144,88 +139,169 @@ describe('planDeploy: refusal', () => {
     expect(planDeploy(['client'], 'production', READY).ok).toBe(false);
   });
 
-  test('a local deploy does not need a Worker name', () => {
+  // `local` was previously "not remote", which meant consent was skipped and a
+  // `wrangler deploy` command was built anyway.
+  test('refuses to plan a local deployment at all', () => {
     setWorkerNames({ api: null, client: null });
 
-    expect(planDeploy(['api'], 'local', READY).ok).toBe(true);
+    const plan = planDeploy(['api'], 'local' as 'staging', READY);
+
+    expect(plan.ok).toBe(false);
+    if (plan.ok) {
+      return;
+    }
+    expect(plan.reason).toContain('not a deployable environment');
+    expect(plan.remedy).toContain('dev:api');
   });
 });
 
-describe('parseEnvironment', () => {
-  test('accepts the three declared environments', () => {
-    for (const environment of ['local', 'staging', 'production'] as const) {
-      expect(parseEnvironment(['--env', environment])).toBe(environment);
+describe('parseDeployArgs', () => {
+  test('accepts the two deployable environments', () => {
+    for (const environment of ['staging', 'production'] as const) {
+      const parsed = parseDeployArgs(['--env', environment]);
+      expect(parsed.ok && parsed.environment).toBe(environment);
     }
   });
 
   test('defaults to staging when no flag is given', () => {
-    // Staging rather than production: the safer default for a command whose
-    // whole purpose is changing live systems.
-    expect(parseEnvironment([])).toBe('staging');
+    // Staging rather than production: the safer default for a command whose whole
+    // purpose is changing live systems.
+    const parsed = parseDeployArgs([]);
+    expect(parsed.ok && parsed.environment).toBe('staging');
   });
 
-  test('returns null for an unrecognised environment, rather than falling back', () => {
-    // Falling back would deploy to staging when the user asked for something
-    // else, and report success.
-    expect(parseEnvironment(['--env', 'prod'])).toBeNull();
-    expect(parseEnvironment(['--env', 'PRODUCTION'])).toBeNull();
-    expect(parseEnvironment(['--env', 'qa'])).toBeNull();
+  test('rejects an unrecognised environment rather than falling back', () => {
+    // Falling back would deploy to staging when the user asked for something else,
+    // and report success.
+    for (const argv of [
+      ['--env', 'prod'],
+      ['--env', 'PRODUCTION'],
+      ['--env', 'qa'],
+    ]) {
+      const parsed = parseDeployArgs(argv);
+      expect(parsed.ok).toBe(false);
+    }
   });
 
-  test('returns null when the flag has no value', () => {
-    // `--env` alone is a typo, not a request for staging.
-    expect(parseEnvironment(['--env'])).toBeNull();
+  // The distinction the audit called out: a *local invocation* is running this CLI
+  // on a laptop; `--env local` is a request for a local deployment target, which
+  // this command does not have. Local workerd is `bun run dev:api`.
+  test('rejects --env local and points at the real local path', () => {
+    const parsed = parseDeployArgs(['--env', 'local']);
+
+    expect(parsed.ok).toBe(false);
+    if (parsed.ok) {
+      return;
+    }
+    expect(parsed.errors.join('\n')).toContain('dev:api');
   });
 
-  test('returns null when the value is another flag', () => {
-    expect(parseEnvironment(['--env', '--dry-run'])).toBeNull();
+  test('rejects --env with no value', () => {
+    const parsed = parseDeployArgs(['--env']);
+    expect(parsed.ok).toBe(false);
+    if (parsed.ok) {
+      return;
+    }
+    expect(parsed.errors.join('\n')).toContain('needs a value');
+  });
+
+  test('rejects two different --env values', () => {
+    const parsed = parseDeployArgs(['--env', 'staging', '--env', 'production']);
+    expect(parsed.ok).toBe(false);
+  });
+
+  test('accepts a repeated identical --env', () => {
+    const parsed = parseDeployArgs(['--env', 'staging', '--env', 'staging']);
+    expect(parsed.ok && parsed.environment).toBe('staging');
   });
 });
 
-describe('parseTargets', () => {
-  test('defaults to every target', () => {
-    expect(parseTargets([])).toEqual(['api', 'client']);
+describe('parseDeployArgs: targets', () => {
+  test('defaults to every target when no target word is given', () => {
+    const parsed = parseDeployArgs([]);
+    expect(parsed.ok && parsed.targets).toEqual(['api', 'client']);
   });
 
   test('selects one named target', () => {
-    expect(parseTargets(['api'])).toEqual(['api']);
+    const parsed = parseDeployArgs(['api']);
+    expect(parsed.ok && parsed.targets).toEqual(['api']);
   });
 
   test('selects several targets in order', () => {
-    expect(parseTargets(['client', 'api'])).toEqual(['client', 'api']);
+    const parsed = parseDeployArgs(['client', 'api']);
+    expect(parsed.ok && parsed.targets).toEqual(['client', 'api']);
   });
 
   test('deduplicates a repeated target', () => {
-    // Otherwise a deploy runs twice, which for a deployment means a second
-    // upload to live traffic.
-    expect(parseTargets(['api', 'api'])).toEqual(['api']);
+    // Otherwise a deploy runs twice, which for a deployment means a second upload
+    // to live traffic.
+    const parsed = parseDeployArgs(['api', 'api']);
+    expect(parsed.ok && parsed.targets).toEqual(['api']);
   });
 
-  test('ignores an unknown positional rather than deploying it', () => {
-    // A typo like `bun run deploy -- ap` falls back to deploying everything,
-    // which is the wrong direction for a mistake to go.
-    expect(parseTargets(['ap'])).toEqual(['api', 'client']);
+  // THE DEFECT: `parseTargets` filtered argv down to tokens that happened to be
+  // valid and defaulted to "both" when nothing survived, so `-- ap` deployed the
+  // API *and* the client to production.
+  test('an unknown target word is an error, not a deploy of everything', () => {
+    const parsed = parseDeployArgs(['clientt']);
+
+    expect(parsed.ok).toBe(false);
+    if (parsed.ok) {
+      return;
+    }
+    expect(parsed.errors.join('\n')).toContain('Unknown target "clientt"');
   });
 
-  test('ignores flags when looking for targets', () => {
-    expect(parseTargets(['--dry-run', 'api', '--yes'])).toEqual(['api']);
+  test('an unknown word among valid ones is still an error', () => {
+    const parsed = parseDeployArgs(['api', 'databse']);
+    expect(parsed.ok).toBe(false);
   });
 
-  test('does not treat a flag argument as a target', () => {
-    expect(parseTargets(['--env', 'production'])).toEqual(['api', 'client']);
+  test('flags are not mistaken for targets', () => {
+    const parsed = parseDeployArgs(['--dry-run', 'api', '--yes']);
+    expect(parsed.ok && parsed.targets).toEqual(['api']);
+  });
+
+  test('a flag argument is not mistaken for a target', () => {
+    const parsed = parseDeployArgs(['--env', 'production']);
+    expect(parsed.ok && parsed.targets).toEqual(['api', 'client']);
+  });
+
+  test('an unknown flag is an error', () => {
+    const parsed = parseDeployArgs(['--forse', 'api']);
+    expect(parsed.ok).toBe(false);
+    if (parsed.ok) {
+      return;
+    }
+    expect(parsed.errors.join('\n')).toContain('Unknown flag');
+  });
+
+  test('--dry-run and --json are recognised', () => {
+    const parsed = parseDeployArgs(['--dry-run', '--json']);
+    expect(parsed.ok && parsed.dryRun).toBe(true);
+    expect(parsed.ok && parsed.json).toBe(true);
   });
 });
 
 describe('planDeploy: steps', () => {
   test('produces one step per target, in order', () => {
-    const steps = planFor(['api', 'client'], 'production');
-
-    expect(steps.map((step) => step.target)).toEqual(['api', 'client']);
+    expect(planFor(['api', 'client'], 'production').map((step) => step.target)).toEqual([
+      'api',
+      'client',
+    ]);
   });
 
-  test('every step invokes wrangler', () => {
-    for (const step of planFor(['api', 'client'], 'production')) {
-      expect(commandsOf([step])[0]).toContain('wrangler');
+  // THE DEFECT: `planDeploy` put `wrangler` in `args` and `runWrangler` prepended
+  // it again, so the process that actually ran was `wrangler wrangler deploy`.
+  test('args never contain the wrangler token', () => {
+    for (const argv of argvOf(planFor(['api', 'client'], 'production'))) {
+      expect(argv.filter((token) => token === 'wrangler')).toHaveLength(0);
+    }
+  });
+
+  test('the first argument is the subcommand', () => {
+    for (const argv of argvOf(planFor(['api', 'client'], 'production'))) {
+      expect(argv[0]).toBe('deploy');
     }
   });
 
@@ -242,27 +318,29 @@ describe('planDeploy: steps', () => {
     // The client is a static bundle. Deploying a Worker for it would provision
     // something the project does not use.
     const [clientStep] = planFor(['client'], 'production');
-
     expect(clientStep?.args).toContain('--assets-only');
   });
 
   test('the client step passes no --config', () => {
     const [clientStep] = planFor(['client'], 'production');
-
     expect(clientStep?.args).not.toContain('--config');
   });
 
-  test('a remote step carries its environment', () => {
-    const [step] = planFor(['api'], 'staging');
-
-    expect(step?.args).toContain('--env');
-    expect(step?.args).toContain('staging');
+  test('a remote step always carries its environment', () => {
+    for (const environment of ['staging', 'production'] as const) {
+      const [step] = planFor(['api'], environment);
+      expect(step?.args).toContain('--env');
+      expect(step?.args).toContain(environment);
+    }
   });
 
-  test('a local step carries no --env', () => {
-    const [step] = planFor(['api'], 'local');
+  test('each step carries its own working directory', () => {
+    // The api step must run where its config lives, the client step where its
+    // assets do. Previously both used one root for everything except the client.
+    const [apiStep, clientStep] = planFor(['api', 'client'], 'production');
 
-    expect(step?.args).not.toContain('--env');
+    expect(apiStep?.cwd).toContain('apps/backend/api');
+    expect(clientStep?.cwd).toContain('apps/frontend/client');
   });
 
   test('carries a human description as well as a command', () => {
@@ -274,23 +352,13 @@ describe('planDeploy: steps', () => {
 });
 
 describe('planDeploy: the consent gate', () => {
-  test('a local step is not remote', () => {
-    expect(planFor(['api'], 'local').every((step) => !step.remote)).toBe(true);
-  });
-
-  test('a remote step is remote', () => {
-    // The consent prompt reads `remote`. A production step marked non-remote
-    // would deploy to live traffic with no confirmation.
-    expect(planFor(['api'], 'production').every((step) => step.remote)).toBe(true);
-    expect(planFor(['api'], 'staging').every((step) => step.remote)).toBe(true);
-  });
-
-  test('the gate is per step, not per plan', () => {
-    // A mixed-target plan in one environment is uniform today, but the two flags
-    // are independent fields and a test that only checked the plan would miss a
-    // step-level mistake.
-    for (const step of planFor(['api', 'client'], 'local')) {
-      expect(typeof step.remote).toBe('boolean');
+  test('every step is remote, because every deployable environment is remote', () => {
+    // A production step marked non-remote would deploy to live traffic with no
+    // confirmation. There is no longer a non-remote deploy path.
+    for (const environment of ['staging', 'production'] as const) {
+      for (const step of planFor(['api', 'client'], environment)) {
+        expect(step.remote).toBe(true);
+      }
     }
   });
 });
@@ -299,7 +367,7 @@ describe('planDeploy: what it will never do', () => {
   test('no source-publication command', () => {
     // Publishing is a different action with different consequences. If it ever
     // appears in a deploy plan, `bun run deploy` would push a repository.
-    for (const command of commandsOf(planFor(['api', 'client'], 'production'))) {
+    for (const command of argvTextOf(planFor(['api', 'client'], 'production'))) {
       expect(command).not.toContain('git push');
       expect(command).not.toContain('gh release');
       expect(command).not.toContain('npm publish');
@@ -309,7 +377,7 @@ describe('planDeploy: what it will never do', () => {
   test('no provisioning command', () => {
     // Creating a database or bucket is not deploying, and is not undone by
     // removing the deploy.
-    for (const command of commandsOf(planFor(['api', 'client'], 'production'))) {
+    for (const command of argvTextOf(planFor(['api', 'client'], 'production'))) {
       expect(command).not.toContain('d1 create');
       expect(command).not.toContain('r2 bucket create');
       expect(command).not.toContain('d1 execute');
@@ -317,23 +385,23 @@ describe('planDeploy: what it will never do', () => {
   });
 
   test('no migration command', () => {
-    // Migrations change a database's shape. Running them as part of a deploy
-    // would make a code rollback insufficient to undo a failed release.
-    for (const command of commandsOf(planFor(['api'], 'production'))) {
+    // Migrations change a database's shape. Running them as part of a deploy would
+    // make a code rollback insufficient to undo a failed release.
+    for (const command of argvTextOf(planFor(['api'], 'production'))) {
       expect(command).not.toContain('migrate');
       expect(command).not.toContain('db:');
     }
   });
 
   test('no credential appears in a command', () => {
-    for (const command of commandsOf(planFor(['api'], 'production'))) {
+    for (const command of argvTextOf(planFor(['api'], 'production'))) {
       expect(command).not.toMatch(/CLOUDFLARE_API_TOKEN=\S/);
       expect(command).not.toMatch(/--api-token\s+\S/);
     }
   });
 
   test('no command deletes or removes anything', () => {
-    for (const command of commandsOf(planFor(['api', 'client'], 'production'))) {
+    for (const command of argvTextOf(planFor(['api', 'client'], 'production'))) {
       expect(command).not.toContain('delete');
       expect(command).not.toContain('rm ');
       expect(command).not.toContain('--force');
@@ -341,29 +409,26 @@ describe('planDeploy: what it will never do', () => {
   });
 
   test('an unknown target is refused, not deployed', () => {
-    // `parseTargets` filters argv, so the CLI cannot produce this — but
-    // `planDeploy` is exported and the test suite calls it directly. A plan that
-    // deployed "database" would be a command built from an unvalidated string.
+    // `parseDeployArgs` rejects one, but `planDeploy` is exported and callers
+    // (including these tests) pass arrays directly. A plan built from an
+    // unvalidated string would be a deploy command for a nonexistent app.
     setWorkerNames({ api: 'test-api-worker', client: 'test-client-worker' });
 
-    const plan = planDeploy(['database' as DeployTarget], 'production', READY);
-
-    expect(plan.ok).toBe(false);
+    expect(planDeploy(['database' as DeployTarget], 'production', READY).ok).toBe(false);
   });
 });
 
 describe('planDeploy: notices', () => {
   test('always states that a deploy is not a source publication', () => {
-    // The distinction this tool exists to make. A user who believes otherwise
-    // will act on the belief — most visibly by expecting `git` to have run.
-    for (const environment of ['local', 'staging', 'production'] as const) {
-      const plan = planForFull(['api'], environment);
-      expect(plan.notices.join('\n')).toContain('does not publish source');
+    // The distinction this tool exists to make. A user who believes otherwise will
+    // act on the belief — most visibly by expecting `git` to have run.
+    for (const environment of ['staging', 'production'] as const) {
+      expect(planForFull(['api'], environment).notices.join('\n')).toContain('does not publish');
     }
   });
 
   test('always states that it creates no resources', () => {
-    for (const environment of ['local', 'staging', 'production'] as const) {
+    for (const environment of ['staging', 'production'] as const) {
       expect(planForFull(['api'], environment).notices.join('\n')).toContain('create');
     }
   });

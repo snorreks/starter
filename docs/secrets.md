@@ -83,20 +83,42 @@ For a secret that genuinely has to be shared — a third-party API key a collabo
 also needs.
 
 ```bash
-bun run setup:secrets            # check what is configured
-bun run secrets:encrypt         # encrypt .env
-bun run secrets:decrypt         # decrypt in place
+bun run setup:secrets            # doctor: what is installed, what is configured
 ```
 
-The template ships the tooling and an empty, documented onboarding path —
-`.age/recipients.txt.example`, and a `secrets/README.md` explaining what goes
-where. It ships **no recipients and no keys**, because those identify the people
-who ran the extraction, not you.
+### `secrets:encrypt` and `secrets:decrypt` are not implemented yet
 
-`secrets/*.enc.*` is gitignored. If you encrypt for your team, the practical
-choice is a private repository for the ciphertext and this one for everything
-else; an encrypted file committed publicly leaks the fact of its recipient set and
-its filename, which is often enough.
+Both commands exist, and both currently print the raw `sops` invocations and **exit
+3**. They do not read, write or encrypt anything.
+
+```bash
+bun run secrets:encrypt -- secrets/production.env
+# NOT IMPLEMENTED. Nothing was read, written or encrypted.
+#   sops -e secrets/production.enc.env   > secrets/production.enc.env.new
+#   sops -d secrets/production.enc.env   > apps/backend/api/.dev.vars
+```
+
+They used to print the same guidance and exit 0. That is worse than not having the
+commands: anything wrapping `bun run secrets:encrypt` — a script, a CI step — saw
+success and concluded a file had been encrypted.
+
+Real `init`, `doctor`, `edit`, `encrypt`, `decrypt`, `exec` and `update-keys`
+arrive with the phase that also wires direnv. Until then, run `sops` directly and
+keep the target path explicit.
+
+### What the template ships
+
+The doctor reports the real state on a fresh clone: `sops` and `age` availability,
+whether `.sops.yaml` exists, and how many recipients it names.
+
+The template ships **no `.sops.yaml`, no `.age/recipients.txt` and no ciphertext**,
+because recipients identify the people who ran the extraction, not you. Create
+`.sops.yaml` with your own public age recipient before encrypting anything.
+
+`secrets/*.enc.*` is gitignored in this template. For an initialised project,
+whether ciphertext belongs in the repository is your call — SOPS ciphertext is
+designed to be committed — but note that a committed encrypted file still discloses
+its recipient set and filename, which is often enough to identify who holds what.
 
 ## Checking before you publish
 

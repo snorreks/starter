@@ -25,12 +25,19 @@ afterEach(() => {
   setDatabaseId(savedDatabaseId);
 });
 
+/**
+ * The argv as it will be handed to the wrangler wrapper.
+ *
+ * `planMigrate` no longer names an executable. The binary is supplied by
+ * `runWrangler`, which resolves the pinned workspace copy — naming it here is how
+ * `bunx wrangler` came to be used and a different wrangler version from npm ran.
+ */
 const commandFor = (target: MigrateTarget) => {
   const plan = planMigrate(target);
   if (!plan.ok) {
     throw new Error(`expected a plan, got refusal: ${plan.reason}`);
   }
-  return [plan.command, ...plan.args].join(' ');
+  return `wrangler ${plan.args.join(' ')}`;
 };
 
 describe('parseTarget', () => {
@@ -161,6 +168,22 @@ describe('planMigrate', () => {
       if (plan.ok) {
         expect(plan.target).toBe(target);
       }
+    }
+  });
+
+  test('the plan args never carry the wrangler token', () => {
+    // The wrapper supplies the binary. A duplicate here is the process that ran
+    // `wrangler wrangler d1 migrations apply`.
+    setDatabaseId('test-database-id');
+
+    for (const target of ['local', 'staging', 'production'] as const) {
+      const plan = planMigrate(target);
+      expect(plan.ok).toBe(true);
+      if (!plan.ok) {
+        continue;
+      }
+      expect(plan.args.filter((arg) => arg === 'wrangler')).toHaveLength(0);
+      expect(plan.args[0]).toBe('d1');
     }
   });
 });

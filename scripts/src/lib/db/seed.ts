@@ -6,11 +6,9 @@
 // "Ada Lovelace" and expects to find it later is deterministic, whereas one
 // that depends on whatever a previous run left behind is not.
 
-import { spawnSync } from 'node:child_process';
 import { join } from 'node:path';
-import { REPO_ROOT } from './migrate.ts';
-
-const API_DIR = join(REPO_ROOT, 'apps/backend/api');
+import { runWrangler } from '../cloudflare/wrangler.ts';
+import { API_DIR } from '../paths.ts';
 
 /** Statements are fixed and parameterless. Never interpolate input into SQL. */
 export const SEED_STATEMENTS: readonly string[] = [
@@ -30,26 +28,21 @@ export const main = (): number => {
       '  1 user, 1 session, 2 notes — all synthetic, all addressed seed@example.invalid\n\n',
   );
 
-  const result = spawnSync(
-    'bunx',
-    [
-      'wrangler',
-      'd1',
-      'execute',
-      'DB',
-      '--local',
-      '--config',
-      join(API_DIR, 'wrangler.jsonc'),
-      '--command',
-      SEED_STATEMENTS.join('; '),
-    ],
-    { stdio: 'inherit', cwd: REPO_ROOT },
-  );
+  const code = runWrangler([
+    'd1',
+    'execute',
+    'DB',
+    '--local',
+    '--config',
+    join(API_DIR, 'wrangler.jsonc'),
+    '--command',
+    SEED_STATEMENTS.join('; '),
+  ]);
 
-  if (result.status === 0) {
+  if (code === 0) {
     process.stdout.write('\nSeeded. The seed session token is not a real credential.\n');
   }
-  return result.status ?? 1;
+  return code;
 };
 
 if (import.meta.main) {

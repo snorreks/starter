@@ -10,7 +10,7 @@
 // reasonable person would agree should be true. A check that needs a baseline
 // to pass is not a check; it is a report.
 
-import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { join, relative } from 'node:path';
 
 export type Violation = {
@@ -28,7 +28,11 @@ export type GuardResult = {
   violations: Violation[];
 };
 
-export const REPO_ROOT = new URL('../../../..', import.meta.url).pathname.replace(/\/$/, '');
+// Shared with every other module, so there is one answer to "where is the repo".
+// See scripts/src/lib/paths.ts for why this is not recomputed here.
+import { REPO_ROOT } from '../paths.ts';
+
+export { REPO_ROOT };
 
 /** Skip these: vendored, generated, or not source. */
 const IGNORED_DIRS = new Set([

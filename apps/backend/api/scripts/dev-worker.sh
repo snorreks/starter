@@ -7,6 +7,15 @@
 set -uo pipefail
 
 cd "$(dirname "$0")/.."
+
+# The pinned workspace copy, not `bunx`: `bunx wrangler` from here or from the
+# repository root falls through to the network and runs whatever npm serves.
+WRANGLER="$PWD/node_modules/.bin/wrangler"
+if [ ! -x "$WRANGLER" ]; then
+  echo "wrangler is not installed at $WRANGLER. Run 'bun install' from the repository root." >&2
+  exit 1
+fi
+
 PIDFILE="${TMPDIR:-/tmp}/starter-wrangler.pid"
 LOGFILE="${TMPDIR:-/tmp}/starter-wrangler.log"
 PORT="${PORT:-8817}"
@@ -26,7 +35,8 @@ stop() {
 
 start() {
   stop
-  setsid bunx wrangler dev --port "$PORT" --local --config wrangler.jsonc \
+  setsid "$WRANGLER" dev --port "$PORT" --local --config wrangler.jsonc \
+    --var "DEPLOYMENT_ENV:${DEPLOYMENT_ENV:-local}" \
     --var "AUTH_RATE_LIMIT_MAX:${AUTH_RATE_LIMIT_MAX:-500}" \
     --var "BETTER_AUTH_SECRET:${BETTER_AUTH_SECRET:-local-dev-secret-not-for-production}" \
     > "$LOGFILE" 2>&1 < /dev/null &

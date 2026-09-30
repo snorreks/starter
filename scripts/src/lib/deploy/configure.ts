@@ -12,13 +12,7 @@
 
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { DEPLOYMENT_CONFIG, type DeploymentEnvironment } from '@starter/schemas';
-import {
-  API_DIR,
-  CLIENT_DIR,
-  captureWrangler,
-  hasCloudflareCredential,
-  runWrangler,
-} from '../cloudflare/wrangler.ts';
+import { API_DIR, captureWrangler, hasCloudflareCredential } from '../cloudflare/wrangler.ts';
 
 const WRANGLER_CONFIG = `${API_DIR}/wrangler.jsonc`;
 
@@ -37,7 +31,14 @@ export const inspectConfig = (): ConfigCheck => {
   const notices: string[] = [];
 
   if (!hasCloudflareCredential()) {
-    problems.push('No Cloudflare credential. Set CLOUDFLARE_API_TOKEN, or run `wrangler login`.');
+    // Previously: "Set CLOUDFLARE_API_TOKEN, or run `wrangler login`." The second
+    // half was advice that could not work: `hasCloudflareCredential` reads only
+    // the environment variable, so a `wrangler login` left the tooling reporting
+    // "no credential" while the operator believed they were authenticated.
+    problems.push(
+      'No Cloudflare credential. Set CLOUDFLARE_API_TOKEN. This tooling does not read ' +
+        'the OAuth credentials `wrangler login` writes to a per-user directory.',
+    );
   }
 
   for (const [app, name] of Object.entries(DEPLOYMENT_CONFIG.workerNames)) {
@@ -148,4 +149,4 @@ if (import.meta.main) {
 }
 
 export type { DeploymentEnvironment };
-export { CLIENT_DIR, runWrangler, WRANGLER_CONFIG };
+export { WRANGLER_CONFIG };

@@ -1,25 +1,30 @@
 $schema: 'https://moonrepo.dev/schemas/v2/project.json'
 
-# Moon v2 dropped `type`, `platform`, `source` and `implicitDependencies` from the
-# project schema. `layer` distinguishes a library from something runnable;
-# `dependsOn` is the build-order graph that the removed workspace-level
-# `layers` and `dependencyRules` blocks used to declare.
+# The end-to-end project: Playwright specs, the harness that starts the servers,
+# and the visual-capture command.
 #
-# Tasks are written out rather than extended from a shared template. Each is a
-# delegation to this project's own package.json script, which stays the
-# authority for what the script does. See .moon/workspace.yml.
-layer: 'tool'
+# This project has no `src/` directory. Every file that matters is a top-level
+# TypeScript module (the harness, the config, the preflight) or lives in `tests/`.
+# The previous `sources` group was `src/**/*`, which matched nothing at all — so
+# `e2e:test` hashed to an empty input set, was reported "cached", and its command
+# was an `echo`. A file group that matches nothing is a cache key that never
+# changes; see docs/testing.md.
+# `automation` is Moon's layer for "an automated testing suite, like E2E,
+# integration, or visual tests". It matters because `tool` may not depend on
+# `application`, and this project genuinely drives the client and the API.
+layer: 'automation'
 
 fileGroups:
   sources:
-    - 'src/**/*'
+    - '*.ts'
+  specs:
+    - 'tests/**/*'
   configs:
     - 'package.json'
     - 'tsconfig*.json'
     - 'moon.yml'
+    - 'playwright.config.ts'
   tests:
-    - 'src/**/*.test.ts'
-    - 'src/**/*.spec.ts'
     - 'tests/**/*'
 
 toolchains:
@@ -27,6 +32,8 @@ toolchains:
   javascript:
 
 dependsOn:
+  - client
+  - database
   - schemas
 
 tasks:
@@ -35,36 +42,42 @@ tasks:
     args: ['run', 'typecheck']
     inputs:
       - '@group(sources)'
+      - '@group(specs)'
+      - '@group(configs)'
   lint:
     command: 'bun'
     args: ['run', 'lint']
     inputs:
       - '@group(sources)'
+      - '@group(specs)'
   format:
     command: 'bun'
     args: ['run', 'format']
     inputs:
       - '@group(sources)'
+      - '@group(specs)'
   fix:
     command: 'bun'
     args: ['run', 'fix']
     inputs:
       - '@group(sources)'
-  test:
+      - '@group(specs)'
+
+  # The real Playwright suite. Not cached: it starts a Worker, a preview server
+  # and a browser, migrates a database, and asserts against them. A cached "pass"
+  # would certify servers that were never started.
+  e2e:
     command: 'bun'
-    args: ['run', 'test']
-    inputs:
-      - '@group(sources)'
-  build:
-    command: 'echo'
-    args: ['nothing to build (TypeScript source)']
-    inputs:
-      - '@group(sources)'
+    args: ['run', 'test:e2e']
+    options:
+      cache: false
+
   capture-evidence:
-    command: 'echo'
-    args: ['nothing to build (TypeScript source)']
-    inputs:
-      - '@group(sources)'
+    command: 'bun'
+    args: ['run', 'capture-evidence']
+    options:
+      cache: false
+
   validate:
     deps:
       - '~:lint'

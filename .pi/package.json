@@ -4,11 +4,12 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "lint": "biome lint extensions",
-    "format": "biome format extensions",
-    "fix": "biome check --write extensions --error-on-warnings",
+    "lint": "biome lint extensions lib tests",
+    "format": "biome format extensions lib tests",
+    "fix": "biome check --write extensions lib tests --error-on-warnings",
     "typecheck": "tsgo --noEmit",
-    "test": "bun test extensions"
+    "test": "bun test tests",
+    "loader:smoke": "bun test tests/pi_loader.test.ts"
   },
   "devDependencies": {
     "@earendil-works/pi-agent-core": "^0.87.1",

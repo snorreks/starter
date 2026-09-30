@@ -15,10 +15,16 @@
 import { spawnSync } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { REPO_ROOT } from '../guards/boundary.ts';
+import { REPO_ROOT } from '../paths.ts';
 
 export const SOPS_CONFIG = join(REPO_ROOT, '.sops.yaml');
 export const RECIPIENTS_FILE = join(REPO_ROOT, '.age/recipients.txt');
+
+/** Exit codes, so a caller can distinguish "unavailable" from "worked". */
+export const EXIT = {
+  ok: 0,
+  notImplemented: 3,
+} as const;
 
 export interface SecretsReport {
   sopsAvailable: boolean;
@@ -67,7 +73,7 @@ export const inspectSecrets = (): SecretsReport => {
       'No .sops.yaml. This is expected in a fresh template: recipients are ' +
         'project-specific and must not be inherited.',
     );
-    nextSteps.push('Create .sops.yaml with your own age recipient (see docs/guides/secrets.md)');
+    nextSteps.push('Create .sops.yaml with your own age recipient (see docs/secrets.md)');
   }
 
   return { sopsAvailable, ageAvailable, configured, recipients, problems, nextSteps };
@@ -93,17 +99,29 @@ export const main = (args: readonly string[]): number => {
     }
   }
 
-  // Encrypt/decrypt are intentionally not implemented as a blind wrapper.
+  // Encrypt/decrypt are not implemented here, and say so with a nonzero exit.
+  //
   // They are one-line `sops -e/-d` invocations, and a wrapper that guesses the
-  // recipient or the in-place flag is how a secret gets written to the wrong
-  // file.
+  // recipient or the in-place flag is how a secret gets written to the wrong file.
+  // The real commands (init, doctor, edit, encrypt, decrypt, exec, update-keys)
+  // arrive with the phase that also ships direnv; until then these two print the
+  // raw sops invocations and exit 3.
+  //
+  // Previously they printed the same guidance and exited 0, so a script — or CI —
+  // wrapping `bun run secrets:encrypt` saw success and concluded a file had been
+  // encrypted. Printing instructions and exiting zero is an always-success fake.
   if (args.includes('encrypt') || args.includes('decrypt')) {
-    process.stdout.write(
-      '\nRun sops directly, so the target file is always explicit:\n' +
+    const operation = args.includes('encrypt') ? 'encrypt' : 'decrypt';
+    process.stderr.write(
+      `secrets:${operation} is NOT IMPLEMENTED. Nothing was read, written or encrypted.\n\n` +
+        'Run sops directly, so the target file is always explicit:\n' +
         '  sops -e secrets/production.enc.env   > secrets/production.enc.env.new\n' +
         '  sops -d secrets/production.enc.env   > apps/backend/api/.dev.vars\n' +
-        '\nDecrypted output must go to a gitignored path.\n',
+        '\nDecrypted output must go to a gitignored path.\n' +
+        '\nThis repository wires real secrets:encrypt / secrets:decrypt (plus init,\n' +
+        'edit, exec and update-keys) in the phase that also adds direnv. See docs/secrets.md.\n',
     );
+    return EXIT.notImplemented;
   }
 
   return 0;

@@ -1,30 +1,48 @@
-/**
- * .pi/extensions/logs.ts
- *
- * Gives the agent the same log operations a human has, as a tool.
- *
- * The point is that it calls `bun run logs` — the same CLI, the same adapters,
- * the same registry — rather than reimplementing log reading. An agent with its
- * own quieter log path is an agent that debugs against different data than you
- * do, and the two eventually disagree about what happened.
- *
- * It shells out deliberately. `Bun.spawn` would be tidier, but a tool that
- * imports the CLI's internals and a tool that runs the CLI can drift apart the
- * first time the CLI gains an option, and only one of them gets updated.
- */
+// .pi/extensions/logs.ts
+//
+// Gives the agent the same log operations a human has, as a tool.
+//
+// This file is an **entrypoint**. It registers one tool and holds no logic that
+// can be tested on its own: the argv translation lives in `.pi/lib/logs_args.ts`
+// and the subprocess handling in `.pi/lib/process.ts`.
+//
+// That separation is not stylistic. `.pi/extensions` is discovery input: Pi
+// loads every module it finds there as an extension. `logs.test.ts` used to live
+// in this directory, imported `bun:test`, and was loaded as an extension on every
+// start. Helpers and tests now live under `.pi/lib` and `.pi/tests`.
+//
+// The tool calls `bun run logs` — the same CLI, the same adapters, the same
+// capability rules a human gets. An agent with its own quieter log path is an
+// agent that debugs against different data than you do.
+//
+// It shells out deliberately. A tool that imports the CLI's internals and a tool
+// that runs the CLI drift apart the first time the CLI gains an option, and only
+// one of them gets updated.
 
-import { spawn } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 import type { AgentToolResult, ExtensionAPI } from '@earendil-works/pi-coding-agent';
 import { Type } from 'typebox';
+import { buildArgs, type LogCallDetails, type LogParams, MAX_LINES } from '../lib/logs_args.ts';
+import { runBounded } from '../lib/process.ts';
 
-const REPO_ROOT = new URL('../../', import.meta.url).pathname.replace(/\/$/, '');
+// `fileURLToPath`, not `new URL(...).pathname`: the latter percent-encodes, so a
+// checkout under a directory with a space in it resolves to a path that does not
+// exist and the tool fails with "bun: command not found" from the wrong cwd.
+const REPO_ROOT = fileURLToPath(new URL('../../', import.meta.url));
 
 /**
- * Bounded so a query can never become an unbounded dump: an agent that asks for
- * "all the logs" and gets a megabyte of NDJSON has lost the thread, and the
- * transcript is now mostly log lines.
+ * Bounds. All three are real ceilings, not advisory.
+ *
+ * A tool with no byte limit and no timeout is a way for a misbehaving CLI to
+ * consume the agent's memory and its turn, and neither failure is visible in the
+ * transcript as anything other than "the model stopped responding".
  */
-const MAX_LINES = 200;
+const LIMITS = {
+  /** Hard wall on the whole call, including a `--follow` that respects its own duration. */
+  timeoutMs: 330_000,
+  /** Bytes of stdout + stderr retained. The log CLI's own output is far smaller. */
+  maxBytes: 512 * 1024,
+} as const;
 
 const PARAMS = Type.Object({
   app: Type.Optional(
@@ -42,9 +60,7 @@ const PARAMS = Type.Object({
   level: Type.Optional(
     Type.Union(
       [Type.Literal('DEBUG'), Type.Literal('INFO'), Type.Literal('WARNING'), Type.Literal('ERROR')],
-      {
-        description: 'Minimum level to include.',
-      },
+      { description: 'Minimum level to include.' },
     ),
   ),
   uid: Type.Optional(
@@ -57,47 +73,7 @@ const PARAMS = Type.Object({
   errorsOnly: Type.Optional(Type.Boolean({ description: 'Shorthand for level ERROR.' })),
 });
 
-interface LogParams {
-  app?: 'client' | 'api' | 'all';
-  mode?: 'local' | 'staging' | 'production';
-  level?: 'DEBUG' | 'INFO' | 'WARNING' | 'ERROR';
-  uid?: string;
-  traceId?: string;
-  limit?: number;
-  errorsOnly?: boolean;
-}
-
-/** Recorded alongside the output so the model can see what was actually run. */
-export interface LogCallDetails {
-  command: string;
-  exitCode: number;
-}
-
-/** Build the argv, rejecting anything the CLI does not accept. */
-export const buildArgs = (params: LogParams): string[] => {
-  const args = ['run', 'logs'];
-
-  args.push(params.app ?? 'all');
-  args.push('--mode', params.mode ?? 'local');
-
-  const level = params.errorsOnly === true ? 'ERROR' : params.level;
-  if (level !== undefined) {
-    args.push('--level', level);
-  }
-  if (params.uid !== undefined && params.uid.length > 0) {
-    args.push('--uid', params.uid);
-  }
-  if (params.traceId !== undefined && params.traceId.length > 0) {
-    args.push('--trace', params.traceId);
-  }
-
-  const limit = params.limit ?? MAX_LINES;
-  // Clamped rather than rejected: a model asking for 100000 lines has usually
-  // made a mistake, and a bounded answer is more useful than an error.
-  args.push('--limit', String(Math.max(1, Math.min(limit, MAX_LINES))));
-
-  return args;
-};
+const usage = (args: readonly string[]): string => `bun ${args.join(' ')}`;
 
 export default function logToolExtension(pi: ExtensionAPI): void {
   pi.registerTool({
@@ -118,50 +94,56 @@ export default function logToolExtension(pi: ExtensionAPI): void {
     parameters: PARAMS,
     async execute(_toolCallId, params: LogParams): Promise<AgentToolResult<LogCallDetails>> {
       const args = buildArgs(params);
+      const command = usage(args);
 
-      return await new Promise<AgentToolResult<LogCallDetails>>((resolve) => {
-        const child = spawn('bun', args, { cwd: REPO_ROOT });
-
-        let stdout = '';
-        let stderr = '';
-
-        child.stdout.on('data', (chunk: Buffer) => {
-          stdout += chunk.toString();
+      let result: Awaited<ReturnType<typeof runBounded>>;
+      try {
+        result = await runBounded('bun', args, {
+          cwd: REPO_ROOT,
+          timeoutMs: LIMITS.timeoutMs,
+          maxBytes: LIMITS.maxBytes,
         });
-        child.stderr.on('data', (chunk: Buffer) => {
-          stderr += chunk.toString();
-        });
+      } catch (error) {
+        return {
+          content: [{ type: 'text', text: `Could not run bun: ${(error as Error).message}` }],
+          details: { command, exitCode: -1, truncated: false },
+        };
+      }
 
-        child.on('error', (error) => {
-          resolve({
-            content: [{ type: 'text', text: `Could not run bun: ${error.message}` }],
-            // No `isError` field exists on the result type. A tool failure is
-            // communicated in the text, which is also what the model reads — so a
-            // refusal from the CLI has to be phrased as an answer, not as an
-            // exception, or the model retries instead of relaying the reason.
-            details: { command: `bun ${args.join(' ')}`, exitCode: -1 },
-          });
-        });
+      const notices: string[] = [];
+      if (result.timedOut) {
+        notices.push(
+          `The command exceeded its ${Math.round(LIMITS.timeoutMs / 1000)}s budget and was stopped.`,
+        );
+      }
+      if (result.truncated) {
+        notices.push(
+          `Output exceeded ${LIMITS.maxBytes} bytes and was truncated.` +
+            (result.artifactPath === undefined
+              ? ''
+              : ` The full output was written to ${result.artifactPath}.`),
+        );
+      }
 
-        child.on('close', (code) => {
-          // stderr first when there is any: the CLI's refusal messages are the
-          // useful part, and they arrive on stderr.
-          const text = code === 0 ? stdout.trim() : stderr.trim() || stdout.trim();
+      // stderr first when there is any: the CLI's refusal messages are the useful
+      // part, and they arrive on stderr.
+      const body =
+        result.code === 0 ? result.stdout.trim() : result.stderr.trim() || result.stdout.trim();
 
-          resolve({
-            content: [
-              {
-                type: 'text',
-                text:
-                  text.length > 0
-                    ? text
-                    : `bun run logs ${args.slice(2).join(' ')} produced no output (exit ${code}).`,
-              },
-            ],
-            details: { command: `bun ${args.join(' ')}`, exitCode: code ?? -1 },
-          });
-        });
-      });
+      const text = [
+        body.length > 0 ? body : `${command} produced no output (exit ${result.code}).`,
+        ...notices,
+      ].join('\n');
+
+      return {
+        content: [{ type: 'text', text }],
+        details: {
+          command,
+          exitCode: result.code,
+          truncated: result.truncated,
+          ...(result.artifactPath === undefined ? {} : { artifactPath: result.artifactPath }),
+        },
+      };
     },
   });
 }

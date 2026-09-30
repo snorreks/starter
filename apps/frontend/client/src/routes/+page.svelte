@@ -6,9 +6,9 @@
   responsibility, the logic belongs in a ViewModel behind it.
 -->
 <script lang="ts">
+import { sessionService, sessionState } from '#lib/services/session_service.svelte';
 import { NotesView } from '#lib/views/notes';
 import { getNotesViewModel } from '#lib/views/notes/notes_composition';
-import { sessionState, sessionService } from '#lib/services/session_service.svelte';
 import { goto } from '$app/navigation';
 
 const viewModel = getNotesViewModel();

@@ -1,15 +1,29 @@
 # Continuous integration.
 #
-# Three jobs, ordered by what they can catch and what they cost:
+# Four jobs, ordered by what they can catch and what they cost:
 #
-#   check   — typecheck, lint, format, guards. Seconds. No browser, no D1.
-#   test    — every unit lane plus the real-browser lane. Needs Chromium.
-#   e2e     — the built client against a real Worker and a real D1.
+#   check   — typecheck, lint, format, guards, config. Seconds, no browser, no D1.
+#   unit    — every unit lane, plus the real-browser lane. Needs Chromium.
+#   worker  — the API's unit tests and the Worker integration suite. Needs workerd.
+#   e2e     — the built client against a real Worker and a real D1, in a browser.
 #
-# Nothing here needs a secret. That is a design constraint, not a convenience:
-# a check that cannot run without a credential is a check nobody runs, and a
-# repository where `bun run test` fails on a fresh clone teaches people to skip
-# the suite rather than to fix it.
+# Two properties this file is written to preserve, both of which it previously lost:
+#
+#   1. **Each job runs a lane that can fail.** The E2E job used to invoke
+#      `e2e:test`, whose command was an `echo`. It applied migrations, installed
+#      Chromium, printed a message and went green — and the 17 Playwright tests were
+#      never executed. `e2e:e2e` now runs the real suite, and the negative control
+#      (a deliberately failing assertion makes this job exit nonzero) is documented
+#      in docs/testing.md.
+#
+#   2. **Zero discovered tests is a failure, not a pass.** A test runner that
+#      matches nothing exits 0 in several configurations. Each lane below is
+#      asserted to have discovered a nonzero number of tests.
+#
+# Nothing here needs a secret. That is a design constraint, not a convenience: a
+# check that cannot run without a credential is a check nobody runs, and a
+# repository where `bun run test` fails on a fresh clone teaches people to skip the
+# suite rather than fix it.
 
 name: CI
 
@@ -32,7 +46,7 @@ permissions:
 env:
   # Pin these. A floating toolchain turns a green build red on a Tuesday for
   # reasons that have nothing to do with the change under review.
-  BUN_VERSION: '1.4.0'
+  BUN_VERSION: '1.4.2'
 
 jobs:
   check:
@@ -65,7 +79,14 @@ jobs:
       - name: Guards
         run: bun run guard
 
-  test:
+      - name: Pi extension loader smoke
+        # Drives the real pinned Pi resource loader against this repository's `.pi/`
+        # layout. A test file or helper left inside `.pi/extensions` is loaded as an
+        # extension on every start and fails; nothing else in the suite notices,
+        # because `bun test` passes on files Pi cannot load.
+        run: bun run --cwd .pi loader:smoke
+
+  unit:
     name: Unit and browser tests
     runs-on: ubuntu-latest
     timeout-minutes: 20
@@ -80,20 +101,43 @@ jobs:
         run: bun install --frozen-lockfile
 
       - name: Install Playwright's Chromium
-        # Before `bun run test`, not after: the client's `test` script runs the
-        # browser lane as part of itself, so a workflow that installs Chromium
-        # afterwards fails with "Executable doesn't exist" and looks like a broken
-        # test rather than a broken ordering.
+        # Before the browser lane, not after: a workflow that installs afterwards
+        # fails with "Executable doesn't exist" and looks like a broken test
+        # rather than a broken ordering.
         #
         # Only Chromium. The browser lane runs one provider; running three would
         # triple the time to catch a divergence nobody has hit.
         run: bunx playwright install --with-deps chromium
 
-      - name: Unit and browser tests
+      - name: Unit tests
         # `moon run :test` fans out to each project's own `test` script, so a new
         # package is covered by adding a script rather than by editing this file.
-        # The client's script includes its real-browser lane.
+        # Unit only: the browser lane is a separate task so it can be cached,
+        # failed and reported independently.
         run: bun run test
+
+      - name: Browser tests
+        run: bun run test:browser
+
+  worker:
+    name: Worker integration
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+
+      - name: Install
+        run: bun install --frozen-lockfile
+
+      - name: Worker integration tests
+        # A real `wrangler dev` against a real local D1, on an OS-assigned port,
+        # with a run id so a leftover listener cannot be mistaken for this run's
+        # server. `wrangler dev` shells out to Node, which the runner image has.
+        run: bun run test:integration
 
   e2e:
     name: End to end
@@ -118,10 +162,23 @@ jobs:
         run: bunx playwright install --with-deps chromium
 
       - name: End-to-end tests
-        # Playwright starts the API and a preview of the built client itself.
-        # The run-id preflight aborts the run rather than testing against a
-        # leftover process on the same port.
-        run: bun run e2e
+        # `e2e:e2e` is the real Playwright suite: it builds the client, starts a
+        # Worker and a preview server, proves the API is this run's Worker, and
+        # drives a browser against the built output.
+        #
+        # Output is teed so the next step can assert on it, and `pipefail` keeps a
+        # Playwright failure from being swallowed by the pipeline's last exit code.
+        run: set -o pipefail; bun run e2e 2>&1 | tee "$RUNNER_TEMP/e2e.log"
+
+      - name: Assert the E2E suite discovered and passed tests
+        # A renamed or moved spec directory makes Playwright report zero tests and
+        # exit 0. That is a green job that ran nothing — the same shape of problem
+        # as the `echo` this job used to run.
+        run: |
+          if ! grep -qE '^[[:space:]]+[0-9]+ passed' "$RUNNER_TEMP/e2e.log"; then
+            echo "::error::The E2E run reported no passing tests. See the log above."
+            exit 1
+          fi
 
       - name: Upload failure artifacts
         # Traces and screenshots only when something failed. Uploading them

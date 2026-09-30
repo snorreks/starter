@@ -9,9 +9,17 @@
 // secret. Every step is safe to run twice.
 
 import { spawnSync } from 'node:child_process';
-import { chmodSync, copyFileSync, existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import {
+  chmodSync,
+  copyFileSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  writeFileSync,
+} from 'node:fs';
 import { join } from 'node:path';
-import { REPO_ROOT } from '../guards/boundary.ts';
+import { API_DIR, REPO_ROOT } from '../paths.ts';
+import { playwrightBin, wranglerBin } from '../tools.ts';
 
 export interface Check {
   name: string;
@@ -29,11 +37,18 @@ const versionOf = (command: string, args: readonly string[] = ['--version']): st
   return (result.stdout ?? result.stderr ?? '').split('\n')[0]?.trim() ?? null;
 };
 
-/** The required toolchain. Optional tools are reported but never block. */
+/**
+ * The required toolchain.
+ *
+ * `node` is required, and it is required *with a reason stated*: `wrangler dev` is
+ * a Node program that spawns workerd, so without Node the Worker never starts and
+ * both `test:integration` and `e2e` sit in a four-minute readiness timeout that
+ * reads like a hang. Reporting "node missing (optional)" was wrong in the other
+ * direction too — it let a lane that cannot work look fine.
+ */
 export const REQUIRED = [
   {
     name: 'bun',
-    minMajor: 1,
     check: () => versionOf('bun'),
     remedy: 'Install Bun: https://bun.sh',
   },
@@ -41,17 +56,80 @@ export const REQUIRED = [
   {
     name: 'node',
     check: () => versionOf('node'),
-    remedy: 'Node is needed by some transitive tooling; install Node 22+.',
+    remedy:
+      'Install Node 22+. `wrangler dev` is a Node program, so without it the Worker ' +
+      'never starts and `bun run test:integration` / `bun run e2e` time out after ' +
+      'four minutes. On Nix: nix-shell -p nodejs.',
   },
 ] as const;
 
+/**
+ * Optional tools, reported but never blocking.
+ *
+ * Where the repository pins the tool itself, the pinned copy is reported rather than
+ * whatever is on PATH — see `scripts/src/lib/tools.ts` for why a global wrangler is
+ * not the same thing as this project's wrangler.
+ */
 export const OPTIONAL = [
-  { name: 'wrangler', check: () => versionOf('wrangler'), why: 'Local Cloudflare Workers + D1' },
+  {
+    name: 'wrangler',
+    check: () => {
+      const bin = wranglerBin();
+      if (bin === null) {
+        return null;
+      }
+      return versionOf(bin);
+    },
+    why: 'Local Cloudflare Workers + D1',
+    remedy: 'Run `bun install` — wrangler is a pinned dependency of apps/backend/api.',
+  },
   { name: 'sops', check: () => versionOf('sops', ['--version']), why: 'Secret encryption' },
   { name: 'age', check: () => versionOf('age', ['--version']), why: 'Secret encryption' },
   { name: 'cargo', check: () => versionOf('cargo'), why: 'Tauri desktop builds' },
   { name: 'direnv', check: () => versionOf('direnv', ['--version']), why: '.envrc loading' },
+  {
+    name: 'playwright',
+    check: () => (playwrightBin() === null ? null : 'installed'),
+    why: 'Browser tests and E2E',
+    remedy:
+      'Run `bunx playwright install --with-deps chromium`. Note the browser also needs ' +
+      'system shared libraries; on NixOS the stock Linux build does not run.',
+  },
 ] as const;
+
+/**
+ * One thing this repository verifies that a version string cannot.
+ *
+ * The API's Wrangler config must exist and name its D1 migrations directory. A
+ * missing `database_id` is expected in a template — the operator provisions it —
+ * so this checks structure, not completeness.
+ */
+export const WORKER_CONFIG_CHECK = (): Check => {
+  const config = join(API_DIR, 'wrangler.jsonc');
+  if (!existsSync(config)) {
+    return {
+      name: 'wrangler.jsonc',
+      required: true,
+      ok: false,
+      detail: 'missing',
+      remedy: `Restore ${config}.`,
+    };
+  }
+
+  const text = readFileSync(config, 'utf8');
+  const hasDb = /"d1_databases"/.test(text);
+  const hasMigrationsDir = /"migrations_dir"/.test(text);
+
+  return {
+    name: 'wrangler.jsonc',
+    required: true,
+    ok: hasDb && hasMigrationsDir,
+    detail: hasDb && hasMigrationsDir ? 'D1 binding and migrations_dir present' : 'incomplete',
+    ...(hasDb && hasMigrationsDir
+      ? {}
+      : { remedy: 'It must name a d1_databases binding and its migrations_dir.' }),
+  };
+};
 
 export interface Report {
   checks: Check[];
@@ -73,6 +151,8 @@ export const inspect = (): Report => {
     });
   }
 
+  checks.push(WORKER_CONFIG_CHECK());
+
   for (const tool of OPTIONAL) {
     const version = tool.check();
     checks.push({
@@ -80,6 +160,9 @@ export const inspect = (): Report => {
       required: false,
       ok: version !== null,
       detail: version ?? 'not found (optional)',
+      ...(version === null && 'remedy' in tool && tool.remedy !== undefined
+        ? { remedy: tool.remedy }
+        : {}),
     });
   }
 
