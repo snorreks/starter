@@ -9,7 +9,7 @@
 //
 // Tauri v2 does not substitute environment variables into `tauri.conf.json`, so
 // `devUrl` has to stay a literal. That is exactly why the default lives here and
-// `scripts/src/lib/guards/boundary.ts` asserts the two agree: a literal that is
+// `scripts/src/guards/boundary.ts` asserts the two agree: a literal that is
 // checked against a single authority cannot drift silently.
 //
 // Override with the environment when a parallel checkout needs a different port.

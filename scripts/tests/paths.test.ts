@@ -1,4 +1,4 @@
-// scripts/src/lib/paths.test.ts
+// scripts/tests/paths.test.ts
 //
 // The resolved repository paths must actually exist.
 //
