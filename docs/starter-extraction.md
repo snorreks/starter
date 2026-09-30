@@ -108,8 +108,9 @@ Guard for the publish step: the newly created repository's id must not be
 - [x] Visual fixtures + honest vision-review status
       — four real screens captured; vision inspection reports as SKIPPED with a
       reason, never as a pass.
-- [ ] CI workflow
-- [ ] Documentation set — `docs/lint.md` written; the rest outstanding.
+- [x] CI workflow — three jobs, no secrets
+- [x] Documentation set — architecture, adding-a-feature, testing, logs, lint,
+      toolchain, cloudflare, native, secrets, agent, rename-checklist.
 - [ ] Verification sweep + publication audit
 - [ ] Publish `snorreks/starter`
 

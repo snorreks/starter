@@ -52,7 +52,10 @@
     "secrets:decrypt": "bun run scripts/src/lib/secrets/index.ts decrypt",
     "test:integration": "moon run api:test-integration",
     "test:all": "moon run :test && bun run test:browser && bun run test:integration",
-    "test:browser": "bun run --cwd apps/frontend/client test:browser"
+    "test:browser": "bun run --cwd apps/frontend/client test:browser",
+    "tauri:dev": "bun run --cwd apps/frontend/client tauri:dev",
+    "tauri:build": "bun run --cwd apps/frontend/client tauri:build",
+    "tauri:icon": "bun run --cwd apps/frontend/client tauri:icon"
   },
   "devDependencies": {
     "@biomejs/biome": "2.5.13",
