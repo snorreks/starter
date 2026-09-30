@@ -1,0 +1,4 @@
+# Keep a bare `bun test` at the root from discovering tests inside every
+# workspace. Real suites are run through their project's Moon task.
+[test]
+root = "./tests"

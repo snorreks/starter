@@ -1,0 +1,22 @@
+{
+  "//": [
+    "Extends SvelteKit's generated base, which supplies `$lib/*`, `$app/*` and",
+    "`$app/types`. Do NOT add a `paths` or `types` block here: TypeScript",
+    "overrides rather than merges those, so doing so silently removes `$lib`.",
+    "Workspace packages (`@starter/*`) resolve through node_modules, because",
+    "each package's `exports` points at its TypeScript source."
+  ],
+  "extends": "$app/tsconfig",
+  "compilerOptions": {
+    "target": "ES2023",
+    "lib": ["ES2023", "DOM", "DOM.Iterable"],
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "noImplicitOverride": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "verbatimModuleSyntax": true
+  },
+  "include": ["src", "tests", "vite.config.ts", "vitest.config.ts"],
+  "exclude": ["src/service-worker"]
+}

@@ -1,0 +1,17 @@
+{
+  "$schema": "https://unpkg.com/syncpack@15.3.3/dist/schema.json",
+  "dev": true,
+  "sortPackages": true,
+  "semverGroups": [
+    {
+      "label": "Biome is pinned: a patch release has previously changed Svelte formatting output.",
+      "packages": ["@biomejs/biome"],
+      "range": "2.5.13"
+    },
+    {
+      "label": "TypeScript is pinned: the native preview compiler and vtsls track this major.",
+      "packages": ["typescript", "@typescript/native-preview"],
+      "range": "6.0.3"
+    }
+  ]
+}

@@ -1,0 +1,21 @@
+/*
+  The single application stylesheet.
+
+  Tailwind v4 is available, but this starter's own screens use the shared UI
+  components and design tokens rather than utility classes in markup. That is a
+  deliberate default: it keeps a template's first screens readable, and the
+  utility path stays available for whoever wants it.
+*/
+@import '@starter/ui/tokens.css';
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  min-height: 100%;
+}
+
+body {
+  background: var(--color-canvas);
+  color: var(--color-text);
+}

@@ -1,0 +1,12 @@
+// packages/frontend/ui/src/index.ts
+//
+// Shared presentational primitives. Deliberately small: only what two or more
+// features actually use. A component that exists for one screen belongs next to
+// that screen, in the application, until a second consumer appears.
+//
+// Prefer a subpath import (`@starter/ui/feedback`) over the barrel: the barrel
+// pulls every component into every graph.
+
+export * from './base/index.ts';
+export * from './feedback/index.ts';
+export * from './notes/index.ts';

@@ -1,0 +1,34 @@
+$schema: 'https://moonrepo.dev/schemas/v2/project.json'
+
+type: 'library'
+language: 'typescript'
+platform: 'node'
+source: './src'
+
+implicitDependencies:
+  - schemas
+
+tasks:
+  typecheck:
+    template: '@starter/typescript-library'
+  lint:
+    template: '@starter/typescript-library'
+  format:
+    template: '@starter/typescript-library'
+  fix:
+    template: '@starter/typescript-library'
+  test:
+    template: '@starter/typescript-library'
+  validate:
+    template: '@starter/typescript-library'
+  build:
+    command: 'echo'
+    args: ['no build step (TypeScript source)']
+    local: true
+  db-generate:
+    command: 'bun'
+    args: ['run', 'db:generate']
+    inputs:
+      - 'src/**/*schema.ts'
+      - 'drizzle.config.ts'
+    local: true

@@ -1,0 +1,201 @@
+/*
+  packages/frontend/ui/src/tokens.css
+
+  The design tokens. Every colour, space and radius in the project resolves
+  through one of these variables, so a theme is a token change and not a
+  stylesheet rewrite.
+
+  Neutrals only, and a single accent. The starter ships no brand palette: a
+  template that dictates a brand is a template you have to unpick. Dark mode is
+  the same token names under a different block, so a component never branches
+  on theme.
+*/
+
+:root {
+  color-scheme: light dark;
+
+  /* Neutrals */
+  --color-canvas: #ffffff;
+  --color-surface: #ffffff;
+  --color-surface-subtle: #f6f7f9;
+  --color-surface-raised: #ffffff;
+  --color-border: #d9dde3;
+  --color-border-strong: #b6bdc7;
+  --color-text: #16191d;
+  --color-text-muted: #5b6472;
+  --color-text-inverted: #ffffff;
+
+  /* Accent — the one chromatic colour, used for primary actions and focus. */
+  --color-accent: #2f5bd0;
+  --color-accent-hover: #2549ab;
+  --color-accent-text: #ffffff;
+  --color-accent-soft: #eaf0fd;
+  --color-focus-ring: #2f5bd0;
+
+  /* Status */
+  --color-danger: #b3261e;
+  --color-danger-hover: #8f1e18;
+  --color-danger-text: #8f1e18;
+  --color-danger-border: #e6b4b1;
+  --color-danger-subtle: #fdf2f1;
+  --color-danger-hover-tint: #f7e3e1;
+  --color-success-text: #1c6b3f;
+  --color-success-subtle: #eef7f1;
+  --color-success-border: #b3ddc4;
+
+  /* Space — 4px base */
+  --space-1: 0.25rem;
+  --space-2: 0.5rem;
+  --space-3: 0.75rem;
+  --space-4: 1rem;
+  --space-5: 1.5rem;
+  --space-6: 2rem;
+  --space-7: 3rem;
+  --space-8: 4rem;
+
+  /* Radius */
+  --radius-sm: 4px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+  --radius-pill: 999px;
+
+  /* Type */
+  --font-family-sans:
+    system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+  --font-family-mono: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace;
+  --font-size-sm: 0.8125rem;
+  --font-size-base: 0.9375rem;
+  --font-size-lg: 1.0625rem;
+  --font-size-xl: 1.375rem;
+  --font-size-2xl: 1.875rem;
+  --line-height-tight: 1.25;
+  --line-height-normal: 1.55;
+
+  /* Motion */
+  --duration-fast: 120ms;
+  --duration-normal: 220ms;
+  --easing-standard: cubic-bezier(0.2, 0, 0.2, 1);
+
+  --shadow-sm: 0 1px 2px rgb(16 20 26 / 8%);
+  --shadow-md: 0 4px 12px rgb(16 20 26 / 10%);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --color-canvas: #121417;
+    --color-surface: #191c20;
+    --color-surface-subtle: #1f2328;
+    --color-surface-raised: #22262b;
+    --color-border: #333941;
+    --color-border-strong: #4a525c;
+    --color-text: #eef1f5;
+    --color-text-muted: #9aa4b2;
+    --color-text-inverted: #121417;
+
+    --color-accent: #7ea2f5;
+    --color-accent-hover: #9db8f8;
+    --color-accent-text: #10131a;
+    --color-accent-soft: #1d2740;
+    --color-focus-ring: #7ea2f5;
+
+    --color-danger: #f2857c;
+    --color-danger-hover: #f6a49d;
+    --color-danger-text: #f6a49d;
+    --color-danger-border: #5c2b28;
+    --color-danger-subtle: #2a1a19;
+    --color-danger-hover-tint: #35201e;
+    --color-success-text: #7ecf9f;
+    --color-success-subtle: #14261c;
+    --color-success-border: #24503a;
+
+    --shadow-sm: 0 1px 2px rgb(0 0 0 / 40%);
+    --shadow-md: 0 4px 12px rgb(0 0 0 / 45%);
+  }
+}
+
+/* Shared primitives. Components use the tokens; these define the tokens'
+   application to bare elements so a screen does not re-declare them. */
+:root {
+  font-family: var(--font-family-sans);
+  font-size: var(--font-size-base);
+  line-height: var(--line-height-normal);
+  color: var(--color-text);
+  background: var(--color-canvas);
+  -webkit-font-smoothing: antialiased;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+:focus-visible {
+  outline: 2px solid var(--color-focus-ring);
+  outline-offset: 2px;
+}
+
+.ui-visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+
+.ui-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  font: inherit;
+  font-size: var(--font-size-base);
+  line-height: var(--line-height-tight);
+  cursor: pointer;
+  transition:
+    background-color var(--duration-fast) var(--easing-standard),
+    border-color var(--duration-fast) var(--easing-standard);
+}
+
+.ui-button:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.ui-button--primary {
+  background: var(--color-accent);
+  border-color: var(--color-accent);
+  color: var(--color-accent-text);
+}
+
+.ui-button--primary:hover:not(:disabled) {
+  background: var(--color-accent-hover);
+  border-color: var(--color-accent-hover);
+}
+
+.ui-button--secondary {
+  background: var(--color-surface);
+  border-color: var(--color-border-strong);
+  color: var(--color-text);
+}
+
+.ui-button--secondary:hover:not(:disabled) {
+  background: var(--color-surface-subtle);
+}
+
+.ui-button--danger-ghost {
+  background: transparent;
+  border-color: transparent;
+  color: var(--color-danger-text);
+}
+
+.ui-button--danger-ghost:hover:not(:disabled) {
+  background: var(--color-danger-subtle);
+}

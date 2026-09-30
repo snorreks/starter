@@ -1,0 +1,36 @@
+# Canonical line endings. Biome and the shell scripts assume LF; without this a
+# Windows checkout produces whole-file diffs on every file.
+* text=auto eol=lf
+
+# Keep shell and config fixtures un-normalized.
+*.sh text eol=lf
+*.bat text eol=crlf
+*.ps1 text eol=crlf
+
+# Binary. Declared explicitly so Git never attempts a text diff or EOL
+# conversion on them. (This project does not use Git LFS; see docs/.)
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.webp binary
+*.ico binary
+*.icns binary
+*.woff binary
+*.woff2 binary
+*.ttf binary
+*.otf binary
+*.mp3 binary
+*.mp4 binary
+*.wav binary
+*.ogg binary
+*.zip binary
+*.gz binary
+*.pdf binary
+*.appimage binary
+*.dmg binary
+*.exe binary
+*.msi binary
+*.deb binary
+*.rpm binary
+*.sqlite binary

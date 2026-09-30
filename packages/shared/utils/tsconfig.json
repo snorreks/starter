@@ -1,0 +1,13 @@
+{
+  "extends": "../../../config/tsconfig/tsconfig.base.json",
+  "compilerOptions": {
+    "types": ["bun"],
+    "paths": {
+      "@starter/logger": ["../logger/src/index.ts"],
+      "@starter/logger/*": ["../logger/src/*"],
+      "@starter/schemas": ["../schemas/src/index.ts"],
+      "@starter/schemas/*": ["../schemas/src/*"]
+    }
+  },
+  "include": ["src/**/*", "tests/**/*"]
+}

@@ -1,0 +1,39 @@
+{
+  "name": "@starter/api",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "license": "MIT",
+  "main": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "dev": "wrangler dev --port 8787",
+    "deploy": "bun run scripts/src/lib/deploy/index.ts",
+    "deploy:dry-run": "bun run scripts/src/lib/deploy/index.ts --dry-run",
+    "lint": "biome lint src",
+    "format": "biome format src",
+    "fix": "biome check --write src --error-on-warnings",
+    "typecheck": "tsgo --noEmit",
+    "test": "bun run test:prepare && bun test",
+    "test:prepare": "bun run scripts/ensure_local_d1.ts",
+    "test:unit": "bun test",
+    "db:migrate": "bun run --cwd ../.. scripts/src/lib/db/migrate.ts --local"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "5.20260929.1",
+    "wrangler": "4.142.0"
+  },
+  "dependencies": {
+    "@starter/auth": "workspace:*",
+    "@starter/database": "workspace:*",
+    "@starter/logger": "workspace:*",
+    "@starter/schemas": "workspace:*",
+    "@starter/utils": "workspace:*",
+    "better-auth": "1.7.6",
+    "drizzle-orm": "0.45.3",
+    "elysia": "1.4.30",
+    "@sinclair/typebox": "0.34.52"
+  }
+}

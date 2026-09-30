@@ -1,0 +1,29 @@
+{
+  // Cloudflare Worker for the API.
+  //
+  // Nothing here is project-specific yet, on purpose: a fresh clone has
+  // provisioned no resources, and the tooling must say so rather than reach
+  // for someone else's. `bun run deploy:configure` writes the ids below.
+  //
+  // `database_id` has no placeholder. An empty or invented id fails at deploy
+  // time with an opaque Wrangler error; omitting it fails at config-validation
+  // time with a clear one. `bun run deploy:check` reports which ids are unset.
+  "$schema": "../../../node_modules/wrangler/config-schema.json",
+  "name": "starter-api",
+  "compatibility_date": "2026-08-21",
+  "compatibility_flags": ["nodejs_compat"],
+  "main": "src/index.ts",
+  "observability": {
+    "enabled": true
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "starter-api",
+      "migrations_dir": "../../../packages/backend/database/drizzle-d1"
+    }
+  ]
+  // R2 is an optional capability, enabled deliberately rather than by default.
+  // Uncomment and name a bucket you have actually created:
+  // "r2_buckets": [{ "binding": "UPLOADS", "bucket_name": "starter-uploads" }]
+}

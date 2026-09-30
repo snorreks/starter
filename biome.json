@@ -1,0 +1,335 @@
+{
+  "$schema": "https://biomejs.dev/schemas/2.5.13/schema.json",
+  "vcs": {
+    "enabled": true,
+    "clientKind": "git",
+    "useIgnoreFile": true,
+    "defaultBranch": "main"
+  },
+  "files": {
+    "includes": [
+      "**",
+      "!**/node_modules/**",
+      "!**/dist/**",
+      "!**/build/**",
+      "!**/.svelte-kit/**",
+      "!**/test-results/**",
+      "!**/playwright-report/**",
+      "!**/.evidence/**",
+      "!**/*.min.js"
+    ],
+    "ignoreUnknown": true
+  },
+  "formatter": {
+    "enabled": true,
+    "indentStyle": "space",
+    "indentWidth": 2,
+    "lineWidth": 100,
+    "lineEnding": "lf"
+  },
+  "javascript": {
+    "formatter": {
+      "quoteStyle": "single",
+      "trailingCommas": "all",
+      "semicolons": "always",
+      "arrowParentheses": "always",
+      "quoteProperties": "asNeeded"
+    }
+  },
+  "json": {
+    "formatter": {
+      "enabled": true
+    }
+  },
+  "css": {
+    "formatter": {
+      "enabled": true
+    }
+  },
+  "html": {
+    "formatter": {
+      "enabled": true
+    }
+  },
+  "assist": {
+    "actions": {
+      "source": {
+        "organizeImports": "on"
+      }
+    }
+  },
+  "linter": {
+    "enabled": true,
+    "rules": {
+      "recommended": true,
+      "a11y": {
+        "recommended": true
+      },
+      "complexity": {
+        "recommended": true,
+        "noForEach": "error",
+        "noUselessTernary": "error",
+        "useArrowFunction": "error",
+        "useLiteralKeys": "error",
+        "noAdjacentSpacesInRegex": "error"
+      },
+      "correctness": {
+        "recommended": true,
+        "noUnusedVariables": "error",
+        "noUnusedImports": "error"
+      },
+      "nursery": {
+        "recommended": true
+      },
+      "performance": {
+        "recommended": true,
+        "noDelete": "error",
+        "noReassign": "error"
+      },
+      "security": {
+        "recommended": true
+      },
+      "style": {
+        "recommended": true,
+        "noNonNullAssertion": "error",
+        "noNestedTernary": "error",
+        "useBlockStatements": "error",
+        "useConsistentTypeDefinitions": {
+          "level": "error",
+          "options": {
+            "style": "type"
+          }
+        },
+        "useConsistentObjectDefinitions": {
+          "level": "error",
+          "options": {
+            "style": "shorthand"
+          }
+        },
+        "useImportType": "error",
+        "useNodejsImportProtocol": "error",
+        "useFilenamingConvention": {
+          "level": "error",
+          "options": {
+            "filenameCases": [
+              "snake_case"
+            ],
+            "requireAscii": false,
+            "strictCase": false,
+            "ignore": [
+              "**/*.d.ts",
+              "**/*.test.ts",
+              "**/*.browser.test.ts",
+              "**/*.spec.ts",
+              "**/index.{ts,js,svelte,css}",
+              "**/wrangler.jsonc",
+              "**/biome.json",
+              "**/tsconfig*.json"
+            ]
+          }
+        },
+        "useNamingConvention": {
+          "level": "error",
+          "options": {
+            "strictCase": false,
+            "conventions": [
+              {
+                "selector": {
+                  "kind": "classMember",
+                  "modifiers": [
+                    "private"
+                  ]
+                },
+                "formats": [
+                  "camelCase"
+                ],
+                "leadingUnderscore": "require"
+              }
+            ]
+          }
+        }
+      },
+      "suspicious": {
+        "recommended": true,
+        "noConsole": {
+          "level": "error",
+          "options": {
+            "allow": []
+          }
+        },
+        "noExplicitAny": "error",
+        "noThenProperty": "error",
+        "noShadowRestrictedNames": "error"
+      }
+    }
+  },
+  "overrides": [
+    {
+      "includes": [
+        "**"
+      ],
+      "linter": {
+        "rules": {
+          "style": {
+            "noNonNullAssertion": "error",
+            "noParameterAssign": "error"
+          },
+          "suspicious": {
+            "noExplicitAny": "error"
+          }
+        }
+      }
+    },
+    {
+      "includes": [
+        "packages/backend/**/*.ts",
+        "apps/backend/**/*.ts",
+        "scripts/**/*.ts"
+      ],
+      "linter": {
+        "rules": {
+          "correctness": {
+            "noRestrictedGlobals": {
+              "level": "error",
+              "options": {
+                "globals": [
+                  "window",
+                  "document",
+                  "localStorage",
+                  "sessionStorage",
+                  "navigator"
+                ]
+              }
+            }
+          },
+          "style": {
+            "noRestrictedImports": {
+              "level": "error",
+              "options": {
+                "patterns": [
+                  {
+                    "group": [
+                      "svelte",
+                      "@sveltejs/kit",
+                      "@sveltejs/vite-plugin-svelte",
+                      "svelte/"
+                    ],
+                    "message": "The server plane must not depend on Svelte. Shared view logic belongs in packages/frontend, which this plane may not import."
+                  },
+                  {
+                    "group": [
+                      "@starter/ui",
+                      "@starter/frontend-services",
+                      "@starter/frontend-services/*",
+                      "@starter/ui/*"
+                    ],
+                    "message": "The server plane must not import frontend packages. Move shared pure logic into packages/shared."
+                  }
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "includes": [
+        "packages/frontend/**/*.ts",
+        "apps/frontend/**/*.ts"
+      ],
+      "linter": {
+        "rules": {
+          "style": {
+            "noRestrictedGlobals": {
+              "level": "error",
+              "options": {
+                "globals": [
+                  "Bun"
+                ]
+              }
+            },
+            "noRestrictedImports": {
+              "level": "error",
+              "options": {
+                "patterns": [
+                  {
+                    "group": [
+                      "node:*",
+                      "bun:*"
+                    ],
+                    "message": "Frontend code runs in a browser and a Tauri webview. Put platform-specific work behind a platform adapter in packages/frontend."
+                  },
+                  {
+                    "group": [
+                      "@starter/database",
+                      "@starter/auth"
+                    ],
+                    "message": "The frontend must not import backend implementation. Share the contract through @starter/schemas instead."
+                  },
+                  {
+                    "group": [
+                      "drizzle-orm",
+                      "better-auth"
+                    ],
+                    "message": "Database and auth implementation belongs to the server plane. The frontend speaks HTTP."
+                  }
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "includes": [
+        "**/*.test.ts",
+        "**/*.spec.ts",
+        "**/tests/**",
+        "**/__tests__/**",
+        "**/fixtures/**"
+      ],
+      "linter": {
+        "rules": {
+          "suspicious": {
+            "noConsole": "off"
+          },
+          "style": {
+            "useNamingConvention": "off",
+            "noRestrictedImports": "off"
+          }
+        }
+      }
+    },
+    {
+      "includes": [
+        "**/*.svelte"
+      ],
+      "linter": {
+        "rules": {
+          "correctness": {
+            "noRestrictedGlobals": "off"
+          },
+          "style": {
+            "useNamingConvention": "off"
+          }
+        }
+      }
+    },
+    {
+      "includes": [
+        "scripts/**/*.ts",
+        ".pi/**/*.ts"
+      ],
+      "linter": {
+        "rules": {
+          "suspicious": {
+            "noConsole": "off"
+          },
+          "style": {
+            "useNamingConvention": "off"
+          }
+        }
+      }
+    }
+  ]
+}

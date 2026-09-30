@@ -1,0 +1,11 @@
+{
+  "extends": "../../../config/tsconfig/tsconfig.backend.json",
+  "compilerOptions": {
+    "types": ["bun"],
+    "paths": {
+      "@starter/schemas": ["../../shared/schemas/src/index.ts"],
+      "@starter/schemas/*": ["../../shared/schemas/src/*"]
+    }
+  },
+  "include": ["src/**/*", "tests/**/*", "drizzle.config.ts"]
+}

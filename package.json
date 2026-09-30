@@ -1,0 +1,67 @@
+{
+  "name": "@starter/monorepo",
+  "version": "0.1.0",
+  "private": true,
+  "license": "MIT",
+  "type": "module",
+  "workspaces": [
+    "packages/shared/*",
+    "packages/backend/*",
+    "packages/frontend/*",
+    "apps/frontend/*",
+    "apps/backend/*",
+    "apps/e2e",
+    "scripts",
+    ".pi"
+  ],
+  "scripts": {
+    "moon": "moon",
+    "dev": "moon run client:dev",
+    "dev:api": "moon run api:dev",
+    "build": "moon run :build",
+    "test": "moon run :test",
+    "test:watch": "moon run :test -- --watch",
+    "lint": "moon run :lint",
+    "format": "moon run :format",
+    "fix": "moon run :fix",
+    "typecheck": "moon run :typecheck",
+    "validate": "moon run :validate",
+    "guard": "moon run scripts:guard",
+    "guard:whole-repo": "moon run scripts:guard-whole-repo",
+    "ci": "bun run scripts/src/lib/ci/report.ts",
+    "clean": "rm -rf node_modules",
+    "clean:all": "rm -rf node_modules .svelte-kit build dist .moon/cache .wrangler state",
+    "setup": "bun run scripts/src/lib/setup/index.ts",
+    "setup:doctor": "bun run scripts/src/lib/setup/index.ts --doctor",
+    "setup:secrets": "bun run scripts/src/lib/secrets/index.ts doctor",
+    "logs": "bun run scripts/src/lib/logs/cli.ts",
+    "logs:local": "bun run scripts/src/lib/logs/cli.ts all --mode local --follow",
+    "db:generate": "moon run database:db-generate",
+    "db:migrate": "bun run scripts/src/lib/db/migrate.ts --local",
+    "db:migrate:remote": "bun run scripts/src/lib/db/migrate.ts --remote",
+    "db:status": "bun run scripts/src/lib/db/status.ts",
+    "db:seed": "bun run scripts/src/lib/db/seed.ts",
+    "contract": "bun run scripts/src/lib/contract/cli.ts",
+    "contract:status": "bun run scripts/src/lib/contract/status.ts",
+    "deploy:configure": "bun run scripts/src/lib/deploy/configure.ts",
+    "deploy:check": "bun run scripts/src/lib/deploy/index.ts --dry-run",
+    "deploy": "bun run scripts/src/lib/deploy/index.ts",
+    "e2e": "moon run e2e:test",
+    "e2e:visual": "moon run e2e:capture-evidence",
+    "secrets:encrypt": "bun run scripts/src/lib/secrets/index.ts encrypt",
+    "secrets:decrypt": "bun run scripts/src/lib/secrets/index.ts decrypt"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "2.5.13",
+    "@moonrepo/cli": "2.5.5",
+    "@types/bun": "1.4.2",
+    "@typescript/native-preview": "7.0.0-dev.20260707.2",
+    "typescript": "6.0.3"
+  },
+  "dependencies": {
+    "@sinclair/typebox": "0.34.52"
+  },
+  "trustedDependencies": [
+    "@biomejs/biome"
+  ]
+}

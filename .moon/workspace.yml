@@ -1,0 +1,94 @@
+# .moon/workspace.yml
+$schema: "https://moonrepo.dev/schemas/v2/workspace.json"
+
+projects:
+  # Tooling
+  scripts: "scripts"
+  pi: ".pi"
+
+  # Apps
+  client: "apps/frontend/client"
+  api: "apps/backend/api"
+  e2e: "apps/e2e"
+
+  # Shared packages (importable by everything above)
+  schemas: "packages/shared/schemas"
+  logger: "packages/shared/logger"
+  utils: "packages/shared/utils"
+
+  # Frontend packages (importable by the client, never by backend code)
+  ui: "packages/frontend/ui"
+  frontend-services: "packages/frontend/services"
+
+  # Backend packages (importable by the api, never by frontend code)
+  database: "packages/backend/database"
+  auth: "packages/backend/auth"
+
+# The dependency rules, stated once so `moon` and Biome agree.
+#
+#   shared/*   -> nothing
+#   backend/*  -> shared/*
+#   frontend/* -> shared/*
+#   apps/*     -> shared/*, and exactly one of backend/* or frontend/*
+#
+# A guard enforces the reverse directions at runtime; see
+# scripts/src/lib/guards/workspace_boundary.ts.
+
+dependencyRules:
+  # Packages may not import apps.
+  - '!~:projects/**'
+
+layers:
+  tool:
+    projects:
+      - scripts
+      - pi
+
+  # ── Shared: pure and portable. No project dependencies at all. ────────────
+  shared:
+    projects:
+      - schemas
+      - logger
+      - utils
+
+  # ── Frontend: browser/native code. May use shared only. ───────────────────
+  frontend:
+    projects:
+      - ui
+      - frontend-services
+    dependsOn:
+      - shared
+
+  # ── Backend: server code. May use shared only. ───────────────────────────
+  backend:
+    projects:
+      - database
+      - auth
+    dependsOn:
+      - shared
+
+  # ── Applications. The client is a browser/native app; the API is a Worker. ─
+  client:
+    projects:
+      - client
+    dependsOn:
+      - shared
+      - frontend
+
+  api:
+    projects:
+      - api
+    dependsOn:
+      - shared
+      - backend
+
+  # ── Tests only. ───────────────────────────────────────────────────────────
+  e2e:
+    projects:
+      - e2e
+    dependsOn:
+      - shared
+
+vcs:
+  manager: 'git'
+  defaultBranch: 'main'
