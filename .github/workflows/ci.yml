@@ -79,21 +79,21 @@ jobs:
       - name: Install
         run: bun install --frozen-lockfile
 
-      - name: Unit tests
-        # Every unit lane: shared packages, scripts, client, agent extensions.
-        # `moon run :test` fans out to each project's own `test` script, so a new
-        # package is covered by adding a script rather than by editing this file.
-        run: bun run test
-
       - name: Install Playwright's Chromium
+        # Before `bun run test`, not after: the client's `test` script runs the
+        # browser lane as part of itself, so a workflow that installs Chromium
+        # afterwards fails with "Executable doesn't exist" and looks like a broken
+        # test rather than a broken ordering.
+        #
         # Only Chromium. The browser lane runs one provider; running three would
         # triple the time to catch a divergence nobody has hit.
         run: bunx playwright install --with-deps chromium
 
-      - name: Browser tests
-        # Real Svelte in a real browser. The stubbed-rune lane cannot cover
-        # reactivity, and this is the lane that does.
-        run: bun run --cwd apps/frontend/client test:browser
+      - name: Unit and browser tests
+        # `moon run :test` fans out to each project's own `test` script, so a new
+        # package is covered by adding a script rather than by editing this file.
+        # The client's script includes its real-browser lane.
+        run: bun run test
 
   e2e:
     name: End to end
