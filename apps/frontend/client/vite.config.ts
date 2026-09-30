@@ -54,7 +54,7 @@ export default defineConfig({
   resolve: {
     alias: isNativeBuild
       ? {}
-      : [{ find: /^@tauri-apps\/.*$/, replacement: resolvePath('src/lib/stubs/tauri_stub.ts') }],
+      : [{ find: /^@tauri-apps\/.*$/, replacement: resolvePath('src/lib/platform/tauri_stub.ts') }],
   },
 
   plugins: [

@@ -9,4 +9,3 @@
 
 export * from './base/index.ts';
 export * from './feedback/index.ts';
-export * from './notes/index.ts';

@@ -1,4 +1,4 @@
-// scripts/src/lib/ci/report.ts
+// scripts/src/ci/report.ts
 //
 // Renders a check result as a GitHub step summary.
 //
@@ -42,27 +42,3 @@ export const renderSummary = (results: readonly CheckResult[]): string => {
   return lines.join('\n');
 };
 
-if (import.meta.main) {
-  // No CI annotation plumbing: the workflow reads a JSON file this produces.
-  const { readFileSync, writeFileSync, mkdirSync } = await import('node:fs');
-  const { join } = await import('node:path');
-  const { REPO_ROOT } = await import('../guards/boundary.ts');
-
-  const input = process.argv[2];
-  if (input === undefined) {
-    process.stderr.write('Usage: bun run ci <results.json>\n');
-    process.exitCode = 2;
-  } else {
-    const results = JSON.parse(readFileSync(input, 'utf8')) as CheckResult[];
-    const summary = renderSummary(results);
-
-    mkdirSync(join(REPO_ROOT, '.evidence'), { recursive: true });
-    writeFileSync(join(REPO_ROOT, '.evidence/verification.md'), `${summary}\n`);
-
-    const { GITHUB_STEP_SUMMARY } = process.env;
-    if (GITHUB_STEP_SUMMARY !== undefined && GITHUB_STEP_SUMMARY !== '') {
-      writeFileSync(GITHUB_STEP_SUMMARY, `${summary}\n`, { flag: 'a' });
-    }
-    process.stdout.write(`${summary}\n`);
-  }
-}

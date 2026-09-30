@@ -1,67 +1,94 @@
 // scripts/src/cli.ts
 //
-// Command router. `bun run scripts -- <command>` dispatches here, and every
-// package.json script points at its own entry file directly.
+// The one command dispatcher for this workspace.
 //
-// The router exists so `bun run scripts -- <command>` works without knowing a
-// path, and so `--help` can list what actually exists rather than a hand-written
-// list that drifts.
+//   bun run scripts -- <command> [args]
+//   bun run scripts -- --help
+//   bun run scripts -- <command> --help
+//
+// Everything else — package.json scripts, CI and the Pi wrappers — goes through
+// here, so there is exactly one implementation of each operation and one place
+// that decides which commands exist.
+//
+// Commands are imported lazily. `bun run scripts -- logs --help` should not pay
+// for the deploy, database and secrets modules to load, and the table has to be a
+// map of loaders rather than a static array of values for that to be true.
 
-export interface Command {
-  name: string;
-  summary: string;
-  run: (args: readonly string[]) => Promise<number> | number;
-}
+import { EXIT, fail, type Command } from './shared/command.ts';
 
-export const main = async (args: readonly string[]): Promise<number> => {
-  const [name, ...rest] = args;
+type CommandLoader = () => Promise<Command>;
 
-  if (name === undefined || name === '--help' || name === '-h') {
-    const { helpText } = await import('./lib/logs/cli.ts');
-    process.stdout.write(`${helpText()}\n`);
-    process.stdout.write('\nOther commands:\n');
-    process.stdout.write('  bun run setup              check the toolchain, create local state\n');
-    process.stdout.write('  bun run db:migrate         apply migrations locally\n');
-    process.stdout.write('  bun run deploy:check       validate the Cloudflare deploy plan\n');
-    process.stdout.write('  bun run guard              boundary and invariant checks\n');
-    process.stdout.write('  bun run contract --help    the contract workflow\n');
-    return 0;
+const COMMANDS: Record<string, CommandLoader> = {
+  ci: async () => (await import('./commands/ci.ts')).ciCommand,
+  configure: async () => (await import('./commands/configure.ts')).configureCommand,
+  contract: async () => (await import('./commands/contracts.ts')).contractCommand,
+  db: async () => (await import('./commands/db.ts')).dbCommand,
+  deploy: async () => (await import('./commands/deploy.ts')).deployCommand,
+  dev: async () => (await import('./commands/dev.ts')).devCommand,
+  doctor: async () => (await import('./commands/setup.ts')).doctorCommand,
+  guard: async () => (await import('./commands/guard.ts')).guardCommand,
+  logs: async () => (await import('./commands/logs.ts')).logsCommand,
+  secrets: async () => (await import('./commands/secrets.ts')).secretsCommand,
+  setup: async () => (await import('./commands/setup.ts')).setupCommand,
+};
+
+const names = (): string[] => Object.keys(COMMANDS).sort();
+
+const renderHelp = async (): Promise<string> => {
+  const summaries = await Promise.all(
+    names().map(async (name) => {
+      const command = await COMMANDS[name]();
+      return `  ${name.padEnd(9)} ${command.summary}`;
+    }),
+  );
+
+  return [
+    'Usage: bun run scripts -- <command> [args]',
+    '       bun run scripts -- <command> --help',
+    '',
+    'Commands:',
+    ...summaries,
+    '',
+    'Exit codes: 0 ok, 1 the work failed, 2 bad invocation, 3 prerequisite unavailable.',
+  ].join('\n');
+};
+
+/**
+ * Dispatch one argv and return the exit code.
+ *
+ * Returning rather than calling `process.exit` keeps the whole CLI reachable from
+ * a test without spawning it.
+ */
+export const main = async (argv: readonly string[]): Promise<number> => {
+  const [name, ...rest] = argv;
+
+  if (name === undefined || name === 'help' || name === '--help' || name === '-h') {
+    process.stdout.write(`${await renderHelp()}\n`);
+    return EXIT.ok;
   }
 
-  if (name === 'logs') {
-    const { main: logsMain } = await import('./lib/logs/cli.ts');
-    return logsMain(rest);
+  const loader = COMMANDS[name];
+
+  if (loader === undefined) {
+    return fail(
+      `Unknown command "${name}".\nAvailable: ${names().join(', ')}\n` +
+        'Run `bun run scripts -- --help` for the list.',
+      EXIT.usage,
+    );
   }
 
-  if (name === 'setup') {
-    const { main: setupMain } = await import('./lib/setup/index.ts');
-    return setupMain(rest);
+  try {
+    return await (await loader()).run(rest);
+  } catch (error) {
+    // An unexpected throw is a defect, not a usage error. Name the command and
+    // exit nonzero rather than letting a stack trace be the whole interface.
+    const detail = error instanceof Error ? (error.stack ?? error.message) : String(error);
+    return fail(`${name} failed: ${detail}`, EXIT.failed);
   }
-
-  if (name === 'guard') {
-    const { main: guardMain } = await import('./lib/guards/run_guards.ts');
-    return guardMain(rest);
-  }
-
-  if (name === 'contract') {
-    const { main: contractMain } = await import('./lib/contract/cli.ts');
-    return contractMain(rest);
-  }
-
-  if (name === 'deploy') {
-    const { main: deployMain } = await import('./lib/deploy/index.ts');
-    return deployMain(rest);
-  }
-
-  if (name === 'db') {
-    const { main: migrateMain } = await import('./lib/db/migrate.ts');
-    return migrateMain(rest);
-  }
-
-  process.stderr.write(`Unknown command "${name}". Try --help.\n`);
-  return 2;
 };
 
 if (import.meta.main) {
   process.exitCode = await main(process.argv.slice(2));
 }
+
+export { COMMANDS };

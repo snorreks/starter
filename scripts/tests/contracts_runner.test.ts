@@ -1,4 +1,4 @@
-// scripts/src/lib/contract/runner.test.ts
+// scripts/src/contracts/runner.test.ts
 //
 // The contract state machine's correctness invariants.
 //

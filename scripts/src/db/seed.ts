@@ -1,4 +1,4 @@
-// scripts/src/lib/db/seed.ts
+// scripts/src/db/seed.ts
 //
 // Insert synthetic seed data, for a fresh local database.
 //
@@ -22,7 +22,7 @@ export const SEED_STATEMENTS: readonly string[] = [
      ('seed_note_0002', 'seed_user_0001', 'Delete me', 'This one exists so the delete path has something to act on.', unixepoch(), unixepoch())`,
 ];
 
-export const main = (): number => {
+export const main = (_args: readonly string[] = []): number => {
   process.stdout.write(
     'Seeding the local database with synthetic data:\n' +
       '  1 user, 1 session, 2 notes — all synthetic, all addressed seed@example.invalid\n\n',
@@ -44,7 +44,3 @@ export const main = (): number => {
   }
   return code;
 };
-
-if (import.meta.main) {
-  process.exitCode = main();
-}

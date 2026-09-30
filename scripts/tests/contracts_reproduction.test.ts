@@ -1,4 +1,4 @@
-// scripts/src/lib/contract/reproduction.test.ts
+// scripts/src/contracts/reproduction.test.ts
 //
 // The audit's recorded reproduction, expressed as a test.
 //

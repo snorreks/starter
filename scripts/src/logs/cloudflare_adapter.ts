@@ -1,100 +1,78 @@
-// scripts/src/lib/logs/cloudflare_adapter.ts
+// scripts/src/logs/cloudflare_adapter.ts
 //
-// Cloudflare log adapters: historical query and bounded live tail.
+// Cloudflare Workers log access: a historical query and a bounded live tail.
 //
-// **These are not validated against a live account.** A fresh clone has no
-// Cloudflare credentials, no Worker and no D1. What *is* implemented and tested
-// is everything up to the provider boundary: capability checks, filter
-// translation, the request the adapter would make, and every failure path. The
-// live query itself is unverified and documented as such — see
-// `docs/first-round-review.md`.
+// **The historical adapter is still a stub.** `queryCloudflareHistory` validates
+// configuration and then returns `retrieval_failed` without sending a provider
+// request. Nothing in this repository should be read as evidence that Cloudflare
+// log querying works. Replacing it with real Workers Observability REST calls —
+// with response validation, pagination, output bounds and error mapping — is
+// phase 3's scope, along with keeping Logpush separate as an optional capability.
 //
-// The APIs used, per current Cloudflare documentation:
-//   - historical: `wrangler tail` cannot read history, so history comes from the
-//     Workers Logs query API (Logpush-backed) via `wrangler`'s HTTP client
-//   - live tail: `wrangler tail <worker> --format json`, bounded by `--duration`
+// What *is* real and tested here: the request translation (`buildHistoricalRequest`)
+// and the live tail's process lifecycle. Both are exercisable without a credential,
+// and a translation bug is exactly the bug that would otherwise only surface
+// against a production account.
 
-import { spawn } from 'node:child_process';
-import { missingToolMessage, wranglerBin } from '../shared/tools.ts';
-import { parseDuration } from './duration.ts';
-import { buildFilter, buildLogpushFilter } from './filter.ts';
+import { streamWrangler } from '../cloudflare/wrangler.ts';
+import type { LogEvent, LogQuery, LogQueryResult } from './types.ts';
+import { type ObservabilityQuery, buildFilter, buildObservabilityQuery } from './filter.ts';
 import { APP_LOG_CONFIG, capabilitiesFor, prerequisiteFor, resolveLogAdapter } from './registry.ts';
-import type { AppId, DeploymentEnvironment, LogEvent, LogQuery, LogQueryResult } from './types.ts';
 
-/** Hard ceiling on a live tail. A follow with no end is not a command. */
-export const MAX_TAIL_MS = 300_000;
+/** Upper bound on a single tail session, so `--follow` cannot run unbounded. */
+export const MAX_TAIL_MS = 15 * 60_000;
+
+/** Default tail budget when `--follow` is given without a duration. */
 export const DEFAULT_TAIL_MS = 60_000;
 
-export interface CloudflareAuth {
-  available: boolean;
-  reason?: string;
-}
-
 /**
- * Is a Cloudflare credential available for this environment?
+ * The provider request this query would send.
  *
- * Checked before any provider call so the failure is an actionable message
- * rather than a Wrangler stack trace.
- */
-export const detectCloudflareAuth = (): CloudflareAuth => {
-  const token = process.env.CLOUDFLARE_API_TOKEN;
-  if (token !== undefined && token.trim().length > 0) {
-    return { available: true };
-  }
-
-  return {
-    available: false,
-    reason:
-      'No Cloudflare credential found.\n' +
-      '  Export CLOUDFLARE_API_TOKEN, or run `wrangler login`.\n' +
-      '  Note: a fixture test of the request builder is NOT a live query. This ' +
-      'adapter has not been run against a real account in this checkout.',
-  };
-};
-
-/**
- * The Logpush filter string this query would send.
- *
- * Exported so a test can assert the translation without a credential. This is
- * the part that must be right for `--uid` and `--trace` to mean anything.
+ * Exported so the translation can be asserted without a credential. This is the
+ * part that must be right for `--uid` and `--trace` to mean anything: if the
+ * narrowing is dropped here, the provider returns every event and the client-side
+ * predicate still reports a filtered count.
  */
 export const buildHistoricalRequest = (
   query: LogQuery,
-): { ok: true; filter: string | null; limit: number } | { ok: false; reason: string } => {
-  const decision = buildFilter(query, capabilitiesFor('cloudflare-logpush'));
+):
+  | { ok: true; request: ObservabilityQuery; limit: number; since: number | undefined }
+  | { ok: false; reason: string } => {
+  const decision = buildFilter(query, capabilitiesFor('cloudflare-observability'));
+
   if (!decision.ok) {
     return { ok: false, reason: decision.unsupported };
   }
 
   return {
     ok: true,
-    filter: buildLogpushFilter(query, decision.since),
+    request: buildObservabilityQuery(query, decision.since),
     limit: query.limit ?? 50,
+    since: decision.since,
   };
 };
 
 /**
- * Historical query against the Workers Logs API.
+ * Historical query against Cloudflare.
  *
- * Returns an explicit status for every outcome. In particular, when
- * credentials are absent it returns `credentials_unavailable` — it does not
- * fall back to local files, because "here are your local logs" in response to
- * "show me the last hour of production" is a misleading answer, not a helpful
- * one.
+ * NOT IMPLEMENTED. Configuration is validated so a caller learns about a missing
+ * Worker name or an absent credential, then the function stops with an explicit
+ * status. It does not fall back to local files, because "here are your local
+ * logs" in answer to "show me the last hour of production" is a misleading answer
+ * rather than a helpful one.
  */
 export const queryCloudflareHistory = async (query: LogQuery): Promise<LogQueryResult> => {
-  const auth = detectCloudflareAuth();
-  if (!auth.available) {
-    return { status: 'credentials_unavailable', events: [], message: auth.reason };
+  const prerequisite = prerequisiteFor(query.app, query.mode);
+  if (prerequisite !== null) {
+    return { status: 'credentials_unavailable', events: [], message: prerequisite };
   }
 
   const worker = APP_LOG_CONFIG[query.app].workerName;
   if (worker === null) {
-    const prerequisite = prerequisiteFor(query.app, query.mode);
     return {
-      status: 'unavailable',
+      status: 'credentials_unavailable',
       events: [],
-      message: prerequisite ?? 'No Worker name is configured for this app.',
+      message: `No Worker name is configured for "${query.app}".`,
     };
   }
 
@@ -103,157 +81,143 @@ export const queryCloudflareHistory = async (query: LogQuery): Promise<LogQueryR
     return { status: 'capability_unsupported', events: [], message: request.reason };
   }
 
-  // Not reached in a fresh clone: the credential branch above returns first.
-  // Kept explicit so the shape of the failure is honest if a credential exists
-  // but the request fails.
+  // NOT IMPLEMENTED — see the file header. Phase 3 sends the Observability REST
+  // request built above. `retrieval_failed` is the honest status: returning an
+  // empty *successful* result would read as "no events matched" when nothing was
+  // ever asked.
   return {
     status: 'retrieval_failed',
     events: [],
     message:
-      `The historical query for worker "${worker}" could not be completed. ` +
-      `Filter: ${request.filter ?? '(none)'}. ` +
-      `Check that Workers Logs is enabled for this Worker and that the token ` +
-      `has the Logs:Read permission.`,
+      `Historical log retrieval is NOT IMPLEMENTED for Worker "${worker}". ` +
+      'This repository does not yet send a Workers Observability request, so no ' +
+      'result here reflects anything stored at the provider. Live tail and the ' +
+      'local adapter do work: try --follow, or --mode local.',
   };
 };
 
-export interface TailHandle {
-  stop: () => void;
-}
-
 /**
- * Bounded live tail via `wrangler tail`.
+ * Bounded live tail through `wrangler tail`.
  *
- * Hard limit: `MAX_TAIL_MS`. A tail that never ends is a stream of events into a
- * terminal or a model's context, and that is not something a command should do
- * by accident.
+ * `wrangler tail` prints a provider envelope per event, not an application
+ * `LogEvent`, so each line is parsed and an unparseable line is skipped rather
+ * than passed downstream as if it were an event.
+ *
+ * The session is bounded by `MAX_TAIL_MS` and reports failure when the bound is
+ * reached, so a forgotten `--follow` does not leave a process holding a port.
  */
-export const tailCloudflare = (
-  query: LogQuery,
-  onEvent: (event: LogEvent) => void,
-): { result: LogQueryResult; handle: TailHandle } => {
-  const capabilities = capabilitiesFor('wrangler-tail');
-  const decision = buildFilter(query, capabilities);
-
-  if (!decision.ok) {
+export const tailCloudflare = async (query: LogQuery): Promise<LogQueryResult> => {
+  const resolution = resolveLogAdapter(query.app, query.mode);
+  if ('unsupported' in resolution) {
+    return { status: 'capability_unsupported', events: [], message: resolution.unsupported };
+  }
+  if (resolution.kind !== 'wrangler-tail') {
     return {
-      result: { status: 'capability_unsupported', events: [], message: decision.unsupported },
-      handle: { stop: () => {} },
+      status: 'capability_unsupported',
+      events: [],
+      message: `--follow needs the wrangler-tail adapter; "${query.app}" does not use it here.`,
     };
   }
 
-  const auth = detectCloudflareAuth();
-  if (!auth.available) {
-    return {
-      result: { status: 'credentials_unavailable', events: [], message: auth.reason },
-      handle: { stop: () => {} },
-    };
+  const prerequisite = prerequisiteFor(query.app, query.mode);
+  if (prerequisite !== null) {
+    return { status: 'credentials_unavailable', events: [], message: prerequisite };
   }
 
   const worker = APP_LOG_CONFIG[query.app].workerName;
   if (worker === null) {
     return {
-      result: {
-        status: 'unavailable',
-        events: [],
-        message: prerequisiteFor(query.app, query.mode) ?? 'No Worker name is configured.',
-      },
-      handle: { stop: () => {} },
+      status: 'credentials_unavailable',
+      events: [],
+      message: `No Worker name is configured for "${query.app}".`,
     };
   }
 
-  const requested = query.duration === undefined ? null : parseDuration(query.duration);
-  if (query.duration !== undefined && requested === null) {
-    return {
-      result: {
-        status: 'capability_unsupported',
-        events: [],
-        message: `Could not parse --duration "${query.duration}". Try 60s, 5m, 1h.`,
-      },
-      handle: { stop: () => {} },
-    };
+  const decision = buildFilter(query, capabilitiesFor('wrangler-tail'));
+  if (!decision.ok) {
+    return { status: 'capability_unsupported', events: [], message: decision.unsupported };
   }
 
-  const durationMs = Math.min(requested?.ms ?? DEFAULT_TAIL_MS, MAX_TAIL_MS);
+  const budgetMs = Math.min(query.followBudgetMs ?? DEFAULT_TAIL_MS, MAX_TAIL_MS);
+  let printed = 0;
 
-  // The pinned workspace copy, not `bunx`. `bunx wrangler` from the repository
-  // root does not find a binary that only `apps/backend/api` depends on, so it
-  // downloads whatever the registry serves that day.
-  const bin = wranglerBin();
-  if (bin === null) {
-    return {
-      result: {
-        status: 'unavailable',
-        events: [],
-        message: missingToolMessage('wrangler', 'apps/backend/api'),
-      },
-      handle: { stop: () => {} },
-    };
-  }
-
-  const child = spawn(bin, ['tail', worker, '--format', 'json'], {
-    stdio: ['ignore', 'pipe', 'pipe'],
-  });
-
-  let buffer = '';
-  const collected: LogEvent[] = [];
-  let stopped = false;
-
-  const stop = (): void => {
-    if (stopped) {
-      return;
-    }
-    stopped = true;
-    child.kill('SIGTERM');
-  };
-
-  child.stdout.on('data', (chunk: Buffer) => {
-    buffer += chunk.toString('utf8');
-
-    // `wrangler tail --format json` emits one JSON object per line.
-    let newline = buffer.indexOf('\n');
-    while (newline !== -1) {
-      const line = buffer.slice(0, newline).trim();
-      buffer = buffer.slice(newline + 1);
-      newline = buffer.indexOf('\n');
-
-      if (line.length === 0) {
-        continue;
-      }
-      try {
-        const parsed = JSON.parse(line) as LogEvent;
-        if (decision.predicate(parsed)) {
-          collected.push(parsed);
-          onEvent(parsed);
+  const code = await streamWrangler(
+    ['tail', worker, '--format', 'json', '--status', 'error'],
+    {
+      timeoutMs: budgetMs,
+      // A live stream has no index, so the predicate runs here, on the client.
+      // docs/logs.md says so rather than implying the provider filtered it.
+      onStdout: (line) => {
+        const event = parseEnvelopeEvent(line);
+        if (event === null) {
+          return;
         }
-      } catch {
-        // `wrangler tail` prefixes some lines with progress output. Skipping an
-        // unparseable line is correct; failing the tail is not.
-      }
-    }
-  });
+        if (decision.predicate?.(event) === true) {
+          printed += 1;
+          process.stdout.write(`${JSON.stringify(event)}\n`);
+        }
+      },
+      onStderr: (line) => process.stderr.write(`${line}\n`),
+    },
+  );
 
-  // Always bounded.
-  const timer = setTimeout(stop, durationMs);
-  timer.unref?.();
+  const elapsed = `after ${Math.round(budgetMs / 1000)}s`;
+
+  if (code === 0) {
+    return { status: 'ok', events: [], message: `Tail closed ${elapsed}. ${printed} shown.` };
+  }
 
   return {
-    result: {
-      status: 'ok',
-      events: collected,
-      following: !stopped,
-      limitations: [
-        '`wrangler tail` is live-only: it cannot read history.',
-        'It cannot filter by user id or trace id — it is an unindexed event stream.',
-        `This tail will stop automatically after ${Math.round(durationMs / 1000)}s.`,
-      ],
-    },
-    handle: { stop },
+    status: 'retrieval_failed',
+    events: [],
+    message: `wrangler tail exited ${code} ${elapsed}. ${printed} shown.`,
   };
 };
 
-/** Resolve the adapter kind for an app/environment pair. */
-export const adapterFor = (
-  app: AppId,
-  mode: DeploymentEnvironment,
-): { kind: string } | { unsupported: string } => resolveLogAdapter(app, mode);
+/**
+ * Pull an application event out of one line of `wrangler tail` output.
+ *
+ * Returns null for anything that is not an envelope carrying the required event
+ * fields: every wrangler banner, every line of its own diagnostics, and any
+ * envelope whose shape has changed. Passing one of those downstream as if it were
+ * a `LogEvent` is what made the previous tail emit plausible-looking nonsense.
+ */
+export const parseEnvelopeEvent = (line: string): LogEvent | null => {
+  const trimmed = line.trim();
+  if (trimmed === '' || !trimmed.startsWith('{')) {
+    return null;
+  }
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(trimmed);
+  } catch {
+    return null;
+  }
+
+  if (typeof parsed !== 'object' || parsed === null) {
+    return null;
+  }
+
+  const envelope = parsed as Record<string, unknown>;
+
+  // `wrangler tail --format json` wraps the event; some versions emit it bare.
+  // Accept both, and refuse anything missing the fields a `LogEvent` requires, so
+  // a shape change shows up as fewer events rather than as invented ones.
+  const candidate = (envelope.event ?? envelope.logs ?? envelope) as Record<string, unknown>;
+  if (typeof candidate !== 'object' || candidate === null) {
+    return null;
+  }
+
+  const { timestamp, level, message, source } = candidate;
+  if (
+    typeof timestamp !== 'string' ||
+    typeof level !== 'string' ||
+    typeof message !== 'string' ||
+    typeof source !== 'string'
+  ) {
+    return null;
+  }
+
+  return { ...candidate, timestamp, level, message, source } as unknown as LogEvent;
+};

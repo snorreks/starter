@@ -1,24 +1,28 @@
-// scripts/dev/api.ts
+// scripts/src/dev-api.ts
 //
 //   bun run dev:api
 //
 // Run the Worker locally and capture its log stream to a file.
 //
-// Replaces the shell launcher this used to be. The shell version spawned wrangler
-// with `setsid` and could not reliably clean it up: Playwright starts this through
-// `webServer`, tears it down when the run ends, and the detached `workerd` survived
-// holding port 8788. The *next* `bun run e2e` then refused with "already used" —
-// a dev command that breaks the command after it.
+// This replaced `apps/backend/api/scripts/dev-worker.sh`, which was a second
+// implementation of the same operation. The two disagreed about the port, about
+// where the log went, and about teardown, so a command that worked from the
+// repository root failed from the API directory. There is one implementation now.
 //
-// Two things are owned here that a shell script could not do well:
+// Ownership, which is the part a shell script got wrong:
 //
-//   1. **Process-group ownership.** wrangler runs `detached`, so it gets its own
-//      process group, and it is killed as a *group*. Signalling wrangler alone
-//      leaves workerd — its child — holding the port, which is the actual failure
-//      that was observed.
-//   2. **Per-checkout state.** The PID file lives in this checkout's
-//      `.wrangler/local`, not a shared `/tmp` path, so two worktrees on one machine
-//      do not kill each other's server.
+//   * **Per-checkout, not per-machine.** State lives in this checkout's
+//     `.wrangler/`, never in a shared `/tmp` path. Two worktrees on one machine
+//     each run their own Worker; the old script's `/tmp/starter-wrangler.pid`
+//     meant the second worktree killed the first one's server.
+//   * **Owned, not pattern-killed.** Only the process this run started, and its
+//     descendants, are ever signalled. Nothing matches on a name, so an unrelated
+//     `wrangler` belonging to someone else is untouched.
+//   * **The child's exit status is this command's exit status.** A caller —
+//     Playwright's `webServer` among them — needs to know the server died rather
+//     than reporting success.
+//   * **Signals are forwarded.** Ctrl-C reaches the Worker, which is what lets
+//     workerd flush D1 writes instead of losing them.
 //
 // Log capture is unchanged in shape: wrangler's banners interleave with the JSON,
 // so the stream is recorded as-is and the log reader skips non-JSON lines.
@@ -33,16 +37,17 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { dirname, join } from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { killTree } from '@starter/utils/process';
+import { API_DIR, REPO_ROOT } from './shared/paths.ts';
+import { EXIT, fail } from './shared/command.ts';
+import { missingToolMessage, wranglerBin } from './shared/tools.ts';
 
-const REPO_ROOT = fileURLToPath(new URL('../../', import.meta.url)).replace(/\/$/, '');
-const API_DIR = join(REPO_ROOT, 'apps/backend/api');
-const WRANGLER = join(API_DIR, 'node_modules', '.bin', 'wrangler');
+const WRANGLER = wranglerBin() ?? join(API_DIR, 'node_modules', '.bin', 'wrangler');
 
-const LOG_DIR = process.env.STARTER_LOG_DIR ?? '/tmp/starter-logs';
+/** Inside the checkout, so a worktree's state is its own. Gitignored. */
+const STATE_DIR = join(REPO_ROOT, '.wrangler', 'local');
+const LOG_DIR = process.env.STARTER_LOG_DIR ?? join(REPO_ROOT, '.wrangler', 'logs');
 const LOG_FILE = join(LOG_DIR, 'api.ndjson');
-const STATE_DIR = process.env.STARTER_STATE_DIR ?? join(REPO_ROOT, '.wrangler', 'local');
 const PIDFILE = join(STATE_DIR, 'api-dev.pid');
 
 const PORT = process.env.API_PORT ?? '8787';
@@ -124,14 +129,22 @@ const buildArgs = (): string[] => {
   return args;
 };
 
-export const main = (): void => {
+/**
+ * Start the Worker and resolve when it stops.
+ *
+ * Returns an exit code rather than setting `process.exitCode` directly, because
+ * the dispatcher owns the process's exit and this module is also reachable from a
+ * test that starts it as a child.
+ *
+ * The promise resolves on the first of: the child exiting, or a signal arriving.
+ * A signal path resolves after the tree has been torn down, so a caller that
+ * `await`s this knows nothing of the Worker's is left running.
+ */
+export const main = (): Promise<number> => {
   if (!existsSync(WRANGLER)) {
-    process.stderr.write(
-      `wrangler is not installed at ${WRANGLER}.\n` +
-        'It is a pinned dependency of apps/backend/api. Run `bun install` from the repository root.\n',
+    return Promise.resolve(
+      fail(missingToolMessage('wrangler', 'apps/backend/api'), EXIT.unavailable),
     );
-    process.exitCode = 1;
-    return;
   }
 
   mkdirSync(LOG_DIR, { recursive: true });
@@ -166,61 +179,70 @@ export const main = (): void => {
     process.stderr.write(chunk);
   });
 
-  let stopped = false;
-  const shutdown = (signal: NodeJS.Signals): void => {
-    if (stopped) {
-      return;
+  return new Promise<number>((resolve) => {
+    // Whether the caller asked us to stop, as opposed to the Worker dying. Only
+    // the latter should be reported as a failure.
+    let stopped = false;
+    let settled = false;
+
+    const teardown = (): void => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      stopWorker(child);
+      rmSync(PIDFILE, { force: true });
+      log.end();
+    };
+
+    const shutdown = (signal: NodeJS.Signals): void => {
+      if (settled) {
+        return;
+      }
+      stopped = true;
+      process.stderr.write(`\nStopping the API (${signal}).\n`);
+
+      const survivors = stopWorker(child);
+      if (survivors.length > 0) {
+        // Named, not swallowed. A pid that survived teardown will hold the port
+        // and break the next run, so it has to be visible.
+        process.stderr.write(
+          `These pids survived teardown and may still hold ${PORT}: ${survivors.join(', ')}\n`,
+        );
+      }
+
+      teardown();
+      resolve(survivors.length === 0 ? EXIT.ok : EXIT.failed);
+    };
+
+    for (const signal of ['SIGINT', 'SIGTERM', 'SIGHUP'] as const) {
+      process.on(signal, () => shutdown(signal));
     }
-    stopped = true;
-    process.stderr.write(`\nStopping the API (${signal}).\n`);
 
-    const survivors = stopWorker(child);
-    if (survivors.length > 0) {
-      // Named, not swallowed. A pid that survived teardown will hold the port and
-      // break the next run, so it has to be visible.
-      process.stderr.write(
-        `These pids survived teardown and may still hold ${PORT}: ${survivors.join(', ')}\n`,
-      );
-    }
+    // The paths that deliver no signal: an uncaught throw, or a caller that simply
+    // exits. Synchronous because `exit` handlers may not await.
+    process.on('exit', teardown);
 
-    rmSync(PIDFILE, { force: true });
-    log.end();
-    process.exit(survivors.length === 0 ? 0 : 1);
-  };
+    child.on('error', (error) => {
+      process.stderr.write(`could not start wrangler: ${error.message}\n`);
+      teardown();
+      resolve(EXIT.unavailable);
+    });
 
-  for (const signal of ['SIGINT', 'SIGTERM', 'SIGHUP'] as const) {
-    process.on(signal, () => shutdown(signal));
-  }
+    child.on('exit', (code, signal) => {
+      const exitedCleanly = !stopped;
+      if (exitedCleanly) {
+        process.stderr.write(`\nThe API exited (${signal ?? `code ${code ?? 'unknown'}`}).\n`);
+      }
+      teardown();
 
-  // Covers the paths that do not deliver a signal — an uncaught throw, or a caller
-  // that simply exits.
-  process.on('exit', () => {
-    if (stopped) {
-      return;
-    }
-    stopped = true;
-    stopWorker(child);
-    rmSync(PIDFILE, { force: true });
-  });
-
-  child.on('error', (error) => {
-    process.stderr.write(`could not start wrangler: ${error.message}\n`);
-    rmSync(PIDFILE, { force: true });
-    process.exitCode = 1;
-  });
-
-  child.on('exit', (code, signal) => {
-    rmSync(PIDFILE, { force: true });
-    log.end();
-    if (!stopped) {
-      process.stderr.write(`\nThe API exited (${signal ?? `code ${code ?? 'unknown'}`}).\n`);
-    }
-    // Preserved, not flattened to 0. A caller — Playwright's `webServer` among
-    // them — needs to know the server died rather than reporting success.
-    process.exitCode = code ?? 1;
+      // Preserved, not flattened to 0. A caller — Playwright's `webServer` among
+      // them — needs to know the server died rather than reporting success.
+      //
+      // A signalled child has no exit code of its own, so it reports failure with
+      // the signal named above. Mapping it to the shell's 128+N would invent a
+      // number the caller cannot act on, and would collide with a real code.
+      resolve(code ?? EXIT.failed);
+    });
   });
 };
-
-if (import.meta.main) {
-  main();
-}

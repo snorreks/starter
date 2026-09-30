@@ -1,4 +1,4 @@
-// scripts/src/lib/db/status.ts
+// scripts/src/db/status.ts
 //
 // Show which migrations have been applied locally, and whether the local
 // database exists at all. Read-only.
@@ -10,7 +10,7 @@ import { API_DIR, REPO_ROOT } from '../shared/paths.ts';
 
 const MIGRATIONS_DIR = join(REPO_ROOT, 'packages/backend/database/drizzle-d1');
 
-export const main = (): number => {
+export const main = (_args: readonly string[] = []): number => {
   if (!existsSync(MIGRATIONS_DIR)) {
     process.stderr.write('No migrations directory. Run `bun run db:generate`.\n');
     return 1;
@@ -27,7 +27,3 @@ export const main = (): number => {
     join(API_DIR, 'wrangler.jsonc'),
   ]);
 };
-
-if (import.meta.main) {
-  process.exitCode = main();
-}

@@ -1,4 +1,4 @@
-// scripts/src/lib/deploy/configure.ts
+// scripts/src/deploy/configure.ts
 //
 // Write this project's Cloudflare configuration.
 //
@@ -11,7 +11,8 @@
 // an actionable error, and this command is the one place it becomes real.
 
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
-import { DEPLOYMENT_CONFIG, type DeploymentEnvironment } from '@starter/schemas';
+import type { DeploymentEnvironment } from '@starter/schemas';
+import { DEPLOYMENT_CONFIG } from '../registry/app_registry.ts';
 import { API_DIR, captureWrangler, hasCloudflareCredential } from '../cloudflare/wrangler.ts';
 
 const WRANGLER_CONFIG = `${API_DIR}/wrangler.jsonc`;
@@ -143,10 +144,6 @@ export const main = (args: readonly string[]): number => {
   );
   return 0;
 };
-
-if (import.meta.main) {
-  process.exitCode = main(process.argv.slice(2));
-}
 
 export type { DeploymentEnvironment };
 export { WRANGLER_CONFIG };

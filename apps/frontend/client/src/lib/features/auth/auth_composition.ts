@@ -1,4 +1,4 @@
-// apps/frontend/client/src/lib/views/auth/auth_composition.ts
+// apps/frontend/client/src/lib/features/auth/auth_composition.ts
 //
 // Wiring. See notes_composition.ts for why this file exists.
 

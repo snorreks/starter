@@ -1,4 +1,4 @@
-// apps/frontend/client/src/lib/services/native_session.ts
+// apps/frontend/client/src/lib/platform/native_session.ts
 //
 // Tauri-only: hold the session token for the webview.
 //
@@ -17,7 +17,7 @@
 //      each API call.
 
 import { isTauri } from '@starter/frontend-services/platform';
-import { setApiTokenProvider } from './api_client.ts';
+import { setApiTokenProvider } from '#lib/services/api_client.ts';
 
 const TOKEN_STORAGE_KEY = 'starter.session.token';
 

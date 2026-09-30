@@ -9,16 +9,16 @@
     ".": "./src/index.ts"
   },
   "scripts": {
-    "dev": "bash ../../../scripts/dev/api.sh",
-    "deploy": "bun run --cwd ../../.. scripts/src/lib/deploy/index.ts",
-    "deploy:dry-run": "bun run --cwd ../../.. scripts/src/lib/deploy/index.ts --dry-run",
+    "dev": "bun run --cwd ../../../ scripts/src/cli.ts dev api",
+    "deploy": "bun run --cwd ../../.. scripts/src/cli.ts deploy",
+    "deploy:dry-run": "bun run --cwd ../../.. scripts/src/cli.ts deploy --dry-run",
     "lint": "biome lint src",
     "format": "biome format src",
     "fix": "biome check --write src --error-on-warnings",
     "typecheck": "tsgo --noEmit",
     "test": "bun test src",
     "test:prepare": "bun run scripts/ensure_local_d1.ts",
-    "db:migrate": "bun run --cwd ../../.. scripts/src/lib/db/migrate.ts --local",
+    "db:migrate": "bun run --cwd ../../.. scripts/src/cli.ts db migrate --local",
     "test:integration": "bun run test:prepare && bun test tests/worker_integration.test.ts"
   },
   "devDependencies": {

@@ -1,4 +1,4 @@
-// scripts/src/lib/logs/local_file_adapter.ts
+// scripts/src/logs/local_file_adapter.ts
 //
 // Local log capture. The adapter that always works: no credentials, no network,
 // which is what makes local log verification part of ordinary CI.
@@ -17,7 +17,8 @@
 import { existsSync } from 'node:fs';
 import { readdir, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { APP_LOG_CONFIG, type LogEvent } from '@starter/schemas';
+import type { LogEvent } from '@starter/schemas/logging';
+import { APP_LOG_CONFIG } from '../registry/app_registry.ts';
 import { buildFilter } from './filter.ts';
 import { capabilitiesFor } from './registry.ts';
 import type { LogQuery, LogQueryResult } from './types.ts';

@@ -1,4 +1,4 @@
-// scripts/src/lib/guards/run_guards.ts
+// scripts/src/guards/run_guards.ts
 //
 //   bun run guard             # every guard
 //   bun run guard -- --json   # machine-readable
@@ -75,6 +75,3 @@ export const main = (args: readonly string[]): number => {
   return report.passed ? 0 : 1;
 };
 
-if (import.meta.main) {
-  process.exitCode = main(process.argv.slice(2));
-}
