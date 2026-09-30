@@ -21,7 +21,7 @@ import {
   guardRequestState,
   guardSourceIsTracked,
   guardWorkspaceBoundary,
-} from '../guards/boundary.ts';
+} from '../src/guards/boundary.ts';
 
 const created: string[] = [];
 

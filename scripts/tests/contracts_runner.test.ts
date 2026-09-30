@@ -30,7 +30,7 @@ import {
   type StageAdapter,
   type StageEvidence,
   type StageOutcome,
-} from '../contracts/runner.ts';
+} from '../src/contracts/runner.ts';
 
 const NOW = 1_700_000_000_000;
 

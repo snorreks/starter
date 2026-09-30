@@ -20,8 +20,8 @@
 
 import { afterEach, describe, expect, test } from 'bun:test';
 import { DEPLOYMENT_CONFIG } from '@starter/schemas';
-import type { ConfigCheck } from '../deploy/configure.ts';
-import { type DeployTarget, parseDeployArgs, planDeploy, type Step } from '../deploy/deploy.ts';
+import type { ConfigCheck } from '../src/deploy/configure.ts';
+import { type DeployTarget, parseDeployArgs, planDeploy, type Step } from '../src/deploy/deploy.ts';
 
 /** A configuration that passes every check. */
 const READY: ConfigCheck = { ok: true, problems: [], notices: [] };
