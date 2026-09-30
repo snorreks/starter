@@ -94,7 +94,7 @@ export const queryCloudflareHistory = async (query: LogQuery): Promise<LogQueryR
   }
 
   const worker = APP_LOG_CONFIG[query.app].workerName;
-  if (worker.length === 0) {
+  if (worker === null) {
     const prerequisite = prerequisiteFor(query.app, query.mode);
     return {
       status: 'unavailable',
@@ -154,7 +154,7 @@ export const tailCloudflare = (
   }
 
   const worker = APP_LOG_CONFIG[query.app].workerName;
-  if (worker.length === 0) {
+  if (worker === null) {
     return {
       result: {
         status: 'unavailable',

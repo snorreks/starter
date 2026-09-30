@@ -18,21 +18,49 @@ export type LiteObserver<T> = {
   publish(payload: T): void;
 };
 
-/** Multi-subscriber observer. */
+/**
+ * Multi-subscriber observer.
+ *
+ * Subscribers are held in an array rather than a `Set`, for two reasons that
+ * both showed up as bugs in the project this came from:
+ *
+ *   - A `Set` silently dedupes. Registering the same function from two call
+ *     sites would leave one of them never firing, with no error anywhere.
+ *   - A `Set` deletes by identity, so two registrations of one function cannot
+ *     be unsubscribed independently: the first unsubscribe kills both.
+ *
+ * The unsubscribe returned closes over the *registration*, not the function, so
+ * it removes exactly the subscription it came from.
+ *
+ * Dispatch is deliberately *not* fail-fast. A listener that throws does not stop
+ * the ones after it, because propagating is strictly worse: one
+ * permanently-broken subscriber then starves every later subscriber on every
+ * subsequent publish, so the symptom is "the second panel stopped updating" with
+ * no error anywhere to explain it. Isolating the throw leaves the faulty listener
+ * broken — but visibly so, and only for itself.
+ */
 export const createObserver = <T = void>(): Observer<T> => {
-  const listeners = new Set<Listener<T>>();
+  const listeners: Listener<T>[] = [];
 
   return {
     subscribe(listener) {
-      listeners.add(listener);
+      listeners.push(listener);
       return () => {
-        listeners.delete(listener);
+        const index = listeners.indexOf(listener);
+        if (index !== -1) {
+          listeners.splice(index, 1);
+        }
       };
     },
     publish(payload) {
-      // Copy before iterating: a listener may unsubscribe during dispatch.
+      // Copy before iterating: a listener may unsubscribe during dispatch, and
+      // splicing the live array mid-iteration would skip the next one.
       for (const listener of [...listeners]) {
-        listener(payload);
+        try {
+          listener(payload);
+        } catch {
+          // Isolated on purpose; see the note above.
+        }
       }
     },
   };

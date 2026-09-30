@@ -73,7 +73,13 @@ export const listSourceFiles = (root: string): string[] => {
 
 const linesOf = (file: string): string[] => readFileSync(file, 'utf8').split('\n');
 
-/** The layer a path belongs to. */
+/**
+ * The layer a path belongs to.
+ *
+ * `client` and `api` are separate layers even though both live under `apps/`.
+ * Merged into one layer, the API was permitted to import `@starter/ui` — Svelte
+ * into a Worker — and the client `@starter/database`.
+ */
 export type Layer = 'shared' | 'backend' | 'frontend' | 'client' | 'api' | 'tool';
 
 export const layerOf = (relativePath: string): Layer | null => {
@@ -421,6 +427,66 @@ const firstMatchingRule = (relativePath: string, rules: readonly IgnoreRule[]): 
   return winner !== null && !winner.negated ? winner : null;
 };
 
+// ── Rule 5 — registry self-consistency ───────────────────────────────────────
+
+/**
+ * Rule 5 — the project's own registries must satisfy their own schemas.
+ *
+ * `APP_LOG_CONFIG` shipped with `workerName: ''` while its schema required
+ * `minLength: 1`, so the registry was invalid and every consumer inherited it.
+ * Nothing failed: the type was `string`, the value was a string, and the only
+ * thing that could have noticed was a schema check that was never run.
+ *
+ * A registry that does not validate against the schema that describes it is not
+ * a type-safe map, it is a comment.
+ *
+ * The check is textual rather than an import, deliberately: a guard that
+ * imported the module it validates could not report a module that fails to load,
+ * which is one of the failures worth catching.
+ */
+export const guardRegistryIsValid = (root = REPO_ROOT): GuardResult => {
+  const violations: Violation[] = [];
+  const registryFile = join(root, 'packages/shared/schemas/src/registry/app_registry.ts');
+
+  if (!existsSync(registryFile)) {
+    return { id: 'registry-valid', label: 'Registries satisfy their schemas', baselineCount: 0, violations };
+  }
+
+  const source = readFileSync(registryFile, 'utf8');
+
+  // An empty string satisfies `string` but not `minLength: 1`. That is exactly
+  // how the invalid value survived review.
+  for (const match of source.matchAll(/workerName:\s*(''|"")/g)) {
+    violations.push({
+      rule: 'registry-valid',
+      file: relative(root, registryFile),
+      line: source.slice(0, match.index).split('\n').length,
+      message:
+        'workerName is set to an empty string.\n' +
+        '  The schema requires minLength 1, so this value is invalid; use `null`\n' +
+        "  for 'not provisioned', which is what DEPLOYMENT_CONFIG does.",
+    });
+  }
+
+  // A registry that provisioned a resource would point this template at
+  // somebody else's account.
+  for (const match of source.matchAll(
+    /d1DatabaseIds:\s*\{\s*api:\s*'(?!')|workerNames:\s*\{\s*(?:client|api):\s*'(?!')/g,
+  )) {
+    violations.push({
+      rule: 'registry-valid',
+      file: relative(root, registryFile),
+      line: source.slice(0, match.index).split('\n').length,
+      message:
+        'A resource id is set to a literal value.\n' +
+        '  DEPLOYMENT_CONFIG must provision nothing; a real id here would make a\n' +
+        "  fresh clone target someone else's account. Use `null`.",
+    });
+  }
+
+  return { id: 'registry-valid', label: 'Registries satisfy their schemas', baselineCount: 0, violations };
+};
+
 /**
  * The guard set, each paired with the id it reports under.
  *
@@ -432,4 +498,5 @@ export const ALL_GUARDS = [
   { id: 'request-state', run: guardRequestState },
   { id: 'no-leftovers', run: guardNoLeftovers },
   { id: 'source-is-tracked', run: guardSourceIsTracked },
+  { id: 'registry-valid', run: guardRegistryIsValid },
 ] as const;

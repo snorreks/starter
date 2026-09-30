@@ -61,8 +61,16 @@ const adapterListSchema = Type.Array(AdapterKindSchema);
 
 export const AppLogConfigSchema = Type.Object({
   app: Type.String({ minLength: 1 }),
-  /** Wrangler worker name for this app + environment. Placeholder by default. */
-  workerName: Type.String({ minLength: 1 }),
+  /**
+   * Wrangler worker name for this app. `null` means "not provisioned yet".
+   *
+   * Nullable rather than `''` on purpose: an empty string satisfies a
+   * `minLength: 1` check by not being one, so a `''` placeholder silently
+   * defeats the validation that was supposed to catch it — the registry shipped
+   * failing its own schema until this was fixed. `DEPLOYMENT_CONFIG` uses the
+   * same convention, so "not provisioned" reads the same everywhere.
+   */
+  workerName: Type.Union([Type.String({ minLength: 1 }), Type.Null()]),
   /** Which producer sources can appear for this app. */
   sources: Type.Array(
     Type.Union([
@@ -184,7 +192,7 @@ const CLIENT_FORWARD: LogAdapterCapabilities = {
 export const APP_LOG_CONFIG: Record<AppId, AppLogConfig> = {
   client: {
     app: 'client',
-    workerName: '',
+    workerName: null,
     sources: ['browser', 'native'],
     adapters: {
       // In dev the browser writes NDJSON through the Vite logging middleware.
@@ -198,7 +206,7 @@ export const APP_LOG_CONFIG: Record<AppId, AppLogConfig> = {
   },
   api: {
     app: 'api',
-    workerName: '',
+    workerName: null,
     sources: ['worker'],
     adapters: {
       local: ['local-file'],

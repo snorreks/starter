@@ -6,14 +6,19 @@
 const DIACRITICS = /[̀-ͯ]/g;
 const NON_SLUG = /[^a-z0-9]+/g;
 
+const MAX_SLUG_LENGTH = 80;
+
 export const slugify = (input: string, fallback = 'untitled'): string => {
+  // Truncation comes before the trim: cutting at the limit can split a word and
+  // leave a trailing hyphen, so "aaa… b" and "aaa… c" would both become
+  // "aaa…-" — two different titles sharing one permalink.
   const slug = input
     .normalize('NFKD')
     .replace(DIACRITICS, '')
     .toLowerCase()
     .replace(NON_SLUG, '-')
-    .replace(/^-+|-+$/g, '')
-    .slice(0, 80);
+    .slice(0, MAX_SLUG_LENGTH)
+    .replace(/^-+|-+$/g, '');
 
   return slug.length > 0 ? slug : fallback;
 };

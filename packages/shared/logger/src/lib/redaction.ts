@@ -105,10 +105,26 @@ export const redactValue = (value: unknown, options: RedactOptions = {}): unknow
     }
 
     if (input instanceof Error) {
+      // `name`, `message` and `stack` are read defensively: an Error subclass
+      // can define any of them as a getter that throws, and this is still the
+      // logging path.
+      const read = (field: 'name' | 'message' | 'stack'): string | undefined => {
+        try {
+          const value: unknown = input[field];
+          return typeof value === 'string' ? value : undefined;
+        } catch {
+          return undefined;
+        }
+      };
+
+      const name = read('name') ?? 'Error';
+      const message = read('message') ?? '';
+      const stack = read('stack');
+
       return {
-        name: input.name,
-        message: input.message,
-        ...(input.stack === undefined ? {} : { stack: input.stack.split('\n').slice(0, 10).join('\n') }),
+        name,
+        message,
+        ...(stack === undefined ? {} : { stack: stack.split('\n').slice(0, 10).join('\n') }),
       };
     }
 
@@ -138,13 +154,39 @@ export const redactValue = (value: unknown, options: RedactOptions = {}): unknow
       }
 
       const result: Record<string, unknown> = {};
-      const keys = Object.keys(input).slice(0, maxEntries);
-      for (const key of keys) {
-        result[key] = isRedactedKey(key, options.extraKeys)
-          ? REDACTED
-          : walk((input as Record<string, unknown>)[key], depth + 1);
+      // `Object.keys` and the property read are both outside the caller's
+      // control: a Proxy, or a getter that throws, would otherwise propagate out
+      // of the logging path and take down the process that is trying to report
+      // something else. A missing field is worth a log line; a crashed request
+      // handler is not.
+      let keys: string[];
+      try {
+        keys = Object.keys(input).slice(0, maxEntries);
+      } catch {
+        return '[unreadable object]';
       }
-      const total = Object.keys(input).length;
+
+      for (const key of keys) {
+        if (isRedactedKey(key, options.extraKeys)) {
+          result[key] = REDACTED;
+          continue;
+        }
+        let entry: unknown;
+        try {
+          entry = (input as Record<string, unknown>)[key];
+        } catch {
+          result[key] = '[unreadable]';
+          continue;
+        }
+        result[key] = walk(entry, depth + 1);
+      }
+
+      let total: number;
+      try {
+        total = Object.keys(input).length;
+      } catch {
+        return result;
+      }
       if (total > maxEntries) {
         result['…'] = `${total - maxEntries} more keys`;
       }
