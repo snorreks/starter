@@ -38,5 +38,8 @@
   },
   "peerDependencies": {
     "svelte": "^5.0.0"
+  },
+  "devDependencies": {
+    "svelte-check": "4.7.6"
   }
 }

@@ -16,7 +16,7 @@
     "format": "biome format src",
     "fix": "biome check --write src --error-on-warnings",
     "typecheck": "tsgo --noEmit",
-    "test": "bun test",
+    "test": "echo \"no unit tests: the api is covered by test:integration (run: bun run test:integration)\"",
     "test:prepare": "bun run scripts/ensure_local_d1.ts",
     "test:unit": "bun test",
     "db:migrate": "bun run --cwd ../.. scripts/src/lib/db/migrate.ts --local",

@@ -15,12 +15,15 @@
     "format": "biome format src",
     "fix": "biome check --write src --error-on-warnings",
     "typecheck": "svelte-check --tsconfig ./tsconfig.json --threshold error",
-    "test": "bun test"
+    "test": "bun test --pass-with-no-tests"
   },
   "dependencies": {
     "@starter/logger": "workspace:*",
     "@starter/schemas": "workspace:*",
     "@starter/utils": "workspace:*",
     "@sinclair/typebox": "0.34.52"
+  },
+  "devDependencies": {
+    "svelte-check": "4.7.6"
   }
 }

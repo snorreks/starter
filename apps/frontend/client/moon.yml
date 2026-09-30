@@ -8,7 +8,7 @@ $schema: 'https://moonrepo.dev/schemas/v2/project.json'
 # Tasks are written out rather than extended from a shared template. Each is a
 # delegation to this project's own package.json script, which stays the
 # authority for what the script does. See .moon/workspace.yml.
-layer: 'library'
+layer: 'application'
 
 fileGroups:
   sources:
@@ -27,8 +27,11 @@ toolchains:
   javascript:
 
 dependsOn:
+  - frontend-services
   - logger
   - schemas
+  - ui
+  - utils
 
 tasks:
   typecheck:
@@ -54,6 +57,31 @@ tasks:
   test:
     command: 'bun'
     args: ['run', 'test']
+    inputs:
+      - '@group(sources)'
+  build:
+    command: 'echo'
+    args: ['nothing to build (TypeScript source)']
+    inputs:
+      - '@group(sources)'
+  tauri:
+    command: 'echo'
+    args: ['nothing to build (TypeScript source)']
+    inputs:
+      - '@group(sources)'
+  tauri-dev:
+    command: 'bun'
+    args: ['run', 'tauri:dev']
+    inputs:
+      - '@group(sources)'
+  tauri-build:
+    command: 'bun'
+    args: ['run', 'tauri:build']
+    inputs:
+      - '@group(sources)'
+  tauri-icon:
+    command: 'bun'
+    args: ['run', 'tauri:icon']
     inputs:
       - '@group(sources)'
   validate:

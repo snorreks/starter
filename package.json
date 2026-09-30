@@ -15,7 +15,7 @@
     ".pi"
   ],
   "scripts": {
-    "moon": "moon",
+    "moon": "bunx moon",
     "dev": "moon run client:dev",
     "dev:api": "bash scripts/dev/api.sh",
     "build": "moon run :build",
@@ -49,7 +49,10 @@
     "e2e": "moon run e2e:test",
     "e2e:visual": "moon run e2e:capture-evidence",
     "secrets:encrypt": "bun run scripts/src/lib/secrets/index.ts encrypt",
-    "secrets:decrypt": "bun run scripts/src/lib/secrets/index.ts decrypt"
+    "secrets:decrypt": "bun run scripts/src/lib/secrets/index.ts decrypt",
+    "test:integration": "moon run api:test-integration",
+    "test:all": "moon run :test && bun run test:browser && bun run test:integration",
+    "test:browser": "bun run --cwd apps/frontend/client test:browser"
   },
   "devDependencies": {
     "@biomejs/biome": "2.5.13",

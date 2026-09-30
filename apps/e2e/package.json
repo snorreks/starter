@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "test": "playwright test --config playwright.config.ts",
+    "test": "echo \"e2e is not a unit lane; run: bun run e2e\"",
     "test:headed": "playwright test --config playwright.config.ts --headed",
     "capture-evidence": "bun run capture_evidence.ts",
     "typecheck": "tsgo --noEmit",

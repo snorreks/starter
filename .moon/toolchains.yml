@@ -1,14 +1,24 @@
-# .moon/toolchains.yml
+# Toolchain resolution for Moon.
+#
+# `.bun-version` at the repository root is the single source of truth for the Bun
+# version. It is what `oven-sh/setup-bun` reads in CI and what a developer reads to
+# know what they need. `.github/workflows/ci.yml` pins the same value.
+#
+# The `version` key is deliberately absent from the `bun` toolchain here.
+#
+# Moon delegates toolchain management to proto, and proto treats an explicit
+# `version` as a hard requirement: with one pinned, every task in every project
+# fails with `missing_tool` unless that exact patch is installed. That is correct
+# for a CI image you control and wrong for a template — a contributor on Bun
+# 1.4.3 or 1.5 would be told to install a version nobody asked them to downgrade
+# to, and the first thing the repository taught them is that it does not work on
+# their machine.
+#
+# Without the pin, proto auto-detects the Bun on PATH, and `.bun-version` still
+# governs CI. Reproducibility where it matters, friction where it does not.
 
-bun:
-  # 🔴 Keep in sync with `.bun-version` at the repo root — that file is the
-  # single source of truth and is what `oven-sh/setup-bun` reads in CI.
-  # Duplicated here (rather than omitted) because proto's auto-detection is
-  # not guaranteed to find `.bun-version` from moon's toolchain resolution,
-  # and a silent version drift between local and CI is exactly the failure
-  # this pin exists to prevent. `bun run verify-bun-version` asserts they match.
-  version: "1.4.0"
+bun: {}
 
 javascript:
-  packageManager: "bun"
+  packageManager: 'bun'
   syncProjectWorkspaceDependencies: true

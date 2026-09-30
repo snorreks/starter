@@ -111,6 +111,9 @@
         "@starter/schemas": "workspace:*",
         "@starter/utils": "workspace:*",
       },
+      "devDependencies": {
+        "svelte-check": "4.7.6",
+      },
     },
     "packages/frontend/ui": {
       "name": "@starter/ui",
@@ -119,6 +122,9 @@
         "@starter/frontend-services": "workspace:*",
         "@starter/schemas": "workspace:*",
         "@starter/utils": "workspace:*",
+      },
+      "devDependencies": {
+        "svelte-check": "4.7.6",
       },
       "peerDependencies": {
         "svelte": "^5.0.0",

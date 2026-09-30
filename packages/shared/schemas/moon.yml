@@ -1,24 +1,59 @@
 $schema: 'https://moonrepo.dev/schemas/v2/project.json'
 
-type: 'library'
-language: 'typescript'
-platform: 'node'
-source: './src'
+# Moon v2 dropped `type`, `platform`, `source` and `implicitDependencies` from the
+# project schema. `layer` distinguishes a library from something runnable;
+# `dependsOn` is the build-order graph that the removed workspace-level
+# `layers` and `dependencyRules` blocks used to declare.
+#
+# Tasks are written out rather than extended from a shared template. Each is a
+# delegation to this project's own package.json script, which stays the
+# authority for what the script does. See .moon/workspace.yml.
+layer: 'library'
+
+fileGroups:
+  sources:
+    - 'src/**/*'
+  configs:
+    - 'package.json'
+    - 'tsconfig*.json'
+    - 'moon.yml'
+  tests:
+    - 'src/**/*.test.ts'
+    - 'src/**/*.spec.ts'
+    - 'tests/**/*'
+
+toolchains:
+  bun:
+  javascript:
 
 tasks:
   typecheck:
-    template: '@starter/typescript-library'
+    command: 'bun'
+    args: ['run', 'typecheck']
+    inputs:
+      - '@group(sources)'
   lint:
-    template: '@starter/typescript-library'
+    command: 'bun'
+    args: ['run', 'lint']
+    inputs:
+      - '@group(sources)'
   format:
-    template: '@starter/typescript-library'
+    command: 'bun'
+    args: ['run', 'format']
+    inputs:
+      - '@group(sources)'
   fix:
-    template: '@starter/typescript-library'
+    command: 'bun'
+    args: ['run', 'fix']
+    inputs:
+      - '@group(sources)'
   test:
-    template: '@starter/typescript-library'
+    command: 'bun'
+    args: ['run', 'test']
+    inputs:
+      - '@group(sources)'
   validate:
-    template: '@starter/typescript-library'
-  build:
-    command: 'echo'
-    args: ['no build step (TypeScript source)']
-    local: true
+    deps:
+      - '~:lint'
+      - '~:format'
+      - '~:typecheck'

@@ -1,0 +1,137 @@
+# Continuous integration.
+#
+# Three jobs, ordered by what they can catch and what they cost:
+#
+#   check   — typecheck, lint, format, guards. Seconds. No browser, no D1.
+#   test    — every unit lane plus the real-browser lane. Needs Chromium.
+#   e2e     — the built client against a real Worker and a real D1.
+#
+# Nothing here needs a secret. That is a design constraint, not a convenience:
+# a check that cannot run without a credential is a check nobody runs, and a
+# repository where `bun run test` fails on a fresh clone teaches people to skip
+# the suite rather than to fix it.
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  # Lets a maintainer verify a template change before landing it, without
+  # pushing a commit to a branch nobody wants.
+  workflow_dispatch:
+
+# A newer push to the same ref makes an in-flight run irrelevant.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  # Pin these. A floating toolchain turns a green build red on a Tuesday for
+  # reasons that have nothing to do with the change under review.
+  BUN_VERSION: '1.4.0'
+
+jobs:
+  check:
+    name: Typecheck, lint, guards
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+
+      - name: Install
+        run: bun install --frozen-lockfile
+
+      - name: Typecheck
+        # Every project, not just one. A shared package that stops typechecking
+        # breaks its consumers in ways that read as their problem.
+        run: bun run typecheck
+
+      - name: Lint
+        run: bun run lint
+
+      - name: Format
+        # Verified, not applied: a formatter that silently rewrites on CI hides
+        # which commit introduced the drift.
+        run: bun run format
+
+      - name: Guards
+        run: bun run guard
+
+  test:
+    name: Unit and browser tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+
+      - name: Install
+        run: bun install --frozen-lockfile
+
+      - name: Unit tests
+        # Every unit lane: shared packages, scripts, client, agent extensions.
+        # `moon run :test` fans out to each project's own `test` script, so a new
+        # package is covered by adding a script rather than by editing this file.
+        run: bun run test
+
+      - name: Install Playwright's Chromium
+        # Only Chromium. The browser lane runs one provider; running three would
+        # triple the time to catch a divergence nobody has hit.
+        run: bunx playwright install --with-deps chromium
+
+      - name: Browser tests
+        # Real Svelte in a real browser. The stubbed-rune lane cannot cover
+        # reactivity, and this is the lane that does.
+        run: bun run --cwd apps/frontend/client test:browser
+
+  e2e:
+    name: End to end
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+
+      - name: Install
+        run: bun install --frozen-lockfile
+
+      - name: Apply migrations to local D1
+        # Without this every route fails on a missing table, and the failure reads
+        # as a product bug rather than as a missing step.
+        run: bun run db:migrate
+
+      - name: Install Playwright's Chromium
+        run: bunx playwright install --with-deps chromium
+
+      - name: End-to-end tests
+        # Playwright starts the API and a preview of the built client itself.
+        # The run-id preflight aborts the run rather than testing against a
+        # leftover process on the same port.
+        run: bun run e2e
+
+      - name: Upload failure artifacts
+        # Traces and screenshots only when something failed. Uploading them
+        # unconditionally would put unreleased UI into artifact storage.
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-artifacts
+          path: |
+            apps/e2e/test-results/
+            apps/e2e/playwright-report/
+          retention-days: 7
+          if-no-files-found: ignore
