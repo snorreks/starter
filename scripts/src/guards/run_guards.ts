@@ -74,4 +74,3 @@ export const main = (args: readonly string[]): number => {
 
   return report.passed ? 0 : 1;
 };
-

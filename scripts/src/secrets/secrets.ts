@@ -126,4 +126,3 @@ export const main = (args: readonly string[]): number => {
 
   return 0;
 };
-

@@ -11,7 +11,7 @@ const USAGE = [
   'Usage: secrets <operation> [options]',
   '',
   'Operations:',
-  '  init               create this project\'s age recipients file and .sops.yaml',
+  "  init               create this project's age recipients file and .sops.yaml",
   '  doctor             check sops, age and the recipients this project needs',
   '  edit <path>        decrypt to an ignored file, open $EDITOR, re-encrypt',
   '  encrypt <path>     encrypt a plaintext file for the project recipients',
