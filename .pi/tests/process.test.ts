@@ -12,10 +12,30 @@ import { afterEach, describe, expect, test } from 'bun:test';
 import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { setTimeout as sleep } from 'node:timers/promises';
 import { runBounded } from '../lib/process.ts';
 
 const artifactRoot = (): string => mkdtempSync(join(tmpdir(), 'pi-process-'));
 const cleanups: string[] = [];
+
+/**
+ * Has this pid stopped existing?
+ *
+ * Polled rather than probed once, because the signal is asynchronous: the run can
+ * settle on `close` microseconds before the killed process is reaped, and a
+ * single probe would fail on that ordering rather than on a survivor.
+ */
+const processGone = async (pid: number, budgetMs = 3_000): Promise<boolean> => {
+  for (let waited = 0; waited < budgetMs; waited += 50) {
+    try {
+      process.kill(pid, 0);
+    } catch {
+      return true;
+    }
+    await sleep(50);
+  }
+  return false;
+};
 
 afterEach(() => {
   for (const dir of cleanups.splice(0)) {
@@ -135,8 +155,12 @@ describe('runBounded', () => {
     const root = artifactRoot();
     cleanups.push(root);
 
+    // The orphan's own pid, recorded by the shell itself, so the assertion below
+    // is about that process and not about the promise having returned.
+    const pidFile = join(root, 'grandchild.pid');
+
     const started = Date.now();
-    const result = await runBounded('sh', ['-c', 'sleep 30 & wait'], {
+    const result = await runBounded('sh', ['-c', `sleep 30 & echo $! > "${pidFile}"; wait`], {
       cwd: root,
       timeoutMs: 300,
       killGraceMs: 200,
@@ -150,6 +174,70 @@ describe('runBounded', () => {
     // reports a timeout rather than an assertion failure. A generous ceiling still
     // catches a hang, but on the assertion rather than on the framework.
     expect(Date.now() - started).toBeLessThan(4_000);
+
+    // And the orphan is gone, not merely unreported: a bound that settles while a
+    // process it spawned keeps running bounds the wait, not the work.
+    const pid = Number.parseInt(readFileSync(pidFile, 'utf8').trim(), 10);
+    expect(Number.isInteger(pid)).toBe(true);
+    expect(pid).toBeGreaterThan(1);
+    expect(await processGone(pid)).toBe(true);
+  });
+
+  test('a backgrounded process outliving the shell is still bounded', async () => {
+    // The same hang reached through the other order of events, which the test
+    // above cannot reach: there the shell outlives its child.
+    //
+    // Here the shell exits immediately and only the backgrounded `sleep` is left,
+    // holding the inherited stdout pipe. So `child.exitCode` is already set while
+    // `close` cannot fire. A kill guard that asks whether the *child* exited says
+    // "nothing to do" — on the timeout, and on the SIGKILL that follows it — and
+    // the run hangs with the timeout having had no effect at all.
+    //
+    // `code` is deliberately not asserted here: the shell really did exit 0. What
+    // must hold is that the timeout fired and the run still finished.
+    const root = artifactRoot();
+    cleanups.push(root);
+
+    const pidFile = join(root, 'orphan.pid');
+
+    const started = Date.now();
+    const result = await runBounded('sh', ['-c', `sleep 30 & echo $! > "${pidFile}"`], {
+      cwd: root,
+      timeoutMs: 300,
+      killGraceMs: 200,
+      maxBytes: 64 * 1024,
+      artifactRoot: root,
+    });
+
+    expect(result.timedOut).toBe(true);
+    expect(Date.now() - started).toBeLessThan(4_000);
+
+    const pid = Number.parseInt(readFileSync(pidFile, 'utf8').trim(), 10);
+    expect(Number.isInteger(pid)).toBe(true);
+    expect(await processGone(pid)).toBe(true);
+  });
+
+  test('multibyte output cannot push the kept text past the byte limit', async () => {
+    // `room` is a byte count and `slice` counts UTF-16 code units, so truncating a
+    // multibyte chunk at `room` *units* kept up to three times the budget. The
+    // byte limit has to be a byte limit, which is the entire contract of
+    // `maxBytes`.
+    const root = artifactRoot();
+    cleanups.push(root);
+
+    const maxBytes = 1024;
+    const result = await runBounded('sh', ['-c', 'yes ééééé | head -c 100000'], {
+      cwd: root,
+      timeoutMs: 10_000,
+      maxBytes,
+      artifactRoot: join(root, 'artifacts'),
+    });
+
+    expect(result.truncated).toBe(true);
+    expect(Buffer.byteLength(result.stdout)).toBeLessThanOrEqual(maxBytes);
+    // The dropped remainder is still on disk, so nothing is lost by the bound.
+    expect(result.artifactPath).toBeDefined();
+    expect(readFileSync(result.artifactPath as string).byteLength).toBeGreaterThan(50_000);
   });
 
   test('a missing binary rejects rather than hanging', async () => {

@@ -19,8 +19,8 @@
 // part is worse than one that says where to look.
 
 import { spawn } from 'node:child_process';
-import { mkdirSync, writeFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { closeSync, mkdirSync, openSync, writeSync } from 'node:fs';
+import { join } from 'node:path';
 
 export interface BoundedRunOptions {
   cwd: string;
@@ -49,15 +49,48 @@ export interface BoundedRunResult {
 const ARTIFACT_ROOT = join(process.cwd(), '.pi', 'artifacts');
 
 /**
- * Append up to `maxBytes`, then spill to a file and stop growing.
+ * Split a chunk at a byte boundary, never inside a character.
  *
- * Returns the text to keep and whether a spill happened. The spill file is the
- * authoritative record of what was dropped, so a reader can go and read it.
+ * A byte count is not a character count: `slice` cuts at UTF-16 code units, so
+ * slicing a multibyte chunk at a byte offset either overruns the limit or splits a
+ * character in half — and the half reads back as U+FFFD. So the boundary is
+ * measured in bytes and only complete characters before it are kept; the rest
+ * goes to the artifact.
+ */
+const splitAtBytes = (chunk: string, maxBytes: number): { head: string; rest: string } => {
+  if (Buffer.byteLength(chunk) <= maxBytes) {
+    return { head: chunk, rest: '' };
+  }
+
+  let used = 0;
+  let units = 0;
+  for (const character of chunk) {
+    const size = Buffer.byteLength(character);
+    if (used + size > maxBytes) {
+      break;
+    }
+    used += size;
+    units += character.length;
+  }
+  return { head: chunk.slice(0, units), rest: chunk.slice(units) };
+};
+
+/**
+ * Keep up to `maxBytes` in memory; stream the rest to the artifact file.
+ *
+ * The overflow used to be accumulated in a second string and written once at the
+ * end, which is not a bound at all: a child that writes 400 MB kept 400 MB here
+ * plus a second copy during the write. The file is the authoritative record of
+ * what was dropped, so a reader can go and read it, and it is now written as the
+ * output arrives rather than after it.
  */
 class BoundedBuffer {
   private kept = '';
-  private spilled = '';
   private total = 0;
+  /** Open handle to the overflow file, once the limit has been passed. */
+  private fd: number | null = null;
+  /** Set when the artifact could not be opened, so it is not retried per chunk. */
+  private spillAttempted = false;
   private spilledTo: string | undefined;
 
   constructor(
@@ -68,37 +101,72 @@ class BoundedBuffer {
 
   write(chunk: string): void {
     this.total += Buffer.byteLength(chunk);
-    this.spilled += chunk;
 
-    if (Buffer.byteLength(this.kept) < this.maxBytes) {
-      const room = this.maxBytes - Buffer.byteLength(this.kept);
-      this.kept += room >= chunk.length ? chunk : chunk.slice(0, room);
+    if (this.fd !== null) {
+      this.append(chunk);
+      return;
+    }
+    if (this.spillAttempted) {
+      // The artifact could not be opened. The in-memory text is still capped, and
+      // the run still reports that output was dropped.
       return;
     }
 
-    // Already truncated; the artifact is written once, at the end.
-  }
-
-  /** Write the overflow and return the path, if anything overflowed. */
-  finish(): { text: string; truncated: boolean; artifactPath?: string } {
-    const keptBytes = Buffer.byteLength(this.kept);
-    if (this.total <= keptBytes) {
-      return { text: this.kept, truncated: false };
+    const { head, rest } = splitAtBytes(chunk, this.maxBytes - Buffer.byteLength(this.kept));
+    this.kept += head;
+    if (rest.length === 0) {
+      return;
     }
+    this.spillAttempted = true;
 
-    const path = join(this.root, `${this.name}-${Date.now()}.log`);
     try {
-      mkdirSync(dirname(path), { recursive: true });
-      writeFileSync(path, this.spilled);
+      mkdirSync(this.root, { recursive: true });
+      const path = join(this.root, `${this.name}-${Date.now()}.log`);
+      this.fd = openSync(path, 'w');
+      // The file is the whole stream, not just the tail, so it opens with what is
+      // already in memory.
+      writeSync(this.fd, this.kept);
       this.spilledTo = path;
     } catch {
       // A tool must not fail because it could not write a debug artifact.
+      this.fd = null;
+      return;
+    }
+
+    this.append(rest);
+  }
+
+  private append(chunk: string): void {
+    if (this.fd === null) {
+      return;
+    }
+    try {
+      writeSync(this.fd, chunk);
+    } catch {
+      /* a debug artifact is not worth failing a run over */
+    }
+  }
+
+  /** Close the artifact and report whether anything overflowed. */
+  finish(): { text: string; truncated: boolean; artifactPath?: string } {
+    const path = this.spilledTo;
+    if (this.fd !== null) {
+      try {
+        closeSync(this.fd);
+      } catch {
+        /* already closed */
+      }
+      this.fd = null;
+    }
+
+    if (this.total <= Buffer.byteLength(this.kept)) {
+      return { text: this.kept, truncated: false };
     }
 
     return {
       text: this.kept,
       truncated: true,
-      ...(this.spilledTo === undefined ? {} : { artifactPath: this.spilledTo }),
+      ...(path === undefined ? {} : { artifactPath: path }),
     };
   }
 }
@@ -156,16 +224,21 @@ export const runBounded = (
     let settled = false;
 
     const kill = (signal: NodeJS.Signals): void => {
-      if (child.exitCode !== null || child.signalCode !== null) {
+      // Whether *this run* is over, not whether the direct child exited. A
+      // backgrounded descendant keeps the inherited stdout pipe open after the
+      // child is gone — `sh -c 'sleep 30 &'` is the smallest example — and `close`,
+      // the only event that settles this promise, waits on that pipe. Gating on
+      // `child.exitCode` therefore made the timeout a request in precisely the
+      // case it exists for: the SIGTERM was skipped, the SIGKILL timer skipped
+      // too, and the run hung. `process.kill(-pid)` still reaches a group whose
+      // leader has exited as long as members remain, and the catch handles ESRCH
+      // for a group that is genuinely empty.
+      if (settled) {
         return;
       }
-      // Signal the group, not just the child, for the reason `detached` explains.
-      //
       // `child.pid` is `undefined` only if the spawn failed, in which case the
       // `error` handler settles the promise and there is no process and no group
       // to signal; falling back to `child.kill` is then a no-op that cannot throw.
-      // The exit-status guard above already covers the reaped case, so a throw
-      // from the group signal would only turn a working timeout into a crash.
       const signalTree = (which: NodeJS.Signals): void => {
         if (child.pid === undefined) {
           child.kill(which);
@@ -184,7 +257,7 @@ export const runBounded = (
       // ignored or is blocked on SIGTERM does not get a second SIGTERM, it gets
       // the one signal it cannot catch.
       setTimeout(() => {
-        if (child.exitCode === null && child.signalCode === null) {
+        if (!settled) {
           signalTree('SIGKILL');
         }
       }, killGraceMs).unref?.();
