@@ -46,7 +46,7 @@ This creates the D1 database and writes its id into `wrangler.jsonc` and
 
 Then set Worker names:
 
-**`packages/shared/schemas/src/registry/app_registry.ts`**
+**`scripts/src/registry/app_registry.ts`**
 
 ```ts
 export const DEPLOYMENT_CONFIG: DeploymentConfig = {
@@ -76,7 +76,7 @@ The pieces to remove, in dependency order:
 2. `packages/backend/database/src/lib/schema.ts` — the `notes` table
 3. a migration: `bun run db:generate && bun run db:migrate`
 4. `apps/backend/api/src/lib/notes.ts`, and its line in `index.ts`
-5. `apps/frontend/client/src/lib/views/notes/`, `services/notes_service*`
+5. `apps/frontend/client/src/lib/features/notes/`, `services/notes_service*`
 6. the client routes and their tests
 7. `apps/e2e/tests/notes.spec.ts`; keep `auth.spec.ts` and retarget it
 
@@ -93,7 +93,7 @@ grep -rn "Starter\|starter" --include=*.ts --include=*.svelte \
 
 Expect hits in: `README.md`, `src-tauri/tauri.conf.json`, `src-tauri/Cargo.toml`,
 `src-tauri/icons/icon.svg`, `apps/frontend/client/src/routes/+layout.svelte`,
-`apps/backend/api/wrangler.jsonc`, and `apps/backend/database/drizzle.config.ts`.
+`apps/backend/api/wrangler.jsonc`, and `packages/backend/database/drizzle.config.ts`.
 
 The `@starter/*` package scope can stay. It is not user-visible, and renaming it
 touches every import in the repository for no benefit. If you do rename it, change

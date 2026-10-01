@@ -95,7 +95,7 @@ environment with Logpush enabled.
 
 Silently returning everything in answer to `--uid` would look exactly like "this
 user has no events" — so it is an error instead. The capabilities each adapter
-declares live in `packages/shared/schemas/src/registry/app_registry.ts`, and the
+declares live in `scripts/src/registry/app_registry.ts`, and the
 CLI checks them *before* building a filter.
 
 ## Redaction

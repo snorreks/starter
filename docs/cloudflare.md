@@ -30,7 +30,7 @@ bun run deploy:check                      # validate a deploy; changes nothing
 
 It does **not** update `DEPLOYMENT_CONFIG`, which is what `deploy:check` reads, and
 it does not deploy anything or create a Worker. So after provisioning you still have
-to put the id in `packages/shared/schemas/src/registry/app_registry.ts` by hand
+to put the id in `scripts/src/registry/app_registry.ts` by hand
 until the project/environment configuration model replaces the registry. A single
 registry with per-environment targets is later-phase work, not something this
 phase pretends to have done.
@@ -65,7 +65,7 @@ different undo.
 - no `d1 execute`, no migrations
 - no credentials in any command
 
-There are tests asserting exactly that (`scripts/src/lib/deploy/deploy.test.ts`).
+There are tests asserting exactly that (`scripts/tests/deploy.test.ts`).
 Publishing a repository does not deploy it. Creating a database does not deploy
 code. A deploy does not publish anything.
 
@@ -116,7 +116,7 @@ one-off exploration, not for a command that mutates something.
 
 ### Before any remote-capable process starts
 
-`scripts/src/lib/deploy/process_boundary.test.ts` substitutes the process runner and
+`scripts/tests/deploy_process_boundary.test.ts` substitutes the process runner and
 asserts the argv that would actually be spawned, and that **nothing** is spawned on
 refusal. Four cases, each of which previously either spawned or guessed:
 
@@ -154,7 +154,7 @@ Now:
 - a configuration failure is a 503 whose body names the binding, not an opaque 500
 
 Every `wrangler dev` caller passes `DEPLOYMENT_ENV` and `BETTER_AUTH_URL`:
-`scripts/dev/api.ts`, the integration suite, and `dev-worker.sh`.
+`scripts/src/dev-api.ts`, the integration suite, and `dev-worker.sh`.
 
 ## Migrations are separate, and deliberately so
 
@@ -203,7 +203,7 @@ coverage of its process lifecycle or exit reporting.
 
 ## Configuration
 
-`packages/shared/schemas/src/registry/app_registry.ts` is the only place an app
+`scripts/src/registry/app_registry.ts` is the only place an app
 maps to a Worker, a bucket or a database. Nothing else is allowed to hold its own
 map, because a duplicated map is how a staging query silently reads production.
 

@@ -17,6 +17,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import {
+  guardDocumentedPaths,
   guardNoLeftovers,
   guardRequestState,
   guardSourceIsTracked,
@@ -403,5 +404,76 @@ describe('version-mirrors', () => {
   test('the live repository agrees with itself', () => {
     // The fixture cases prove the rule; this proves the rule is currently met.
     expect(guardVersionMirrors(REPO_ROOT).violations).toEqual([]);
+  });
+});
+
+describe('documented-paths', () => {
+  // The scripts restructure moved `scripts/src/lib/**` and nine documents kept
+  // pointing at the old layout. Nothing failed: a reader following the link
+  // concluded the rule it described was not enforced, which is the opposite of
+  // the truth and the more expensive mistake, because it gets acted on.
+  test('rejects a document pointing at a path that does not exist', () => {
+    const root = makeTree({
+      'docs/logs.md': 'The adapter lives in `scripts/src/logs/filter.ts`.\n',
+      'scripts/src/logs/filter.ts': 'export const f = 1;\n',
+    });
+
+    expect(guardDocumentedPaths(root).violations).toEqual([]);
+  });
+
+  test('reports the stale path, with the file and line', () => {
+    const root = makeTree({
+      'docs/logs.md': 'See `scripts/src/logs/gone.ts` for the adapter.\n',
+    });
+
+    const violations = guardDocumentedPaths(root).violations;
+    expect(violations).toHaveLength(1);
+    expect(violations[0].file).toBe('docs/logs.md');
+    expect(violations[0].message).toContain('scripts/src/logs/gone.ts');
+  });
+
+  test('accepts a path narrated as removed, so history is not falsified', () => {
+    // "This repository once had X" is a true statement about a file that is gone.
+    // Reporting it would train the reader to ignore the guard.
+    const root = makeTree({
+      'docs/agent.md': 'This repository once had `.pi/extensions/logs.test.ts`.\n',
+    });
+
+    expect(guardDocumentedPaths(root).violations).toEqual([]);
+  });
+
+  test('reads the paragraph, not the line, because prose wraps', () => {
+    // The verb sits on the previous line from the path it governs, which is how
+    // the real .coderabbit.yaml comment reads.
+    const root = makeTree({
+      '.coderabbit.yaml':
+        '# the previous version of this file pointed\n# at `apps/frontend/hub`, which is not here.\n',
+    });
+
+    expect(guardDocumentedPaths(root).violations).toEqual([]);
+  });
+
+  test('exempts the incident write-ups entirely', () => {
+    // These record paths that were correct when written. Rewriting them would
+    // erase the evidence for the .gitignore bug that hid eight source files.
+    const root = makeTree({
+      'docs/first-round-review.md': 'Fixed: `scripts/src/lib/tools.ts` resolves the pinned copy.\n',
+      'docs/starter-extraction.md': 'Silently excluded `scripts/src/lib/logs/`.\n',
+    });
+
+    expect(guardDocumentedPaths(root).violations).toEqual([]);
+  });
+
+  test('ignores globs and placeholders, which are not paths', () => {
+    const root = makeTree({
+      'docs/architecture.md': 'Layers live under `packages/shared/**` and `apps/<app>/src`.\n',
+    });
+
+    expect(guardDocumentedPaths(root).violations).toEqual([]);
+  });
+
+  test('the live documentation agrees with the live tree', () => {
+    // The fixtures prove the rule; this proves the rule is currently met.
+    expect(guardDocumentedPaths(REPO_ROOT).violations).toEqual([]);
   });
 });

@@ -25,7 +25,7 @@ they are.
 
 ### Why there is a launcher script
 
-`tauri:build` is `scripts/build_tauri.ts`, not `tauri build`, and each of the four
+`tauri:build` is `apps/frontend/client/scripts/build_tauri.ts`, not `tauri build`, and each of the four
 things below is a reason:
 
 1. **The `@tauri-apps/*` stub must be off for every native target.** `vite.config.ts`

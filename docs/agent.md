@@ -38,7 +38,7 @@ habit. `defaultProjectTrust` is `ask`, not `always`, for that reason.
 **Pi loads every module it finds in `.pi/extensions` as an extension.** A helper or
 a test placed there is loaded on every start.
 
-This repository had `.pi/extensions/logs.test.ts`. It imported `bun:test`, so
+This repository once had `.pi/extensions/logs.test.ts` (now `.pi/tests/`). It imported `bun:test`, so
 starting the agent produced an extension error every time — and `bun test` passed,
 because Bun does not care what Pi can load. A passing suite told you nothing about
 whether the agent started.

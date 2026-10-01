@@ -1,0 +1,276 @@
+# yaml-language-server: $schema=https://coderabbit.ai/integrations/schema.v2.json
+# CodeRabbit AI PR review configuration.
+# See https://docs.coderabbit.ai/ for full documentation.
+#
+# CodeRabbit is advisory only — never a required check. The blocking checks are
+# the self-hosted ones: `bun run guard`, `typecheck`, `lint`, and the four test
+# lanes. A reviewer's opinion must never be a merge gate; a command that exits
+# nonzero must be.
+#
+# Every path in this file was checked against the tree before being written. A
+# path filter for a directory that does not exist is not a harmless no-op: it
+# reads as coverage that is present. The previous version of this file pointed
+# at `apps/frontend/hub`, `examples/`, `.claude/CLAUDE.md` and a `lpc` asset
+# tree, none of which exist here, while saying nothing about `apps/e2e` or
+# `scripts/src/guards` — which do.
+#
+# Tools are opt-out by default and only run when matching files change, so this
+# file lists enables and deliberate suppressions only.
+
+language: "en-US"
+early_access: false
+tone_instructions: "Be concise and direct. Focus on correctness, type safety, and architectural boundaries. Never comment on formatting or style — Biome owns those and runs in CI. Never praise; report only what is wrong or genuinely risky."
+
+reviews:
+    profile: assertive
+    # Advisory only (see header): CodeRabbit must never post a blocking
+    # "Request changes" review.
+    request_changes_workflow: false
+    high_level_summary: true
+    poem: false
+    review_status: true
+    collapse_walkthrough: false
+    changed_files_summary: true
+    # Diagrams for a PR that restructures directories help; for a one-line fix
+    # they are noise. Left on because the phases this config was written for are
+    # large and structural.
+    sequence_diagrams: true
+
+    path_filters:
+        # Generated / vendored — not ours to review.
+        - "!**/node_modules/**"
+        - "!**/dist/**"
+        - "!**/build/**"
+        - "!**/.svelte-kit/**"
+        - "!**/coverage/**"
+        - "!**/*.min.js"
+        - "!**/*.min.css"
+        - "!**/*.map"
+        - "!**/*.lock"
+        - "!**/*.lockb"
+        - "!bun.lock"
+        - "!.wrangler/**"
+        # Drizzle emits these; hand-review the schema, not the migration.
+        - "!packages/backend/database/drizzle*/**/*.sql"
+        # The Pi loader loads every module in here as an extension, so a helper
+        # or a test placed in `extensions/` fails on every start. Review the
+        # entrypoints, not the directory's incidental contents.
+        - "!.pi/extensions/**"
+
+    path_instructions:
+        # ── Runtime boundaries — the rules a reviewer can't infer from the file ──
+        #
+        # Three boundaries, each enforced twice (Biome's import rules and
+        # `bun run guard`), so a review that contradicts them should be corrected
+        # rather than obeyed. See AGENTS.md.
+
+        - path: "apps/backend/api/src/**"
+          instructions: |
+              Cloudflare Worker (module format). `nodejs_compat` is on, so the
+              supported `node:*` subset is allowed, but flag anything the Workers
+              runtime cannot do at request time: filesystem access, `child_process`,
+              native addons, long-lived module-scope mutable state shared across
+              requests, or blocking sync I/O.
+              Data access is D1 through bindings — never a direct network DB
+              driver. Auth is Better Auth. R2 is optional and only for uploads
+              (`UPLOADS`).
+
+              Deployment mode is explicit and fails closed: `DEPLOYMENT_ENV` decides
+              whether development defaults are permitted, it is never inferred from
+              a URL, and a missing or unrecognised value is an error rather than a
+              default. `BETTER_AUTH_URL` must be structurally valid and https
+              outside local, and the development placeholder secret is refused
+              remotely even when supplied explicitly. Flag any change that
+              reintroduces a default here — that is the exact regression this
+              boundary exists to prevent.
+
+        - path: "apps/frontend/client/src/**"
+          instructions: |
+              SvelteKit static SPA, also the Tauri v2 shell. There is no server:
+              `+server.ts`, `+page.server.ts` and `+layout.server.ts` are forbidden.
+              No `node:*` imports in this path — it ships to a browser/webview, and
+              `@starter/utils` is linked into this bundle, which is why
+              `killTree` lives on the `@starter/utils/process` subpath and is
+              deliberately absent from the package barrel.
+
+              Persistence goes through the repository layer. Never a D1 call, never
+              a raw driver call from a component.
+
+              The dev port is 5173, declared once in `dev_ports.ts` and asserted
+              against `tauri.conf.json` by a test, because Tauri v2 does not
+              interpolate environment variables into its config. A second literal
+              is a bug, not a convenience.
+
+        - path: "apps/e2e/**"
+          instructions: |
+              Playwright specs and the harness that starts the real client and the
+              real Worker. A test here must fail when the behaviour it names breaks
+              — an assertion that cannot fail is the failure this lane exists to
+              catch. The lane requires `node` on PATH (a Wrangler program without
+              it never starts) and a Chromium that links against this host's libc.
+
+        - path: "packages/shared/**"
+          instructions: |
+              The portable core: runs in browser, Worker and Bun. These packages
+              import nothing from `apps/` or `scripts/`. Flag any import that binds
+              this code to one runtime — `node:*`, browser globals, a server-only
+              dependency — and any new third-party dependency that is not
+              runtime-neutral.
+
+        - path: "packages/frontend/**"
+          instructions: |
+              Browser/Tauri only. No `node:*` imports, no database or backend
+              service imports. Svelte 5 runes; View/ViewModel separation. Note that
+              feature components (e.g. NoteCard) live in the feature folder, not in
+              a shared UI package, once they are specific to one feature.
+
+        - path: "packages/backend/**"
+          instructions: |
+              Backend only. No browser APIs. `AppError` for error paths
+              (`@starter/utils`), service/repository layering, DB access via
+              repositories.
+
+        - path: "apps/frontend/client/src-tauri/**"
+          instructions: |
+              Rust shell. `moon check` runs clippy here. Prefer a native call over a
+              JS shim. Desktop and mobile builds are distinct: a flag that stubs
+              one while claiming to build the other is the failure to flag.
+
+        # ── Patterns Biome and tsc cannot check ─────────────────────────────
+        - path: "**/*.svelte"
+          instructions: "Svelte 5 runes ($state, $derived, $effect). Views stay logicless — logic belongs in the ViewModel."
+
+        - path: "**/*_view_model.svelte.ts"
+          instructions: |
+              ViewModel state via $state runes. No direct database/driver access —
+              go through a service or repository.
+
+              Mutation lifecycle invariants, each with a regression test: a write
+              that completes after `dispose()` must be discarded; optimistic
+              rollback must restore only the rows that update itself changed, never
+              clobber a row another writer deleted; and `isMutating` must stay true
+              until the last in-flight mutation settles, not the first.
+
+        - path: "**/*.test.ts"
+          instructions: |
+              Tests should assert behaviour, not implementation. Flag tests that
+              would pass vacuously: empty fixture globs, unasserted promises,
+              assertions that can never fail, and a count assertion that is not
+              there when the count is the point.
+
+              A test whose subject is a file path must fail loudly when that file
+              moves, not report ENOENT — a moved file is a broken invariant, and a
+              bare "no such file" reads like a broken checkout instead.
+
+        - path: ".github/workflows/*.yml"
+          instructions: |
+              Pin third-party actions to a full commit SHA, avoid `${{ }}`
+              interpolation inside run blocks, set explicit least-privilege
+              `permissions`.
+
+              Note that `BUN_VERSION` here is a literal, not a read of
+              `.bun-version`: Actions cannot read a file into a workflow-level
+              `env:`. It is a second source of truth, and the `version-mirrors`
+              guard is what keeps it in agreement with `config/toolchain.json`.
+              Flag any edit that changes one without the other.
+
+        - path: "scripts/**"
+          instructions: |
+              Bun CLI tooling, one dispatcher at `src/cli.ts` with domain modules
+              beside it. Flag hardcoded absolute paths, secrets in source, and
+              unchecked subprocess exit codes — a command that succeeds while doing
+              nothing is worse than one that fails.
+
+              A command with no adapter must exit nonzero with an explanation and
+              the invocation that would work. Never replace required functionality
+              with an echo, an always-zero exit, a blanket skip or a weakened
+              assertion.
+
+              Guard tasks run with `options.cache: false` because they read files
+              outside the project that Moon cannot hash. Flag a change that
+              re-enables caching there, or adds a guard whose subject is a file
+              the task does not declare: it would report `ok` on real drift.
+
+    auto_review:
+        enabled: true
+        drafts: false
+        # Pause automatic incremental reviews immediately after the first review pass
+        auto_pause_after_reviewed_commits: 1
+        base_branches:
+            - main
+        ignore_title_keywords:
+            - "WIP"
+            - "wip"
+            - "DO NOT MERGE"
+            - "draft"
+
+    tools:
+        biome:
+            enabled: true
+        shellcheck:
+            enabled: true
+        actionlint:
+            enabled: true
+        zizmor:
+            enabled: true
+        markdownlint:
+            enabled: true
+        yamllint:
+            enabled: true
+        gitleaks:
+            enabled: true
+        # Dependency CVE scanning against bun.lock — pairs with Renovate.
+        osvScanner:
+            enabled: true
+
+        # Deliberate suppressions: review does not add value here.
+        # Biome owns JS/TS linting; a second opinion is pure duplicate noise.
+        eslint:
+            enabled: false
+        oxc:
+            enabled: false
+        # Rust lives only in apps/frontend/client/src-tauri; `moon check` runs
+        # clippy there already. Flip to true to also get it in PR review.
+        clippy:
+            enabled: false
+        # There are no Dockerfiles in this repository.
+        hadolint:
+            enabled: false
+
+    finishing_touches:
+        autofix:
+            enabled: true
+        fix_ci:
+            enabled: true
+        resolve_merge_conflict:
+            enabled: true
+        docstrings:
+            enabled: false
+        unit_tests:
+            enabled: false
+        simplify:
+            enabled: false
+
+    pre_merge_checks:
+        title:
+            mode: warning
+            requirements: "Conventional commit prefix (feat:, fix:, chore:, refactor:, docs:) and under 72 characters."
+        description:
+            mode: warning
+        docstrings:
+            mode: "off"
+
+chat:
+    auto_reply: true
+
+knowledge_base:
+    code_guidelines:
+        enabled: true
+        filePatterns:
+            - "AGENTS.md"
+            - ".pi/skills/**/SKILL.md"
+            - "docs/architecture.md"
+    learnings:
+        scope: local
+    web_search:
+        enabled: true

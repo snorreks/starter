@@ -593,6 +593,102 @@ export const guardVersionMirrors = (root = REPO_ROOT): GuardResult => {
   };
 };
 
+// ── Rule 7 — documented paths exist ──────────────────────────────────────────
+
+/**
+ * Rule 7 — every repository path a document points at must exist.
+ *
+ * The scripts restructure moved `scripts/src/lib/**` into a dispatcher plus
+ * domain modules, and nine documents kept pointing at the old layout. Nothing
+ * failed. A reader following `docs/architecture.md` to the guard that enforces
+ * the request-state rule landed on a path that does not exist, and the natural
+ * conclusion is that the rule is not enforced — which is the opposite of the
+ * truth, and the more expensive mistake, because it is acted on.
+ *
+ * Two exclusions, both because the alternative is falsifying a record:
+ *
+ *   - Documents that narrate the past. "This repository once had
+ *     `.pi/extensions/logs.test.ts`" is a true statement about a file that is
+ *     gone, and so is "the previous config pointed at `apps/frontend/hub`". The
+ *     check reads the surrounding paragraph, not the line, because prose wraps
+ *     and the verb is often on the previous line.
+ *   - The incident write-ups themselves (`docs/first-round-review.md`,
+ *     `docs/starter-extraction.md`), which record paths that were correct when
+ *     written. Rewriting those would erase the evidence for the `.gitignore`
+ *     bug that hid eight source files from git.
+ */
+export const guardDocumentedPaths = (root = REPO_ROOT): GuardResult => {
+  const violations: Violation[] = [];
+
+  const NARRATED =
+    /\b(once had|once was|used to be|previously|former(ly)?|no longer|removed|renamed|moved|pointed at|does not exist|doesn'?t exist|is gone)\b/i;
+
+  /** A repo-root-relative path in backticks. Narrow on purpose, so prose is not
+   * mistaken for a reference. Globs and placeholders are skipped by the caller. */
+  const PATH_PATTERN =
+    /`((?:scripts|apps|packages|docs|\.pi|\.github|\.moon|config)\/[A-Za-z0-9_./-]+)`/g;
+
+  const files: string[] = [
+    'README.md',
+    'AGENTS.md',
+    ...(existsSync(join(root, 'docs')) ? readdirSync(join(root, 'docs')) : [])
+      .filter((entry) => entry.endsWith('.md'))
+      .map((entry) => join('docs', entry)),
+  ];
+
+  for (const relativePath of files) {
+    // The incident records are history, not instructions.
+    if (relativePath === 'docs/first-round-review.md') {
+      continue;
+    }
+    if (relativePath === 'docs/starter-extraction.md') {
+      continue;
+    }
+
+    const full = join(root, relativePath);
+    if (!existsSync(full)) {
+      continue;
+    }
+
+    const text = readFileSync(full, 'utf8');
+
+    for (const match of text.matchAll(PATH_PATTERN)) {
+      const path = match[1].replace(/[.,;:]$/, '');
+      if (path.includes('*') || path.includes('<') || existsSync(join(root, path))) {
+        continue;
+      }
+
+      const lineStart = text.lastIndexOf('\n', match.index) + 1;
+      const paragraphStart = text.lastIndexOf('\n\n', match.index) + 2;
+      const lineEnd = text.indexOf('\n', match.index);
+      const line = text.slice(lineStart, lineEnd === -1 ? text.length : lineEnd);
+      const paragraph = text.slice(paragraphStart, lineEnd === -1 ? text.length : lineEnd);
+
+      if (NARRATED.test(line) || NARRATED.test(paragraph)) {
+        continue;
+      }
+
+      violations.push({
+        rule: 'documented-paths',
+        file: relativePath,
+        line: text.slice(0, match.index).split('\n').length,
+        message:
+          `This document points at ${path}, which does not exist.\n` +
+          '  A reader who follows the link concludes the thing it describes is not\n' +
+          '  implemented. To describe something that was removed, say so in the same\n' +
+          '  sentence — the guard exempts a path narrated in the past tense.',
+      });
+    }
+  }
+
+  return {
+    id: 'documented-paths',
+    label: 'Documented paths exist',
+    baselineCount: 0,
+    violations,
+  };
+};
+
 /**
  * The guard set, each paired with the id it reports under.
  *
@@ -606,4 +702,5 @@ export const ALL_GUARDS = [
   { id: 'source-is-tracked', run: guardSourceIsTracked },
   { id: 'registry-valid', run: guardRegistryIsValid },
   { id: 'version-mirrors', run: guardVersionMirrors },
+  { id: 'documented-paths', run: guardDocumentedPaths },
 ] as const;

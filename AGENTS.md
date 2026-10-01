@@ -139,7 +139,7 @@ bun run --cwd apps/frontend/client tauri build
 bun run --cwd packages/backend/database db:generate
 ```
 
-`scripts/src/lib/tools.ts` does this in TypeScript for the tooling workspace.
+`scripts/src/shared/tools.ts` does this in TypeScript for the tooling workspace.
 
 ## Writing tests here
 
@@ -157,7 +157,7 @@ bun run --cwd packages/backend/database db:generate
 
 ## Conventions worth knowing
 
-- **Config lives in one place.** Repository paths in `scripts/src/lib/paths.ts`
+- **Config lives in one place.** Repository paths in `scripts/src/shared/paths.ts`
   (with a test, because the wrong `../` depth is silent and reads as a missing
   file). Dev ports in `apps/frontend/client/dev_ports.ts`. App-to-Worker mapping in
   the app registry.
