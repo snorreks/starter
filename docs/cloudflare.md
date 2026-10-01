@@ -285,7 +285,7 @@ instruction offered could not be followed.
 ```bash
 bun run deploy:configure -- --account <32-hex>   # the account id, no provisioning
 bun run deploy:configure -- --provision          # create D1, record the id and account
-bun run deploy:configure -- --worker api <name>  # a Worker name
+bun run deploy:configure -- --worker api <name>  # app, then name — both required
 ```
 
 ### Staging and production are different deployments

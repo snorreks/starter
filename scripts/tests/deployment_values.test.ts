@@ -16,7 +16,7 @@ import { afterEach, describe, expect, test } from 'bun:test';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
-import { provisionDatabase } from '../src/deploy/configure.ts';
+import { provisionDatabase, setAccount } from '../src/deploy/configure.ts';
 import { DEPLOYMENT_CONFIG } from '../src/registry/app_registry.ts';
 import {
   describeResolution,
@@ -49,6 +49,32 @@ afterEach(() => {
 });
 
 const local = (values: unknown): string => JSON.stringify(values);
+
+/**
+ * Silence a command's own progress output for one call.
+ *
+ * `provisionDatabase` and `setAccount` both write to stdout as part of their contract,
+ * so a test that asserts on the files they wrote would otherwise interleave that with
+ * the runner's output. Returns the restore function, and every call site runs it in
+ * `finally` — a swallowed restore leaves the rest of the suite writing into the void.
+ *
+ * Module scope rather than inside one `describe`, because two different describes need
+ * it and duplicating a helper that patches global state is how a test ends up
+ * silencing another test's output.
+ */
+const quiet = (): (() => void) => {
+  const out = process.stdout.write.bind(process.stdout);
+  const err = process.stderr.write.bind(process.stderr);
+  const swallow = (): boolean => true;
+
+  process.stdout.write = swallow as unknown as typeof process.stdout.write;
+  process.stderr.write = swallow as unknown as typeof process.stderr.write;
+
+  return () => {
+    process.stdout.write = out;
+    process.stderr.write = err;
+  };
+};
 
 describe('resolveDeploymentValues', () => {
   test('reports nothing provisioned on a fresh checkout', () => {
@@ -186,28 +212,6 @@ describe('provisionDatabase', () => {
       'apps/backend/api/wrangler.jsonc':
         '{\n  "d1_databases": [\n    {\n      "binding": "DB",\n      "database_name": "starter-api",\n      "database_id": ""\n    }\n  ]\n}\n',
     });
-
-  /**
-   * Silence the command's own progress output for one call.
-   *
-   * `provisionDatabase` writes to stdout as part of its contract, so a test that
-   * asserts on the files it wrote would otherwise interleave that with the runner's
-   * output. Returns the restore function, and every call site runs it in `finally` —
-   * a swallowed restore leaves the rest of the suite writing into the void.
-   */
-  const quiet = (): (() => void) => {
-    const out = process.stdout.write.bind(process.stdout);
-    const err = process.stderr.write.bind(process.stderr);
-    const swallow = (): boolean => true;
-
-    process.stdout.write = swallow as unknown as typeof process.stdout.write;
-    process.stderr.write = swallow as unknown as typeof process.stderr.write;
-
-    return () => {
-      process.stdout.write = out;
-      process.stderr.write = err;
-    };
-  };
 
   test('records the id where the tooling reads it, not only in wrangler.jsonc', () => {
     const root = tree();
@@ -483,5 +487,127 @@ describe('targetsFor', () => {
     const values = resolveDeploymentValues({}, root);
     expect(values.environments?.staging?.workerNames.api).toBe('ok-api');
     expect(values.environments?.production).toBeUndefined();
+  });
+});
+
+describe('setAccount', () => {
+  // The one operation that *writes* the local overlay, and it had no test — because it
+  // hardcoded `REPO_ROOT`, so there was nowhere to point it. The bug that missing test
+  // concealed is worth stating, because the fix is in the remedy text this repository
+  // itself prints:
+  //
+  //   bun run deploy:configure -- --worker api starter-api
+  //
+  // was read as "the name is `api`", and recorded the literal string `"api"` as the
+  // Worker's name. Wrangler accepts that as a valid name, so the deploy plan printed
+  // `--name api` and nothing failed until it published to the wrong place.
+
+  const ACCOUNT = 'a'.repeat(32);
+
+  test('records the account id alone, provisioning nothing', () => {
+    const root = makeTree({});
+    const restore = quiet();
+
+    try {
+      expect(setAccount(['--account', ACCOUNT], root)).toBe(0);
+
+      const values = resolveDeploymentValues({}, root);
+      expect(values.accountId).toBe(ACCOUNT);
+      // Setting the account must not invent a Worker or a database.
+      expect(values.workerNames.api).toBeNull();
+      expect(values.d1DatabaseIds.api).toBeNull();
+    } finally {
+      restore();
+    }
+  });
+
+  test('records a Worker name against the app it was given', () => {
+    // The regression: `api` is the app, `starter-api` is the name.
+    const root = makeTree({});
+    const restore = quiet();
+
+    try {
+      expect(setAccount(['--account', ACCOUNT, '--worker', 'api', 'starter-api'], root)).toBe(0);
+
+      const values = resolveDeploymentValues({}, root);
+      expect(values.workerNames.api).toBe('starter-api');
+      // And the *other* app is untouched, rather than given the same name.
+      expect(values.workerNames.client).toBeNull();
+      // The decisive assertion: the name is not the app id.
+      expect(values.workerNames.api).not.toBe('api');
+    } finally {
+      restore();
+    }
+  });
+
+  test('records the client Worker name just as readily as the API one', () => {
+    const root = makeTree({});
+    const restore = quiet();
+
+    try {
+      setAccount(['--account', ACCOUNT, '--worker', 'client', 'starter-client'], root);
+
+      expect(resolveDeploymentValues({}, root).workerNames.client).toBe('starter-client');
+    } finally {
+      restore();
+    }
+  });
+
+  test('refuses a single --worker argument rather than guessing the target', () => {
+    // Guessing is what produced the bug. Refusing costs one line of extra typing.
+    const root = makeTree({});
+    const restore = quiet();
+
+    try {
+      expect(setAccount(['--account', ACCOUNT, '--worker', 'starter-api'], root)).toBe(2);
+
+      // Nothing written at all, not even the account id: the invocation was wrong.
+      expect(existsSync(join(root, LOCAL_DEPLOYMENT_FILE))).toBe(false);
+    } finally {
+      restore();
+    }
+  });
+
+  test('refuses a --worker target that is not an app', () => {
+    const root = makeTree({});
+    const restore = quiet();
+
+    try {
+      expect(setAccount(['--account', ACCOUNT, '--worker', 'frontend', 'x'], root)).toBe(2);
+      expect(existsSync(join(root, LOCAL_DEPLOYMENT_FILE))).toBe(false);
+    } finally {
+      restore();
+    }
+  });
+
+  test('refuses an account id that is not 32 hex characters, writing nothing', () => {
+    for (const bad of ['nope', 'a'.repeat(31), 'z'.repeat(32)]) {
+      const root = makeTree({});
+      const restore = quiet();
+
+      try {
+        expect(setAccount(['--account', bad], root)).toBe(2);
+        expect(existsSync(join(root, LOCAL_DEPLOYMENT_FILE))).toBe(false);
+      } finally {
+        restore();
+      }
+    }
+  });
+
+  test('recording a Worker name does not erase the account id or the other app', () => {
+    const root = makeTree({});
+    const restore = quiet();
+
+    try {
+      setAccount(['--account', ACCOUNT, '--worker', 'api', 'starter-api'], root);
+      setAccount(['--account', ACCOUNT, '--worker', 'client', 'starter-client'], root);
+
+      const values = resolveDeploymentValues({}, root);
+      expect(values.accountId).toBe(ACCOUNT);
+      expect(values.workerNames.api).toBe('starter-api');
+      expect(values.workerNames.client).toBe('starter-client');
+    } finally {
+      restore();
+    }
   });
 });

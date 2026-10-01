@@ -227,14 +227,36 @@ export const provisionDatabase = (
   return 0;
 };
 
+/** The apps a Worker name can be recorded for. Drives the error message and the check. */
+const WORKER_APPS = { client: null, api: null } as const;
+
 /**
- * Record the account id, and optionally a worker name, without provisioning.
+ * Record the account id, and optionally a Worker name, without provisioning.
  *
  * Separate from `--provision` because the account id is needed by read-only paths
  * — the Observability log query above all — and requiring a database creation to
  * set it would make asking a question about yesterday's logs a mutating command.
+ *
+ * `--worker` takes **two** arguments: the app, then the name.
+ *
+ *     bun run deploy:configure -- --worker api starter-api
+ *
+ * The first version accepted one and inferred the target from it, which was wrong in
+ * the way that matters: `--worker api starter-api` — the exact form this repository's
+ * own remedy text recommends — read the *target* as the name and recorded the literal
+ * string `"api"` as the Worker's name. The deploy plan then printed `--name api`,
+ * which wrangler accepts as a valid Worker name, so nothing failed until the deploy
+ * published to the wrong place.
+ *
+ * A one-argument form is now refused rather than guessed. Guessing the target is what
+ * the no-inherited-configuration rule is about, and the cost of refusing is one line
+ * of typing.
+ *
+ * `root` is a parameter so this is testable against a throwaway directory. It was
+ * hardcoded to `REPO_ROOT`, which meant the one operation that *writes* the local
+ * overlay had no test at all.
  */
-export const setAccount = (args: readonly string[]): number => {
+export const setAccount = (args: readonly string[], root: string = REPO_ROOT): number => {
   const accountIndex = args.indexOf('--account');
   const account = accountIndex === -1 ? undefined : args[accountIndex + 1];
 
@@ -248,22 +270,46 @@ export const setAccount = (args: readonly string[]): number => {
   }
 
   const workerIndex = args.indexOf('--worker');
-  const worker = workerIndex === -1 ? undefined : args[workerIndex + 1];
+  const workerApp = workerIndex === -1 ? undefined : args[workerIndex + 1];
+  const workerName = workerIndex === -1 ? undefined : args[workerIndex + 2];
 
-  writeLocalValues((current) => ({
-    ...current,
-    accountId: account.toLowerCase(),
-    ...(worker === undefined || worker === null
-      ? {}
-      : {
-          workerNames: {
-            ...current.workerNames,
-            [worker in current.workerNames ? worker : 'api']: worker,
-          },
-        }),
-  }));
+  if (workerApp !== undefined && workerName === undefined) {
+    process.stderr.write(
+      `--worker takes the app and the name: --worker <${Object.keys(WORKER_APPS).join('|')}> <name>\n` +
+        '  Nothing was changed. A single argument would have to be guessed at, and a\n' +
+        '  Worker name recorded against the wrong app is a deploy to the wrong place.\n',
+    );
+    return 2;
+  }
+
+  if (workerApp !== undefined && !(workerApp in WORKER_APPS)) {
+    process.stderr.write(
+      `--worker "${workerApp}" is not an app. Expected one of: ${Object.keys(WORKER_APPS).join(', ')}.\n` +
+        '  Nothing was changed.\n',
+    );
+    return 2;
+  }
+
+  writeLocalValues(
+    (current) => ({
+      ...current,
+      accountId: account.toLowerCase(),
+      ...(workerApp === undefined || workerName === undefined
+        ? {}
+        : {
+            workerNames: {
+              ...current.workerNames,
+              [workerApp]: workerName,
+            },
+          }),
+    }),
+    root,
+  );
 
   process.stdout.write(`Account id written to ${LOCAL_DEPLOYMENT_FILE}.\n`);
+  if (workerApp !== undefined && workerName !== undefined) {
+    process.stdout.write(`Worker name for "${workerApp}" written: ${workerName}\n`);
+  }
   return 0;
 };
 
@@ -285,7 +331,7 @@ export const main = (args: readonly string[]): number => {
   }
 
   if (args.includes('--account')) {
-    return setAccount(args);
+    return setAccount(args, REPO_ROOT);
   }
 
   const check = inspectConfig();
