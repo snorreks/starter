@@ -20,6 +20,22 @@
 //      `preflight.ts` for why that distinction matters.
 
 import { defineConfig, devices } from '@playwright/test';
+import { fileURLToPath } from 'node:url';
+
+/**
+ * Which Chromium this run uses.
+ *
+ * `CHROMIUM_PATH` is set by the Nix dev shell, because Playwright's own download
+ * links against a Linux libc and a fixed set of `.so` names that NixOS only
+ * provides under versioned suffixes. Left unset, Playwright uses its downloaded
+ * copy — correct everywhere else.
+ *
+ * `new URL(...).pathname` is never used on a path in this file: it
+ * percent-encodes, so a checkout under a directory containing a space resolves
+ * to a nonexistent location and the failure reads as a missing file.
+ */
+const chromiumPath = process.env.CHROMIUM_PATH;
+const launchOptions = chromiumPath ? { executablePath: chromiumPath } : {};
 
 /**
  * Ports.
@@ -103,7 +119,7 @@ export default defineConfig({
   projects: [
     {
       name: 'chromium',
-      use: { ...devices['Desktop Chrome'] },
+      use: { ...devices['Desktop Chrome'], launchOptions },
     },
   ],
 
@@ -113,7 +129,7 @@ export default defineConfig({
       // in order, so the API is listening before the client is asked for.
       command: `bun run dev:api`,
       url: `${apiBaseUrl}/api/health`,
-      cwd: new URL('../..', import.meta.url).pathname,
+      cwd: fileURLToPath(new URL('../..', import.meta.url)),
       reuseExistingServer: false,
       timeout: 120_000,
       stdout: 'pipe',
@@ -134,7 +150,7 @@ export default defineConfig({
       url: clientBaseUrl,
       // Against the built output, not `vite dev`. A dev-only success would make
       // this lane certify something the deploy does not do.
-      cwd: new URL('../frontend/client', import.meta.url).pathname,
+      cwd: fileURLToPath(new URL('../frontend/client', import.meta.url)),
       reuseExistingServer: false,
       timeout: 300_000,
       stdout: 'pipe',

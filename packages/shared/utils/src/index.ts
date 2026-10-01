@@ -7,6 +7,7 @@ export * from './lib/common/base_class.ts';
 export * from './lib/common/deferred.ts';
 export * from './lib/common/error.ts';
 export * from './lib/common/ids.ts';
+export * from './lib/common/lifecycle_guard.ts';
 export * from './lib/common/listener.ts';
 export * from './lib/common/stale_guard.ts';
 // `./lib/process` is deliberately NOT re-exported here. It uses `node:child_process`

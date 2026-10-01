@@ -12,12 +12,13 @@
 // composition seam.
 
 import type { Note } from '@starter/schemas/notes';
-import { BaseViewModelContainer, ErrorState, NoteCard } from '@starter/ui';
+import { BaseViewModelContainer, ErrorState } from '@starter/ui';
 import { StaleGuard } from '@starter/utils';
 import { flushSync } from 'svelte';
 import { describe, expect, test } from 'vitest';
-import type { NotesService } from '#lib/services/notes_service.svelte.ts';
-import { NotesViewModel } from '#lib/views/notes/notes_view_model.svelte.ts';
+import NoteCard from '#lib/features/notes/note_card.svelte';
+import type { NotesService } from '#lib/features/notes/notes_service.svelte.ts';
+import { NotesViewModel } from '#lib/features/notes/notes_view_model.svelte.ts';
 import { emptySnippet, mountInDocument } from './mount_helper.ts';
 
 const note = (overrides: Partial<Note> = {}): Note => ({

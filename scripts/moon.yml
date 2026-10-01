@@ -64,12 +64,32 @@ tasks:
       - '@group(sources)'
   guard:
     command: 'bun'
-    args: ['run', 'src/lib/guards/run_guards.ts']
+    args: ['run', 'src/cli.ts', 'guard']
+    # `cache: false` is load-bearing, not a performance choice.
+    #
+    # The guards read files that live outside this project: `config/toolchain.json`,
+    # `.bun-version`, `.gitignore`, the app registry, and every file in `apps/` and
+    # `packages/` that the boundary walk inspects. Moon hashes only the inputs it
+    # is told about, and it rejects `..` in a task input, so those files cannot be
+    # declared. The consequence is concrete and was observed: with `.bun-version`
+    # drifted to 1.4.0, `bun run guard` printed `ok` and exited 0, because the
+    # cache key had not changed. A guard that cannot fail is worse than no guard,
+    # because it is believed.
+    #
+    # The same reasoning as the E2E lane's file groups: a cache key that cannot
+    # see what the command reads is not a cache. The guard is a few hundred
+    # milliseconds, and it is the thing people trust when they are about to merge.
+    options:
+      cache: false
     inputs:
       - '@group(sources)'
   guard-whole-repo:
     command: 'bun'
-    args: ['run', 'src/lib/guards/run_guards.ts', '--whole-repo']
+    args: ['run', 'src/cli.ts', 'guard', '--whole-repo']
+    # Same reason as `guard`: it reads the whole repository, including files that
+    # are not inputs to this task.
+    options:
+      cache: false
     inputs:
       - '@group(sources)'
   validate:

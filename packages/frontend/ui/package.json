@@ -18,10 +18,6 @@
       "svelte": "./src/feedback/index.ts",
       "default": "./src/feedback/index.ts"
     },
-    "./notes": {
-      "svelte": "./src/notes/index.ts",
-      "default": "./src/notes/index.ts"
-    },
     "./tokens.css": "./src/tokens.css"
   },
   "scripts": {

@@ -7,13 +7,13 @@
   "main": "./src/index.ts",
   "scripts": {
     "start": "bun run src/index.ts",
-    "lint": "biome lint src",
-    "format": "biome format src",
-    "fix": "biome check --write src --error-on-warnings",
+    "lint": "biome lint src tests",
+    "format": "biome format src tests",
+    "fix": "biome check --write src tests --error-on-warnings",
     "typecheck": "tsgo --noEmit",
     "test": "bun test",
-    "guard": "bun run src/lib/guards/run_guards.ts",
-    "guard:whole-repo": "bun run src/lib/guards/run_guards.ts --whole-repo"
+    "guard": "bun run src/cli.ts guard",
+    "guard:whole-repo": "bun run src/cli.ts guard --whole-repo"
   },
   "dependencies": {
     "@starter/logger": "workspace:*",

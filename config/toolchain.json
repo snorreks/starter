@@ -1,0 +1,44 @@
+{
+  "//": [
+    "ONE authority for every version pin in this repository.",
+    "",
+    "Anything that needs a version reads it here: the Nix flake, `bun run",
+    "setup:doctor`, and the `version-mirrors` guard. Nothing re-states a version",
+    "in a second file except the mirrors listed below, and those are checked.",
+    "",
+    "The mirrors that exist, and who owns them:",
+    "",
+    "  .bun-version                      oven-sh/setup-bun in CI, proto locally",
+    "  .github/workflows/ci.yml BUN_VERSION   a LITERAL, not a read of .bun-version",
+    "  flake.nix                         reads toolchain.json, writes none",
+    "  .moon/toolchains.yml              names the package manager only",
+    "",
+    "The CI literal is a known second source, not an oversight. GitHub Actions",
+    "cannot read a file into `env:` at the workflow level, so the value is",
+    "repeated there and the `version-mirrors` guard is what keeps the two in",
+    "agreement. That guard found the real drift: `.bun-version` said 1.4.0",
+    "while CI pinned 1.4.2, and `bun install --frozen-lockfile` then failed in CI",
+    "with an error about the lockfile that named nothing useful.",
+    "",
+    "`bun run setup:doctor` and `bun run guard` both check these agree. Note that",
+    "`guard` sets `options.cache: false` in scripts/moon.yml: the mirrors live",
+    "outside the scripts project and Moon cannot hash them, so a cached guard",
+    "would report `ok` on real drift."
+  ],
+  "bun": "1.4.2",
+  "playwright": {
+    "//": [
+      "The version the browsers must match. Read from the workspace copy of",
+      "@playwright/test, and cross-checked against the lockfile, because the",
+      "browser download is keyed by the package version.",
+      "",
+      "The binaries themselves are NOT installed from the network on NixOS:",
+      "Playwright's Linux Chromium needs glibc and libraries a generic",
+      "`.deb`-shaped download does not link against. `flake.nix` supplies one and",
+      "`bun run setup:doctor` proves it launches; the symptom it prevents is",
+      "`error while loading shared libraries: libgbm.so.1`, which Playwright",
+      "reports as `Target page, context or browser has been closed`."
+    ],
+    "browsers": ["chromium"]
+  }
+}

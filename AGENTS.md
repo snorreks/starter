@@ -17,6 +17,7 @@ explanation** rather than printing advice and exiting 0:
 | Command | Exit | Why |
 |---|---|---|
 | `bun run secrets:encrypt` / `secrets:decrypt` | 3 | Not implemented yet. Prints the raw `sops` invocation. |
+| `bun run scripts -- secrets init\|doctor\|edit\|exec\|update-recipients` | 3 | Advertised, not implemented. Same rule: an operation never reports a success it did not perform. |
 | `bun run contract run <path>` (without `--dry-run`) | 3 | No execution adapter yet. `--dry-run` works. |
 
 ## Commands
