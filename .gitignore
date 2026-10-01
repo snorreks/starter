@@ -46,6 +46,16 @@ state/
 wrangler.generated.jsonc
 .dev.vars
 .dev.vars.*
+
+# Provisioned resource ids: account, Worker names, D1/R2 ids.
+#
+# Written by `bun run deploy:configure -- --provision` and read by `deploy:check`,
+# `db:migrate` and the log adapters. Gitignored because these identify a real
+# account: committing them would make a fresh clone target somebody else's
+# resources, which is the same reason `registry-valid` fails the build on a literal
+# id in `app_registry.ts`. Two layers with one rule — a resource id belongs to a
+# person, not to the project.
+.starter/
 !.dev.vars.example
 
 # Native build output

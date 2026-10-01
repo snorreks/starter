@@ -24,6 +24,7 @@
 // passed downstream as if it were an application event.
 
 import { streamWrangler } from '../cloudflare/wrangler.ts';
+import { effectiveDeploymentValues } from '../registry/deployment_values.ts';
 import { buildFilter } from './filter.ts';
 import { buildObservabilityRequest, type ObservabilityRequest } from './observability.ts';
 import {
@@ -34,8 +35,8 @@ import {
 } from './observability_client.ts';
 import {
   APP_LOG_CONFIG,
+  type AppId,
   capabilitiesFor,
-  DEPLOYMENT_CONFIG,
   prerequisiteFor,
   resolveLogAdapter,
 } from './registry.ts';
@@ -53,8 +54,25 @@ export const DEFAULT_WINDOW_MS = 60 * 60_000;
 /** Ceiling on one historical read, so `--since 30d` cannot fetch forever. */
 export const MAX_WINDOW_MS = 7 * 24 * 60 * 60_000;
 
-/** The configured Cloudflare account id, or null when unprovisioned. */
-const accountId = (): string | null => DEPLOYMENT_CONFIG.accountId;
+/**
+ * The configured Cloudflare account id, or null when unprovisioned.
+ */
+const accountId = (): string | null => effectiveDeploymentValues().accountId;
+
+/**
+ * The Worker name to query, for one app.
+ *
+ * `APP_LOG_CONFIG.workerName` is a *third* copy of the Worker name — alongside
+ * `DEPLOYMENT_CONFIG.workerNames` and the local overlay — and it was hardcoded to
+ * `null` for both apps. So a project that had provisioned a Worker was told "no
+ * Worker name is configured" by the very command whose job is reading its logs.
+ *
+ * The local overlay wins, because it is what `deploy:configure` writes and what the
+ * operator last said. `APP_LOG_CONFIG.workerName` is consulted last, and only so a
+ * future topology that legitimately differs per log path can still override.
+ */
+const workerNameFor = (app: AppId): string | null =>
+  effectiveDeploymentValues().workerNames[app] ?? APP_LOG_CONFIG[app].workerName;
 
 /**
  * The provider request this query would send.
@@ -76,7 +94,7 @@ export const buildHistoricalRequest = (
   }
 
   const windowMs = Math.min(decision.since ?? DEFAULT_WINDOW_MS, MAX_WINDOW_MS);
-  const worker = APP_LOG_CONFIG[query.app].workerName;
+  const worker = workerNameFor(query.app);
 
   return {
     ok: true,
@@ -118,7 +136,7 @@ export const queryCloudflareHistory = async (
     return { status: 'credentials_unavailable', events: [], message: observabilityGate };
   }
 
-  const worker = APP_LOG_CONFIG[query.app].workerName;
+  const worker = workerNameFor(query.app);
   if (worker === null) {
     return {
       status: 'credentials_unavailable',
@@ -208,7 +226,7 @@ export const tailCloudflare = async (query: LogQuery): Promise<LogQueryResult> =
     return { status: 'credentials_unavailable', events: [], message: prerequisite };
   }
 
-  const worker = APP_LOG_CONFIG[query.app].workerName;
+  const worker = workerNameFor(query.app);
   if (worker === null) {
     return {
       status: 'credentials_unavailable',

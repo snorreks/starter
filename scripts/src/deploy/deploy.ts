@@ -35,7 +35,7 @@ import {
   setProcessRunner,
   wranglerAvailable,
 } from '../cloudflare/wrangler.ts';
-import { DEPLOYMENT_CONFIG } from '../registry/app_registry.ts';
+import { LOCAL_DEPLOYMENT_FILE, effectiveDeploymentValues } from '../registry/deployment_values.ts';
 import { type ConfigCheck, inspectConfig } from './configure.ts';
 
 export type DeployTarget = 'api' | 'client';
@@ -300,12 +300,17 @@ export const planDeploy = (
   const notices = [...config.notices];
 
   for (const target of targets) {
-    const workerName = DEPLOYMENT_CONFIG.workerNames[target];
+    const workerName = effectiveDeploymentValues().workerNames[target];
     if (workerName === null) {
       return {
         ok: false,
         reason: `No Worker name is configured for "${target}" in the ${environment} environment.`,
-        remedy: 'Set workerNames in packages/shared/schemas/src/registry/app_registry.ts.',
+        // Named the file the tooling reads, not the committed registry: the
+        // `registry-valid` guard fails the build on a literal id there, so telling
+        // an operator to edit that module sent them into a dead end.
+        remedy:
+          `bun run deploy:configure -- --worker ${target} <name>\n` +
+          `  (recorded in ${LOCAL_DEPLOYMENT_FILE}, which is gitignored)`,
       };
     }
   }

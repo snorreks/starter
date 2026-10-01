@@ -20,6 +20,10 @@
 
 import { afterEach, describe, expect, test } from 'bun:test';
 import { DEPLOYMENT_CONFIG } from '../src/registry/app_registry.ts';
+import {
+  effectiveDeploymentValues,
+  setDeploymentValues,
+} from '../src/registry/deployment_values.ts';
 import type { ConfigCheck } from '../src/deploy/configure.ts';
 import { type DeployTarget, parseDeployArgs, planDeploy, type Step } from '../src/deploy/deploy.ts';
 
@@ -28,14 +32,30 @@ const READY: ConfigCheck = { ok: true, problems: [], notices: [] };
 
 const savedWorkerNames = { ...DEPLOYMENT_CONFIG.workerNames };
 
+/**
+ * Set the Worker names for the duration of a test.
+ *
+ * This installs values through the resolver seam rather than mutating
+ * `DEPLOYMENT_CONFIG`. The old version assigned to the committed module, which
+ * production no longer reads — provisioning writes a gitignored overlay and the
+ * environment, and the module is only the floor. That gap is why every test here
+ * passed while `deploy:check` reported "no Worker name" for a project that had
+ * provisioned one: the tests set the one value the code did not read.
+ */
 const setWorkerNames = (names: Partial<Record<DeployTarget, string | null>>): void => {
-  for (const [target, value] of Object.entries(names)) {
-    DEPLOYMENT_CONFIG.workerNames[target as DeployTarget] = value;
-  }
+  const current = effectiveDeploymentValues();
+  setDeploymentValues({
+    ...current,
+    workerNames: { ...current.workerNames, ...names },
+  });
 };
 
 afterEach(() => {
+  // Clear the injection rather than restoring a snapshot: leaving values
+  // installed would leak into every later test file in this process, and a test
+  // that passes because of another file's leftovers is not a test.
   setWorkerNames(savedWorkerNames);
+  setDeploymentValues(null);
 });
 
 /**
@@ -127,7 +147,12 @@ describe('planDeploy: refusal', () => {
     }
     // Naming the target is what makes the message actionable.
     expect(plan.reason).toContain('"api"');
-    expect(plan.remedy).toContain('workerNames');
+    // And the remedy has to be a command that works. It used to say "Set
+    // workerNames in packages/shared/schemas/src/registry/app_registry.ts", which
+    // is a path that moved and a module `registry-valid` fails the build on when
+    // it holds a literal id — so following the advice was impossible.
+    expect(plan.remedy).toContain('deploy:configure');
+    expect(plan.remedy).not.toContain('app_registry.ts');
   });
 
   test('refuses when a different target has no Worker name', () => {

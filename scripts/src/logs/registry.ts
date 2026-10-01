@@ -15,18 +15,30 @@ import {
   APP_LOG_CONFIG,
   type AppId,
   capabilitiesFor,
-  DEPLOYMENT_CONFIG,
   type LogAdapterCapabilities,
   type LogAdapterKind,
   resolveLogAdapter,
 } from '../registry/app_registry.ts';
+import { effectiveDeploymentValues, type DeploymentValues } from '../registry/deployment_values.ts';
 
 export type { AppId, DeploymentEnvironment, LogAdapterCapabilities, LogAdapterKind };
-export { APP_LOG_CONFIG, capabilitiesFor, DEPLOYMENT_CONFIG, resolveLogAdapter };
+export { APP_LOG_CONFIG, capabilitiesFor, resolveLogAdapter };
+
+/**
+ * Effective deployment values.
+ *
+ * Re-exported from here so a log adapter never reaches past the registry bridge
+ * for configuration. It resolves the gitignored local overlay and the environment,
+ * not just the committed defaults — reading `DEPLOYMENT_CONFIG` directly reported
+ * "no Worker configured" for a project that had provisioned one, because
+ * `deploy:configure --provision` wrote only `wrangler.jsonc`.
+ */
+export const deploymentValues = (): DeploymentValues => effectiveDeploymentValues();
+export { DEPLOYMENT_CONFIG } from '../registry/app_registry.ts';
 
 /** Does this deployment have a Worker name configured at all? */
 export const isProvisioned = (app: AppId): boolean => {
-  const name = DEPLOYMENT_CONFIG.workerNames[app];
+  const name = deploymentValues().workerNames[app];
   return typeof name === 'string' && name.length > 0;
 };
 
@@ -49,7 +61,7 @@ export const prerequisiteFor = (app: AppId, mode: DeploymentEnvironment): string
     );
   }
 
-  if (mode === 'production' && DEPLOYMENT_CONFIG.d1DatabaseIds.api === null) {
+  if (mode === 'production' && deploymentValues().d1DatabaseIds.api === null) {
     return 'No D1 database id is configured for the API.\n  Run: bun run deploy:configure -- --provision';
   }
 
