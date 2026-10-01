@@ -217,6 +217,41 @@ const usage = (): string =>
     'Exit codes: 0 accepted/dry-run, 1 blocked, 2 usage, 3 no execution adapter available.',
   ].join('\n');
 
+/**
+ * Reject a flag that contradicts the run being resumed.
+ *
+ * The mode is part of a run's identity: a dry run may never reach `accepted`, and a
+ * real run's stages are supposed to have been performed. Resuming either kind with
+ * the other flag would let the dry adapter record `succeeded` against a real run —
+ * and a later real adapter would then skip those stages as proven. A resume is the
+ * one path where the manifest exists and the adapter check below is skipped, so the
+ * contradiction has to be caught here.
+ */
+const modeMismatch = (manifest: RunManifest, dryRun: boolean): boolean =>
+  manifest.dryRun !== dryRun;
+
+/**
+ * Bind a resumed run to the code it is resuming against.
+ *
+ * Acceptance compares verification evidence against `sourceRevision`, so a manifest
+ * that keeps the revision it was created at accepts evidence gathered from an older
+ * tree. When the revision has moved, `verify` goes back to `pending`: a passing
+ * verification of revision A says nothing about revision B.
+ */
+const rebindRevision = (manifest: RunManifest, revision: string | undefined): RunManifest => {
+  if (manifest.sourceRevision === revision) {
+    return manifest;
+  }
+  return {
+    ...manifest,
+    sourceRevision: revision,
+    stages: {
+      ...manifest.stages,
+      verify: { stage: 'verify', status: 'pending', attempts: 0 },
+    },
+  };
+};
+
 export const main = async (args: readonly string[]): Promise<number> => {
   const [command, ...rest] = args;
 
@@ -323,7 +358,19 @@ export const main = async (args: readonly string[]): Promise<number> => {
       return EXIT.usage;
     }
 
-    if (!dryRun && existing === undefined) {
+    if (existing !== undefined && modeMismatch(existing, dryRun)) {
+      process.stderr.write(
+        `Run ${existing.runId} is a ${existing.dryRun ? 'dry' : 'real'} run, and ` +
+          `${dryRun ? '--dry-run' : 'no --dry-run'} was given. ` +
+          'Resume it with the mode it was started in, or start a new run.\n',
+      );
+      return EXIT.usage;
+    }
+
+    // Not gated on `existing === undefined`: a resumed real run must be refused too.
+    // Reaching here with one would run the dry adapter over it, which records
+    // `succeeded` for stages nothing performed.
+    if (!dryRun) {
       process.stderr.write(
         'No execution adapter is available.\n\n' +
           '`contract run` performs work through a bounded Pi adapter, which phase 5 wires up.\n' +
@@ -336,15 +383,29 @@ export const main = async (args: readonly string[]): Promise<number> => {
       return EXIT.adapterUnavailable;
     }
 
+    const revision = currentRevision();
     const manifest =
-      existing ??
-      createManifest(contract.id, contract.mode, Date.now(), {
-        dryRun,
-        sourceRevision: currentRevision(),
-      });
+      existing === undefined
+        ? createManifest(contract.id, contract.mode, Date.now(), {
+            dryRun,
+            sourceRevision: revision,
+          })
+        : rebindRevision(existing, revision);
 
     process.stdout.write(`${describeManifest(manifest)}\n\n${dryRun ? 'DRY RUN\n\n' : ''}`);
     saveManifest(manifest);
+
+    // The dry adapter can only ever see a manifest that declares itself a dry run:
+    // the mismatch check above refuses the other combination and the non-dry path
+    // has already returned, so `dryRun` is true on this line by construction. That
+    // is asserted rather than assumed, because the failure it prevents is silent —
+    // `runContract` records whatever the adapter reports as `succeeded`.
+    if (!manifest.dryRun) {
+      process.stderr.write(
+        `Refusing to run the dry adapter over ${manifest.runId}, which is not a dry run.\n`,
+      );
+      return EXIT.blocked;
+    }
 
     const result = await runContract(manifest, dryAdapter);
 
