@@ -82,15 +82,17 @@ export default function logToolExtension(pi: ExtensionAPI): void {
     description:
       "Read this project's structured logs through `bun run logs`. Same CLI, same adapters, " +
       'same capability rules a human gets — including refusing a filter the active adapter ' +
-      'cannot support rather than silently ignoring it. Use this instead of reading log ' +
-      'files or guessing at what an API call did.',
+      'cannot support rather than silently ignoring it. Prefer this over reading log files ' +
+      'directly or guessing at what an API call did: it applies redaction, bounds and the same ' +
+      'capability checks the CLI applies. A non-zero exit from the CLI is a real answer, not a ' +
+      'tool failure — the message says which prerequisite is missing, so relay it rather than ' +
+      'retrying.',
+    // No `promptGuidelines`. They are appended to the system prompt on every turn
+    // of every session, whether or not the session reads a log, and the two this
+    // tool used to carry said what the description above now says. The guidance is
+    // kept; only the duplicated always-on mechanism is gone.
+    // `.pi/tests/tool_surface.test.ts` enforces the absence for every tool.
     promptSnippet: "Read application logs via the project's own log CLI",
-    promptGuidelines: [
-      'Prefer read_logs over reading log files directly: it applies redaction, bounds, and ' +
-        'the same capability checks the CLI applies.',
-      'A non-zero exit from the CLI is a real answer, not a tool failure. The message says ' +
-        'which prerequisite is missing — relay it rather than retrying.',
-    ],
     parameters: PARAMS,
     async execute(_toolCallId, params: LogParams): Promise<AgentToolResult<LogCallDetails>> {
       const args = buildArgs(params);

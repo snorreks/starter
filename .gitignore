@@ -128,6 +128,13 @@ playwright/.cache/
 .pi/workspaces/
 .pi/background-tasks/*
 !.pi/background-tasks/README.md
+# Handoff notes: durable for the machine that wrote them, invisible to git.
+#
+# A note is evidence about one moment in one worktree. Committed, it lands in
+# history, appears in every clone, and goes stale the moment anyone else pushes.
+# `handoff { action: "write" }` refuses to write here unless this rule is present.
+.pi/handoffs/*
+!.pi/handoffs/README.md
 .pi/healing_context.json
 .pi/pipeline_payload_*.json
 .pi/MARKER_*

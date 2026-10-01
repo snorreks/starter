@@ -25,11 +25,24 @@ habit. `defaultProjectTrust` is `ask`, not `always`, for that reason.
 |---|---|
 | `.pi/settings.json` | Tool and resource defaults |
 | `.pi/extensions/logs.ts` | The `read_logs` tool — entrypoint only |
+| `.pi/extensions/repo_task.ts` | Discover and run the repository's own tasks |
+| `.pi/extensions/dev_process.ts` | Start, watch and stop owned long-running processes |
+| `.pi/extensions/handoff.ts` | Write and resume durable handoff notes |
+| `.pi/extensions/herdr.ts` | Isolated worktrees — **optional**, absent by default |
 | `.pi/lib/logs_args.ts` | argv construction, no Pi imports, testable without a runtime |
-| `.pi/lib/process.ts` | Bounded, cancellable subprocess runner |
-| `.pi/tests/` | Tests, including the loader smoke test |
+| `.pi/lib/tasks.ts` | Moon task graph discovery and argv |
+| `.pi/lib/jobs.ts` | Job handles, bounded logs, owned-child cleanup |
+| `.pi/lib/handoff.ts` | Handoff notes and the staleness check |
+| `.pi/lib/herdr_cli.ts` | The Herdr boundary, as a capability that can be absent |
+| `.pi/lib/process.ts` | Bounded, cancellable subprocess runner — shared by every tool |
+| `.pi/lib/tool_namespace.ts` | Registers a family of actions as **one** tool |
+| `.pi/tests/` | Tests, including the loader smoke test and the tool-surface budget |
 | `.pi/skills/adding-a-feature/` | The conventions, as a skill |
 | `.pi/skills/debugging-with-logs/` | How to read logs, and what refusals mean |
+| `.pi/skills/herdr-worktrees/` | Isolated worktrees, ports, install, handoff |
+| `.pi/skills/reviewing-a-pr/` | CI, review threads, stale findings |
+| `.pi/skills/browser-debugging/` | Screenshots, traces, console, network evidence |
+| `.pi/skills/handoff/` | Writing and resuming a handoff note |
 | `.pi/prompts/review.md` | `/prompt:review` |
 | `.pi/prompts/check.md` | `/prompt:check` |
 
@@ -60,6 +73,18 @@ it — without that negative control, "no errors" could pass merely because noth
 was loaded.
 
 It makes no LLM request and reads no credentials.
+
+Three more suites guard the parts a unit test cannot see:
+
+| Test | Guards |
+|---|---|
+| `tests/pi_loader.test.ts` | The real loader accepts this layout, with a negative control |
+| `tests/optional_capabilities.test.ts` | Every extension loads with `PATH` emptied |
+| `tests/tool_surface.test.ts` | The prompt budget, and that no tool re-adds `promptGuidelines` |
+
+`tests/task_graph.test.ts` queries this repository's **real** Moon installation
+rather than a fixture, so the JSON shapes the parser handles are the ones Moon
+actually emits. It is local, read-only, and needs no credentials.
 
 ## The log tool
 
@@ -99,6 +124,167 @@ test instead of becoming a silently-ignored argument:
 the CLI parses every flag this tool can emit
 ```
 
+## The other three tools
+
+All three are **one tool each, with an `action` discriminator** — not one tool per
+action. See [The tool surface budget](#the-tool-surface-budget) for why that
+matters more than it sounds.
+
+### `repo_task` — the repository's own tasks
+
+```ts
+repo_task { action: "list", params: { query: "test" } }
+repo_task { action: "run",  params: { task: "pi:test" } }
+```
+
+It reads the real task graph through `moon query tasks` rather than guessing a
+`bun run` script, because several root scripts are aggregates over that graph
+(`bun run test` is `moon run :test`) and only the task ids know which project edge
+carries the inputs and the caching. An unknown id is refused **before anything is
+spawned**, with the nearest real ids — Moon's own error for an unknown task does
+not say what you probably meant.
+
+`moon query tasks` writes its `$ …` banner to **stderr** and JSON to **stdout**.
+Merging the two streams, which is the obvious thing to do, makes `JSON.parse`
+throw on a valid response.
+
+### `dev_process` — owned long-running processes
+
+```ts
+dev_process { action: "start", params: { args: ["bun", "run", "dev:api"] } }
+dev_process { action: "status", params: { job: "job-…" } }
+dev_process { action: "logs",   params: { job: "job-…" } }
+dev_process { action: "stop",   params: { job: "job-…" } }
+```
+
+Pi's `bash` returns when the command returns, so a dev server has to be
+backgrounded and then *inferred* from its log — which fails in the worst
+direction, because a linking phase that has printed nothing for thirty seconds is
+indistinguishable from a finished build.
+
+So `start` returns a **handle and a log path** immediately, and completion is only
+ever the process's own exit status. Quiet output is reported as an observation and
+never as a state transition; every status line for a running job says so outright.
+
+State lives in `.pi/background-tasks/` (gitignored, with a `README.md` kept), so a
+session that dies mid-build leaves a record rather than an orphan process.
+
+Three details that are load-bearing:
+
+- **A stop signals the whole process group.** Signalling only the direct child
+  leaves a grandchild holding the inherited stdout pipe, so the job never reports
+  as stopped.
+- **A stop checks ownership first.** Each child gets a random token in its own
+  environment; before signalling, the token is read back from
+  `/proc/<pid>/environ`. A recycled pid therefore gets **refused** rather than
+  killed — that is somebody else's process. Where `/proc` is unavailable the
+  verdict reports `verified: false` instead of pretending it passed.
+- **A killed job reports exit 124**, not 0. "Timed out" and "stopped" must not
+  read as a pass, and neither is a failure of the process itself.
+
+### `handoff` — notes outside tracked source
+
+```ts
+handoff { action: "write", params: { name: "pr-f-…", objective: "…", nextStep: "…" } }
+handoff { action: "read",  params: { name: "pr-f-…" } }
+```
+
+Notes live in `.pi/handoffs/`, gitignored. Committed, a handoff lands in history,
+appears in every clone, and goes stale the moment anyone else pushes. `write`
+verifies the rule is actually in `.gitignore` via `git check-ignore` and refuses
+otherwise.
+
+**A note is a claim, not a fact.** `read` compares its recorded head, branch and
+worktree against the live repository and reports every claim that no longer
+holds. Even when nothing contradicts it, the output says the position matches and
+that this is *not* evidence the described results still hold. An empty failure
+list renders as *"None observed. This is not the same as verified."* — because
+nobody having recorded a failure is a different claim from everything having
+passed, and only the second is usually false.
+
+The `handoff` skill is the workflow; this is the mechanism.
+
+### `herdr` — an optional capability
+
+```ts
+herdr { action: "status" }
+herdr { action: "worktree_list" }
+herdr { action: "worktree_create", params: { branch: "pr-f-…", base: "main" } }
+herdr { action: "help", params: { group: "worktree create" } }
+```
+
+See [Optional capabilities](#optional-capabilities) below.
+
+## The tool surface budget
+
+Every registered tool pins its name, label, description, `promptSnippet`,
+`promptGuidelines` and full JSON Schema into the system prompt on **every turn of
+every session**, whether or not the session ever calls it. The cost is invisible in
+normal use and only grows.
+
+So the surface is **measured and bounded**, not estimated:
+
+```bash
+bun run --cwd .pi test        # tool_surface.test.ts prints the number
+```
+
+```
+tool surface: 5 tool(s), 8429 bytes (~2107 tokens)
+  herdr            2175 bytes
+  dev_process      1778 bytes
+  read_logs        1601 bytes
+  handoff          1550 bytes
+  repo_task        1325 bytes
+```
+
+`tests/tool_surface.test.ts` loads the real pinned Pi loader, sums the real
+registrations, and fails above **12 000 bytes**. It also has a floor, so a bug
+that registers nothing cannot pass by being small, and asserts no tool carries
+`promptGuidelines` — those are always-on cost that duplicates the description.
+That is why `read_logs` folded its two guidelines into its description rather than
+keeping both.
+
+**Grouping is judged by what reaches the prompt**, not by how many actions exist.
+Five tools cover 13 actions; a tool per action would cost 13 schemas on every
+turn for the same capability.
+
+The number is printed on every run on purpose. A budget nobody can see the current
+value of only bites when it is already too late.
+
+## Optional capabilities
+
+Herdr is optional. A machine without it — and a session not inside a
+Herdr-managed pane — is the normal case for anyone who cloned this template.
+
+**Nothing in `herdr.ts` runs at module load**, so Pi starts either way. The tool
+registers unconditionally and reports a **named unavailable capability** when the
+capability is absent, because a tool that vanishes when its dependency is missing
+is indistinguishable from a broken install — the model gets no way to ask *why*.
+
+The distinction the whole thing turns on: an **absent** capability is not a
+**failed** command. Only the second is worth retrying.
+
+| State | Reported as | Retry? |
+|---|---|---|
+| Not installed / not inside a pane | named unavailable capability | no |
+| Installed, command refused | that command's error and exit status | maybe |
+| Ran, returned something unreadable | state is unknown | after reading it |
+
+Two rules that protect the user, and are asserted on the argv the CLI actually
+received rather than on the tool's own flags:
+
+- **`--no-focus` is the default.** An agent that creates a focused workspace
+  interrupts whatever the user was typing.
+- **`--force` is never defaulted on**, and `remove` requires an explicit workspace
+  id read from a response. Ids are opaque handles the server allocates; a
+  predicted `w1` is how an agent ends up operating on the wrong workspace.
+
+No action touches `herdr session`. Closing or restarting a persistent session
+destroys whatever state the user has in it.
+
+`tests/optional_capabilities.test.ts` loads every extension with `PATH` emptied
+and asserts zero errors and that all five tools still register.
+
 ## Skills
 
 A skill is a directory with a `SKILL.md`. Pi advertises its name and description
@@ -108,6 +294,10 @@ out of context until it is needed.
 ```bash
 /skill:adding-a-feature
 /skill:debugging-with-logs
+/skill:herdr-worktrees
+/skill:reviewing-a-pr
+/skill:browser-debugging
+/skill:handoff
 ```
 
 **Write the description to say when it applies**, not just what it is. The
@@ -129,41 +319,44 @@ invented finding costs more than a missed stylistic one.
 
 ## One TypeBox exception
 
-`.pi/extensions/logs.ts` imports `typebox` (1.x) while the rest of the repository
-uses `@sinclair/typebox` (0.34).
+The extensions import `typebox` (1.x) while the rest of the repository uses
+`@sinclair/typebox` (0.34).
 
 This is forced. Pi's `registerTool` consumes a TypeBox 1.x schema object and
 cannot read a 0.34 one, and an extension that does not touch the server has no
 reason to depend on Elysia. The two meet only at this boundary, so the exception
 stops at `.pi/` and is recorded in `.pi/tsconfig.json`.
 
+`typebox/value` is used for the dispatch-time validation in
+`lib/tool_namespace.ts`, so `params` are checked against each action's own schema
+even though the tool registers one `{ action, params }` envelope.
+
 ## Contracts
 
-For a change where "done" needs saying before the work starts:
+`docs/contracts/` and `bun run contract` are **not wired to any of the tools here**
+and are dormant. Nothing in `.pi/` invokes the runner, and no extension polls it.
 
-```bash
-bun run contract new "Add thing export as NDJSON" --mode standard
-bun run contract run docs/contracts/C-001-....md
-bun run contract status
-```
+For work that spans sessions, the maintained answer is the `handoff` skill and the
+`handoff` tool: a short written brief, plus a state check on resume. That is
+deliberately the smaller thing — a note a person can read in a conversation, and a
+command that says whether to believe it.
 
-Two templates in `docs/contracts/`:
-
-- `THIN_TEMPLATE.md` (standard) — problem, acceptance criteria, out of scope,
-  verification. The default.
-- `TEMPLATE.md` (full) — adds a written design and a written **critique** of it
-  before implementation.
-
-Use `standard` unless there is a real design decision with more than one reasonable
-answer. Full mode costs a document review before any code exists; for a change with
-one obvious implementation that becomes paperwork somebody rubber-stamps.
-
-The runner is a bounded, resumable state machine with injectable stages, so the
-whole lifecycle can be exercised in CI with no model provider and no credentials.
-It has no code path that can merge or deploy: **creating a contract does not
-authorise publishing its result.**
+The contract runner remains documented for when it is finished. Until then, a
+"contract-driven" workflow would be a second, unexercised path beside the one that
+works.
 
 ## Removing it
 
-`rm -rf .pi && bun run moon run pi:* 2>/dev/null`. Nothing else in the repository
-depends on it — the guards enforce the architecture, not the agent config.
+```bash
+rm -rf .pi
+bun run moon run pi:* 2>/dev/null
+```
+
+Two edits to finish the job:
+
+1. Remove `"pi": ".pi"` from the `projects:` block in `.moon/workspace.yml`.
+2. Remove `".pi"` from the `workspaces` array in the root `package.json`.
+
+Nothing else in the repository depends on `.pi` — the guards enforce the
+architecture, not the agent config. `AGENTS.md` mentions `.pi` once, in its layout
+section; that line can go with it.

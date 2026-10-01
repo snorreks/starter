@@ -11,6 +11,7 @@ fileGroups:
   sources:
     - 'extensions/**/*.ts'
     - 'lib/**/*.ts'
+    - 'lib/**/*.mjs'
     - 'tests/**/*.ts'
     - 'settings.json'
   entrypoints:
