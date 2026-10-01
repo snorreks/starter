@@ -4,9 +4,10 @@
 //
 //   bun run e2e:visual
 //
-// This runs its own servers through Playwright rather than assuming a dev server
-// is already up, so what it captures is the same build the E2E suite just
-// validated — not whatever happens to be on :4183 from someone's terminal.
+// It captures the same built Worker the E2E suite validates. It does not start
+// one: run `bun run dev:worker` first, or let `bun run e2e` start it. What it
+// captures is therefore the compiled Worker rather than whatever happens to be
+// listening on the port.
 //
 // What it does with them
 // ----------------------
@@ -21,7 +22,7 @@
 // a decision nobody made.
 
 import { type Browser, chromium, type Page } from '@playwright/test';
-import { clientBaseUrl } from './preflight.ts';
+import { appBaseUrl } from './preflight.ts';
 import {
   type EvidenceResult,
   ensureEvidenceDir,
@@ -38,12 +39,13 @@ import {
  */
 const SCREENS: readonly { name: string; path: string; prepare?: (page: Page) => Promise<void> }[] =
   [
+    { name: 'landing', path: '/' },
     { name: 'login', path: '/login' },
     { name: 'login-error', path: '/login', prepare: submitBadCredentials },
-    { name: 'notes-empty', path: '/', prepare: signIn },
+    { name: 'notes-empty', path: '/notes', prepare: signIn },
     {
       name: 'notes-populated',
-      path: '/',
+      path: '/notes',
       prepare: async (page) => {
         await signIn(page);
         await seedNotes(page);
@@ -52,7 +54,7 @@ const SCREENS: readonly { name: string; path: string; prepare?: (page: Page) => 
   ];
 
 async function signIn(page: Page): Promise<void> {
-  await page.goto(`${clientBaseUrl}/login`);
+  await page.goto(`${appBaseUrl}/login`);
   await page.getByTestId('auth-toggle-mode').click();
   await page.getByTestId('auth-email-input').fill(`visual-${crypto.randomUUID()}@example.test`);
   await page.getByTestId('auth-password-input').fill('correct horse battery staple');
@@ -98,7 +100,7 @@ async function capture(browser: Browser): Promise<EvidenceResult> {
     const page = await context.newPage();
 
     try {
-      await page.goto(`${clientBaseUrl}${screen.path}`);
+      await page.goto(`${appBaseUrl}${screen.path}`);
       if (screen.prepare !== undefined) {
         await screen.prepare(page);
       }
@@ -145,7 +147,7 @@ const visionRound = (): { available: boolean; reason?: string } => {
 };
 
 async function main(): Promise<number> {
-  process.stdout.write(`capturing visual evidence from ${clientBaseUrl}\n`);
+  process.stdout.write(`capturing visual evidence from ${appBaseUrl}\n`);
 
   const browser = await chromium.launch();
   let result: EvidenceResult;

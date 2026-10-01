@@ -35,7 +35,7 @@ export const LOG_ADAPTER_KINDS = [
   'cloudflare-observability',
   /** Bounded live tail via `wrangler tail`. Live only, no history. */
   'wrangler-tail',
-  /** Browser events forwarded to the API's telemetry endpoint. */
+  /** Browser events forwarded to the application's own telemetry endpoint. */
   'client-forward',
 ] as const;
 
@@ -114,24 +114,25 @@ export type AppLogConfig = Static<typeof AppLogConfigSchema>;
 export const DEPLOYMENT_CONFIG_SCHEMA = Type.Object(
   {
     /**
-     * Cloudflare Worker names. `null` means "not provisioned yet" — the deploy
+     * The Cloudflare Worker name. `null` means "not provisioned yet" — the deploy
      * dry-run reports that as an actionable error instead of inventing a target.
+     *
+     * One value, not one per app. The application deploys as a single Worker plus
+     * its static assets, so there is exactly one name to provision; a `client` and
+     * an `api` entry would be two names for one resource, and the registry's own
+     * stated rule is that a value in more than one place is a value nobody can
+     * tell is in effect.
      */
-    workerNames: Type.Object(
-      {
-        client: Type.Union([Type.String(), Type.Null()]),
-        api: Type.Union([Type.String(), Type.Null()]),
-      },
-      { additionalProperties: false },
-    ),
-    /** D1 database ids. Must be filled by the operator; never committed. */
-    d1DatabaseIds: Type.Object(
-      {
-        api: Type.Union([Type.String(), Type.Null()]),
-      },
-      { additionalProperties: false },
-    ),
-    /** Optional R2 bucket for user uploads. This round: optional capability. */
+    workerName: Type.Union([Type.String({ minLength: 1 }), Type.Null()]),
+    /**
+     * The D1 database id. Must be filled by the operator; never committed.
+     *
+     * `minLength: 1` for the same reason `workerName` has it: an empty string
+     * satisfies `Type.String()` and defeats the validation that is supposed to
+     * catch an unset value. `null` is how "not provisioned" is spelled.
+     */
+    d1DatabaseId: Type.Union([Type.String({ minLength: 1 }), Type.Null()]),
+    /** Optional R2 bucket for user uploads. A documented future capability. */
     r2BucketNames: Type.Object(
       {
         uploads: Type.Union([Type.String(), Type.Null()]),
@@ -139,16 +140,10 @@ export const DEPLOYMENT_CONFIG_SCHEMA = Type.Object(
       { additionalProperties: false },
     ),
     /**
-     * Custom domains. Empty by default; the starter never assumes a domain it does
-     * not control, and `configure --provision` is how a user sets these.
+     * Custom domain. Empty by default; the starter never assumes a domain it does
+     * not control, and `configure --provision` is how a user sets this.
      */
-    customDomains: Type.Object(
-      {
-        client: Type.Union([Type.String(), Type.Null()]),
-        api: Type.Union([Type.String(), Type.Null()]),
-      },
-      { additionalProperties: false },
-    ),
+    customDomain: Type.Union([Type.String(), Type.Null()]),
     /**
      * Cloudflare account id, or `null` when unprovisioned.
      *
@@ -175,15 +170,26 @@ export type DeploymentConfig = Static<typeof DEPLOYMENT_CONFIG_SCHEMA>;
  * must say so rather than reaching for a previous project's resources.
  */
 export const DEPLOYMENT_CONFIG: DeploymentConfig = {
-  workerNames: { client: null, api: null },
-  d1DatabaseIds: { api: null },
+  workerName: null,
+  d1DatabaseId: null,
   r2BucketNames: { uploads: null },
-  customDomains: { client: null, api: null },
+  customDomain: null,
   accountId: null,
 };
 
-/** Apps that exist in this project. Used for CLI validation and docs. */
-export const APP_IDS = ['client', 'api'] as const;
+/**
+ * The apps this project deploys.
+ *
+ * One entry, and the name is the same one `LOG_APPS` in `@starter/schemas` uses,
+ * because there is one application: one Worker serves the HTML, the assets and the
+ * API. It was `['client', 'api']`, which described a deployment where the browser
+ * and the API were separate resources with separate names and separate D1
+ * databases — two Workers to provision for what is now one.
+ *
+ * The browser and the Worker are still told apart in a log, by `source`
+ * (`browser` vs `worker`), not by `app`. See `@starter/schemas/logging`.
+ */
+export const APP_IDS = ['web'] as const;
 export type AppId = (typeof APP_IDS)[number];
 
 export const isAppId = (value: unknown): value is AppId =>
@@ -235,30 +241,23 @@ const CLIENT_FORWARD: LogAdapterCapabilities = {
  * logs by default and are only available where a forwarder runs.
  */
 export const APP_LOG_CONFIG: Record<AppId, AppLogConfig> = {
-  client: {
-    app: 'client',
+  web: {
+    app: 'web',
     workerName: null,
-    sources: ['browser'],
+    // Both sources, because both halves of this application log through the same
+    // deployment: the Worker's own events, and browser events it accepted at
+    // `/api/telemetry` and re-emitted. There is no second Worker for browser
+    // events to reach a separate provider with, which is why `client-forward` is a
+    // local capability here rather than a remote one.
+    sources: ['browser', 'worker', 'cli'],
     adapters: {
-      // In dev the browser writes NDJSON through the Vite logging middleware.
-      local: ['local-file'],
-      // Browser events reach the provider only if client telemetry forwarding is
-      // enabled for the deployment, which this round does not enable.
-      staging: [],
-      production: [],
-    },
-    capabilities: [LOCAL_FILE, CLIENT_FORWARD],
-  },
-  api: {
-    app: 'api',
-    workerName: null,
-    sources: ['worker'],
-    adapters: {
+      // `bun run dev` writes NDJSON to `.wrangler/logs/app.ndjson` in this
+      // checkout, from both the Node dev server and the telemetry endpoint.
       local: ['local-file'],
       staging: ['cloudflare-observability', 'wrangler-tail'],
       production: ['cloudflare-observability', 'wrangler-tail'],
     },
-    capabilities: [LOCAL_FILE, OBSERVABILITY, WRANGLER_TAIL],
+    capabilities: [LOCAL_FILE, CLIENT_FORWARD, OBSERVABILITY, WRANGLER_TAIL],
   },
 };
 
@@ -277,8 +276,8 @@ export const APP_LOG_CONFIG: Record<AppId, AppLogConfig> = {
  * refuses.
  */
 export interface EnvironmentTargets {
-  workerNames: { client: string | null; api: string | null };
-  d1DatabaseIds: { api: string | null };
+  workerName: string | null;
+  d1DatabaseId: string | null;
 }
 
 // `Partial`: presence is the signal. A project with only staging must be able to say so
@@ -304,21 +303,37 @@ export type PerEnvironment = Partial<Record<DeploymentEnvironment, EnvironmentTa
  *   - historical read  needs `historicalQuery`.
  *
  * With no request kind, the first configured adapter wins, which is what this did
- * before and is still the right answer for a bare `bun run logs api`.
+ * before and is still the right answer for a bare `bun run logs web`.
  */
 export const resolveLogAdapter = (
   app: AppId,
   environment: DeploymentEnvironment,
   follow = false,
 ): { kind: LogAdapterKind } | { unsupported: string } => {
-  const candidates = APP_LOG_CONFIG[app].adapters[environment];
+  // A declared-`AppId` parameter makes this unreachable through the CLI, which
+  // validates with `isAppId` first. It is checked anyway because this function is
+  // exported and the alternative is `APP_LOG_CONFIG[app].adapters` throwing a
+  // `TypeError` whose message names an index rather than the app the caller
+  // typed. A refusal that says what was wrong is the difference between a fixable
+  // report and a puzzle.
+  const config = APP_LOG_CONFIG[app];
+
+  if (config === undefined) {
+    return {
+      unsupported:
+        `Unknown app "${String(app)}". This project deploys: ` +
+        `${APP_IDS.map((id) => `"${id}"`).join(', ')}.`,
+    };
+  }
+
+  const candidates = config.adapters[environment];
 
   if (candidates.length === 0) {
     return {
       unsupported:
         `No log adapter is configured for app "${app}" in environment "${environment}". ` +
-        'Browser events are not server logs: they only exist in an ' +
-        'environment where client telemetry forwarding is enabled.',
+        'Browser events are not server logs: they only exist in an environment where ' +
+        'telemetry forwarding is enabled.',
     };
   }
 

@@ -4,7 +4,7 @@
 //
 // The reason this module exists: `bunx <tool>` from the repository root does NOT
 // find a tool that only one workspace package depends on. `wrangler` is declared
-// by `apps/backend/api` and `scripts`, so its binary lives in those packages'
+// by `apps/frontend/client` and `scripts`, so its binary lives in those packages'
 // `node_modules/.bin`, and `node_modules/.bin` at the root does not contain it.
 // `bunx wrangler` therefore falls through to the network and runs whatever the
 // registry served that day. Observed here: the lockfile pins 4.142.0, and
@@ -57,13 +57,19 @@ export const resolveWorkspaceBin = (
   return isExecutableFile(rootBin) ? rootBin : null;
 };
 
-/** Wrangler, as pinned by `apps/backend/api` (the package that deploys). */
+/**
+ * Wrangler, as pinned by `apps/frontend/client` (the package that deploys) and
+ * `scripts`.
+ */
 export const wranglerBin = (): string | null =>
-  resolveWorkspaceBin('wrangler', ['apps/backend/api', 'scripts']);
+  resolveWorkspaceBin('wrangler', ['apps/frontend/client', 'scripts']);
 
 /** Drizzle Kit, as pinned by `packages/backend/database`. */
 export const drizzleKitBin = (): string | null =>
   resolveWorkspaceBin('drizzle-kit', ['packages/backend/database']);
+
+/** Vite, as pinned by `apps/frontend/client`. Used to start the dev server. */
+export const viteBin = (): string | null => resolveWorkspaceBin('vite', ['apps/frontend/client']);
 
 /** Playwright, as pinned by `apps/frontend/client` and used by `apps/e2e`. */
 export const playwrightBin = (): string | null =>

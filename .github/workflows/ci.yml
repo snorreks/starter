@@ -4,8 +4,8 @@
 #
 #   check   — typecheck, lint, format, guards, config. Seconds, no browser, no D1.
 #   unit    — every unit lane, plus the real-browser lane. Needs Chromium.
-#   worker  — the API's unit tests and the Worker integration suite. Needs workerd.
-#   e2e     — the built client against a real Worker and a real D1, in a browser.
+#   worker  — the built Worker in real workerd against real local D1.
+#   e2e     — the built client and the built Worker, one origin, in a browser.
 #
 # Two properties this file is written to preserve, both of which it previously lost:
 #
@@ -15,6 +15,10 @@
 #      never executed. `e2e:e2e` now runs the real suite, and the negative control
 #      (a deliberately failing assertion makes this job exit nonzero) is documented
 #      in docs/testing.md.
+#
+#   1b. **The E2E job runs the artifact, not a dev server.** It serves the compiled
+#      `_worker.js`, so a bundling mistake, an Svelte SSR crash, or a dev-only
+#      success fails here rather than in production.
 #
 #   2. **Zero discovered tests is a failure, not a pass.** A test runner that
 #      matches nothing exits 0 in several configurations. Each lane below is
@@ -175,10 +179,12 @@ jobs:
         run: bun install --frozen-lockfile
 
       - name: Worker integration tests
-        # A real `wrangler dev` against a real local D1, on an OS-assigned port,
-        # with a run id so a leftover listener cannot be mistaken for this run's
-        # server. `wrangler dev` shells out to Node, which the runner image has.
-        run: bun run test:integration
+        # Builds the Worker, then runs a real `wrangler dev` on the built
+        # `.svelte-kit/cloudflare/_worker.js` against a real local D1, on an
+        # OS-assigned port, with a run id so a leftover listener cannot be mistaken
+        # for this run's server. `wrangler dev` shells out to Node, which the runner
+        # image has.
+        run: bun run test:worker
 
   e2e:
     name: End to end
@@ -216,9 +222,13 @@ jobs:
         run: bun run --cwd apps/e2e browsers:install
 
       - name: End-to-end tests
-        # `e2e:e2e` is the real Playwright suite: it builds the client, starts a
-        # Worker and a preview server, proves the API is this run's Worker, and
-        # drives a browser against the built output.
+        # `e2e:e2e` is the real Playwright suite. It builds the app, starts the
+        # BUILT Worker in workerd on one origin, proves that origin is this run's
+        # Worker via a run id, and drives a browser against it.
+        #
+        # One `webServer` entry, not two. The page, the assets and `/api/*` are all
+        # served by that one process, so there is no proxy for the browser to cross
+        # and no second server whose readiness could be mistaken for the first.
         #
         # Output is teed so the next step can assert on it, and `pipefail` keeps a
         # Playwright failure from being swallowed by the pipeline's last exit code.

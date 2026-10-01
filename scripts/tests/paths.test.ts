@@ -7,7 +7,7 @@
 // the *parent* of the repository, and the symptom was:
 //
 //   ENOENT: no such file or directory,
-//   open '/home/sonny/.../passion/apps/backend/api/wrangler.jsonc'
+//   open '/home/sonny/.../passion/apps/frontend/client/wrangler.jsonc'
 //
 // — one directory above the checkout, phrased as a missing file. `planMigrate` then
 // reported "No migrations found", and the deploy plan could not name its config.
@@ -19,10 +19,10 @@
 
 import { describe, expect, test } from 'bun:test';
 import { existsSync, statSync } from 'node:fs';
-import { basename, dirname } from 'node:path';
+import { basename, dirname, isAbsolute, join } from 'node:path';
 import {
-  API_DIR,
   CLIENT_DIR,
+  CLIENT_DIR_RELATIVE,
   DATABASE_DIR,
   E2E_DIR,
   PI_DIR,
@@ -40,13 +40,12 @@ describe('repository paths', () => {
     // The specific regression: one `../` too many, so `REPO_ROOT` was
     // `/home/…/passion` rather than `/home/…/passion/starter`.
     expect(dirname(REPO_ROOT)).not.toBe(REPO_ROOT);
-    expect(existsSync(`${REPO_ROOT}/apps/backend/api/wrangler.jsonc`)).toBe(true);
+    expect(existsSync(`${REPO_ROOT}/apps/frontend/client/wrangler.jsonc`)).toBe(true);
     expect(existsSync(`${REPO_ROOT}/package.json`)).toBe(true);
     expect(existsSync(`${REPO_ROOT}/.moon/workspace.yml`)).toBe(true);
   });
 
   test.each([
-    ['API_DIR', API_DIR, 'apps/backend/api'],
     ['CLIENT_DIR', CLIENT_DIR, 'apps/frontend/client'],
     ['E2E_DIR', E2E_DIR, 'apps/e2e'],
     ['DATABASE_DIR', DATABASE_DIR, 'packages/backend/database'],
@@ -57,11 +56,21 @@ describe('repository paths', () => {
     expect(dir.endsWith(suffix)).toBe(true);
   });
 
+  // The relation between the two forms of the client path is load-bearing, and an
+  // absolute `CLIENT_DIR_RELATIVE` is invisible to every test above: `join(root, x)`
+  // ignores `root` and returns `x`, so a caller that honours a caller's root
+  // silently writes to this repository instead. Asserting the relation makes that a
+  // failing test rather than a database id committed to `wrangler.jsonc`.
+  test('CLIENT_DIR_RELATIVE is the relative form of CLIENT_DIR', () => {
+    expect(isAbsolute(CLIENT_DIR_RELATIVE)).toBe(false);
+    expect(join(REPO_ROOT, CLIENT_DIR_RELATIVE)).toBe(CLIENT_DIR);
+  });
+
   test('paths are not percent-encoded', () => {
     // `new URL(...).pathname` percent-encodes; a checkout under a directory with a
     // space would resolve to a path that does not exist.
     expect(REPO_ROOT).not.toMatch(/%[0-9A-Fa-f]{2}/);
-    for (const dir of [API_DIR, CLIENT_DIR, E2E_DIR, DATABASE_DIR, PI_DIR]) {
+    for (const dir of [CLIENT_DIR, E2E_DIR, DATABASE_DIR, PI_DIR]) {
       expect(dir).not.toMatch(/%[0-9A-Fa-f]{2}/);
     }
   });
@@ -69,7 +78,7 @@ describe('repository paths', () => {
   test('paths have no trailing separator', () => {
     // A trailing slash makes `path.startsWith()` comparisons and string equality
     // behave differently for the same directory.
-    for (const dir of [REPO_ROOT, API_DIR, CLIENT_DIR, E2E_DIR, DATABASE_DIR, PI_DIR]) {
+    for (const dir of [REPO_ROOT, CLIENT_DIR, E2E_DIR, DATABASE_DIR, PI_DIR]) {
       expect(dir.endsWith('/')).toBe(false);
     }
   });

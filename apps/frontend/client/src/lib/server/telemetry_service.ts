@@ -1,8 +1,8 @@
-// apps/backend/api/src/lib/telemetry.ts
+// apps/frontend/client/src/lib/server/telemetry_service.ts
 //
 // Client log ingestion.
 //
-// Five things this endpoint is careful about, each an abuse or leak vector:
+// Five things this is careful about, each an abuse or leak vector:
 //
 //   1. **Client-reported context is not identity.** Anything the browser claims
 //      about itself arrives under `clientReported` and is stored as a label. The
@@ -11,18 +11,17 @@
 //      in another user's log history.
 //   2. **Redaction happens before storage**, not after retrieval.
 //   3. **Rate limiting** is per session and per IP: this is the one
-//      unauthenticated-reachable write path in the API.
+//      unauthenticated-reachable write path in the application.
 //   4. **A failure to store never fails the request.** Telemetry that breaks the
 //      product is worse than telemetry that is missing.
-//   5. **The body is size-capped by the router**, before parsing.
+//   5. **The body is size-capped by the route**, before parsing.
 //
-// Validation is Elysia's job, via the `body` schema, exactly as it is for the
-// notes routes. Reading the body by hand — `await request.text()` — does not
-// work reliably here: by the time a handler runs, the router may already hold
-// the stream, and `request.text()` then fails with "Body is not valid JSON" for
-// a perfectly valid payload.
+// Validation is the route adapter's job, through `readJsonBody` with the schemas
+// exported here. The service only sees records that already satisfy them, which is
+// what lets `storeRecord` be unit-tested with no HTTP involved. Reading the body
+// by hand inside the service would be the second code path to the same parse.
 
-import type { Static } from '@sinclair/typebox';
+import { type Static, Type } from '@sinclair/typebox';
 import { redactValue } from '@starter/logger';
 import {
   type ClientReportedContext,
@@ -30,11 +29,9 @@ import {
   type LogEvent,
   LogEventSchema,
 } from '@starter/schemas/logging';
-import { Elysia, status, t } from 'elysia';
-import type { Container } from './container.ts';
-import { buildRequestContext, type RequestContext } from './request_context.ts';
+import type { RequestContext } from './request_context.ts';
 
-/** Hard ceiling on one submission. Rejected before parsing. */
+/** Hard ceiling on one submission. Rejected by the route before parsing. */
 export const MAX_BODY_BYTES = 16 * 1024;
 
 const WINDOW_MS = 60_000;
@@ -45,16 +42,18 @@ const SWEEP_INTERVAL_MS = 5_000;
  * One submitted record.
  *
  * The event fields plus the self-asserted context. Modelled explicitly rather
- * than as `LogEvent & { clientReported }` because the router validates
+ * than as `LogEvent & { clientReported }` because the schemas set
  * `additionalProperties: false`, and the point is to admit exactly one extra
  * field — the one that is explicitly labelled as unverified.
  */
-const IngestRecordSchema = t.Intersect([
+export const IngestRecordSchema = Type.Intersect([
   LogEventSchema,
-  t.Object({ clientReported: t.Optional(ClientReportedContextSchema) }),
+  Type.Object({ clientReported: Type.Optional(ClientReportedContextSchema) }),
 ]);
 
-const IngestBodySchema = t.Union([IngestRecordSchema, t.Array(IngestRecordSchema)]);
+export const IngestBodySchema = Type.Union([IngestRecordSchema, Type.Array(IngestRecordSchema)]);
+
+export type IngestRecord = Static<typeof IngestRecordSchema>;
 
 /**
  * Fixed-window counter.
@@ -91,7 +90,14 @@ const sweep = (now: number): void => {
   }
 };
 
-export type IngestRecord = Static<typeof IngestRecordSchema>;
+/** Call before ingesting, so the counter map does not accumulate forever. */
+export const maybeSweep = (now = Date.now()): void => {
+  if (now % SWEEP_INTERVAL_MS < 1_000) {
+    sweep(now);
+  }
+};
+
+export const limiterKeyFor = rateLimitKey;
 
 /**
  * Store one parsed record.
@@ -114,10 +120,10 @@ export const storeRecord = (record: IngestRecord, context: RequestContext): void
     ) as Record<string, unknown> | undefined,
   };
 
-  // Round 1 writes to the platform's own log stream via the logger, which is
-  // what `wrangler tail` and the provider's Logs product both index. A D1 table
-  // was considered and rejected: it would need its own retention policy, its
-  // own index, and a migration, for a capability the platform already provides.
+  // Writes to the platform's own log stream via the logger, which is what
+  // `wrangler tail` and the provider's Logs product both index. A D1 table was
+  // considered and rejected: it would need its own retention policy, its own
+  // index, and a migration, for a capability the platform already provides.
   context.logger.write({
     logLevel: stored.level,
     logType: stored.level === 'ERROR' ? 'error' : 'info',
@@ -127,37 +133,3 @@ export const storeRecord = (record: IngestRecord, context: RequestContext): void
     ...(stored.userId === undefined ? {} : { userId: stored.userId }),
   });
 };
-
-export const telemetryRoutes = (container: Container) =>
-  new Elysia({ name: 'starter/telemetry' }).post(
-    '/api/telemetry',
-    async ({ request, body }) => {
-      const context = await buildRequestContext(request, container);
-
-      const now = Date.now();
-      if (now % SWEEP_INTERVAL_MS < 1_000) {
-        sweep(now);
-      }
-
-      if (isRateLimited(rateLimitKey(context, request.headers.get('cf-connecting-ip')))) {
-        return status(429, { error: 'rate_limited', message: 'Too many log events.' });
-      }
-
-      const records = Array.isArray(body) ? body : [body];
-      for (const record of records) {
-        storeRecord(record, context);
-      }
-
-      return status(202, { accepted: records.length, rejected: 0 });
-    },
-    {
-      body: IngestBodySchema,
-      bodyLimit: MAX_BODY_BYTES,
-      response: {
-        202: t.Object({ accepted: t.Number(), rejected: t.Number() }),
-        // Emitted by the router's own validation, not by the handler.
-        413: t.Object({ error: t.String(), message: t.String() }),
-        429: t.Object({ error: t.String(), message: t.String() }),
-      },
-    },
-  );

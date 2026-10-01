@@ -11,7 +11,7 @@ the suite rather than to fix it.
 ```bash
 bun run test               # unit, every project
 bun run test:browser       # real Svelte in Chromium
-bun run test:integration   # real Worker + real D1
+bun run test:worker       # build, then real workerd + real D1
 bun run e2e                # built client + real Worker + real D1 + real browser
 bun run test:all           # all four, in that order, no duplicates
 bun run e2e:visual         # screenshots for review
@@ -23,7 +23,7 @@ better where you are.
 ## Why the lanes are separate tasks
 
 They are separate Moon tasks — `client:test`, `client:test-browser`,
-`api:test-integration`, `e2e:e2e` — and not one fan-out, for two reasons.
+`client:test-worker`, `e2e:e2e` — and not one fan-out, for two reasons.
 
 **They fail independently.** A Chromium that will not launch must not fail the
 unit lane, or a broken system library reads as a broken product.
@@ -46,33 +46,35 @@ CI applied migrations, installed Chromium, printed that message and went green. 
 because its `inputs` were `src/**/*` and `apps/e2e` has no `src/` directory — a
 file group that matches nothing hashes to a key that never changes.
 
-Both are fixed, and the fix is verified rather than asserted:
+Both are fixed, and the fix is verified rather than asserted. The transcript below is
+from the round that fixed them; **this round's counts are in
+[capability-matrix.md](capability-matrix.md)**, because a number in a document is
+worthless without the run that produced it.
 
 ```bash
-# 1. The suite runs.
+# 1. The suite runs, and reports its own count.
 $ bun run e2e
-  17 passed (11.7s)
+  … passed …
 
 # 2. It runs again immediately, and nothing leaks. This was the other half of the
 #    problem: the launcher spawned workerd detached, so each run left a server
-#    holding port 8788 and the *next* run refused with "already used".
+#    holding its port and the *next* run refused with "already used".
 $ bun run e2e && bun run e2e
-  17 passed
-  17 passed
+  … passed …
+  … passed …
 
 # 3. A failing browser assertion fails the public command.
 #    (add a bogus expectation to apps/e2e/tests/auth.spec.ts, run, restore)
 $ bun run e2e
   1 failed
-    [chromium] > tests/auth.spec.ts:64:3 > a wrong password is refused
-  16 passed
+    [chromium] > tests/auth.spec.ts > a wrong password is refused
   exit 1
 ```
 
 Step 3 is the one that matters. A green E2E job that ran nothing is worse than no
 E2E job at all.
 
-## The E2E and integration lanes need `node` on PATH
+## The E2E and Worker lanes need `node` on PATH
 
 `wrangler dev` is a Node program that spawns `workerd`. On a NixOS host with only
 Bun installed, `wrangler dev` exits with `env: 'node': No such file or directory`
@@ -89,10 +91,12 @@ prerequisite: see `docs/capability-matrix.md`.
 |---|---|---|
 | Unit | `bun run test` | Is this function correct? |
 | Browser | `bun run test:browser` | Does this reactivity actually reach the DOM? |
-| Integration | `bun run test:integration` | Does the Worker route, authenticate and authorize correctly? |
+| Worker | `bun run test:worker` | Does the built Worker route, authenticate and authorize correctly in workerd? |
 | E2E | `bun run e2e` | Does the whole path work, through a build and a browser? |
 
-Counts are derived by running the lanes, not recorded here:
+Counts are derived by running the lanes, not recorded here except in
+[capability-matrix.md](capability-matrix.md), which records what a given round
+actually ran:
 
 ```bash
 bun run test:all          # each lane prints its own count
@@ -100,9 +104,9 @@ bun run test:all          # each lane prints its own count
 
 ### Unit
 
-Across `packages/shared/*`, `scripts`, `apps/backend/api` (deployment-mode
-resolution and the real `worker.fetch` entrypoint), the client's Bun lane, and the
-Pi extensions plus their loader smoke test.
+Across `packages/shared/*`, `scripts`, the client's Bun lane (which now includes the
+deployment-mode resolution tests that used to live in the API app), and the Pi
+extensions plus their loader smoke test.
 
 Pure logic, schema refusals, redaction, flag parsing, deploy and migration plans,
 process-tree teardown, and the contract state machine.
@@ -132,7 +136,7 @@ Two things to know when adding tests here:
 - **Effects need a macrotask.** `flushSync()` alone is not always enough after
   mount; `await tick()` is the reliable form.
 
-### Integration — `apps/backend/api/tests/worker_integration.test.ts`
+### Worker — `apps/frontend/client/tests/worker_integration.test.ts`
 
 Against a real `wrangler dev` with real local D1, on an OS-assigned port.
 
@@ -151,16 +155,25 @@ Two hazards, both handled:
   `workerd` child is what holds the port, so teardown walks the process tree from
   the recorded pid (`killTree` in `@starter/utils/process`).
 
-Every run also passes `DEPLOYMENT_ENV` and `BETTER_AUTH_URL`. The Worker now fails
-closed without them, so a harness that omitted them would wait four minutes for a
-server that was refusing every request with a 503 that names the binding.
+Every run also passes `DEPLOYMENT_ENV`. The Worker fails closed without it, so a
+harness that omitted it would wait four minutes for a server refusing every request
+with a 503 that names the binding. `BETTER_AUTH_URL` is deliberately *not* passed:
+in a local environment the Worker derives it from the request's own origin, and
+deriving it in the harness would re-test the configured path rather than the
+derived one that a developer actually runs.
 
-### E2E — `apps/e2e/tests`, Playwright against the **built** client
+### E2E — `apps/e2e/tests`, Playwright against the **built** client and the **built** Worker
 
 Not `vite dev`. A dev-only success would certify something the deploy does not do,
 and a build-only failure is invisible to every other lane.
 
-Two files:
+One `webServer` entry runs `bun run build && bun run --cwd ../.. dev:worker`, so the
+browser talks to the compiled `_worker.js` in workerd on one origin — the same
+artifact the deploy ships. There is no API on a second port and no proxy, which is
+what makes the deep-link, cookie and 404 cases meaningful here rather than only in
+production.
+
+Three files:
 
 - `notes.spec.ts` — the whole path: sign up, create, edit, delete, and each
   confirmed after a reload so the assertion is about persistence rather than
@@ -168,14 +181,24 @@ Two files:
 - `auth.spec.ts` — the authorization boundary, with **two separate browser
   contexts** so sessions cannot share cookies. One account cannot read, edit or
   delete another's note; each case also asserts the row still exists afterwards,
-  so a `403` from a handler that deleted it anyway would fail.
+  so a `403` from a handler that deleted it anyway would fail. The same file also
+  covers the public landing page, a deep link after sign-in, and the difference
+  between a JSON 404 under `/api/*` and an HTML 404 for a page — the distinction
+  `hooks.server.ts` exists to make.
+- `preflight.ts` — the identity check below, which runs before any browser starts.
 
-Preflight runs first and **aborts** if the API is not this run's Worker:
+Preflight runs first and **aborts** if the app on the port is not this run's Worker:
 
 ```
-The API on port 8788 is a leftover process from an earlier run.
+The app on port 5173 is a leftover process from an earlier run.
   It reports run id "e2e_..." , not this run's.
 ```
+
+One detail the direct-API calls need: Playwright's `APIRequestContext` does not send
+an `Origin` header, and SvelteKit's CSRF check requires one for a content-type-less
+or form mutating request. Every direct `POST`/`PATCH`/`DELETE` in these specs carries
+it explicitly. That is a property of the client, not a workaround: a browser always
+sends it, and the E2E suite is asserting the same thing a browser would do.
 
 ### Visual — reports as SKIPPED
 
@@ -198,8 +221,10 @@ Stated plainly rather than left to discover. See `docs/capability-matrix.md`.
 
 - **Live Cloudflare.** No deployment, provisioning, remote migration or log query
   was executed against a real account.
-- **Native builds.** No Tauri bundle was produced; `cargo` is absent on this host.
-- **Mobile.** No Android or iOS build was attempted.
+- **The browser lane.** See `docs/capability-matrix.md` for whether the Chromium
+  on this host can launch; a lane that cannot start must be reported, not skipped
+  quietly.
+- **Live Cloudflare.** A deployment or a provisioned resource id was never used.
 
 ## Rate limits and the clock
 
@@ -237,8 +262,8 @@ confirming exactly which tests failed:
 
 ```bash
 # Restoring the old locality heuristic in container.ts
-$ bun run --cwd apps/backend/api test
-(fail) worker.fetch configuration handling > a deployed-looking env with no
+$ bun run --cwd apps/frontend/client test:unit
+(fail) resolveDeploymentEnvironment > a deployed-looking env with no
        DEPLOYMENT_ENV is refused, not treated as local
 ```
 

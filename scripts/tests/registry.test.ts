@@ -2,7 +2,7 @@
 //
 // The project registry, and the deployment config.
 //
-// This file is the reason `bun run logs api --mode production` cannot silently
+// This file is the reason `bun run logs web --mode production` cannot silently
 // read the wrong project's data: it is the only place an app maps to a Worker, a
 // bucket or a database. A duplicated map elsewhere would be invisible until it
 // queried staging while claiming to be production.
@@ -57,22 +57,22 @@ describe('APP_LOG_CONFIG', () => {
     }
   });
 
-  test("the browser's events are not claimed to be server logs", () => {
-    // The asymmetry is deliberate. A client adapter that resolved for staging
-    // would answer "show me production browser logs" with something, and the
-    // answer would be empty rather than an honest refusal.
+  test('a deployed environment has a historical adapter and a live adapter', () => {
     for (const environment of ['staging', 'production'] as const) {
-      const resolution = resolveLogAdapter('client', environment);
-      expect('unsupported' in resolution).toBe(true);
-    }
-  });
-
-  test('the api has a historical adapter and a live adapter', () => {
-    for (const environment of ['staging', 'production'] as const) {
-      const resolution = resolveLogAdapter('api', environment);
+      const resolution = resolveLogAdapter('web', environment);
       expect('kind' in resolution).toBe(true);
       expect(capabilitiesFor((resolution as { kind: never }).kind).historicalQuery).toBe(true);
     }
+  });
+
+  test('the browser and the Worker are told apart by source, not by app', () => {
+    // There is one app now, so a browser-forwarded event and a server event reach
+    // the same deployment. `source` is the field that separates them, and this
+    // assertion is what stops somebody re-adding a second app id to fix the
+    // confusion the field already resolves.
+    const sources = APP_LOG_CONFIG.web.sources;
+    expect(sources).toContain('browser');
+    expect(sources).toContain('worker');
   });
 
   test('local resolves to the file adapter, never to a credentialed one', () => {
@@ -114,29 +114,35 @@ describe('DEPLOYMENT_CONFIG', () => {
   });
 
   test('a fresh clone has provisioned nothing', () => {
-    expect(DEPLOYMENT_CONFIG.workerNames.client).toBeNull();
-    expect(DEPLOYMENT_CONFIG.workerNames.api).toBeNull();
-    expect(DEPLOYMENT_CONFIG.d1DatabaseIds.api).toBeNull();
+    expect(DEPLOYMENT_CONFIG.workerName).toBeNull();
+    expect(DEPLOYMENT_CONFIG.d1DatabaseId).toBeNull();
     expect(DEPLOYMENT_CONFIG.r2BucketNames.uploads).toBeNull();
-    expect(DEPLOYMENT_CONFIG.customDomains.api).toBeNull();
+    expect(DEPLOYMENT_CONFIG.customDomain).toBeNull();
+    expect(DEPLOYMENT_CONFIG.accountId).toBeNull();
   });
 
   test('an empty string is not an acceptable placeholder', () => {
     // `''` satisfies `string` but fails `minLength: 1` in the app-log schema, so a
-    // `''` used to pass every type check and be invalid at runtime.
-    const withEmptyName = {
-      ...APP_LOG_CONFIG.api,
-      workerName: '',
-    };
-    expect([...Value.Errors(AppLogConfigSchema, withEmptyName)].length).toBeGreaterThan(0);
+    // `''` used to pass every type check and be invalid at runtime. Asserted for
+    // both the log config and the deployment config, because both now carry a
+    // single name and a second unchecked `string` is one refactor away.
+    expect(
+      [...Value.Errors(AppLogConfigSchema, { ...APP_LOG_CONFIG.web, workerName: '' })].length,
+    ).toBeGreaterThan(0);
+    expect(
+      [...Value.Errors(DEPLOYMENT_CONFIG_SCHEMA, { ...DEPLOYMENT_CONFIG, workerName: '' })].length,
+    ).toBeGreaterThan(0);
   });
 });
 
 describe('isAppId', () => {
   test('accepts only the declared apps', () => {
-    expect(isAppId('client')).toBe(true);
-    expect(isAppId('api')).toBe(true);
-    expect(isAppId('worker')).toBe(false);
+    expect(isAppId('web')).toBe(true);
+    // The two ids this registry used to have, rejected explicitly: a stale caller
+    // that says `logs client` must get a refusal naming what is valid, not a
+    // silently wrong lookup.
+    expect(isAppId('client')).toBe(false);
+    expect(isAppId('api')).toBe(false);
     expect(isAppId('all')).toBe(false);
     expect(isAppId(undefined)).toBe(false);
     expect(isAppId(7)).toBe(false);
@@ -149,19 +155,20 @@ describe('isAppId', () => {
 });
 
 describe('resolveLogAdapter', () => {
-  test('refuses rather than defaulting when an environment has no adapter', () => {
-    const resolution = resolveLogAdapter('client', 'production');
-    expect('unsupported' in resolution).toBe(true);
-    if ('unsupported' in resolution) {
-      expect(resolution.unsupported).toContain('client');
-      expect(resolution.unsupported).toContain('production');
-    }
+  test('refuses rather than defaulting for an app that is not declared', () => {
+    // The refusal names the app and the environment, so the message is actionable.
+    // Passing a plain string here is the mistake a type error would have caught;
+    // the runtime check is what stops it reading a config that does not exist.
+    const resolution = resolveLogAdapter('clinet' as AppId, 'production');
+    expect(resolution).toEqual(
+      expect.objectContaining({ unsupported: expect.stringContaining('clinet') }),
+    );
   });
 
   test('names the app type as an AppId, not as a string', () => {
     // A plain string would let `resolveLogAdapter('clinet', 'production')` compile
     // and then read `undefined` from the config.
-    const app: AppId = 'api';
+    const app: AppId = 'web';
     expect('kind' in resolveLogAdapter(app, 'staging')).toBe(true);
   });
 });

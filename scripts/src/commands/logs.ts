@@ -2,11 +2,16 @@
 //
 // The one log command family.
 //
-//   bun run logs client --mode local --source browser --level debug
-//   bun run logs api --mode staging --since 30m --level error
+//   bun run logs web --mode local --source browser --level debug
+//   bun run logs web --mode staging --since 30m --level error
 //   bun run logs all --mode production --trace TRACE_ID --json
-//   bun run logs client --mode production --uid USER_ID --since 15m
-//   bun run logs api --mode staging --follow --duration 60s
+//   bun run logs web --mode production --uid USER_ID --since 15m
+//   bun run logs web --mode staging --follow --duration 60s
+//
+// One app, so one positional word. `web` selects it; `all` means the same thing
+// today and exists so the word a script already passes keeps working. Which half
+// of the application produced a record is `--source`, not the app word: a browser
+// event forwarded through the server is still `--source browser`.
 //
 // Design rules this implements, all of which exist because their absence caused
 // a real problem in the source project:
@@ -21,7 +26,13 @@
 //   * **Log content is data, not instruction.** Events are printed through a
 //     renderer that never interpolates them into a prompt.
 
-import { isDeploymentEnvironment, isLogLevel, type LogApp, type LogSource } from '@starter/schemas';
+import {
+  isDeploymentEnvironment,
+  isLogLevel,
+  LOG_SOURCES,
+  type LogApp,
+  type LogSource,
+} from '@starter/schemas';
 import {
   DEFAULT_TAIL_MS,
   MAX_TAIL_MS,
@@ -33,7 +44,7 @@ import { buildFilter } from '../logs/filter.ts';
 import { readAllLocal, readLocal } from '../logs/local_file_adapter.ts';
 import { capabilitiesFor, resolveLogAdapter } from '../logs/registry.ts';
 import type { FlagDoc, LogQuery, LogQueryResult } from '../logs/types.ts';
-import { APP_LOG_CONFIG, isAppId } from '../registry/app_registry.ts';
+import { APP_IDS, APP_LOG_CONFIG, type AppId, isAppId } from '../registry/app_registry.ts';
 import type { Command } from '../shared/command.ts';
 
 const HARD_LIMIT_CAP = 500;
@@ -47,7 +58,11 @@ const FLAG_DOCS: readonly FlagDoc[] = [
   { flag: '--level', arg: 'DEBUG|INFO|WARNING|ERROR', description: 'Minimum severity.' },
   {
     flag: '--source',
-    arg: 'browser|worker|cli',
+    // Written from the schema's own vocabulary rather than a second literal list,
+    // so `--help` cannot advertise a source no producer emits. It used to say
+    // `native`, which has not existed since PR A: a flag that parses and then
+    // matches nothing is a command that succeeds while doing nothing.
+    arg: LOG_SOURCES.join('|'),
     description: 'Restrict to a producer source.',
   },
   { flag: '--trace', arg: '<trace-id>', description: 'Correlate to one request.' },
@@ -82,7 +97,7 @@ export const helpText = (): string => {
   });
 
   return [
-    'Usage: bun run logs <client|api|all> [flags]',
+    'Usage: bun run logs <web|all> [flags]',
     '',
     'Read structured logs from local capture or Cloudflare.',
     '',
@@ -90,17 +105,16 @@ export const helpText = (): string => {
     ...lines,
     '',
     'Examples:',
-    '  bun run logs client --mode local --source browser --level debug',
-    '  bun run logs api --mode staging --since 30m --level error',
+    '  bun run logs web --mode local --source browser --level debug',
+    '  bun run logs web --mode staging --since 30m --level error',
     '  bun run logs all --mode production --trace TRACE_ID --json',
-    '  bun run logs client --mode production --uid USER_ID --since 15m',
-    '  bun run logs api --mode staging --follow --duration 60s',
+    '  bun run logs web --mode production --uid USER_ID --since 15m',
+    '  bun run logs web --mode staging --follow --duration 60s',
     '',
     'Notes:',
-    '  Browser logs are NOT server logs. They only exist in an',
-    '  environment where client telemetry forwarding is enabled, and round 1',
-    '  does not enable it. `bun run logs client --mode staging` will say so',
-    '  rather than pretending otherwise.',
+    '  There is one app. Its Worker half and its browser half both log under',
+    '  `app=web`, told apart by `source` (`worker` vs `browser`). Browser events',
+    '  reach the same deployment by being forwarded to /api/telemetry.',
     '  Cloudflare queries need CLOUDFLARE_API_TOKEN or `wrangler login`, and a',
     '  configured Worker name. Until both are present, that path reports',
     '  `credentials_unavailable`.',
@@ -108,7 +122,7 @@ export const helpText = (): string => {
 };
 
 export interface ParsedArgs {
-  app: 'client' | 'api' | 'all' | undefined;
+  app: 'web' | 'all' | undefined;
   flags: Map<string, string | true>;
   errors: string[];
 }
@@ -197,9 +211,8 @@ export const toQuery = (
   }
 
   const source = readString(parsed.flags, '--source');
-  const validSources: LogSource[] = ['browser', 'worker', 'cli'];
-  if (source !== undefined && !validSources.includes(source as LogSource)) {
-    return { ok: false, message: `--source must be one of ${validSources.join(', ')}.` };
+  if (source !== undefined && !(LOG_SOURCES as readonly string[]).includes(source)) {
+    return { ok: false, message: `--source must be one of ${LOG_SOURCES.join(', ')}.` };
   }
 
   const limitRaw = readString(parsed.flags, '--limit');
@@ -320,12 +333,12 @@ export const main = async (argv: readonly string[]): Promise<number> => {
 
   const app = parsed.app;
   if (app === undefined) {
-    process.stderr.write('Which app? client, api or all.\n\n');
+    process.stderr.write('Which app? web or all.\n\n');
     process.stderr.write(`${helpText()}\n`);
     return 2;
   }
   if (app !== 'all' && !isAppId(app)) {
-    process.stderr.write(`Unknown app "${app}". Expected client, api or all.\n`);
+    process.stderr.write(`Unknown app "${app}". Expected web or all.\n`);
     return 2;
   }
 
@@ -335,7 +348,7 @@ export const main = async (argv: readonly string[]): Promise<number> => {
     return 2;
   }
 
-  const targets: Array<'client' | 'api'> = app === 'all' ? ['client', 'api'] : [app];
+  const targets: AppId[] = app === 'all' ? [APP_IDS[0]] : [app];
   const results: string[] = [];
   let worst = 0;
 
@@ -399,7 +412,7 @@ export const main = async (argv: readonly string[]): Promise<number> => {
 export const logsCommand: Command = {
   name: 'logs',
   summary: 'read, follow and filter log events',
-  usage: 'logs <client|api|all> [--mode local|staging|production] [filters]',
+  usage: 'logs <web|all> [--mode local|staging|production] [filters]',
   run: main,
 };
 

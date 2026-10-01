@@ -28,8 +28,7 @@ const readEnv = (key: string): string | undefined => {
 
 const toLogApp = (raw: string | undefined): LogApp => {
   switch (raw) {
-    case 'client':
-    case 'api':
+    case 'web':
     case 'scripts':
       return raw;
     default:

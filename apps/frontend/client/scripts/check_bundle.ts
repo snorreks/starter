@@ -2,38 +2,50 @@
 //
 //   bun run --cwd apps/frontend/client check:bundle
 //
-// Verify the built SPA is the artifact it claims to be.
+// Verify the built artifact is a deployable Worker plus its static assets.
 //
 // `vite build` exiting 0 is necessary and not sufficient. The failure modes this
-// catches are ones that produce a green build and a broken site:
+// catches are ones that produce a green build and a broken deploy:
 //
-//   * no output at all (a mis-set adapter `pages`/`assets` path, or a build that a
-//     cache should not have restored)
-//   * no `index.html`, so every deep link 404s
-//   * no emitted assets — a shell with no code, which renders blank rather than
-//     erroring
-//   * **a native import that survived into the bundle.** `@tauri-apps/*` calls
-//     into a native shell that does not exist in this starter, so such a call
-//     throws at runtime, on whichever screen reaches it first. Nothing in the
-//     build reports it, which is why it is asserted here.
+//   * no output at all (a mis-set `assets.directory`, or a build that a cache
+//     should not have restored)
+//   * no `_worker.js`. `wrangler deploy` would then ship a static site with no
+//     server: every `/api/*` call 404s and every page is a 404 too, because there
+//     is nothing to render them.
+//   * no emitted client assets — a Worker that serves a shell with no code
+//   * **a native import that survived into the bundle.** `@tauri-apps/*` calls a
+//     shell that does not exist in this starter, so such a call throws at runtime,
+//     on whichever screen reaches it first, and nothing in the build reports it.
+//   * **server code in a client chunk.** The browser half and the Worker half of
+//     one application share a build, which is exactly the situation in which
+//     `drizzle-orm` or `better-auth` can end up in a file the browser downloads.
+//     A green build is still a green build in that case, and the result is a
+//     published database driver plus an auth implementation sitting in public
+//     assets.
 //
-// The last one replaced a two-mode check. There were once a browser and a native
-// bundle, distinguished by a build flag, and the bundle had to carry the right
-// marker for the mode it was checked in. There is one target now, so the check
-// asserts the property directly instead of matching a bundle against a label.
+// The last one is the assertion this file grew for. It is deliberately a marker
+// scan rather than a module-graph check: the graph work belongs to the resolved
+// dependency guard, and a text scan here is a cheap second gate that runs on the
+// artifact itself rather than on the source.
 //
-// Note on what this deliberately does NOT assert: that the bundle contains no
-// loopback URL. It can contain `http://127.0.0.1:8787`, in the branch that
-// resolves the API base URL during a server render where there is no origin to be
-// relative to, and that is correct. A static scan cannot tell a guarded fallback
-// from an unconditional destination, so asserting on it would be asserting on
-// nothing.
+// What it deliberately does NOT assert: that the bundle contains no loopback URL.
+// A static scan cannot tell a guarded fallback from an unconditional destination,
+// so asserting on that would be asserting on nothing. The bundle must not contain
+// a *secret marker* or a server *implementation*, and those two are checkable.
 
 import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-const BUILD_DIR = fileURLToPath(new URL('../build', import.meta.url));
+// `new URL(relative, import.meta.url)` resolves against *this file*, which lives in
+// `apps/frontend/client/scripts/`. One `../` is wrong in a way that reads as a
+// missing build rather than as a path bug: it points at `apps/frontend/.svelte-kit`,
+// which does not exist. `paths.test.ts` guards the shared copy of this same idea in
+// the tooling workspace.
+const BUILD_DIR = fileURLToPath(new URL('../.svelte-kit/cloudflare', import.meta.url));
+
+/** The Worker entrypoint `wrangler.jsonc` points `main` at. */
+const WORKER_ENTRY = '_worker.js';
 
 /**
  * A specifier for a native shell, matched against every emitted script.
@@ -43,8 +55,53 @@ const BUILD_DIR = fileURLToPath(new URL('../build', import.meta.url));
  */
 const NATIVE_SPECIFIER = '@tauri-apps/';
 
+/**
+ * Markers that must not appear in a file the browser downloads.
+ *
+ * A secret marker and a server implementation are different failures with the same
+ * consequence — a credential or a data-access library published as a static asset —
+ * so they are one check with one list, reported per file so the reader knows which
+ * chunk to look at.
+ *
+ * **These have to be strings that survive minification.** The obvious choice —
+ * `drizzle-orm`, `better-auth` — does not work, and the reason is worth recording
+ * because it was measured rather than assumed: a client module that imports
+ * `@starter/database` bundles cleanly and the library *name* is gone, while the
+ * schema it carries survives as a string. A negative control (`import { notes }
+ * from '@starter/database'` in `notes_service.svelte.ts`) produced a green
+ * `vite build`, a green `check:bundle` under a name-based list, and a client chunk
+ * containing the `notes_owner_id_idx` DDL.
+ *
+ * So the list is distinctive identifiers from the server-only packages, which is
+ * what a real leak actually contains. The D1 table and index names are the sharpest
+ * of these: they exist nowhere else, and they are in the SQL Drizzle emits, so they
+ * are present whenever a table definition is.
+ */
+const SERVER_MARKERS = [
+  // Configuration secret names from `src/lib/server/env.ts`.
+  'BETTER_AUTH_SECRET',
+  'BETTER_AUTH_URL',
+  // The Workers bindings module. Resolved to a stub in dev, so it never appears in
+  // a client chunk even when the import is there.
+  'cloudflare:workers',
+  // Drizzle/D1 table and index names from `@starter/database`. A row definition is
+  // the thing that leaks when a server package is reachable from browser code.
+  'notes_owner_id_idx',
+  'notes_owner_updated_idx',
+  'device_codes',
+  'account_id',
+  // Better Auth's own DDL.
+  'emailVerified',
+  'email_verified',
+] as const;
+
 export interface BundleProblem {
-  code: 'no_output' | 'no_index' | 'no_assets' | 'no_entry_script' | 'native_import';
+  code:
+    | 'no_output'
+    | 'no_worker'
+    | 'no_assets'
+    | 'native_import'
+    | 'server_code_in_client';
   message: string;
   remedy: string;
 }
@@ -81,7 +138,7 @@ const readIfPresent = (path: string): string | null => {
 };
 
 /**
- * Inspect a built bundle directory.
+ * Inspect a built artifact directory.
  *
  * `dir` is a parameter so a fixture bundle can be written to a temporary
  * directory and checked without building anything.
@@ -101,51 +158,36 @@ export const checkBundle = (dir: string = BUILD_DIR): BundleProblem[] => {
 
   const problems: BundleProblem[] = [];
 
-  if (!files.includes('index.html')) {
+  if (!files.includes(WORKER_ENTRY)) {
     problems.push({
-      code: 'no_index',
-      message: 'No index.html in the build output.',
+      code: 'no_worker',
+      message: `No ${WORKER_ENTRY} in the build output.`,
       remedy:
-        'The SPA fallback is missing, so every deep link returns 404. Check the adapter ' +
-        "option in vite.config.ts (`fallback: 'index.html'`, `pages: 'build'`).",
+        'The deployable unit is a Cloudflare Worker plus its static assets, and the Worker ' +
+        "is what serves the HTML, the API and the session cookie. Without it, `wrangler " +
+        'deploy` publishes assets alone and every route 404s. Check `main` and ' +
+        '`assets.directory` in wrangler.jsonc, and that the adapter is @sveltejs/adapter-cloudflare.',
     });
   }
 
-  const assetFiles = files.filter((file) => file.startsWith('_app/immutable/'));
-  if (assetFiles.length === 0) {
+  const clientAssets = files.filter(
+    (file) => file.startsWith('_app/immutable/') && file.endsWith('.js'),
+  );
+  if (clientAssets.length === 0) {
     problems.push({
       code: 'no_assets',
-      message: 'No files under _app/immutable/.',
+      message: 'No client modules under _app/immutable/.',
       remedy:
         'The build produced no client assets. SvelteKit wrote a shell with no code, which ' +
         'renders as a blank page rather than an error.',
     });
   }
 
-  const index = readIfPresent(join(dir, 'index.html')) ?? '';
-  if (index.length > 0) {
-    // SvelteKit's SPA shell does not emit `<script type="module" src=...>`. It emits
-    // an inline script with a dynamic `import()` of the entry chunk. An earlier
-    // version of this check looked for the module-script form, found nothing, and
-    // reported a perfectly good build as broken — so the assertion is written
-    // against what SvelteKit actually emits.
-    const hasEntry = /_app\/immutable\/entry\/start\.[\w-]+\.js/.test(index);
-    if (!hasEntry) {
-      problems.push({
-        code: 'no_entry_script',
-        message: 'index.html does not reference the SvelteKit entry chunk.',
-        remedy:
-          'The built HTML loads and runs nothing, which renders as a blank page. Check that ' +
-          'the routes directory is non-empty and that `prerender.handleUnseenRoutes` is not ' +
-          'discarding them.',
-      });
-    }
-  }
-
   // Reported per file rather than once, because "which module" is the difference
   // between a fixable report and a hunt.
   for (const file of files.filter((name) => name.endsWith('.js'))) {
     const source = readIfPresent(join(dir, file));
+
     if (source?.includes(NATIVE_SPECIFIER)) {
       problems.push({
         code: 'native_import',
@@ -153,6 +195,24 @@ export const checkBundle = (dir: string = BUILD_DIR): BundleProblem[] => {
         remedy:
           'A `@tauri-apps/*` call reaches a shell that does not exist and throws when that ' +
           'screen runs. Remove the import; `bun run check:bundle` fails it until you do.',
+      });
+    }
+
+    // The Worker entrypoint is the one file *supposed* to contain all of this.
+    if (file === WORKER_ENTRY || !source) {
+      continue;
+    }
+
+    const leaked = SERVER_MARKERS.filter((marker) => source.includes(marker));
+    if (leaked.length > 0) {
+      problems.push({
+        code: 'server_code_in_client',
+        message: `${file} contains ${leaked.map((m) => `"${m}"`).join(', ')}.`,
+        remedy:
+          'That file is served to the browser as a static asset. A database driver, an auth ' +
+          'implementation, a secret name or a `cloudflare:workers` import in a client chunk ' +
+          'means server code crossed the boundary. Move it into src/lib/server/** or a ' +
+          '+server.ts route adapter, which SvelteKit only builds into the Worker.',
       });
     }
   }

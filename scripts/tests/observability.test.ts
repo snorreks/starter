@@ -39,7 +39,7 @@ import type { LogQuery } from '../src/logs/types.ts';
 const NOW = 1_760_000_000_000;
 const WINDOW = { from: NOW - 60_000, to: NOW };
 
-const baseQuery: LogQuery = { app: 'api', mode: 'staging' };
+const baseQuery: LogQuery = { app: 'web', mode: 'staging' };
 
 const fixture = (name: string): string =>
   readFileSync(join(import.meta.dirname, 'fixtures', name), 'utf8');

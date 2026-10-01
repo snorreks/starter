@@ -23,8 +23,7 @@ It creates no Worker and deploys nothing.
 Then set the account and Worker names in the gitignored local configuration:
 
 ```bash
-bun run deploy:configure -- --account <account-id> --worker api your-app-api
-bun run deploy:configure -- --account <account-id> --worker client your-app-client
+bun run deploy:configure -- --account <account-id> --worker your-app-web
 ```
 
 Keep unprovisioned values in `scripts/src/registry/app_registry.ts` as `null`.
@@ -44,9 +43,10 @@ The pieces to remove, in dependency order:
 1. `packages/shared/schemas/src/notes/`
 2. `packages/backend/database/src/lib/schema.ts` — the `notes` table
 3. a migration: `bun run db:generate && bun run db:migrate`
-4. `apps/backend/api/src/lib/notes.ts`, and its line in `index.ts`
-5. `apps/frontend/client/src/lib/features/notes/`, `services/notes_service*`
-6. the client routes and their tests
+4. `apps/frontend/client/src/lib/server/notes_service.ts`, and its two route adapters
+   (`src/routes/api/notes/+server.ts` and `src/routes/api/notes/[id]/+server.ts`)
+5. `apps/frontend/client/src/lib/features/notes/`
+6. `apps/frontend/client/src/routes/notes/`, and its tests
 7. `apps/e2e/tests/notes.spec.ts`; keep `auth.spec.ts` and retarget it
 
 Keep `auth.spec.ts`'s cross-account tests. They are about ownership, not about
@@ -61,7 +61,7 @@ grep -rn "Starter\|starter" --include=*.ts --include=*.svelte \
 ```
 
 Expect hits in: `README.md`, `AGENTS.md`, `apps/frontend/client/src/routes/+layout.svelte`,
-`apps/backend/api/wrangler.jsonc`, and `packages/backend/database/drizzle.config.ts`.
+`apps/frontend/client/wrangler.jsonc`, and `packages/backend/database/drizzle.config.ts`.
 
 The `@starter/*` package scope can stay. It is not user-visible, and renaming it
 touches every import in the repository for no benefit. If you do rename it, change
@@ -71,7 +71,7 @@ touches every import in the repository for no benefit. If you do rename it, chan
 
 If you add a custom domain, put it in both places:
 
-- `DEPLOYMENT_CONFIG.customDomains`
+- `DEPLOYMENT_CONFIG.customDomain`
 - the `TRUSTED_ORIGINS` Worker binding
 
 They are different things: the first is documentation the deploy tooling reads, the
@@ -92,7 +92,7 @@ Nothing is signed, because no keys are shipped. When you add them:
 
 ```bash
 bun run typecheck && bun run guard && bun run lint && bun run format && bun run test
-bun run test:integration
+bun run test:worker
 bun run e2e
 ```
 
@@ -128,7 +128,6 @@ this one records only that there is nothing to find.
 
 ## What you cannot inherit, and should not try to
 
-- Updater signing keys, if you ever add a native client
 - Age recipients and identities
 - Cloudflare account ids, database ids, bucket names, custom domains
 - OAuth client ids and secrets

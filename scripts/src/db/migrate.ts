@@ -15,7 +15,7 @@ import { join } from 'node:path';
 import { isDeploymentEnvironment } from '@starter/schemas';
 import { runWrangler, wranglerAvailable } from '../cloudflare/wrangler.ts';
 import { targetsFor } from '../registry/deployment_values.ts';
-import { API_DIR, REPO_ROOT } from '../shared/paths.ts';
+import { CLIENT_DIR, REPO_ROOT } from '../shared/paths.ts';
 
 const MIGRATIONS_DIR = join(REPO_ROOT, 'packages/backend/database/drizzle-d1');
 
@@ -89,13 +89,13 @@ export const planMigrate = (target: MigrateTarget): Plan => {
         'DB',
         '--local',
         '--config',
-        join(API_DIR, 'wrangler.jsonc'),
+        join(CLIENT_DIR, 'wrangler.jsonc'),
       ],
     };
   }
 
   const targets = targetsFor(target);
-  if (targets === null || targets.d1DatabaseIds.api === null) {
+  if (targets === null || targets.d1DatabaseId === null) {
     return {
       ok: false,
       reason: 'No D1 database id is configured, so there is no safe target to migrate.',
@@ -117,7 +117,7 @@ export const planMigrate = (target: MigrateTarget): Plan => {
       '--env',
       target,
       '--config',
-      join(API_DIR, 'wrangler.jsonc'),
+      join(CLIENT_DIR, 'wrangler.jsonc'),
     ],
   };
 };

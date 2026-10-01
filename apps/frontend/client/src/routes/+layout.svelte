@@ -8,11 +8,13 @@ import '../app.css';
 import '#lib/runtime/logger';
 import { setDialogCapabilities } from '@starter/frontend-services/base';
 import type { Snippet } from 'svelte';
+import { untrack } from 'svelte';
 import { sessionService, sessionState } from '#lib/services/session_service.svelte';
-import { goto } from '$app/navigation';
+import { goto, invalidateAll } from '$app/navigation';
+import type { LayoutData } from './$types';
 
-type Props = { children: Snippet };
-let { children }: Props = $props();
+type Props = { data: LayoutData; children: Snippet };
+let { data, children }: Props = $props();
 
 // Dialog capability: the base classes reach user-facing dialogs through this
 // object rather than importing the app's component tree, which is what keeps
@@ -33,8 +35,26 @@ setDialogCapabilities({
 let user = $state(sessionState.user);
 $effect(() => sessionState.subscribe((next) => (user = next)));
 
+// Seeded from the server's answer rather than fetched. `locals.user` is already
+// the verified identity, so a browser round trip here has exactly two possible
+// outcomes — the same answer, or the server and the browser disagreeing about who
+// is signed in — and the second is a bug rather than a refresh.
+//
+// `untrack` because this runs once, on both the server and the client, and only
+// the value at this moment is wanted. After a client-side navigation SvelteKit
+// re-runs the load and hands the component new props, and the *server* has already
+// re-rendered every page from them — the browser state is then brought back into
+// agreement by `invalidateAll()` and the sign-out path below, both of which are
+// explicit about it. Re-seeding reactively here would instead overwrite a session
+// the user just established by signing in.
+sessionState.set(untrack(() => data.user));
+
 async function signOut(): Promise<void> {
   await sessionService.signOut();
+  // The server has to re-render: `/notes` redirects on its load, and this shell's
+  // sign-in link comes from the layout load. Navigating without invalidating would
+  // leave both describing the session that just ended.
+  await invalidateAll();
   await goto('/login');
 }
 </script>

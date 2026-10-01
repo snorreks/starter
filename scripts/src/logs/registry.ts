@@ -36,9 +36,17 @@ export { APP_LOG_CONFIG, capabilitiesFor, resolveLogAdapter };
 export const deploymentValues = (): DeploymentValues => effectiveDeploymentValues();
 export { DEPLOYMENT_CONFIG } from '../registry/app_registry.ts';
 
-/** Does this deployment have a Worker name configured at all? */
-export const isProvisioned = (app: AppId): boolean => {
-  const name = deploymentValues().workerNames[app];
+/**
+ * Does this deployment have a Worker name configured at all?
+ *
+ * The `app` argument is accepted and ignored. There is one Worker, so every app
+ * resolves to the same name, and a per-app lookup would be a second way for the
+ * answer to be wrong. The parameter stays because every caller already has one and
+ * because removing it would make this look like a regression rather than a
+ * deliberate narrowing — see docs/architecture.md.
+ */
+export const isProvisioned = (_app: AppId): boolean => {
+  const name = deploymentValues().workerName;
   return typeof name === 'string' && name.length > 0;
 };
 
@@ -55,14 +63,14 @@ export const prerequisiteFor = (app: AppId, mode: DeploymentEnvironment): string
 
   if (!isProvisioned(app)) {
     return (
-      `No Cloudflare Worker name is configured for "${app}".\n` +
-      '  Run: bun run deploy:configure   (it writes wrangler.jsonc for your account)\n' +
+      'No Cloudflare Worker name is configured.\n' +
+      '  Run: bun run deploy:configure   (it records the name for your account)\n' +
       '  Then: bun run deploy:check --dry-run'
     );
   }
 
-  if (mode === 'production' && deploymentValues().d1DatabaseIds.api === null) {
-    return 'No D1 database id is configured for the API.\n  Run: bun run deploy:configure -- --provision';
+  if (mode === 'production' && deploymentValues().d1DatabaseId === null) {
+    return 'No D1 database id is configured.\n  Run: bun run deploy:configure -- --provision';
   }
 
   return null;

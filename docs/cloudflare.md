@@ -11,11 +11,17 @@ one account.
 
 ```bash
 bun run db:migrate     # local D1, via wrangler's local state
-bun run dev:api        # Worker on :8787
+bun run dev            # the app on :5173, Node, emulated bindings
+bun run dev:worker     # the built Worker on :5173, real workerd, real D1
 ```
 
-Wrangler runs the Worker in workerd with local D1 backed by a file under
-`.wrangler/`. Nothing leaves the machine.
+Both modes run the Worker in workerd — `dev:worker` literally does, and `dev` runs
+the same server code through the adapter's binding emulation — with local D1 backed
+by a file under `.wrangler/`. Nothing leaves the machine.
+
+One origin serves the pages, the assets and `/api/*`. There is no API on a second
+port and no proxy in between, so a session cookie behaves identically here and in
+production. See [architecture.md](architecture.md).
 
 ## Provisioning
 
@@ -27,11 +33,18 @@ bun run deploy:check                      # validate a deploy; changes nothing
 
 `--provision` creates the database and records its id in the gitignored
 `.starter/deployment.local.json`, which the deployment and migration tooling reads.
-It also updates `apps/backend/api/wrangler.jsonc` when a database entry is present.
-Record the account and Worker names with `deploy:configure -- --account <account-id>
---worker api <worker-name>` (repeat for `client`). Keep the committed defaults in
-`scripts/src/registry/app_registry.ts` unprovisioned. Provisioning creates no Worker
-and deploys nothing. The local file can also hold per-environment targets.
+It also updates `apps/frontend/client/wrangler.jsonc` when a database entry is
+present, because `wrangler` reads that one at deploy time. Record the account and
+Worker name with `deploy:configure -- --account <account-id> --worker <worker-name>`.
+Keep the committed defaults in `scripts/src/registry/app_registry.ts` unprovisioned.
+Provisioning creates no Worker and deploys nothing. The local file can also hold
+per-environment targets.
+
+`--worker` takes **one** argument: the name. It used to take two — a target and a
+name — and a caller who wrote `--worker api` had `api` recorded as the Worker's name,
+which then deployed to a Worker called `api` or failed on an account that has no
+such Worker. There is one Worker, so there is nothing for a second argument to
+select.
 
 ## Credentials
 
@@ -72,13 +85,24 @@ code. A deploy does not publish anything.
 ```bash
 bun run deploy:check                    # validate; the recommended first command
 bun run deploy -- --dry-run             # print every command that would run
-bun run deploy -- api --env staging --yes
-bun run deploy -- api client --env production --yes
-bun run deploy -- api --env staging --json    # machine-readable plan
+bun run deploy -- web --env staging --yes
+bun run deploy -- web --env production --yes
+bun run deploy -- web --env staging --json    # machine-readable plan
 ```
+
+There is exactly one target. The application deploys as one Worker plus its static
+assets, so there is one `wrangler deploy` to plan and one Worker name to provision.
+The two-target form this replaced cost something real: a partial deploy in which the
+Worker succeeded and the assets did not leaves a live deployment whose pages 404,
+and nothing in the plan could express that as a state to avoid.
 
 `--dry-run` and `deploy:check` read the **same** plan object that a real run
 executes. A dry run that re-derives its commands is a dry run that can lie.
+
+The plan also refuses to run at all if `.svelte-kit/cloudflare/_worker.js` is
+absent. `wrangler deploy` against a missing build does not fail loudly: it publishes
+an empty deployment whose every page 404s, which reads as a successful deploy of a
+blank site.
 
 Three rules, each of which was previously a way to change something nobody asked for:
 
@@ -90,18 +114,18 @@ remote deploy.
 **`--env local` is refused.** `--env` takes `staging` or `production`. This command
 deploys to a remote environment and has no local deployment target. Running the CLI
 on your laptop is a *local invocation* and is unrelated; the local **runtime** is
-`bun run dev:api` (`wrangler dev`). Those are different concepts and the old code
-built a `wrangler deploy` command for a "non-remote" local step anyway.
+`bun run dev`. Those are different concepts and the old code built a `wrangler
+deploy` command for a "non-remote" local step anyway.
 
-**An unrecognised target word is an error.** `bun run deploy -- clientt` fails with
-`Unknown target "clientt"`. It used to filter argv down to the words that happened
-to be valid targets and default to *both* when nothing survived, so a typo widened
-a single-target production deploy into a deploy of both apps.
+**An unrecognised target word is an error.** `bun run deploy -- webb` fails with
+`Unknown target "webb"`. It used to filter argv down to the words that happened to
+be valid targets and default to *everything* when nothing survived, so a typo
+widened a single-target production deploy into a deploy of both apps.
 
 ### The wrangler that runs
 
 Commands resolve to the pinned workspace copy at
-`apps/backend/api/node_modules/.bin/wrangler`, never to `bunx wrangler`.
+`apps/frontend/client/node_modules/.bin/wrangler`, never to `bunx wrangler`.
 
 `bunx` from the repository root does not find a binary that only one workspace
 package depends on, so it downloads whatever the registry serves that day. Observed
@@ -109,8 +133,9 @@ here: the lockfile pins 4.142.0 and `bunx wrangler --version` reported 4.144.0. 
 deploy tool running a version the project never validated is how "works on my
 machine" starts.
 
-The same applies to `drizzle-kit`, `playwright` and `tauri`. `bunx` is for
-one-off exploration, not for a command that mutates something.
+The same applies to `drizzle-kit` and `playwright`. `bunx` is for one-off
+exploration, not for a command that mutates something. There is deliberately no
+`bunx` fallback in `scripts/src/shared/tools.ts`.
 
 ### Before any remote-capable process starts
 
@@ -121,6 +146,7 @@ refusal. Four cases, each of which previously either spawned or guessed:
 - `wrangler` appears in the command line exactly once. `planDeploy` used to put
   `wrangler` in the step's args *and* `runWrangler` prepended it, so the process
   that ran was `wrangler wrangler deploy`.
+- one target is one spawn — there is no second app whose step could half-succeed
 - a typo'd target spawns nothing
 - `--env local` spawns nothing
 - a missing credential or a missing `--yes` spawns nothing
@@ -131,7 +157,7 @@ The Worker decides whether development defaults are permitted from one explicit
 binding, and fails closed:
 
 ```jsonc
-// apps/backend/api/wrangler.jsonc
+// apps/frontend/client/wrangler.jsonc
 "vars": { "DEPLOYMENT_ENV": "local" }
 ```
 
@@ -145,14 +171,19 @@ it.
 Now:
 
 - a missing or unrecognised `DEPLOYMENT_ENV` is an error, not a local default
-- `BETTER_AUTH_URL` is required in every environment and validated structurally
-- it must be `https` outside local
+- `BETTER_AUTH_URL` is required in every deployed environment and validated
+  structurally; it must be `https` outside local
+- in a **local** environment `BETTER_AUTH_URL` may be omitted, and the request's own
+  origin is used instead — but only for a loopback http origin. Deriving a public
+  origin from an inbound request is a development convenience; a deployed
+  environment must state its own rather than accept one from a caller.
 - the development placeholder secret is **rejected remotely even when supplied
   explicitly**, as is any secret under 32 characters
 - a configuration failure is a 503 whose body names the binding, not an opaque 500
 
-Every `wrangler dev` caller passes `DEPLOYMENT_ENV` and `BETTER_AUTH_URL`:
-`scripts/src/dev-api.ts`, the integration suite, and `dev-worker.sh`.
+Every local-Worker caller passes `DEPLOYMENT_ENV`: `scripts/src/dev-app.ts` (for
+`dev:worker`) and the E2E harness. `vite dev` needs no forwarding because the adapter
+reads `wrangler.jsonc` itself.
 
 ## Migrations are separate, and deliberately so
 
@@ -176,10 +207,16 @@ expand, deploy, migrate, contract.
 
 | Environment | Adapter | History | Filters by user id |
 |---|---|---|---|
-| `local` | local file | yes | yes |
-| staging / production (api) | Workers Observability query | yes — **no live call has been made** | yes |
-| staging / production (api), live | `wrangler tail` | no | **no** |
-| staging / production (client) | none | — | — |
+| `local` | local file (`.wrangler/logs/app.ndjson`) | yes | yes |
+| staging / production | Workers Observability query | yes — **no live call has been made** | yes |
+| staging / production, `--follow` | `wrangler tail` | no | **no** |
+
+One app, so one set of adapters. `bun run logs web` is the whole command. The browser
+and the Worker are told apart by `--source`, not by the app word: browser events
+reach the same deployment by being forwarded to `/api/telemetry` and re-emitted as
+`source: browser`. The `client-forward` capability that serves them declares
+`historicalQuery: false`, which is the honest statement that they only exist where a
+forwarder runs.
 
 ### The historical query, and what is actually verified about it
 
@@ -247,7 +284,7 @@ is a feature.
 
 `--follow` selects the tail adapter by capability rather than taking the first
 configured one. It used to take the first, which was the *historical* adapter, so
-`bun run logs api --mode staging --follow` was dead in every remote environment while
+`bun run logs web --mode staging --follow` was dead in every remote environment while
 the registry listed a working tail adapter two entries further down the same array.
 
 Each line the tail receives is a provider *envelope*, not an application event, and
@@ -283,7 +320,7 @@ instruction offered could not be followed.
 ```bash
 bun run deploy:configure -- --account <32-hex>   # the account id, no provisioning
 bun run deploy:configure -- --provision          # create D1, record the id and account
-bun run deploy:configure -- --worker api <name>  # app, then name — both required
+bun run deploy:configure -- --worker <name>      # the one Worker's name
 ```
 
 ### Staging and production are different deployments
@@ -299,8 +336,8 @@ The overlay takes an optional `environments` map:
 {
   "accountId": "…",
   "environments": {
-    "staging":    { "workerNames": { "api": "starter-api-staging" }, "d1DatabaseIds": { "api": "…" } },
-    "production": { "workerNames": { "api": "starter-api-prod" },    "d1DatabaseIds": { "api": "…" } }
+    "staging":    { "workerName": "starter-web-staging", "d1DatabaseId": "…" },
+    "production": { "workerName": "starter-web-prod",    "d1DatabaseId": "…" }
   }
 }
 ```
@@ -338,11 +375,11 @@ its own will not satisfy it.
 **`Refusing to modify … without --yes`** — expected. Add `--yes`, or use
 `--dry-run` to see what would run. It is refused in an interactive shell too.
 
-**`--env local is not a deployment target`** — expected. Use
-`bun run dev:api` for local workerd.
+**`--env local is not a deployment target`** — expected. Use `bun run dev` for
+local workerd.
 
-**`Unknown target "clientt"`** — expected, and deliberately not "deploy everything".
-Valid targets are `api` and `client`.
+**`Unknown target "webb"`** — expected, and deliberately not "deploy everything".
+The only valid target is `web`.
 
 **`The API is not configured correctly and refused to start`** — a 503 whose body
 names the binding. See "Deployment mode on the Worker" above.
@@ -352,18 +389,21 @@ names the binding. See "Deployment mode on the Worker" above.
 deploy plan refuses before it can reach Cloudflare.
 
 **Auth returns `Invalid origin`** — the requesting origin is not in
-`TRUSTED_ORIGINS`. Add it as a var: `bun run dev:api` with `TRUSTED_ORIGINS` set in
-the environment.
+`TRUSTED_ORIGINS`. Set it in the environment before `bun run dev`, or as a Worker
+var.
 
 **D1 says no such table** — migrations were not applied. `bun run db:migrate:remote`.
 
 **`env: 'node': No such file or directory`** — `wrangler dev` is a Node program.
 Provide `node` on PATH. On Nix: `nix-shell -p nodejs`.
 
-**A leftover `wrangler dev` is holding the port.** Find it with
-`ss -lptn 'sport = :8787'` and `kill <pid>`. Not `pkill -f wrangler`: the pattern
+**A leftover dev server is holding the port.** Find it with
+`ss -lptn 'sport = :5173'` and `kill <pid>`. Not `pkill -f wrangler`: the pattern
 is broad enough to match the shell that launched it, which kills the caller.
 
-`bun run dev:api` and the integration suite now tear their worker down by walking
+`scripts/src/dev-app.ts` and the integration suite tear their Worker down by walking
 the process tree, so repeated runs do not accumulate servers. A leak here means
-something bypassed both — check for a `wrangler dev` started by hand.
+something bypassed both — check for a `wrangler dev` started by hand. The launcher
+also records the pid it started in `.wrangler/local/dev.pid` and clears a stale one
+on the next run, per checkout, so two worktrees on one machine do not kill each
+other's server.

@@ -36,6 +36,15 @@ export type NotesStatus =
 export interface NotesViewModelOptions {
   className?: string;
   notes?: NotesService;
+  /**
+   * The list the server already rendered, if any.
+   *
+   * The SSR load returns the owner's notes, so the first paint has data and
+   * `initialize()` has nothing left to fetch. Without this the screen shows a
+   * loading state, issues the identical request, and renders the same list — a
+   * visible flash and a wasted round trip on every visit.
+   */
+  initialNotes?: Note[];
 }
 
 export class NotesViewModel extends BaseViewModel<{
@@ -43,6 +52,16 @@ export class NotesViewModel extends BaseViewModel<{
   startWithLoadingView?: boolean;
 }> {
   readonly #notes: NotesService;
+  /**
+   * True once the screen has data from somewhere — a seed, or a completed load.
+   *
+   * This is what makes "already loaded" a fact rather than a guess. Without it,
+   * `initialize()` cannot tell "the server rendered this list" from "nothing has
+   * happened yet", and the only two remaining options are always refetching (a
+   * flash on every visit) or never loading at all (a permanently empty screen when
+   * the first render had no data).
+   */
+  #seeded = false;
 
   status = $state<NotesStatus>({ kind: 'loading' });
   /** Id being edited, or null when the composer is creating. */
@@ -65,6 +84,9 @@ export class NotesViewModel extends BaseViewModel<{
       startWithLoadingView: false,
     });
     this.#notes = options.notes ?? notesService;
+    if (options.initialNotes !== undefined) {
+      this.seed(options.initialNotes);
+    }
   }
 
   // ── Derived ────────────────────────────────────────────────────────────────
@@ -89,7 +111,25 @@ export class NotesViewModel extends BaseViewModel<{
 
   // ── Commands ───────────────────────────────────────────────────────────────
 
+  /**
+   * Adopt a list the server already produced.
+   *
+   * Sorts exactly as `load()` does, so seeding and loading cannot produce two
+   * different orders for the same data. Deliberately *not* a load: there is no
+   * request, so there is nothing to abort and nothing that can fail. Any
+   * outstanding optimistic rollback is superseded for the same reason `load()`
+   * supersedes it — its snapshot no longer describes the list on screen.
+   */
+  seed(notes: readonly Note[]): void {
+    this.#optimistic.supersede();
+    this.status = { kind: 'ready', notes: [...notes].sort((a, b) => b.updatedAt - a.updatedAt) };
+    this.#seeded = true;
+  }
+
   override async initialize(): Promise<void> {
+    if (this.#seeded) {
+      return;
+    }
     await this.load();
   }
 
@@ -122,6 +162,7 @@ export class NotesViewModel extends BaseViewModel<{
         return;
       }
 
+      this.#seeded = true;
       // Newest first: the common case is "what did I just write".
       this.status = {
         kind: 'ready',

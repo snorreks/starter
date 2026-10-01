@@ -1,6 +1,6 @@
 $schema: 'https://moonrepo.dev/schemas/v2/project.json'
 
-# The end-to-end project: Playwright specs, the harness that starts the servers,
+# The end-to-end project: Playwright specs, the harness that starts the server,
 # and the visual-capture command.
 #
 # This project has no `src/` directory. Every file that matters is a top-level
@@ -11,7 +11,7 @@ $schema: 'https://moonrepo.dev/schemas/v2/project.json'
 # changes; see docs/testing.md.
 # `automation` is Moon's layer for "an automated testing suite, like E2E,
 # integration, or visual tests". It matters because `tool` may not depend on
-# `application`, and this project genuinely drives the client and the API.
+# `application`, and this project genuinely drives the application.
 layer: 'automation'
 
 fileGroups:
@@ -63,9 +63,9 @@ tasks:
       - '@group(sources)'
       - '@group(specs)'
 
-  # The real Playwright suite. Not cached: it starts a Worker, a preview server
-  # and a browser, migrates a database, and asserts against them. A cached "pass"
-  # would certify servers that were never started.
+  # The real Playwright suite. Not cached: it builds the Worker, starts it in
+  # workerd, starts a browser, migrates a database, and asserts against them. A
+  # cached "pass" would certify a server and a database that were never started.
   e2e:
     command: 'bun'
     args: ['run', 'test:e2e']

@@ -53,11 +53,26 @@ const IGNORED_DIRS = new Set([
 
 const SOURCE_EXTENSIONS = ['.ts', '.tsx', '.svelte'];
 
+/**
+ * Every source file beneath `root`, or `[]` when there is no such directory.
+ *
+ * The absent case is not hypothetical. `guardRequestState` scans one specific
+ * directory, and the fixtures that prove it works build throwaway trees that do
+ * not contain it. Throwing `ENOENT` from a walk meant those tests failed on a
+ * missing directory rather than on the rule they exist to check, and a guard that
+ * crashes reports nothing at all — the one outcome worse than a false violation.
+ */
 export const listSourceFiles = (root: string): string[] => {
   const found: string[] = [];
 
   const walk = (directory: string): void => {
-    for (const entry of readdirSync(directory)) {
+    let entries: string[];
+    try {
+      entries = readdirSync(directory);
+    } catch {
+      return;
+    }
+    for (const entry of entries) {
       if (IGNORED_DIRS.has(entry)) {
         continue;
       }
@@ -86,7 +101,7 @@ const linesOf = (file: string): string[] => readFileSync(file, 'utf8').split('\n
  * Merged into one layer, the API was permitted to import `@starter/ui` — Svelte
  * into a Worker — and the client `@starter/database`.
  */
-export type Layer = 'shared' | 'backend' | 'frontend' | 'client' | 'api' | 'tool';
+export type Layer = 'shared' | 'backend' | 'frontend' | 'client' | 'client-server' | 'tool';
 
 export const layerOf = (relativePath: string): Layer | null => {
   if (relativePath.startsWith('packages/shared/')) {
@@ -98,15 +113,16 @@ export const layerOf = (relativePath: string): Layer | null => {
   if (relativePath.startsWith('packages/frontend/')) {
     return 'frontend';
   }
-  // The two apps are separate layers. Treating `apps/` as one layer let the API
-  // import `@starter/ui` — Svelte component code — into a Worker, where it would
-  // compile and then fail at runtime, or drag `svelte/internal` into a bundle
-  // that has no DOM.
+  if (isClientServerModule(relativePath)) {
+    return 'client-server';
+  }
+  // Everything else in the SvelteKit app is browser code. Treating `apps/` as one
+  // layer let a server module and a component share a permission set, which is
+  // exactly the distinction this migration has to keep: `apps/frontend/**` is one
+  // directory holding two runtimes, and the boundary between them is the
+  // `client-server` check above, not the directory.
   if (relativePath.startsWith('apps/frontend/')) {
     return 'client';
-  }
-  if (relativePath.startsWith('apps/backend/')) {
-    return 'api';
   }
   if (relativePath.startsWith('apps/')) {
     return null;
@@ -115,6 +131,53 @@ export const layerOf = (relativePath: string): Layer | null => {
     return 'tool';
   }
   return null;
+};
+
+/**
+ * Server-only modules inside the SvelteKit application.
+ *
+ * This is the narrow policy adjustment that lets one application hold both a
+ * browser half and a Worker half. It is deliberately a *list of two concrete
+ * shapes* rather than "everything under `src/lib/server`", because a broad rule
+ * is indistinguishable from the sweeping exemption it replaces: a new directory
+ * named `server` would silently become server-only, and a file under the existing
+ * `src/lib/server/` would be trusted by its location rather than by what it
+ * imports.
+ *
+ * Two shapes, both from the framework rather than from a convention:
+ *
+ *   1. Everything beneath `src/lib/server/` — the application's own server-only
+ *      area. SvelteKit treats a leading `server` path segment the same way.
+ *   2. The route adapters the framework only ever compiles into the Worker:
+ *      `+server.ts`, `+page.server.ts` and `+layout.server.ts` anywhere under
+ *      `src/routes/`, plus `src/hooks.server.ts`.
+ *
+ * What this does *not* cover, and why that matters: a `+page.svelte` is not in
+ * this list, so the components and the client services in the same directory keep
+ * the browser-only permission set. A single app holding two runtimes is only
+ * safe while the two are distinguishable by something a reviewer can see in the
+ * path. PR C replaces this mechanism with a resolved-dependency check; until then
+ * this is the narrowest rule that admits the legitimate imports, and the
+ * acceptance it buys is proven by `check:bundle` on the built artifact, which
+ * fails if any of these imports reaches a client chunk.
+ */
+const isClientServerModule = (relativePath: string): boolean => {
+  const app = 'apps/frontend/client/';
+  if (!relativePath.startsWith(app)) {
+    return false;
+  }
+
+  const within = relativePath.slice(app.length);
+
+  if (within.startsWith('src/lib/server/')) {
+    return true;
+  }
+
+  if (within === 'src/hooks.server.ts') {
+    return true;
+  }
+
+  return /(^|\/)\+(?:server|page\.server|layout\.server)\.ts$/.test(within);
 };
 
 /**
@@ -152,8 +215,15 @@ const ALLOWED_IMPORTS: Record<string, readonly string[]> = {
     '@starter/ui',
     '@starter/frontend-services',
   ],
-  // The API app: backend and shared. Never the UI, which is Svelte.
-  api: [
+  // Server-only modules inside the client app. Backend and shared, plus the same
+  // set `client` has: a route adapter legitimately imports a DTO type from
+  // `@starter/schemas`, and a page's own ViewModel, because a `+page.svelte` and
+  // its `+page.server.ts` are different halves of one screen.
+  //
+  // What it must never gain: `@starter/ui` or `@starter/frontend-services`, which
+  // are browser code. Svelte components in a Worker compile and then fail, and
+  // `svelte/internal` in a bundle with no DOM is the same problem one layer down.
+  'client-server': [
     '@starter/schemas',
     '@starter/logger',
     '@starter/utils',
@@ -443,9 +513,16 @@ const REQUEST_STATE_PATTERNS: readonly { pattern: RegExp; message: string }[] = 
 
 export const guardRequestState = (root = REPO_ROOT): GuardResult => {
   const violations: Violation[] = [];
-  const apiDir = join(root, 'apps/backend/api/src');
 
-  for (const file of listSourceFiles(apiDir)) {
+  // The whole SvelteKit `src` tree, not only a server-only subdirectory. The rule
+  // is about request identity, and a `let currentUser` written into a component or
+  // a client service is the same defect: a module-scope value read by the next
+  // caller. The scanned directory used to be `apps/backend/api/src`; that
+  // application no longer exists, and scanning only `src/lib/server` would have
+  // quietly reduced this guard's coverage in exchange for a tidier diff.
+  const appSrc = join(root, 'apps/frontend/client/src');
+
+  for (const file of listSourceFiles(appSrc)) {
     const relativePath = relative(root, file);
     linesOf(file).forEach((text, index) => {
       const code = text.replace(/\/\/.*$/, '');
@@ -716,8 +793,14 @@ export const guardRegistryIsValid = (root = REPO_ROOT): GuardResult => {
 
   // A registry that provisioned a resource would point this template at
   // somebody else's account.
+  //
+  // The keys are matched as a set rather than enumerated, because this repository
+  // has one Worker and one D1 database now and the enumeration was `client|api`
+  // — a pair that no longer exists. Naming the shape keeps the check working when
+  // the resource count changes, which is the only property it needs: *some* id set
+  // to a string literal in the committed registry is the defect.
   for (const match of source.matchAll(
-    /d1DatabaseIds:\s*\{\s*api:\s*'(?!')|workerNames:\s*\{\s*(?:client|api):\s*'(?!')/g,
+    /d1DatabaseIds:\s*\{\s*\w+:\s*'(?!')|workerNames:\s*\{\s*\w+:\s*'(?!')/g,
   )) {
     violations.push({
       rule: 'registry-valid',

@@ -35,7 +35,7 @@ import { setDeploymentValues } from '../src/registry/deployment_values.ts';
 const NOW = 1_760_000_000_000;
 
 const query = (overrides: Partial<LogQuery> = {}): LogQuery => ({
-  app: 'api',
+  app: 'web',
   mode: 'staging',
   follow: true,
   duration: '30s',
@@ -125,10 +125,10 @@ afterEach(() => {
 describe('tailCloudflare', () => {
   const provision = (): void => {
     setDeploymentValues({
-      workerNames: { client: null, api: 'starter-api' },
-      d1DatabaseIds: { api: 'db-1' },
+      workerName: 'starter-web',
+      d1DatabaseId: 'db-1',
       r2BucketNames: { uploads: null },
-      customDomains: { client: null, api: null },
+      customDomain: null,
       accountId: 'a'.repeat(32),
     });
   };
@@ -256,10 +256,10 @@ describe('tailCloudflare', () => {
 
   test('refuses when no Worker is provisioned', async () => {
     setDeploymentValues({
-      workerNames: { client: null, api: null },
-      d1DatabaseIds: { api: 'db-1' },
+      workerName: null,
+      d1DatabaseId: 'db-1',
       r2BucketNames: { uploads: null },
-      customDomains: { client: null, api: null },
+      customDomain: null,
       accountId: 'a'.repeat(32),
     });
     const h = harness(() => {});
@@ -290,15 +290,12 @@ describe('environment-specific log targets', () => {
       process.env.CLOUDFLARE_API_TOKEN = 'fixture-token';
       setDeploymentValues({
         accountId: 'a'.repeat(32),
-        workerNames: { client: null, api: 'single-api' },
-        d1DatabaseIds: { api: 'single-db' },
+        workerName: 'single-web',
+        d1DatabaseId: 'single-db',
         r2BucketNames: { uploads: null },
-        customDomains: { client: null, api: null },
+        customDomain: null,
         environments: {
-          staging: {
-            workerNames: { client: null, api: 'staging-api' },
-            d1DatabaseIds: { api: 'staging-db' },
-          },
+          staging: { workerName: 'staging-web', d1DatabaseId: 'staging-db' },
         },
       });
       const requests: unknown[] = [];
@@ -312,14 +309,14 @@ describe('environment-specific log targets', () => {
       const built = buildHistoricalRequest(query());
       expect(built.ok).toBe(true);
       if (built.ok) {
-        expect(built.request.datasets).toEqual(['staging-api']);
+        expect(built.request.datasets).toEqual(['staging-web']);
       }
       expect((await queryCloudflareHistory(query(), fetchImpl)).status).toBe('ok');
       expect(requests).toHaveLength(1);
-      expect(requests[0]).toHaveProperty('datasets', ['staging-api']);
+      expect(requests[0]).toHaveProperty('datasets', ['staging-web']);
       await tailCloudflare(query());
-      expect(h.spawned[0]).toContain('staging-api');
-      expect(h.spawned[0]).not.toContain('single-api');
+      expect(h.spawned[0]).toContain('staging-web');
+      expect(h.spawned[0]).not.toContain('single-web');
 
       expect(buildHistoricalRequest(query({ mode: 'production' })).ok).toBe(false);
       expect((await queryCloudflareHistory(query({ mode: 'production' }), fetchImpl)).status).toBe(

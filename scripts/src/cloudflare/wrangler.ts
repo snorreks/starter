@@ -19,10 +19,10 @@
 
 import { spawn, spawnSync } from 'node:child_process';
 import { killTree } from '@starter/utils/process';
-import { API_DIR, CLIENT_DIR, REPO_ROOT } from '../shared/paths.ts';
+import { CLIENT_DIR, REPO_ROOT } from '../shared/paths.ts';
 import { missingToolMessage, wranglerBin } from '../shared/tools.ts';
 
-export { API_DIR, CLIENT_DIR, REPO_ROOT };
+export { CLIENT_DIR, REPO_ROOT };
 
 /**
  * Why wrangler is unusable, or `null` when it is usable.
@@ -34,7 +34,7 @@ export { API_DIR, CLIENT_DIR, REPO_ROOT };
 export const wranglerUnavailableReason = (): string | null => {
   const bin = wranglerBin();
   if (bin === null) {
-    return missingToolMessage('wrangler', 'apps/backend/api');
+    return missingToolMessage('wrangler', 'apps/frontend/client');
   }
 
   const probe = spawnSync(bin, ['--version'], { encoding: 'utf8', cwd: REPO_ROOT });
@@ -153,7 +153,7 @@ export const runWrangler = (
 ): number => {
   const bin = wranglerBin();
   if (bin === null) {
-    process.stderr.write(`${missingToolMessage('wrangler', 'apps/backend/api')}\n`);
+    process.stderr.write(`${missingToolMessage('wrangler', 'apps/frontend/client')}\n`);
     return 1;
   }
   return runner.run(bin, wranglerArgs, { cwd: options.cwd ?? REPO_ROOT });
@@ -316,7 +316,7 @@ export const streamWrangler = (
 ): Promise<number> => {
   const bin = streamBinary();
   if (bin === null) {
-    options.onStderr(missingToolMessage('wrangler', 'apps/backend/api'));
+    options.onStderr(missingToolMessage('wrangler', 'apps/frontend/client'));
     return Promise.resolve(1);
   }
   return streamRunner.run(
@@ -338,7 +338,11 @@ export const captureWrangler = (
 ): { ok: boolean; stdout: string; stderr: string } => {
   const bin = wranglerBin();
   if (bin === null) {
-    return { ok: false, stdout: '', stderr: missingToolMessage('wrangler', 'apps/backend/api') };
+    return {
+      ok: false,
+      stdout: '',
+      stderr: missingToolMessage('wrangler', 'apps/frontend/client'),
+    };
   }
 
   const result = spawnSync(bin, [...wranglerArgs], {

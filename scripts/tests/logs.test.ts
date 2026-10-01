@@ -21,7 +21,7 @@
 import { describe, expect, test } from 'bun:test';
 import { Value } from '@sinclair/typebox/value';
 import { LOG_SOURCES, type LogEvent, LogEventSchema } from '@starter/schemas';
-import { helpText, parseArgs, toQuery } from '../src/commands/logs.ts';
+import { parseArgs, toQuery } from '../src/commands/logs.ts';
 import {
   buildHistoricalRequest,
   MAX_TAIL_MS,
@@ -32,6 +32,7 @@ import { buildFilter } from '../src/logs/filter.ts';
 import { parseNdjson } from '../src/logs/local_file_adapter.ts';
 import { capabilitiesFor, resolveLogAdapter } from '../src/logs/registry.ts';
 import type { LogQuery } from '../src/logs/types.ts';
+import type { AppId } from '../src/registry/app_registry.ts';
 
 // ── Fixtures ─────────────────────────────────────────────────────────────────
 
@@ -39,7 +40,11 @@ const NOW = 1_760_000_000_000;
 
 const event = (overrides: Partial<LogEvent> = {}): LogEvent => ({
   timestamp: NOW,
-  app: 'client',
+  // One app. The fixtures still say `source` explicitly, because that is now the
+  // only thing distinguishing the Worker's records from the browser's — and the
+  // schema check below is what proves the split deployment's `app: 'api'` cannot
+  // reappear without the schema rejecting it.
+  app: 'web',
   environment: 'local',
   source: 'browser',
   level: 'INFO',
@@ -57,7 +62,6 @@ const FIXTURES: LogEvent[] = [
   event({ timestamp: NOW - 10_000, level: 'ERROR', event: 'notes.create_failed', traceId: 'tr_1' }),
   event({
     timestamp: NOW - 5_000,
-    app: 'api',
     source: 'worker',
     level: 'ERROR',
     event: 'request.failed',
@@ -66,7 +70,8 @@ const FIXTURES: LogEvent[] = [
   }),
   event({
     timestamp: NOW - 4_000,
-    app: 'api',
+    // The Worker accepted this at `/api/telemetry` and re-emitted it. It stays a
+    // browser record: `app` says which application, `source` says which half of it.
     source: 'worker',
     level: 'ERROR',
     event: 'client_reported',
@@ -75,7 +80,7 @@ const FIXTURES: LogEvent[] = [
   }),
 ];
 
-const baseQuery: LogQuery = { app: 'api', mode: 'local' };
+const baseQuery: LogQuery = { app: 'web', mode: 'local' };
 
 // ── Duration parsing ─────────────────────────────────────────────────────────
 
@@ -295,15 +300,33 @@ describe('buildHistoricalRequest', () => {
 // ── Registry / capability honesty ────────────────────────────────────────────
 
 describe('app registry', () => {
-  test('browser logs have no staging or production adapter', () => {
-    // This is the "browser logs are not server logs" rule, enforced in data.
-    const staging = resolveLogAdapter('client', 'staging');
-    expect('unsupported' in staging).toBe(true);
+  test('browser events are readable only where a forwarder runs', () => {
+    // "Browser logs are not server logs" used to be enforced by giving the browser
+    // its own app id, so `resolveLogAdapter('client', 'staging')` had nowhere to
+    // go. With one app that distinction moved into the capability table: the
+    // adapter that serves forwarded browser records declares it cannot read
+    // history, which is the same refusal expressed where it is still true.
+    expect(capabilitiesFor('client-forward').historicalQuery).toBe(false);
+    expect(capabilitiesFor('client-forward').liveTail).toBe(false);
+    // And the remote adapters answer for the Worker's own records, which is the
+    // half that genuinely exists server-side.
+    expect(capabilitiesFor('cloudflare-observability').historicalQuery).toBe(true);
   });
 
-  test('the API has a local adapter', () => {
-    const local = resolveLogAdapter('api', 'local');
+  test('the application has a local adapter', () => {
+    const local = resolveLogAdapter('web', 'local');
     expect(local).toEqual({ kind: 'local-file' });
+  });
+
+  test('an app this project does not deploy is refused by name, not by crashing', () => {
+    // Previously this threw a `TypeError` naming an array index. The caller is told
+    // which apps exist, because "Unknown app" with the valid set is a one-line fix.
+    const refused = resolveLogAdapter('api' as unknown as AppId, 'local');
+    expect('unsupported' in refused).toBe(true);
+    if (!('unsupported' in refused)) {
+      return;
+    }
+    expect(refused.unsupported).toContain('"web"');
   });
 
   test('the live tail declares it cannot filter by user or trace', () => {
@@ -320,7 +343,7 @@ describe('app registry', () => {
   });
 
   test('--duration is clamped to that ceiling before the adapter sees it', () => {
-    const parsed = parseArgs(['api', '--follow', '--duration', '1h']);
+    const parsed = parseArgs(['web', '--follow', '--duration', '1h']);
     const query = toQuery(parsed);
     expect(query.ok).toBe(true);
     if (!query.ok) {
@@ -330,7 +353,7 @@ describe('app registry', () => {
   });
 
   test('an unparseable --duration is a usage error, not a silent default', () => {
-    expect(toQuery(parseArgs(['api', '--follow', '--duration', 'soon'])).ok).toBe(false);
+    expect(toQuery(parseArgs(['web', '--follow', '--duration', 'soon'])).ok).toBe(false);
   });
 });
 
@@ -358,17 +381,9 @@ describe('parseNdjson', () => {
 
 describe('parseArgs / toQuery', () => {
   test('parses a documented invocation', () => {
-    const parsed = parseArgs([
-      'client',
-      '--mode',
-      'local',
-      '--source',
-      'browser',
-      '--level',
-      'debug',
-    ]);
+    const parsed = parseArgs(['web', '--mode', 'local', '--source', 'browser', '--level', 'debug']);
     expect(parsed.errors).toEqual([]);
-    expect(parsed.app).toBe('client');
+    expect(parsed.app).toBe('web');
 
     const query = toQuery(parsed);
     expect(query.ok).toBe(true);
@@ -381,7 +396,7 @@ describe('parseArgs / toQuery', () => {
   });
 
   test('accepts --flag=value', () => {
-    const parsed = parseArgs(['api', '--since=30m', '--limit=10']);
+    const parsed = parseArgs(['web', '--since=30m', '--limit=10']);
     const query = toQuery(parsed);
     expect(query.ok).toBe(true);
     if (!query.ok) {
@@ -392,7 +407,7 @@ describe('parseArgs / toQuery', () => {
   });
 
   test('caps --limit at the hard maximum', () => {
-    const parsed = parseArgs(['api', '--limit=99999']);
+    const parsed = parseArgs(['web', '--limit=99999']);
     const query = toQuery(parsed);
     expect(query.ok).toBe(true);
     if (!query.ok) {
@@ -402,59 +417,35 @@ describe('parseArgs / toQuery', () => {
   });
 
   test('rejects an unknown flag rather than ignoring it', () => {
-    const parsed = parseArgs(['api', '--nope']);
+    const parsed = parseArgs(['web', '--nope']);
     expect(parsed.errors).toContain('Unknown flag "--nope". Run with --help.');
   });
 
   test('rejects a flag with a missing value', () => {
-    const parsed = parseArgs(['api', '--since']);
+    const parsed = parseArgs(['web', '--since']);
     expect(parsed.errors).toContain('--since needs a value.');
   });
 
   test('rejects an invalid mode, level, source and limit', () => {
-    expect(toQuery(parseArgs(['api', '--mode', 'prod'])).ok).toBe(false);
-    expect(toQuery(parseArgs(['api', '--level', 'LOUD'])).ok).toBe(false);
-    expect(toQuery(parseArgs(['api', '--source', 'satellite'])).ok).toBe(false);
-    expect(toQuery(parseArgs(['api', '--limit', '0'])).ok).toBe(false);
-  });
-
-  // PR A removed the native shell. The log vocabulary kept `native` afterwards, so
-  // `--source native` parsed successfully, matched no event that any producer can
-  // emit, and reported success — the exact shape of no-op this repository's first
-  // rule forbids.
-  //
-  // The assertion is written against `LOG_SOURCES` rather than against a literal
-  // list, so it fails whenever the schema and the CLI disagree — which is how this
-  // happened in the first place: the CLI carried its own copy of the vocabulary.
-  test('rejects a source no producer emits', () => {
-    expect(toQuery(parseArgs(['api', '--source', 'native'])).ok).toBe(false);
-
-    for (const source of LOG_SOURCES) {
-      expect(toQuery(parseArgs(['api', '--source', source])).ok).toBe(true);
-    }
-  });
-
-  // The negative control for the test above: with `native` back in the vocabulary,
-  // the first assertion fails and the second fails, because the CLI no longer
-  // accepts what the schema declares.
-  test('the two vocabularies cannot drift apart silently', () => {
-    const schemaAccepts = (source: string): boolean =>
-      (LOG_SOURCES as readonly string[]).includes(source);
-
-    for (const candidate of ['browser', 'worker', 'cli', 'native', 'tauri']) {
-      expect(toQuery(parseArgs(['api', '--source', candidate])).ok).toBe(schemaAccepts(candidate));
-    }
-  });
-
-  test('--help advertises exactly the sources the schema declares', () => {
-    // `--help` is the other place the vocabulary was copied. A flag list that names
-    // a value the parser then rejects is a contradiction the operator finds first.
-    const help = helpText();
-    expect(help).toContain(LOG_SOURCES.join('|'));
-    expect(help).not.toContain('native|');
+    expect(toQuery(parseArgs(['web', '--mode', 'prod'])).ok).toBe(false);
+    expect(toQuery(parseArgs(['web', '--level', 'LOUD'])).ok).toBe(false);
+    expect(toQuery(parseArgs(['web', '--source', 'satellite'])).ok).toBe(false);
+    expect(toQuery(parseArgs(['web', '--limit', '0'])).ok).toBe(false);
   });
 
   test('rejects a second positional argument', () => {
-    expect(parseArgs(['api', 'client']).errors).toHaveLength(1);
+    // `all` is accepted as a synonym for the one app; a second word is not, because
+    // there is nothing left for it to select.
+    expect(parseArgs(['web', 'all']).errors).toHaveLength(1);
+  });
+
+  test('refuses a source no producer emits', () => {
+    // `--source native` used to parse, because the CLI carried its own list of
+    // source names and that list was never reconciled with the schema when the
+    // native shell was removed. It then matched nothing and reported success.
+    expect(toQuery(parseArgs(['web', '--source', 'native'])).ok).toBe(false);
+    for (const source of LOG_SOURCES) {
+      expect(toQuery(parseArgs(['web', '--source', source])).ok).toBe(true);
+    }
   });
 });

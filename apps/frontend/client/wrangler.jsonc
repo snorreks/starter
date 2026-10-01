@@ -1,38 +1,90 @@
 {
-  // Cloudflare Pages / Workers static assets configuration for the client.
+  // The one Cloudflare Worker.
   //
-  // `deploy --client` runs `wrangler deploy --assets-only` in this directory, and
-  // until this file existed there was nothing for it to read: no `assets` binding,
-  // no entrypoint, no name. Wrangler would have looked for a config, not found one,
-  // and deployed from its defaults — which means either a failed deploy or, worse, a
-  // successful deploy of something other than the built site.
+  // This file is the deployment *and* the local development contract:
+  // `@sveltejs/adapter-cloudflare` reads it to emit `.svelte-kit/cloudflare/`
+  // (client assets plus `_worker.js`), and in `vite dev` and `vite preview` it
+  // builds the emulated binding set from it through wrangler's
+  // `getPlatformProxy`. There is no second source, so local and deployed
+  // environments cannot disagree about what the D1 binding is called.
   //
-  // `directory` is the output of `vite build` (adapter-static), and
-  // `check_bundle` asserts that directory exists and holds a real bundle before any
-  // deploy can run. So a deploy cannot ship an empty site: the artifact check fails
-  // first.
+  // The three keys below are required by the adapter and are not optional
+  // preferences: `main` and `assets.directory` say what to ship, and
+  // `assets.binding` is how the Worker reads the assets. Removing `assets.binding`
+  // while keeping `main` fails configuration validation with a message naming
+  // the key, which is why they are written out rather than inherited.
   //
-  // No `compatibility_flags` and no bindings: the client is static. There is no
-  // Worker code here to run, and a `nodejs_compat` flag here would imply there is.
+  // `database_id` has no placeholder on purpose. An invented id fails at deploy
+  // time with an opaque Wrangler error; omitting it fails at configuration time
+  // with a clear one. `bun run deploy:configure` writes the real id, and
+  // `bun run deploy:check` reports which ids are still unset.
   //
-  // The Worker name is not set here on purpose. Resource identity belongs in
-  // `.starter/deployment.local.json`, which is gitignored; `wrangler deploy` reads
-  // `--name` from the plan that `deploy:check` prints.
-  "$schema": "node_modules/wrangler/config-schema.json",
-  "name": "starter-client",
-  "compatibility_date": "2026-09-01",
+  // The Worker name is likewise not asserted here: resource identity belongs in
+  // `.starter/deployment.local.json`, which is gitignored, and `wrangler deploy`
+  // reads `--name` from the plan that `deploy:check` prints. A name committed here
+  // would make a fresh clone target somebody else's Worker — which is exactly what
+  // the `registry-valid` guard fails the build for.
+  "$schema": "../../../node_modules/wrangler/config-schema.json",
+  "name": "starter-web",
+  "compatibility_date": "2026-10-01",
+  // `nodejs_compat` is not cosmetic. The adapter's own `cloudflare:workers` stub
+  // in dev imports `node:async_hooks` for AsyncLocalStorage, and that import is
+  // replaced with the real module in the built output.
+  "compatibility_flags": ["nodejs_compat"],
+  "main": ".svelte-kit/cloudflare/_worker.js",
   "assets": {
-    "directory": "./build",
-    // A missing asset must 404, not fall through to an index that does not exist
-    // either. Without this, a deep link on a static host can resolve to the SPA
-    // shell with a 200 and then fail in the router, which reads as a client bug.
-    "not_found_handling": "404-page",
-    "html_handling": "auto-trailing-slash"
+    "binding": "ASSETS",
+    "directory": ".svelte-kit/cloudflare",
+    // `none`, and stated explicitly because the default is not safe to leave
+    // implicit here.
+    //
+    // This is a **server-rendered** application: `/`, `/login` and `/notes` are
+    // not files, they are routes the Worker renders. The static-assets router
+    // runs *before* the Worker and answers a request it can match; anything it
+    // cannot match it either passes on or answers itself, and which of those it
+    // does is what `not_found_handling` decides.
+    //
+    // With `"404-page"` it answers a *navigation* request itself. That produced a
+    // 404 for `/login` in a browser while the same URL answered 200 from curl,
+    // because only a navigation carries `Sec-Fetch-Mode: navigate`. Ten E2E
+    // specs failed on it, and every API spec passed — a difference in one header,
+    // in the exact direction that makes a browser look broken while the tool
+    // that "works" is the one lying.
+    //
+    // `none` passes the miss to the Worker, which is the SSR handler: it renders
+    // the route, and it returns a real 404 for a route that does not exist.
+    "not_found_handling": "none"
   },
   "observability": {
-    // Matches the API Worker. The browser's own logs are forwarded through the
-    // client telemetry path, not by Workers Logs, so this is here for parity and
-    // for the (currently disabled) forwarder rather than for local debugging.
-    "enabled": false
-  }
+    // Structured events, indexed by the provider's Logs product. The same
+    // request-scoped logger writes them whether it is running in workerd or in the
+    // Node dev server.
+    "enabled": true
+  },
+  // DEPLOYMENT_ENV is required and is the only thing that decides whether
+  // development defaults are permitted. It is set explicitly here rather than
+  // inferred from BETTER_AUTH_URL, because a deploy that forgets BETTER_AUTH_URL is
+  // exactly the deploy that must not be treated as local.
+  //
+  // `local` is the default *top-level* environment, which is what `vite dev` and
+  // `vite preview` read. Every `--env staging` / `--env production` deployment
+  // overrides it; the app refuses to start if the resolved value is absent or
+  // unrecognised.
+  //
+  // BETTER_AUTH_URL is deliberately absent. In a local environment the app derives
+  // it from the origin the request arrived on, which is correct for a single-origin
+  // app and removes a value that has to be edited every time the dev port changes.
+  // A deployed environment must set it, and must set it to https.
+  "vars": {
+    "DEPLOYMENT_ENV": "local"
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "starter-web",
+      "migrations_dir": "../../../packages/backend/database/drizzle-d1"
+    }
+  ]
+  // R2 is a documented future capability, not a binding. Nothing reads it, and a
+  // binding nobody reads is a resource somebody pays for. See docs/architecture.md.
 }

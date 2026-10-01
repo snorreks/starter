@@ -1,9 +1,9 @@
 // packages/shared/schemas/src/logging/log_event.ts
 //
-// The one structured event shape used by every producer (browser, Worker) and
-// every consumer (console, `bun run logs`, Pi log tool). Keeping a single
-// schema here is what makes cross-plane correlation possible: a browser event
-// and a Worker event are queryable with the same field names.
+// The one structured event shape used by every producer (client, Worker, native
+// shell) and every consumer (console, `bun run logs`, Pi log tool). Keeping a
+// single schema here is what makes cross-plane correlation possible: a browser
+// event and a Worker event are queryable with the same field names.
 //
 // Note on style: each union is written out as an explicit `Type.Union([...])`
 // rather than built with `.map()` over a const array. TypeBox's `Type.Union`
@@ -52,11 +52,17 @@ export const isLogLevel = (value: unknown): value is LogLevel =>
 /**
  * Which application emitted the event. Mirrors the app registry.
  *
- * The vocabulary no longer carries `native`. PR A removed the native shell, and a
- * value with no producer is a value a filter can name and never match — so
- * `bun run logs --source native` parsed, returned nothing, and reported success.
+ * `web` is the single full-stack application: its server half runs in workerd and
+ * its browser half runs in the page, and both emit under this name. Which half
+ * produced a record is `source`, not `app` — that is the distinction the field
+ * below exists to keep, and it is why a browser event forwarded through the
+ * server is still `source: 'browser'`.
+ *
+ * The vocabulary used to be `client` + `api` + `native`, which described a split
+ * deployment. Keeping those names after the split ended would have meant every
+ * log line claiming to come from an application that no longer exists.
  */
-export const LOG_APPS = ['client', 'api', 'scripts'] as const;
+export const LOG_APPS = ['web', 'scripts'] as const;
 export type LogApp = (typeof LOG_APPS)[number];
 
 /**
@@ -118,7 +124,7 @@ export const LogEventSchema = Type.Object(
   {
     /** Epoch milliseconds. Assigned at capture time, not at render time. */
     timestamp: Type.Number(),
-    app: Type.Union([Type.Literal('client'), Type.Literal('api'), Type.Literal('scripts')]),
+    app: Type.Union([Type.Literal('web'), Type.Literal('scripts')]),
     environment: Type.Union([
       Type.Literal('local'),
       Type.Literal('staging'),
@@ -187,7 +193,7 @@ export const SCHEMA_UNION_ASSERTIONS = [
 // -----------------------------------------------------------------------------
 
 /**
- * Context a browser client asserts about itself.
+ * Context a browser or native client asserts about itself.
  *
  * Sent as its own object so a server-side reader can never mistake a
  * self-reported identity for a verified one: `LogEvent.userId` is filled in by

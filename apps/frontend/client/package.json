@@ -5,7 +5,8 @@
   "type": "module",
   "license": "MIT",
   "scripts": {
-    "dev": "vite dev",
+    "dev": "bun run --cwd ../.. scripts/src/cli.ts dev app",
+    "dev:worker": "bun run --cwd ../.. scripts/src/cli.ts dev built",
     "build": "vite build",
     "preview": "vite preview",
     "check:bundle": "bun scripts/check_bundle.ts",
@@ -16,20 +17,27 @@
     "typecheck": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json --threshold error",
     "test": "bun run test:unit",
     "test:unit": "bun run test:unit:run",
-    "test:unit:run": "bun test --isolate --path-ignore-patterns='src/browser_tests/**' --preload ./src/lib/test_setup.ts --tsconfig-override=tsconfig.test.json src/lib tests scripts",
-    "test:browser": "vitest run --config vitest.config.ts"
+    "test:unit:run": "bun test --isolate --path-ignore-patterns='src/browser_tests/**' --path-ignore-patterns='tests/worker_integration.test.ts' --preload ./src/lib/test_setup.ts --tsconfig-override=tsconfig.test.json src/lib tests scripts",
+    "test:browser": "vitest run --config vitest.config.ts",
+    "test:worker": "bun run test:integration",
+    "test:integration": "bun run build && bun test tests/worker_integration.test.ts"
   },
   "dependencies": {
+    "@starter/auth": "workspace:*",
+    "@starter/database": "workspace:*",
     "@starter/frontend-services": "workspace:*",
     "@starter/logger": "workspace:*",
     "@starter/schemas": "workspace:*",
     "@starter/ui": "workspace:*",
     "@starter/utils": "workspace:*",
-    "@sinclair/typebox": "0.34.52"
+    "@sinclair/typebox": "0.34.52",
+    "better-auth": "1.7.6",
+    "drizzle-orm": "0.45.3"
   },
   "devDependencies": {
-    "@sveltejs/adapter-static": "4.0.0-next.4",
-    "@sveltejs/kit": "3.0.0-next.30",
+    "@cloudflare/workers-types": "5.20260929.1",
+    "@sveltejs/adapter-cloudflare": "8.0.0",
+    "@sveltejs/kit": "3.0.0",
     "@sveltejs/vite-plugin-svelte": "7.3.1",
     "@tailwindcss/vite": "4.3.3",
     "@vitest/browser": "5.0.2",
@@ -40,6 +48,7 @@
     "tailwindcss": "4.3.3",
     "typescript": "6.0.3",
     "vite": "8.3.1",
-    "vitest": "5.0.2"
+    "vitest": "5.0.2",
+    "wrangler": "4.142.0"
   }
 }

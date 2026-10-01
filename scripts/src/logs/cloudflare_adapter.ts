@@ -53,9 +53,16 @@ export const MAX_WINDOW_MS = 7 * 24 * 60 * 60_000;
  */
 const accountId = (): string | null => effectiveDeploymentValues().accountId;
 
-/** Resolve only the requested environment's Worker; absent targets are refused. */
-const workerNameFor = (app: AppId, mode: LogQuery['mode']): string | null =>
-  targetsFor(mode)?.workerNames[app] ?? null;
+/**
+ * Resolve only the requested environment's Worker; absent targets are refused.
+ *
+ * `app` is unused and always was, once there was one Worker: the Cloudflare
+ * Observability query is account- and Worker-scoped, and there is nothing an app id
+ * could select between. It stays in the signature so a caller that has one does not
+ * have to know that.
+ */
+const workerNameFor = (_app: AppId, mode: LogQuery['mode']): string | null =>
+  targetsFor(mode)?.workerName ?? null;
 
 /**
  * The provider request this query would send.
