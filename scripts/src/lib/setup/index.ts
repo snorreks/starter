@@ -91,9 +91,15 @@ export const OPTIONAL = [
     name: 'playwright',
     check: () => (playwrightBin() === null ? null : 'installed'),
     why: 'Browser tests and E2E',
+    // The pinned binary, through the workspace script that owns it. Not `bunx`:
+    // `bunx playwright` from the repository root does not find the workspace copy
+    // and downloads whatever the registry serves, which then installs browser
+    // builds that do not match the pinned `@playwright/test` this suite runs
+    // against. A remedy that installs the wrong version is worse than no remedy.
     remedy:
-      'Run `bunx playwright install --with-deps chromium`. Note the browser also needs ' +
-      'system shared libraries; on NixOS the stock Linux build does not run.',
+      'Run `bun run --cwd apps/e2e browsers:install` (the pinned Playwright, via ' +
+      'apps/e2e). Note the browser also needs system shared libraries; on NixOS ' +
+      'the stock Linux build does not run.',
   },
 ] as const;
 
