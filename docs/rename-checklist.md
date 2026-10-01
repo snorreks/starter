@@ -8,7 +8,7 @@ domain, no resource id and no key belonging to anyone.
 Your identity reaches your users through the **Worker name**, the **D1 database**
 and the **account** you provision into — not through a bundle id, because this is
 a web starter and there is no installed application to identify. Set those in
-step 2.
+step 1.
 
 ## 1. Provision your resources
 
@@ -78,8 +78,8 @@ They are different things: the first is documentation the deploy tooling reads, 
 second is what Better Auth and the origin check actually enforce. Setting only the
 first gives a sign-in form that returns 403 in production and works locally.
 
-Nothing is pre-trusted: `TRUSTED_ORIGINS` is the entire allowlist, in both Better
-Auth's origin check and the API's CORS layer.
+`TRUSTED_ORIGINS` is the API's complete CORS allowlist. Better Auth also implicitly
+trusts the origin from its `baseURL`, in addition to `TRUSTED_ORIGINS`.
 
 ## 5. Signing keys
 

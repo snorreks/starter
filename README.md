@@ -31,15 +31,15 @@ domains, and no tokens anywhere in the repository — see
 bun install
 bun run setup          # checks the toolchain, writes .env from the examples
 bun run db:migrate     # applies migrations to local D1
-bun run dev            # client on :5173
+bun run dev            # client on PORT (default :5173)
 bun run dev:api        # Worker on :8787, logs to /tmp/starter-logs/api.ndjson
 ```
 
-Then sign up at <http://127.0.0.1:5173/login>.
+Then sign up at `http://127.0.0.1:<client-port>/login`, using the port configured
+by `PORT` (default: <http://127.0.0.1:5173/login>).
 
-The client dev port is decided in one place, `apps/frontend/client/dev_ports.ts`,
-because the dev server, the `/api` proxy target and the documented URL used to be
-able to disagree. Override it with `PORT`.
+The client dev port comes from `CLIENT_DEV_PORT` in
+`apps/frontend/client/dev_ports.ts`, which reads `PORT` and defaults to 5173.
 
 Nothing above needs a Cloudflare account. The local Worker runs against Wrangler's
 local D1.
