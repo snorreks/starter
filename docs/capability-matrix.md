@@ -126,9 +126,39 @@ Not part of the repository, but a missing one presents as a confusing failure.
 |---|---|---|
 | `node` on PATH | `test:integration`, `e2e` | `env: 'node': No such file or directory`, then a 4-minute readiness timeout |
 | Chromium's shared libraries (`libglib-2.0.so.0`, `libnss3`, `libgbm`, X11, …) | `test:browser`, `e2e` | `error while loading shared libraries`, reported as `Target page, context or browser has been closed` |
+| `CHROMIUM_PATH` pointing at a runnable browser | `test:browser`, `e2e` | Playwright falls back to its own download, which is absent on NixOS |
+| the `chromium_headless_shell` store path | `test:browser` **only** | `Executable doesn't exist at …/bin/chromium_headless_shell-1243/…` |
 | `cargo` and the system webview libraries | `tauri:*` | `cargo is not on PATH` (named explicitly by the launcher) |
 | Xcode / Android SDK + NDK | mobile builds | named explicitly by the launcher |
 
 On NixOS these come from a dev shell, which arrives with the direnv phase. Until
 then, provide them yourself; the commands above name each missing one rather than
 failing silently.
+
+### `test:browser` needs one thing the dev shell does not provide
+
+`bun run test:browser` is the one lane that does not run on a stock
+`nix develop`, and the reason is worth stating rather than rediscovering:
+
+- `pkgs.chromium` is the browser **wrapper**. It runs, and `e2e` passes with it.
+- `chromium_headless_shell` is a **separate** store path. The dev shell does not
+  pull it in.
+- `vitest-browser` with `headless: true` resolves that shell, so it looks for an
+  executable that is not there. `playwright.config.ts` does not, because
+  `chromium.launch()` uses the full browser — which is why `e2e` (17 specs) and
+  `test:integration` (12 specs) pass while this lane cannot start.
+
+Setting `channel: 'chromium'` in the instance or in `launch` does **not** redirect
+the resolution; it was tried and reverted rather than shipped unverified.
+
+To run it, make the headless shell reachable, then re-run:
+
+```bash
+ls -d "$(dirname "$(readlink -f "$(command -v chromium)")")"/chromium_headless_shell-*
+nix develop -c bun run test:browser
+```
+
+As of the commit that closed the remaining capability gaps, this lane is **NOT
+RUN**. It fails identically on `main` in a clean worktree, so it is not a
+regression from that work — but it is also not verified, and the suite behind it has
+not been observed passing here.

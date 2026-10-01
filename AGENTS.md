@@ -93,6 +93,7 @@ own:
 |---|---|---|
 | `node` on PATH | `test:integration`, `e2e` | `env: 'node': No such file or directory`, then a 4-minute timeout |
 | Chromium's shared libraries | `test:browser`, `e2e` | `error while loading shared libraries` |
+| the `chromium_headless_shell` store path | `test:browser` **only** | `Executable doesn't exist at …/chromium_headless_shell-1243/…` — see [docs/capability-matrix.md](docs/capability-matrix.md) |
 | `cargo` + system webview libs | `tauri:*` | named explicitly by the launcher |
 
 See [docs/capability-matrix.md](docs/capability-matrix.md).
