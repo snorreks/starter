@@ -45,7 +45,7 @@ gh pr checks <number> --json name,state,bucket,link,workflow
 
 `bucket` is the useful field: `pass`, `fail`, `pending`, `skipping`, `cancel`.
 
-- `pending` means **not run yet**, which is not a pass and not a failure. Say it is
+- `pending` means **not complete yet**, which is not a pass and not a failure. Say it is
   pending.
 - `skipping` means the check did not execute. In this repository some lanes
   cannot run — see [docs/capability-matrix.md](../../docs/capability-matrix.md).
@@ -55,7 +55,7 @@ gh pr checks <number> --json name,state,bucket,link,workflow
 For a failing check, read the log rather than guessing:
 
 ```bash
-gh run view --log-failed
+gh run view <run-id-from-the-failed-check-link> --log-failed
 ```
 
 ## 3. Read every review thread — including the later pages
@@ -78,10 +78,6 @@ query($owner:String!, $repo:String!, $number:Int!, $endCursor:String) {
           isOutdated
           path
           line
-          comments(first:100) {
-            pageInfo { hasNextPage endCursor }
-            nodes { author { login } body path line createdAt url }
-          }
         }
       }
     }
@@ -89,13 +85,29 @@ query($owner:String!, $repo:String!, $number:Int!, $endCursor:String) {
 }' -f owner=<owner> -f repo=<repo> -F number=<number>
 ```
 
-`--paginate` requires every level you need to be fully walked to declare
-`hasNextPage: false`. **Check the inner `comments.pageInfo` too** — a single
-thread can have more comments than the outer query returned.
+The query above paginates only `reviewThreads`. For every thread returned across
+all pages, fetch its comments separately using that thread's `id`. Start each
+invocation without a cursor:
 
-`gh api graphql --paginate` needs `pageInfo { hasNextPage endCursor }` at every
-level. If the inner one reports more pages, re-run with the thread's own cursor
-rather than assuming you have the lot.
+```bash
+gh api graphql --paginate -f query='
+query($threadId:ID!, $endCursor:String) {
+  node(id:$threadId) {
+    ... on PullRequestReviewThread {
+      comments(first:100, after:$endCursor) {
+        pageInfo { hasNextPage endCursor }
+        nodes { author { login } body path line createdAt url }
+      }
+    }
+  }
+}' -f threadId=<thread-id>
+```
+
+Collect every page returned for each thread. In this query `--paginate` advances
+`$endCursor` using only that thread's `comments.pageInfo.endCursor`, until its
+`hasNextPage` is false. Repeat for every thread, starting without a cursor each
+time. Never pass the outer `reviewThreads` cursor here or reuse a cursor from
+another thread.
 
 ## 4. Separate findings that still stand from findings that are stale
 

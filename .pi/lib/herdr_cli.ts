@@ -276,16 +276,11 @@ export const validateWorktreeParams = (
     return undefined;
   }
 
-  if (action === 'create' && params.branch === undefined && params.path === undefined) {
+  if (action === 'create' && !params.branch && !params.path) {
     return 'worktree create needs a branch or an explicit path; Herdr will not invent either.';
   }
 
-  if (
-    action === 'open' &&
-    params.workspace === undefined &&
-    params.path === undefined &&
-    params.branch === undefined
-  ) {
+  if (action === 'open' && !params.workspace && !params.path && !params.branch) {
     return 'worktree open needs a workspace id, a path or a branch to identify the checkout.';
   }
 

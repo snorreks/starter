@@ -21,6 +21,7 @@ import { afterEach, describe, expect, test } from 'bun:test';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { DefaultResourceLoader, SettingsManager } from '@earendil-works/pi-coding-agent';
 import { handoffDir, listHandoffs, writeHandoff } from '../lib/handoff.ts';
 import { jobDir, jobJsonPath, listJobs } from '../lib/jobs.ts';
 import { cleanupFakes, scratchDir } from './fake_bin.ts';
@@ -128,14 +129,35 @@ describe('the loader uses an isolated agentDir', () => {
 
     const here = mkdtempSync(join(tmpdir(), 'pi-iso-here-'));
     const there = mkdtempSync(join(tmpdir(), 'pi-iso-there-'));
-    expect(here).not.toBe(there);
+    try {
+      const extension = join(here, 'only-here.ts');
+      writeFileSync(extension, 'export default function () {}');
+      writeFileSync(join(here, 'settings.json'), JSON.stringify({ extensions: [extension] }));
+      const hereSettings = SettingsManager.create(REPO_ROOT, here);
+      const thereSettings = SettingsManager.create(REPO_ROOT, there);
+      const hereLoader = new DefaultResourceLoader({
+        cwd: REPO_ROOT,
+        agentDir: here,
+        settingsManager: hereSettings,
+      });
+      const thereLoader = new DefaultResourceLoader({
+        cwd: REPO_ROOT,
+        agentDir: there,
+        settingsManager: thereSettings,
+      });
+      await hereLoader.reload();
+      await thereLoader.reload();
 
-    // Nothing written by one is visible to the other.
-    writeFileSync(join(here, 'marker'), 'x');
-    expect(existsSync(join(there, 'marker'))).toBe(false);
-
-    rmSync(here, { recursive: true, force: true });
-    rmSync(there, { recursive: true, force: true });
+      expect(hereLoader.getExtensions().errors).toEqual([]);
+      expect(thereLoader.getExtensions().errors).toEqual([]);
+      expect(hereLoader.getExtensions().extensions.map((entry) => entry.path)).toContain(extension);
+      expect(thereLoader.getExtensions().extensions.map((entry) => entry.path)).not.toContain(
+        extension,
+      );
+    } finally {
+      rmSync(here, { recursive: true, force: true });
+      rmSync(there, { recursive: true, force: true });
+    }
   });
 });
 

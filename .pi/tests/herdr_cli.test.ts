@@ -177,6 +177,23 @@ describe('buildWorktreeArgs', () => {
 });
 
 describe('validateWorktreeParams — refusals before anything is spawned', () => {
+  test('empty identifiers cannot turn create or open into a default action', () => {
+    for (const branch of [undefined, '']) {
+      for (const path of [undefined, '']) {
+        expect(validateWorktreeParams('create', { branch, path })).toContain('needs a branch');
+        for (const workspace of [undefined, '']) {
+          expect(validateWorktreeParams('open', { branch, path, workspace })).toContain(
+            'needs a workspace id',
+          );
+        }
+      }
+    }
+    expect(validateWorktreeParams('create', { branch: '', path: '/checkout' })).toBeUndefined();
+    expect(
+      validateWorktreeParams('open', { branch: '', path: '', workspace: 'wPK' }),
+    ).toBeUndefined();
+  });
+
   test('remove without a workspace id is refused with the reason and a remedy', () => {
     const reason = validateWorktreeParams('remove', {});
     expect(reason).toContain('--workspace');

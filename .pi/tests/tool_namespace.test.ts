@@ -39,7 +39,11 @@ interface RegisteredTool {
     signal?: AbortSignal,
     onUpdate?: unknown,
     ctx?: unknown,
-  ) => Promise<{ content: Array<{ type: string; text: string }>; isError?: boolean }>;
+  ) => Promise<{
+    content: Array<{ type: string; text: string }>;
+    isError?: boolean;
+    details: unknown;
+  }>;
 }
 
 const register = () => {
@@ -66,17 +70,22 @@ const register = () => {
           message: Type.String({ description: 'Text to echo.' }),
           times: Type.Optional(Type.Number({ default: 1, description: 'Repetitions.' })),
         }),
-        execute: async (_id, params) => ({
-          content: [
-            {
-              type: 'text',
-              text: Array.from({ length: params.times ?? 1 }, () => params.message).join('|'),
-            },
-          ],
-          // `details` is required on Pi's AgentToolResult, and is what the UI and
-          // the transcript renderer read.
-          details: { echoed: params.message, times: params.times ?? 1 },
-        }),
+        execute: async (_id, params) => {
+          if (params.times === undefined) {
+            throw new Error('The schema default was not injected');
+          }
+          return {
+            content: [
+              {
+                type: 'text',
+                text: Array.from({ length: params.times }, () => params.message).join('|'),
+              },
+            ],
+            // `details` is required on Pi's AgentToolResult, and is what the UI and
+            // the transcript renderer read.
+            details: { echoed: params.message, times: params.times },
+          };
+        },
       }),
       defineAction({
         action: 'noop',
@@ -133,8 +142,23 @@ describe('dispatch', () => {
 
   test('applies schema defaults, so an action body can rely on them', async () => {
     const tool = register();
-    const result = await tool.execute('1', { action: 'echo', params: { message: 'x', times: 3 } });
-    expect(textOf(result)).toBe('x|x|x');
+    const result = await tool.execute('1', { action: 'echo', params: { message: 'x' } });
+    expect(textOf(result)).toBe('x');
+    expect(result.details).toEqual({ echoed: 'x', times: 1 });
+  });
+
+  test.each([null, false, 0, [], new Date(0), 'plain', '{oops', '[1,2]'])(
+    'rejects invalid containers %j',
+    async (params) => {
+      const result = await register().execute('1', { action: 'noop', params });
+      expect(result.isError).toBe(true);
+      expect(result.details).toMatchObject({ error: 'invalid_params' });
+    },
+  );
+
+  test('recovers flat fields alongside empty params', async () => {
+    const result = await register().execute('1', { action: 'echo', params: {}, message: 'flat' });
+    expect(textOf(result)).toBe('flat');
   });
 
   test('rejects an unknown action with the list of real ones', async () => {

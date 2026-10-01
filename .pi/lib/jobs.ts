@@ -21,7 +21,7 @@
 //
 // Lives outside `.pi/extensions/`, which is Pi's discovery input.
 
-import { type ChildProcess, spawn } from 'node:child_process';
+import { spawn } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
 import {
   closeSync,
@@ -34,9 +34,9 @@ import {
   renameSync,
   statSync,
   writeFileSync,
-  writeSync,
 } from 'node:fs';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 /** Repo-relative directory. Already gitignored in `.gitignore`. */
 export const JOB_DIR = '.pi/background-tasks';
@@ -70,7 +70,7 @@ export interface StartJobOptions {
   cwd: string;
   /** Wall-clock ceiling. The job is SIGTERMed then SIGKILLed at it. */
   timeoutMs: number;
-  /** Bytes of the log kept readable in memory for `wait()`. */
+  /** Maximum bytes read from the log by `tail()`. */
   maxBytes: number;
   /** Extra grace between SIGTERM and SIGKILL. */
   killGraceMs?: number;
@@ -143,7 +143,7 @@ const readProcessEnv = (pid: number): string | undefined => {
 
 export interface OwnershipVerdict {
   owned: boolean;
-  /** False when the platform could not answer — `owned` is then a guess. */
+  /** False when the platform could not answer; signalling must be refused. */
   verified: boolean;
   reason: string;
 }
@@ -156,8 +156,8 @@ export interface OwnershipVerdict {
  *   * the token matches            → `owned: true, verified: true`
  *   * the process exists and the token does **not** match → `owned: false`. The
  *     pid was recycled, so this is somebody else's process.
- *   * the process cannot be inspected → `owned: true, verified: false`. The
- *     caller may proceed, but must not describe the kill as proven.
+ *   * the process cannot be inspected → `owned: false, verified: false`. The
+ *     caller must refuse to signal it.
  */
 export const verifyOwnership = (snapshot: JobSnapshot): OwnershipVerdict => {
   if (snapshot.pid === undefined) {
@@ -174,7 +174,7 @@ export const verifyOwnership = (snapshot: JobSnapshot): OwnershipVerdict => {
   const environ = readProcessEnv(snapshot.pid);
   if (environ === undefined) {
     return {
-      owned: alive,
+      owned: false,
       verified: false,
       reason: alive
         ? 'this platform does not expose /proc/<pid>/environ, so ownership is unverified'
@@ -217,7 +217,7 @@ export const startJob = (
   args: readonly string[],
   options: StartJobOptions,
 ): StartResult => {
-  const root = options.cwd;
+  const root = resolve(options.cwd);
   const id = makeJobId();
   const token = randomBytes(16).toString('hex');
   const killGraceMs = options.killGraceMs ?? 3_000;
@@ -236,147 +236,101 @@ export const startJob = (
     lastOutputAt: Date.now(),
   };
 
-  const child: ChildProcess = spawn(command, [...args], {
-    cwd: root,
-    stdio: ['ignore', 'pipe', 'pipe'],
-    // Own process group, so a stop reaches the whole tree. Signalling only the
-    // direct child leaves grandchildren holding the pipes open, and a stop that
-    // leaves them running is not a stop.
-    detached: true,
-    env: { ...process.env, [JOB_TOKEN_ENV]: token, GIT_TERMINAL_PROMPT: '0' },
-  });
-
-  let logFd: number | undefined;
-  try {
-    logFd = openSync(jobLogPath(root, id), 'w');
-  } catch {
-    // Unwritable log directory: the job still runs and still reports a status.
-    logFd = undefined;
-  }
-
-  let kept = '';
-  const append = (chunk: string): void => {
-    snapshot.lastOutputAt = Date.now();
-    if (Buffer.byteLength(kept) + Buffer.byteLength(chunk) > options.maxBytes) {
-      // Keep the tail: for a running job the last lines are the ones that say
-      // what it is doing now. The file is the complete record.
-      kept = `${kept}${chunk}`.slice(-options.maxBytes);
-    } else {
-      kept += chunk;
-    }
-    if (logFd !== undefined) {
-      try {
-        writeSync(logFd, chunk);
-      } catch {
-        /* a debug log is not worth stopping a job over */
-      }
-    }
-  };
-
-  child.stdout?.on('data', (chunk: Buffer) => append(chunk.toString('utf8')));
-  child.stderr?.on('data', (chunk: Buffer) => append(chunk.toString('utf8')));
+  writeSnapshot(root, snapshot);
+  const supervisor = spawn(
+    process.execPath,
+    [
+      fileURLToPath(new URL('./job_supervisor.mjs', import.meta.url)),
+      JSON.stringify({
+        snapshot,
+        jsonPath: jobJsonPath(root, id),
+        logPath: jobLogPath(root, id),
+        timeoutMs: options.timeoutMs,
+        killGraceMs,
+        killedExit: KILLED_EXIT,
+      }),
+    ],
+    {
+      cwd: root,
+      detached: true,
+      stdio: ['ignore', 'ignore', 'ignore', 'ipc'],
+      env: { ...process.env, [JOB_TOKEN_ENV]: token, GIT_TERMINAL_PROMPT: '0' },
+    },
+  );
 
   let settled = false;
   let resolveWait: (value: JobSnapshot) => void = () => {};
   const exited = new Promise<JobSnapshot>((resolve) => {
     resolveWait = resolve;
   });
-
-  const closeLog = (): void => {
-    if (logFd !== undefined) {
-      try {
-        closeSync(logFd);
-      } catch {
-        /* already closed */
-      }
-      logFd = undefined;
-    }
-  };
-
-  const settle = (state: JobState, code: number): void => {
+  const accept = (value: JobSnapshot): void => {
     if (settled) {
       return;
     }
-    settled = true;
-    clearTimeout(timer);
-    options.signal?.removeEventListener('abort', onAbort);
-    snapshot.state = state;
-    snapshot.exitCode = code;
-    snapshot.finishedAt = Date.now();
-    closeLog();
-    writeSnapshot(root, snapshot);
-    resolveWait(snapshot);
-  };
-
-  /** Signal the whole group, with a documented fallback to the direct child. */
-  const signalTree = (which: NodeJS.Signals): void => {
-    if (child.pid === undefined) {
-      return;
-    }
-    try {
-      process.kill(-child.pid, which);
-    } catch {
-      try {
-        child.kill(which);
-      } catch {
-        /* already gone */
-      }
+    Object.assign(snapshot, value);
+    if (snapshot.finishedAt !== undefined) {
+      settled = true;
+      options.signal?.removeEventListener('abort', onAbort);
+      resolveWait({ ...snapshot });
     }
   };
-
   const stop = (): void => {
-    if (settled) {
-      return;
+    if (!settled && supervisor.connected) {
+      supervisor.send('stop', () => {});
     }
-    signalTree('SIGTERM');
-    setTimeout(() => {
-      if (!settled) {
-        // SIGKILL specifically: a process that ignored SIGTERM does not get a
-        // second SIGTERM, it gets the one signal it cannot catch.
-        signalTree('SIGKILL');
-      }
-    }, killGraceMs).unref?.();
   };
-
-  const timer = setTimeout(() => {
-    snapshot.state = 'killed';
-    stop();
-  }, options.timeoutMs);
-  timer.unref?.();
-
-  const onAbort = (): void => {
-    snapshot.state = 'killed';
-    stop();
-  };
+  const onAbort = (): void => stop();
   options.signal?.addEventListener('abort', onAbort, { once: true });
-
-  child.on('error', (error) => {
-    // A spawn failure has no exit code. Reported as `failed` with -1 so it is
-    // never mistaken for a clean exit.
-    append(`\n[spawn failed: ${error.message}]\n`);
-    snapshot.pid = undefined;
-    settle('failed', -1);
+  if (options.signal?.aborted) {
+    stop();
+  }
+  supervisor.on('message', (value: JobSnapshot) => accept(value));
+  supervisor.on('error', () => {
+    const failed: JobSnapshot = {
+      ...snapshot,
+      state: 'failed',
+      exitCode: -1,
+      finishedAt: Date.now(),
+    };
+    writeSnapshot(root, failed);
+    accept(failed);
   });
-
-  child.on('close', (code, signal) => {
+  supervisor.on('close', () => {
     if (settled) {
       return;
     }
-    const finalCode = code ?? (signal === null ? 0 : KILLED_EXIT);
-    settle(finalCode === 0 ? 'exited' : 'failed', finalCode);
+    const persisted = readJob(root, id);
+    if (persisted?.finishedAt !== undefined) {
+      accept(persisted);
+    } else {
+      // The supervisor itself failed before it could report a terminal result.
+      const failed: JobSnapshot = {
+        ...snapshot,
+        state: 'failed',
+        exitCode: -1,
+        finishedAt: Date.now(),
+      };
+      writeSnapshot(root, failed);
+      accept(failed);
+    }
   });
-
-  snapshot.pid = child.pid;
-  writeSnapshot(root, snapshot);
 
   const handle: JobHandle = {
-    snapshot: () => ({ ...snapshot }),
+    snapshot: () => {
+      try {
+        snapshot.lastOutputAt = Math.max(
+          snapshot.lastOutputAt,
+          statSync(jobLogPath(root, id)).mtimeMs,
+        );
+      } catch {
+        // Preserve the last observation when the log is unavailable.
+      }
+      return { ...snapshot };
+    },
     wait: () => exited,
-    tail: () => kept,
+    tail: () => tailJobLog(root, id, options.maxBytes) ?? '',
     stop: async () => {
       stop();
-      // Bounded: SIGKILL follows after the grace period regardless, so this
-      // cannot wait forever even if the group ignores SIGTERM.
       const deadline = Date.now() + killGraceMs + 2_000;
       while (!settled && Date.now() < deadline) {
         await new Promise((resolve) => setTimeout(resolve, 25));
@@ -489,7 +443,7 @@ export const stopJob = async (
   }
 
   const verdict = verifyOwnership(snapshot);
-  if (!verdict.owned) {
+  if (!verdict.owned || !verdict.verified) {
     return {
       stopped: false,
       reason: `refusing to signal pid ${snapshot.pid}: ${verdict.reason}`,
@@ -499,18 +453,23 @@ export const stopJob = async (
 
   // Update the on-disk state before signalling: if this process dies mid-kill,
   // the next reader must see an intent to stop, not a job that looks live.
-  const stopping: JobSnapshot = { ...snapshot, state: 'killed', finishedAt: Date.now() };
+  const stopping: JobSnapshot = {
+    ...snapshot,
+    state: 'killed',
+    exitCode: KILLED_EXIT,
+    finishedAt: Date.now(),
+  };
   writeSnapshot(root, stopping);
 
   signalGroup(snapshot.pid as number, 'SIGTERM');
   await new Promise((resolve) => setTimeout(resolve, graceMs));
-  signalGroup(snapshot.pid as number, 'SIGKILL');
+  if (verifyOwnership(snapshot).owned) {
+    signalGroup(snapshot.pid as number, 'SIGKILL');
+  }
 
   return {
     stopped: true,
-    reason: verdict.verified
-      ? `sent SIGTERM then SIGKILL to the process group of pid ${snapshot.pid}`
-      : `sent SIGTERM then SIGKILL to pid ${snapshot.pid} (ownership unverified on this platform)`,
+    reason: `sent SIGTERM and escalated if still owned to the process group of pid ${snapshot.pid}`,
     snapshot: stopping,
   };
 };

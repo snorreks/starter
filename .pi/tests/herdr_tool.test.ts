@@ -304,7 +304,7 @@ describe('refusals that protect the user', () => {
     expect(text(result)).toContain('--workspace');
     expect(text(result)).toContain('herdr worktree list');
     // The version probe ran; the destructive command did not.
-    expect(fake.calls()).not.toContain('worktree remove');
+    expect(fake.calls().join('\n')).not.toContain('worktree remove');
     expect(fake.calls().join(' ')).not.toContain('--force');
   }, 30_000);
 

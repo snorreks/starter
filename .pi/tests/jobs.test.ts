@@ -15,11 +15,16 @@
 //      child's own environment is checked first, so a recycled pid is refused
 //      rather than killed.
 
-import { afterAll, describe, expect, test } from 'bun:test';
+import { afterAll, describe, expect, spyOn, test } from 'bun:test';
+import { spawn } from 'node:child_process';
+import * as fs from 'node:fs';
+import { join, relative } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { setTimeout as sleep } from 'node:timers/promises';
 import {
   JOB_TOKEN_ENV,
   type JobSnapshot,
+  jobJsonPath,
   listJobs,
   readJob,
   startJob,
@@ -62,6 +67,13 @@ describe('a job that finishes', () => {
     expect(handle.tail()).toContain('hello from the job');
   }, 20_000);
 
+  test('a relative cwd is resolved before the supervisor changes directory', async () => {
+    const dir = scratchDir('job-relative');
+    const { handle } = started(relative(process.cwd(), dir), fakeBin('pwd', 'pwd').path);
+    expect((await handle.wait()).state).toBe('exited');
+    expect(handle.tail().trim()).toBe(dir);
+  });
+
   test('a non-zero exit is `failed`, never reported as success', async () => {
     const dir = scratchDir('job-fail');
     const bin = fakeBin('failing', 'echo "boom" >&2\nexit 3');
@@ -73,19 +85,71 @@ describe('a job that finishes', () => {
     expect(snapshot.exitCode).toBe(3);
   }, 20_000);
 
-  test('an exit status survives the Pi process that started it', async () => {
-    // The journal is what makes a job visible to a later session, so it has to
-    // carry the outcome rather than only the pid.
-    const dir = scratchDir('job-journal');
-    const bin = fakeBin('done', 'exit 7');
-
-    const { snapshot } = started(dir, bin.path);
-    await sleep(400);
-
-    const onDisk = readJob(dir, snapshot.id);
-    expect(onDisk?.state).toBe('failed');
-    expect(onDisk?.exitCode).toBe(7);
-  }, 20_000);
+  test.each([
+    [process.execPath, 0],
+    [process.execPath, 7],
+    ['node', 0],
+    ['node', 7],
+  ] as const)(
+    'persists %s exit %i after the originating process is killed',
+    async (runtime, code) => {
+      const dir = scratchDir('job-orphan');
+      const release = join(dir, 'release');
+      const bin = fakeBin(
+        'wait-for-release',
+        `while [ ! -f "${release}" ]; do sleep 0.05; done\necho survived\nexit ${code}`,
+      );
+      const modulePath = fileURLToPath(new URL('../lib/jobs.ts', import.meta.url));
+      const origin = spawn(
+        runtime,
+        [
+          '-e',
+          `
+      import { startJob } from ${JSON.stringify(modulePath)};
+      startJob(${JSON.stringify(bin.path)}, [], { cwd: ${JSON.stringify(dir)}, timeoutMs: 10000, maxBytes: 4096 });
+      setInterval(() => {}, 1000);
+    `,
+        ],
+        { stdio: 'ignore' },
+      );
+      const originClosed = new Promise((resolve) => origin.on('close', resolve));
+      let snapshot: JobSnapshot | undefined;
+      try {
+        const readyDeadline = Date.now() + 5000;
+        while (Date.now() < readyDeadline) {
+          snapshot = listJobs(dir)[0];
+          if (snapshot?.pid !== undefined) {
+            break;
+          }
+          await sleep(25);
+        }
+        expect(snapshot?.pid).toBeDefined();
+        if (snapshot?.pid === undefined) {
+          throw new Error('The job did not start before the readiness deadline');
+        }
+        origin.kill('SIGKILL');
+        await originClosed;
+        expect(readJob(dir, snapshot.id)?.state).toBe('running');
+        fs.writeFileSync(release, 'go');
+        const deadline = Date.now() + 5000;
+        while (Date.now() < deadline && readJob(dir, snapshot.id)?.state === 'running') {
+          await sleep(25);
+        }
+        const final = readJob(dir, snapshot.id);
+        expect(final?.state).toBe(code === 0 ? 'exited' : 'failed');
+        expect(final?.exitCode).toBe(code);
+        expect(final?.finishedAt).toBeGreaterThanOrEqual(snapshot.startedAt);
+        expect(tailJobLog(dir, snapshot.id)).toContain('survived');
+      } finally {
+        origin.kill('SIGKILL');
+        fs.writeFileSync(release, 'go');
+        if (snapshot !== undefined) {
+          await stopJob(dir, snapshot.id, 25);
+        }
+      }
+    },
+    20_000,
+  );
 });
 
 describe('silence is not completion', () => {
@@ -120,11 +184,11 @@ describe('bounds', () => {
 
     // 124, never 0: "timed out" must not read as "succeeded".
     expect(final.exitCode).toBe(124);
-    expect(['killed', 'failed']).toContain(final.state);
+    expect(final.state).toBe('killed');
     expect(final.finishedAt).toBeGreaterThanOrEqual(snapshot.startedAt);
   }, 20_000);
 
-  test('the in-memory tail is bounded while the file keeps the whole stream', async () => {
+  test('the readable tail is bounded while the file keeps the whole stream', async () => {
     const dir = scratchDir('job-flood');
     const bin = fakeBin(
       'flood',
@@ -215,7 +279,6 @@ describe('owned-child cleanup', () => {
     expect(verdict.reason).toContain('was reused');
 
     const { writeFileSync } = await import('node:fs');
-    const { jobJsonPath } = await import('../lib/jobs.ts');
     writeFileSync(jobJsonPath(dir, real.id), JSON.stringify(forged, null, 2));
 
     const outcome = await stopJob(dir, real.id);
@@ -229,6 +292,42 @@ describe('owned-child cleanup', () => {
     await handle.stop();
   }, 30_000);
 
+  test('refuses a live process whose environment cannot be inspected', async () => {
+    const dir = scratchDir('job-unverified');
+    const { handle } = started(dir, fakeBin('owned', 'sleep 30').path);
+    await sleep(settle);
+    const snapshot = handle.snapshot();
+    const read = fs.readFileSync;
+    const inspect = spyOn(fs, 'readFileSync').mockImplementation(((
+      path: unknown,
+      ...args: unknown[]
+    ) => {
+      if (path === `/proc/${snapshot.pid}/environ`) {
+        throw new Error('unavailable');
+      }
+      return Reflect.apply(read, fs, [path, ...args]);
+    }) as typeof fs.readFileSync);
+    const signal = spyOn(process, 'kill');
+    try {
+      expect(verifyOwnership(snapshot)).toMatchObject({ owned: false, verified: false });
+      expect((await stopJob(dir, snapshot.id, 25)).stopped).toBe(false);
+      expect(signal.mock.calls.every(([, which]) => which === 0)).toBe(true);
+    } finally {
+      inspect.mockRestore();
+      signal.mockRestore();
+      await handle.stop();
+    }
+  }, 20_000);
+
+  test('a later session stop stays killed when the child closes', async () => {
+    const dir = scratchDir('job-stop-journal');
+    const { handle } = started(dir, fakeBin('owned', 'sleep 30').path);
+    await sleep(settle);
+    expect((await stopJob(dir, handle.snapshot().id, 25)).stopped).toBe(true);
+    expect((await handle.wait()).state).toBe('killed');
+    expect(readJob(dir, handle.snapshot().id)).toMatchObject({ state: 'killed', exitCode: 124 });
+  }, 20_000);
+
   test('a real job verifies as owned through its planted token', async () => {
     const dir = scratchDir('job-token');
     const bin = fakeBin('owned', 'sleep 30');
@@ -238,7 +337,7 @@ describe('owned-child cleanup', () => {
     const verdict = verifyOwnership(handle.snapshot());
     // `/proc` is Linux-only; where it is missing the verdict must say the answer
     // is unverified rather than pretending it passed.
-    expect(verdict.owned).toBe(true);
+    expect(verdict.owned).toBe(verdict.verified);
     if (verdict.verified) {
       expect(verdict.reason).toContain('token');
     } else {

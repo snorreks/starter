@@ -298,7 +298,9 @@ const NAMESPACE_PARAMS = Type.Object({
 });
 
 const isPlainObject = (value: unknown): value is Record<string, unknown> =>
-  typeof value === 'object' && value !== null && !Array.isArray(value);
+  typeof value === 'object' &&
+  value !== null &&
+  (Object.getPrototypeOf(value) === Object.prototype || Object.getPrototypeOf(value) === null);
 
 const describeValue = (value: unknown): string => {
   const text = typeof value === 'string' ? value : (JSON.stringify(value) ?? String(value));
@@ -385,8 +387,15 @@ export const registerNamespace = (pi: ExtensionAPI, options: NamespaceOptions): 
       // nested `params`; fall back to the rest of the call only when none was.
       const { action: _key, params: nested, ...flat } = envelope;
       const parsedNested = parseParamsContainer(nested);
-      const hasNested = isPlainObject(parsedNested) && Object.keys(parsedNested).length > 0;
-      const raw = hasNested ? parsedNested : flat;
+      if (parsedNested !== undefined && !isPlainObject(parsedNested)) {
+        return textResult(
+          `Invalid params for ${options.name}.${action.action}: params must be an object.`,
+          true,
+          { error: 'invalid_params', action: action.action },
+        );
+      }
+      const raw =
+        parsedNested === undefined || Object.keys(parsedNested).length === 0 ? flat : parsedNested;
 
       const params = Value.Default(
         action.parameters,

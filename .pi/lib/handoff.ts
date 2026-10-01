@@ -185,7 +185,7 @@ export const listHandoffs = (root: string): string[] => {
     return [];
   }
   return readdirSync(dir)
-    .filter((name) => name.endsWith('.md'))
+    .filter((name) => name.endsWith('.md') && name !== 'README.md')
     .map((name) => name.replace(/\.md$/, ''))
     .sort();
 };
@@ -214,8 +214,8 @@ export interface StaleClaim {
 /**
  * Compare a note's claims against live state.
  *
- * Returns the contradictions. An empty array means the note's *position* still
- * holds — it says nothing about whether the work described is still correct,
+ * Returns the contradictions. An empty array only means none were detected —
+ * unrecorded claims and unavailable observations cannot establish agreement,
  * which is why the caller must still re-derive state rather than trust the note.
  */
 export const staleClaims = (note: HandoffNote, observed: ObservedState): StaleClaim[] => {
@@ -270,9 +270,9 @@ export const staleClaims = (note: HandoffNote, observed: ObservedState): StaleCl
 export const renderResumeWarning = (note: HandoffNote, claims: StaleClaim[]): string => {
   if (claims.length === 0) {
     return (
-      `Note "${note.name}" was written ${new Date(note.writtenAt).toISOString()} and its recorded ` +
-      'position still matches this checkout. That is NOT evidence that its results still hold: ' +
-      'it means the head, branch and worktree agree. Re-derive current state with ' +
+      `Note "${note.name}" was written ${new Date(note.writtenAt).toISOString()} and no ` +
+      'position contradictions were detected. That is NOT evidence that its results still hold. ' +
+      'Re-derive current state with ' +
       '`repo_task list` / `git status` before trusting any command result in it.'
     );
   }

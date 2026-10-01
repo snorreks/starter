@@ -9,7 +9,7 @@
 // state before anything believes it.
 
 import { afterAll, describe, expect, test } from 'bun:test';
-import { existsSync } from 'node:fs';
+import { existsSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import {
   HANDOFF_DIR,
@@ -123,6 +123,7 @@ describe('reading notes', () => {
     writeHandoff(dir, note({ name: 'first' }));
     writeHandoff(dir, note({ name: 'second' }));
 
+    writeFileSync(join(handoffDir(dir), 'README.md'), 'Handoff directory guide');
     expect(listHandoffs(dir).sort()).toEqual(['first', 'second']);
     expect(handoffDir(dir).startsWith(dir)).toBe(true);
   });
@@ -197,6 +198,19 @@ describe('staleness — old evidence is a claim, not a fact', () => {
     // observed-false. Conflating them would mark every note stale on a machine
     // where the check could not run.
     expect(staleClaims(current, { head: current.head, branch: current.branch })).toEqual([]);
+  });
+
+  test('missing claims or observations do not imply agreement', () => {
+    for (const value of [
+      current,
+      note({ head: undefined, branch: undefined, worktree: undefined }),
+    ]) {
+      const warning = renderResumeWarning(value, staleClaims(value, {}));
+      expect(warning).toContain('no position contradictions were detected');
+      expect(warning).not.toContain('agree');
+      expect(warning).not.toContain('still matches');
+      expect(warning).toContain('Re-derive current state');
+    }
   });
 
   test('the stale warning tells the model not to repeat an unverified result', () => {
