@@ -26,7 +26,7 @@
 
 import { spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { dirname, join, relative, resolve } from 'node:path';
+import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { REPO_ROOT } from '../shared/paths.ts';
 
 export const SOPS_CONFIG = join(REPO_ROOT, '.sops.yaml');
@@ -135,7 +135,7 @@ export const isGitIgnored = (path: string, root: string = REPO_ROOT): boolean =>
 /** Paths outside the repository are never tracked, so always acceptable. */
 const isOutsideRepo = (path: string, root: string): boolean => {
   const rel = relative(root, resolve(path));
-  return rel === '' || rel.startsWith('..');
+  return rel === '..' || rel.startsWith(`..${sep}`) || isAbsolute(rel);
 };
 
 /**
@@ -504,6 +504,11 @@ export const updateRecipients = (
     (_match: string, head: string, block: string) =>
       `${head}${block}${added.map((recipient) => `      - ${recipient}\n`).join('')}`,
   );
+
+  if (updated === text) {
+    process.stderr.write('No age list could be extended in .sops.yaml. Nothing was changed.\n');
+    return EXIT.failed;
+  }
 
   writeFileSync(configPath, updated, 'utf8');
   process.stdout.write(

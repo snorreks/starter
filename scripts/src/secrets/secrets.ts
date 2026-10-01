@@ -166,6 +166,27 @@ const report = (result: { ok: boolean; code: number; stderr: string }): number =
 
 export const main = (args: readonly string[]): number => {
   const operation = positional(args)[0];
+  const separator = operation === 'exec' ? args.indexOf('--') : -1;
+  const options = separator === -1 ? args : args.slice(0, separator);
+  for (let index = 0; index < options.length; index += 1) {
+    const option = options[index];
+    if (option !== '--out' && option !== '--env') {
+      continue;
+    }
+    const value = options[index + 1];
+    if (
+      value === undefined ||
+      value.startsWith('-') ||
+      value === '' ||
+      (option === '--env' && !/^[A-Za-z_][A-Za-z0-9_]*=.+$/s.test(value))
+    ) {
+      process.stderr.write(
+        `${option} requires ${option === '--env' ? 'KEY=<ciphertext>' : 'a path'}.\n`,
+      );
+      return EXIT.usage;
+    }
+    index += 1;
+  }
   const rest = positional(args).slice(1);
   const outIndex = args.indexOf('--out');
   const out = outIndex === -1 ? undefined : args[outIndex + 1];
@@ -190,9 +211,6 @@ export const main = (args: readonly string[]): number => {
         );
         return EXIT.usage;
       }
-      // Every file is attempted, so one bad path does not leave the rest silently
-      // unprocessed; the worst status wins, because a partial success that reports
-      // success is the failure mode this command existed to end.
       // Every file is attempted, so one bad path does not silently leave the rest
       // unprocessed. The code reported is the *first* failure, not the last: with
       // several files the order the operator named them in is the order they will
@@ -222,7 +240,7 @@ export const main = (args: readonly string[]): number => {
     }
 
     case 'exec':
-      return report(execWithSecrets(afterDoubleDash(args), envPairs(args), REPO_ROOT));
+      return report(execWithSecrets(afterDoubleDash(args), envPairs(options), REPO_ROOT));
 
     case 'edit': {
       // A real operation, and deliberately narrow: sops already provides `sops edit`.

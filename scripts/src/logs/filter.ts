@@ -56,7 +56,7 @@ export const buildFilter = (
       unsupported:
         'This adapter cannot filter by user id. `wrangler tail` is a live event ' +
         'stream with no index, so it cannot filter by any field. Use ' +
-        '`--mode local` or an environment with Logpush enabled.',
+        'the Workers Observability query for user-ID filtering, or `--mode local`.',
     };
   }
 

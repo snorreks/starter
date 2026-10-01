@@ -213,7 +213,7 @@ describe.skipIf(!canEncrypt)('secrets: a real round trip', () => {
     writeFileSync(join(repo.root, 'app.enc.env'), 'A=1\n', 'utf8');
     writeFileSync(join(repo.root, 'leaked.env'), 'untouched\n', 'utf8');
     execFileSync('git', ['add', '-f', 'leaked.env'], { cwd: repo.root });
-    encryptFile('app.enc.env', repo.root);
+    expect(encryptFile('app.enc.env', repo.root).ok).toBe(true);
 
     const result = run(
       `const { decryptFile } = await import('${SOPTS}');\nconst r = decryptFile('app.enc.env', 'leaked.env', process.cwd());\nconsole.log('ok=' + r.ok + ' code=' + r.code);`,
@@ -229,7 +229,7 @@ describe.skipIf(!canEncrypt)('secrets: a real round trip', () => {
     const repo = makeRepo();
     initConfig(repo.publicKey, repo.root);
     writeFileSync(join(repo.root, 'app.enc.env'), 'A=1\n', 'utf8');
-    encryptFile('app.enc.env', repo.root);
+    expect(encryptFile('app.enc.env', repo.root).ok).toBe(true);
 
     // `secrets/` is gitignored and therefore absent from a fresh clone, so writing
     // there without creating it threw ENOENT *after* a successful decrypt.
@@ -241,6 +241,24 @@ describe.skipIf(!canEncrypt)('secrets: a real round trip', () => {
 
     expect(result).toContain('ok=true');
     expect(readFileSync(join(repo.root, 'secrets', 'out.env'), 'utf8')).toBe('A=1\n');
+  });
+
+  test('decrypt permits an explicit output outside the repository', () => {
+    const repo = makeRepo();
+    expect(initConfig(repo.publicKey, repo.root)).toBe(EXIT.ok);
+    writeFileSync(join(repo.root, 'app.enc.env'), 'A=1\n', 'utf8');
+    expect(encryptFile('app.enc.env', repo.root).ok).toBe(true);
+    const outside = mkdtempSync(join(tmpdir(), 'starter-secret-output-'));
+    created.push(outside);
+    const output = join(outside, 'plain.env');
+    const result = run(
+      `const { decryptFile } = await import('${SOPTS}');\n` +
+        `const r = decryptFile('app.enc.env', ${JSON.stringify(output)}, process.cwd());\nconsole.log(r.code);`,
+      repo.env,
+      repo.root,
+    );
+    expect(result.trim()).toBe('0');
+    expect(readFileSync(output, 'utf8')).toBe('A=1\n');
   });
 
   test('exec puts the decrypted value in the environment, with no braces attached', () => {
@@ -262,11 +280,13 @@ describe.skipIf(!canEncrypt)('secrets: a real round trip', () => {
       [
         '-e',
         `const { execWithSecrets } = await import('${SOPTS}');\n` +
-          `execWithSecrets(['sh', '-c', 'printf "%s" "$API_TOKEN"'], { API_TOKEN: ${JSON.stringify(ciphertext)} }, process.cwd());`,
+          `const r = execWithSecrets(['sh', '-c', 'printf "%s" "$API_TOKEN"'], { API_TOKEN: ${JSON.stringify(ciphertext)} }, process.cwd()); console.error(r.code);`,
       ],
       { cwd: repo.root, env: repo.env, encoding: 'utf8' },
     );
 
+    expect(seen.status).toBe(0);
+    expect(seen.stderr.trim()).toBe('0');
     expect(seen.stdout).toBe('exec-secret-value');
   });
 

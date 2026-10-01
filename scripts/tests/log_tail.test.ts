@@ -22,7 +22,13 @@
 
 import { afterEach, describe, expect, test } from 'bun:test';
 import { setStreamBinary, setStreamRunner } from '../src/cloudflare/wrangler.ts';
-import { DEFAULT_TAIL_MS, MAX_TAIL_MS, tailCloudflare } from '../src/logs/cloudflare_adapter.ts';
+import {
+  buildHistoricalRequest,
+  DEFAULT_TAIL_MS,
+  MAX_TAIL_MS,
+  queryCloudflareHistory,
+  tailCloudflare,
+} from '../src/logs/cloudflare_adapter.ts';
 import type { LogQuery } from '../src/logs/types.ts';
 import { setDeploymentValues } from '../src/registry/deployment_values.ts';
 
@@ -49,8 +55,15 @@ type Emit = (onStdout: (line: string) => void) => void;
 const harness = (
   emit: Emit,
   code = 0,
-): { spawned: string[][]; out: string[]; err: string[]; restore: () => void } => {
+): {
+  spawned: string[][];
+  timeouts: (number | undefined)[];
+  out: string[];
+  err: string[];
+  restore: () => void;
+} => {
   const spawned: string[][] = [];
+  const timeouts: (number | undefined)[] = [];
   const out: string[] = [];
   const err: string[] = [];
 
@@ -61,6 +74,7 @@ const harness = (
   setStreamRunner({
     run: async (_command, args, _options, handlers) => {
       spawned.push([...args]);
+      timeouts.push(_options.timeoutMs);
       emit((line: string) => handlers.onStdout(line));
       return code;
     },
@@ -79,6 +93,7 @@ const harness = (
 
   return {
     spawned,
+    timeouts,
     out,
     err,
     restore: () => {
@@ -233,7 +248,7 @@ describe('tailCloudflare', () => {
       expect(h.spawned).toHaveLength(1);
       // The budget reaches the runner as a timeout, not as a duration string, so it
       // is bounded by construction rather than by being parsed correctly.
-      expect(h.spawned[0]).toContain('--format');
+      expect(h.timeouts).toEqual([MAX_TAIL_MS]);
     } finally {
       h.restore();
     }
@@ -264,5 +279,64 @@ describe('tailCloudflare', () => {
     // `Infinity` would make `--follow` unbounded and nothing else would notice.
     expect(Number.isFinite(DEFAULT_TAIL_MS)).toBe(true);
     expect(DEFAULT_TAIL_MS).toBeLessThan(MAX_TAIL_MS);
+  });
+});
+
+describe('environment-specific log targets', () => {
+  test('history and tail use the selected Worker and refuse absent environments', async () => {
+    const saved = process.env.CLOUDFLARE_API_TOKEN;
+    const h = harness(() => {});
+    try {
+      process.env.CLOUDFLARE_API_TOKEN = 'fixture-token';
+      setDeploymentValues({
+        accountId: 'a'.repeat(32),
+        workerNames: { client: null, api: 'single-api' },
+        d1DatabaseIds: { api: 'single-db' },
+        r2BucketNames: { uploads: null },
+        customDomains: { client: null, api: null },
+        environments: {
+          staging: {
+            workerNames: { client: null, api: 'staging-api' },
+            d1DatabaseIds: { api: 'staging-db' },
+          },
+        },
+      });
+      const requests: unknown[] = [];
+      const fetchImpl: import('../src/logs/observability_client.ts').FetchLike = async (
+        _url,
+        init,
+      ) => {
+        requests.push(JSON.parse(init.body));
+        return { ok: true, status: 200, text: async () => '{"result":{"data":[]}}' };
+      };
+      const built = buildHistoricalRequest(query());
+      expect(built.ok).toBe(true);
+      if (built.ok) {
+        expect(built.request.datasets).toEqual(['staging-api']);
+      }
+      expect((await queryCloudflareHistory(query(), fetchImpl)).status).toBe('ok');
+      expect(requests).toHaveLength(1);
+      expect(requests[0]).toHaveProperty('datasets', ['staging-api']);
+      await tailCloudflare(query());
+      expect(h.spawned[0]).toContain('staging-api');
+      expect(h.spawned[0]).not.toContain('single-api');
+
+      expect(buildHistoricalRequest(query({ mode: 'production' })).ok).toBe(false);
+      expect((await queryCloudflareHistory(query({ mode: 'production' }), fetchImpl)).status).toBe(
+        'credentials_unavailable',
+      );
+      expect((await tailCloudflare(query({ mode: 'production' }))).status).toBe(
+        'credentials_unavailable',
+      );
+      expect(requests).toHaveLength(1);
+      expect(h.spawned).toHaveLength(1);
+    } finally {
+      h.restore();
+      if (saved === undefined) {
+        delete process.env.CLOUDFLARE_API_TOKEN;
+      } else {
+        process.env.CLOUDFLARE_API_TOKEN = saved;
+      }
+    }
   });
 });

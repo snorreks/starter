@@ -13,7 +13,7 @@
 // stayed clean and every test passed. That is what Rule 4 exists to catch.
 
 import { afterAll, describe, expect, test } from 'bun:test';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import {
@@ -412,7 +412,7 @@ describe('documented-paths', () => {
   // pointing at the old layout. Nothing failed: a reader following the link
   // concluded the rule it described was not enforced, which is the opposite of
   // the truth and the more expensive mistake, because it gets acted on.
-  test('rejects a document pointing at a path that does not exist', () => {
+  test('accepts a document pointing at an existing path', () => {
     const root = makeTree({
       'docs/logs.md': 'The adapter lives in `scripts/src/logs/filter.ts`.\n',
       'scripts/src/logs/filter.ts': 'export const f = 1;\n',
@@ -444,13 +444,19 @@ describe('documented-paths', () => {
 
   test('reads the paragraph, not the line, because prose wraps', () => {
     // The verb sits on the previous line from the path it governs, which is how
-    // the real .coderabbit.yaml comment reads.
+    // a wrapped Markdown paragraph reads.
     const root = makeTree({
-      '.coderabbit.yaml':
-        '# the previous version of this file pointed\n# at `apps/frontend/hub`, which is not here.\n',
+      'docs/logs.md': 'The previous application was removed from\n`apps/frontend/hub`.\n',
     });
 
     expect(guardDocumentedPaths(root).violations).toEqual([]);
+  });
+
+  test('reports the same wrapped path without historical narration', () => {
+    const root = makeTree({
+      'docs/logs.md': 'The application lives\nat `apps/frontend/hub`.\n',
+    });
+    expect(guardDocumentedPaths(root).violations).toHaveLength(1);
   });
 
   test('exempts the incident write-ups entirely', () => {
@@ -473,7 +479,28 @@ describe('documented-paths', () => {
   });
 
   test('the live documentation agrees with the live tree', () => {
-    // The fixtures prove the rule; this proves the rule is currently met.
+    // A missing document must fail before the guard's absent-file handling.
+    for (const doc of [
+      'AGENTS.md',
+      'README.md',
+      'docs/logs.md',
+      'docs/cloudflare.md',
+      'docs/secrets.md',
+      'docs/rename-checklist.md',
+      'docs/README.md',
+      'docs/adding-a-feature.md',
+      'docs/agent.md',
+      'docs/architecture.md',
+      'docs/capability-matrix.md',
+      'docs/first-round-review.md',
+      'docs/lint.md',
+      'docs/native.md',
+      'docs/starter-extraction.md',
+      'docs/testing.md',
+      'docs/toolchain.md',
+    ]) {
+      expect(existsSync(join(REPO_ROOT, doc)), `Expected document is missing: ${doc}`).toBe(true);
+    }
     expect(guardDocumentedPaths(REPO_ROOT).violations).toEqual([]);
   });
 });
@@ -519,6 +546,18 @@ describe('workspace-boundary: import scanning', () => {
     expect(violations).toHaveLength(1);
     expect(violations[0].line).toBe(3);
   });
+
+  test.each(['"/*"', "'// comment'", '`/* template`'])(
+    'sees a forbidden import after a literal containing a comment marker: %s',
+    (literal) => {
+      const root = makeTree({
+        'apps/backend/api/src/lib/db.ts': `const value = ${literal};\nimport { thing } from '${pkg('ui')}';\n`,
+      });
+      const violations = guardWorkspaceBoundary(root).violations;
+      expect(violations).toHaveLength(1);
+      expect(violations[0].line).toBe(2);
+    },
+  );
 
   test('sees a static specifier embedded in a template literal', () => {
     // The interpolation is code, so blanking the whole template would hide a real
@@ -579,10 +618,9 @@ describe('workspace-boundary: import scanning', () => {
       `await import(\n  '${pkg('ui')}'\n);`,
     ];
 
-    for (const [index, form] of forms.entries()) {
+    for (const form of forms) {
       const root = makeTree({ 'apps/backend/api/src/lib/db.ts': `${form}\n` });
-      expect(guardWorkspaceBoundary(root).violations).toHaveLength(1);
-      expect(index).toBeGreaterThanOrEqual(0);
+      expect(guardWorkspaceBoundary(root).violations, form).toHaveLength(1);
     }
   });
 
@@ -618,7 +656,7 @@ describe('documented-paths: markdown links', () => {
     expect(violations[0].message).toContain('cloudflare-gone.md');
   });
 
-  test('rejects a repo-root-relative link, as the index uses', () => {
+  test('accepts a repo-root-relative link, as the index uses', () => {
     // `[docs/logs.md](docs/logs.md)` from the top level is the shape AGENTS.md and
     // README.md use. Resolved relative to its own document it would be
     // `docs/docs/logs.md`, so this is the case that made a doc-relative-only check

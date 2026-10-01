@@ -25,15 +25,13 @@ bun run deploy:configure -- --check       # what is still missing
 bun run deploy:check                      # validate a deploy; changes nothing
 ```
 
-`--provision` creates the database and writes its id into
-`apps/backend/api/wrangler.jsonc`.
-
-It does **not** update `DEPLOYMENT_CONFIG`, which is what `deploy:check` reads, and
-it does not deploy anything or create a Worker. So after provisioning you still have
-to put the id in `scripts/src/registry/app_registry.ts` by hand
-until the project/environment configuration model replaces the registry. A single
-registry with per-environment targets is later-phase work, not something this
-phase pretends to have done.
+`--provision` creates the database and records its id in the gitignored
+`.starter/deployment.local.json`, which the deployment and migration tooling reads.
+It also updates `apps/backend/api/wrangler.jsonc` when a database entry is present.
+Record the account and Worker names with `deploy:configure -- --account <account-id>
+--worker api <worker-name>` (repeat for `client`). Keep the committed defaults in
+`scripts/src/registry/app_registry.ts` unprovisioned. Provisioning creates no Worker
+and deploys nothing. The local file can also hold per-environment targets.
 
 ## Credentials
 

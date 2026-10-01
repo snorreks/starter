@@ -292,17 +292,53 @@ describe('queryObservability', () => {
   });
 
   test('says so when there is no fetch at all, rather than throwing', async () => {
+    const savedFetch = globalThis.fetch;
+    try {
+      Object.defineProperty(globalThis, 'fetch', {
+        value: undefined,
+        configurable: true,
+        writable: true,
+      });
+      const outcome = await queryObservability({
+        accountId: 'acct_abc123',
+        token: 'tok',
+        worker: 'starter-api',
+        request,
+      });
+      expect(outcome.ok).toBe(false);
+      if (!outcome.ok) {
+        expect(outcome.status).toBe('capability_unsupported');
+      }
+    } finally {
+      globalThis.fetch = savedFetch;
+    }
+  });
+
+  test('aborts while retrieving the response body and reports a read failure', async () => {
     const outcome = await queryObservability({
       accountId: 'acct_abc123',
       token: 'tok',
       worker: 'starter-api',
       request,
-      // Deliberately removing the runtime global for this case. The platform fetch
-      // exists under Bun, so this asserts that the branch is reachable and honest
-      // rather than the absence of a global.
-      fetchImpl: undefined,
+      timeoutMs: 10,
+      fetchImpl: async (_url, init) => ({
+        ok: true,
+        status: 200,
+        text: () =>
+          new Promise<string>((_resolve, reject) => {
+            if (init.signal === undefined) {
+              throw new Error('Missing request signal');
+            }
+            init.signal.addEventListener('abort', () => reject(new Error('body aborted')), {
+              once: true,
+            });
+          }),
+      }),
     });
-
-    expect(outcome.ok === false || outcome.events !== undefined).toBe(true);
+    expect(outcome.ok).toBe(false);
+    if (!outcome.ok) {
+      expect(outcome.status).toBe('retrieval_failed');
+      expect(outcome.message).toContain('body aborted');
+    }
   });
 });

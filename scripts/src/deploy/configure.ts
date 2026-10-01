@@ -23,7 +23,9 @@ import {
   type DeploymentValues,
   describeResolution,
   LOCAL_DEPLOYMENT_FILE,
+  type LocalDeploymentValues,
   localConfigProblem,
+  readLocalValues,
   resolveDeploymentValues,
 } from '../registry/deployment_values.ts';
 
@@ -70,15 +72,24 @@ export const inspectConfig = (
     );
   }
 
-  for (const [app, name] of Object.entries(values.workerNames)) {
-    if (name === null) {
-      problems.push(`No Worker name configured for "${app}".`);
+  const scopes = values.environments === undefined ? { default: values } : values.environments;
+  for (const [environment, targets] of Object.entries(scopes)) {
+    const scope = values.environments === undefined ? '' : ` in ${environment}`;
+    for (const [app, name] of Object.entries(targets.workerNames)) {
+      if (name === null) {
+        problems.push(`No Worker name configured for "${app}"${scope}.`);
+      }
+    }
+    if (targets.d1DatabaseIds.api === null) {
+      problems.push(`No D1 database id configured for the API${scope}.`);
     }
   }
 
-  if (values.d1DatabaseIds.api === null) {
-    problems.push('No D1 database id configured for the API.');
-  } else if (describeResolution('d1DatabaseIds.api') === 'local-file') {
+  if (
+    values.environments === undefined &&
+    values.d1DatabaseIds.api !== null &&
+    describeResolution('d1DatabaseIds.api') === 'local-file'
+  ) {
     // Naming the source is what stops the next question being "where did this id
     // come from, and is it mine?"
     notices.push(`D1 database id read from ${LOCAL_DEPLOYMENT_FILE}.`);
@@ -115,11 +126,15 @@ export const inspectConfig = (
  * worker name someone already set.
  */
 export const writeLocalValues = (
-  update: (current: DeploymentValues) => DeploymentValues,
+  update: (current: LocalDeploymentValues) => LocalDeploymentValues,
   root: string = REPO_ROOT,
 ): void => {
   const path = join(root, LOCAL_DEPLOYMENT_FILE);
-  const current = resolveDeploymentValues(process.env, root);
+  const problem = localConfigProblem(root);
+  if (problem !== null) {
+    throw new Error(problem);
+  }
+  const current = readLocalValues(root);
   const next = update(current);
 
   mkdirSync(dirname(path), { recursive: true });
@@ -152,7 +167,7 @@ export const writeLocalValues = (
 export const provisionDatabase = (
   options: {
     create?: () => { ok: boolean; stdout: string; stderr: string };
-    write?: (current: DeploymentValues) => DeploymentValues;
+    write?: (current: LocalDeploymentValues) => LocalDeploymentValues;
     root?: string;
     hasCredential?: () => boolean;
   } = {},
@@ -201,12 +216,15 @@ export const provisionDatabase = (
       ? text.replace(/("database_id"\s*:\s*)"[^"]*"/, `$1"${id}"`)
       : text.replace(/("database_name"\s*:\s*"[^"]*",)/, `$1\n      "database_id": "${id}",`);
 
-    writeFileSync(wranglerPath, updated);
+    if (updated !== text) {
+      writeFileSync(wranglerPath, updated);
+      process.stdout.write(`D1 database id written to wrangler.jsonc: ${id}\n`);
+    }
   }
 
   const write =
     options.write ??
-    ((current: DeploymentValues): DeploymentValues => ({
+    ((current: LocalDeploymentValues): LocalDeploymentValues => ({
       ...current,
       d1DatabaseIds: { ...current.d1DatabaseIds, api: id },
       accountId: account ?? current.accountId,
@@ -214,7 +232,6 @@ export const provisionDatabase = (
 
   writeLocalValues(write, root);
 
-  process.stdout.write(`D1 database id written to wrangler.jsonc: ${id}\n`);
   process.stdout.write(`D1 database id written to ${LOCAL_DEPLOYMENT_FILE}: ${id}\n`);
   if (account !== null) {
     process.stdout.write(`Cloudflare account id recorded: ${account}\n`);

@@ -24,7 +24,7 @@
 // passed downstream as if it were an application event.
 
 import { streamWrangler } from '../cloudflare/wrangler.ts';
-import { effectiveDeploymentValues } from '../registry/deployment_values.ts';
+import { effectiveDeploymentValues, targetsFor } from '../registry/deployment_values.ts';
 import { buildFilter } from './filter.ts';
 import { buildObservabilityRequest, type ObservabilityRequest } from './observability.ts';
 import {
@@ -33,13 +33,7 @@ import {
   prerequisite as observabilityPrerequisite,
   queryObservability,
 } from './observability_client.ts';
-import {
-  APP_LOG_CONFIG,
-  type AppId,
-  capabilitiesFor,
-  prerequisiteFor,
-  resolveLogAdapter,
-} from './registry.ts';
+import { type AppId, capabilitiesFor, prerequisiteFor, resolveLogAdapter } from './registry.ts';
 import type { LogEvent, LogQuery, LogQueryResult } from './types.ts';
 
 /** Upper bound on a single tail session, so `--follow` cannot run unbounded. */
@@ -59,20 +53,9 @@ export const MAX_WINDOW_MS = 7 * 24 * 60 * 60_000;
  */
 const accountId = (): string | null => effectiveDeploymentValues().accountId;
 
-/**
- * The Worker name to query, for one app.
- *
- * `APP_LOG_CONFIG.workerName` is a *third* copy of the Worker name — alongside
- * `DEPLOYMENT_CONFIG.workerNames` and the local overlay — and it was hardcoded to
- * `null` for both apps. So a project that had provisioned a Worker was told "no
- * Worker name is configured" by the very command whose job is reading its logs.
- *
- * The local overlay wins, because it is what `deploy:configure` writes and what the
- * operator last said. `APP_LOG_CONFIG.workerName` is consulted last, and only so a
- * future topology that legitimately differs per log path can still override.
- */
-const workerNameFor = (app: AppId): string | null =>
-  effectiveDeploymentValues().workerNames[app] ?? APP_LOG_CONFIG[app].workerName;
+/** Resolve only the requested environment's Worker; absent targets are refused. */
+const workerNameFor = (app: AppId, mode: LogQuery['mode']): string | null =>
+  targetsFor(mode)?.workerNames[app] ?? null;
 
 /**
  * The provider request this query would send.
@@ -93,8 +76,12 @@ export const buildHistoricalRequest = (
     return { ok: false, reason: decision.unsupported };
   }
 
+  if (targetsFor(query.mode) === null) {
+    return { ok: false, reason: `No deployment targets configured for "${query.mode}".` };
+  }
+
   const windowMs = Math.min(decision.since ?? DEFAULT_WINDOW_MS, MAX_WINDOW_MS);
-  const worker = workerNameFor(query.app);
+  const worker = workerNameFor(query.app, query.mode);
 
   return {
     ok: true,
@@ -136,7 +123,7 @@ export const queryCloudflareHistory = async (
     return { status: 'credentials_unavailable', events: [], message: observabilityGate };
   }
 
-  const worker = workerNameFor(query.app);
+  const worker = workerNameFor(query.app, query.mode);
   if (worker === null) {
     return {
       status: 'credentials_unavailable',
@@ -230,7 +217,7 @@ export const tailCloudflare = async (query: LogQuery): Promise<LogQueryResult> =
     return { status: 'credentials_unavailable', events: [], message: prerequisite };
   }
 
-  const worker = workerNameFor(query.app);
+  const worker = workerNameFor(query.app, query.mode);
   if (worker === null) {
     return {
       status: 'credentials_unavailable',

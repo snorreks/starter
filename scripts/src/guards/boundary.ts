@@ -215,28 +215,29 @@ const codeOnly = (text: string): string => {
   while (index < text.length) {
     const rest = text.slice(index);
 
-    // A comment wins over anything else at this position: nothing inside it is code,
-    // so there is no reason to look for a quote in it at all.
+    // Only markers before the next quote start comments. Literal contents are
+    // handled by the quote scanner below.
+    const quote = rest.search(/['"`]/);
     const lineComment = rest.startsWith('//') ? 0 : rest.indexOf('//');
     const blockComment = rest.startsWith('/*') ? 0 : rest.indexOf('/*');
     const commentAt = [lineComment, blockComment]
       .filter((at) => at !== -1)
       .sort((a, b) => a - b)[0];
 
-    if (commentAt !== undefined && commentAt !== -1) {
+    if (commentAt !== undefined && (quote === -1 || commentAt < quote)) {
+      out += rest.slice(0, commentAt);
       const isBlock = rest.startsWith('/*', commentAt);
       const end = isBlock ? rest.indexOf('*/', commentAt + 2) : rest.indexOf('\n', commentAt);
       if (end === -1) {
-        out += ' '.repeat(rest.length);
+        out += rest.slice(commentAt).replace(/[^\n]/g, ' ');
         break;
       }
       // The newline itself is kept so line numbering downstream is unaffected.
-      out += ' '.repeat(end - commentAt) + (isBlock ? '  ' : '');
+      out += rest.slice(commentAt, end).replace(/[^\n]/g, ' ') + (isBlock ? '  ' : '');
       index += isBlock ? end + 2 : end;
       continue;
     }
 
-    const quote = rest.search(/['"`]/);
     if (quote === -1) {
       out += rest;
       break;

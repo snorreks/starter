@@ -92,11 +92,13 @@ The tool refuses rather than guessing, and says which refusal applied.
 ### Getting started
 
 ```bash
+mkdir -p .age secrets                         # local input and identity directories
 age-keygen -o .age/key.txt                     # your PRIVATE key. Never committed.
 grep -o 'age1.*' .age/key.txt                  # your PUBLIC key
 bun run secrets:init -- age1…                  # writes .sops.yaml with one recipient
 
-bun run secrets:encrypt -- secrets/app.enc.env # in place, requires a gitignored path
+printf 'API_TOKEN=replace-with-your-token\n' > secrets/app.enc.env
+bun run secrets:encrypt -- secrets/app.enc.env # encrypt the plaintext in place
 bun run secrets:decrypt -- secrets/app.enc.env # to stdout; nothing written
 ```
 
@@ -182,8 +184,9 @@ its recipient set and filename, which is often enough to identify who holds what
 
 ### What is verified, and what is not
 
-**Verified** by 15 tests that drive the real binaries with an identity generated per
-run: the encrypt/decrypt round trip returns the original bytes; a tracked `--out` is
+**Verified** by the 16 tests in `scripts/tests/secrets.test.ts`, including 11
+round-trip tests that drive the real binaries with an identity generated per run:
+the encrypt/decrypt round trip returns the original bytes; a tracked `--out` is
 refused and the file is untouched; a recipient added later cannot read what was
 encrypted before they joined; `exec` hands the child a bare value; and each refusal
 above leaves the file exactly as it was.

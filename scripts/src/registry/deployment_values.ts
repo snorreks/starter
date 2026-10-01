@@ -75,6 +75,12 @@ export interface DeploymentValues {
   environments?: Partial<Record<DeploymentEnvironment, EnvironmentTargets>>;
 }
 
+export type LocalDeploymentValues = {
+  [K in keyof DeploymentValues]?: DeploymentValues[K] extends object
+    ? Partial<DeploymentValues[K]>
+    : DeploymentValues[K];
+};
+
 const NULL_VALUES: DeploymentValues = {
   workerNames: { client: null, api: null },
   d1DatabaseIds: { api: null },
@@ -87,7 +93,13 @@ const NULL_VALUES: DeploymentValues = {
 const usable = (value: unknown): string | null =>
   typeof value === 'string' && value.trim() !== '' ? value.trim() : null;
 
-const readLocalFile = (root: string): Partial<DeploymentValues> => {
+const objectSection = (value: unknown): Record<string, unknown> | undefined =>
+  typeof value === 'object' && value !== null && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : undefined;
+
+/** Read only the local layer, preserving keys that the writer does not change. */
+export const readLocalValues = (root: string): LocalDeploymentValues => {
   const path = join(root, LOCAL_DEPLOYMENT_FILE);
   if (!existsSync(path)) {
     return {};
@@ -108,13 +120,17 @@ const readLocalFile = (root: string): Partial<DeploymentValues> => {
     return {};
   }
 
-  const raw = parsed as Record<string, unknown>;
+  return objectSection(parsed) ?? {};
+};
+
+const readLocalFile = (root: string): Partial<DeploymentValues> => {
+  const raw = readLocalValues(root);
   const out: Partial<DeploymentValues> = {};
 
-  const workers = raw.workerNames as Record<string, unknown> | undefined;
-  const d1 = raw.d1DatabaseIds as Record<string, unknown> | undefined;
-  const r2 = raw.r2BucketNames as Record<string, unknown> | undefined;
-  const domains = raw.customDomains as Record<string, unknown> | undefined;
+  const workers = objectSection(raw.workerNames);
+  const d1 = objectSection(raw.d1DatabaseIds);
+  const r2 = objectSection(raw.r2BucketNames);
+  const domains = objectSection(raw.customDomains);
 
   if (workers !== undefined) {
     out.workerNames = { client: usable(workers.client) ?? null, api: usable(workers.api) ?? null };
@@ -147,12 +163,12 @@ const readLocalFile = (root: string): Partial<DeploymentValues> => {
       if (name !== 'staging' && name !== 'production') {
         continue;
       }
-      if (typeof value !== 'object' || value === null) {
+      const entry = objectSection(value);
+      if (entry === undefined) {
         continue;
       }
-      const entry = value as Record<string, unknown>;
-      const names = entry.workerNames as Record<string, unknown> | undefined;
-      const d1 = entry.d1DatabaseIds as Record<string, unknown> | undefined;
+      const names = objectSection(entry.workerNames);
+      const d1 = objectSection(entry.d1DatabaseIds);
 
       parsed[name] = {
         workerNames: {
@@ -220,6 +236,9 @@ export const resolveDeploymentValues = (
   const apiFromEnv = usable(env.CLOUDFLARE_D1_DATABASE_ID);
   if (apiFromEnv !== null) {
     merged.d1DatabaseIds = { ...merged.d1DatabaseIds, api: apiFromEnv };
+    for (const target of Object.values(merged.environments ?? {})) {
+      target.d1DatabaseIds = { ...target.d1DatabaseIds, api: apiFromEnv };
+    }
   }
 
   return merged;
@@ -238,7 +257,9 @@ export const localConfigProblem = (root: string = REPO_ROOT): string | null => {
     return null;
   }
   try {
-    JSON.parse(readFileSync(path, 'utf8'));
+    if (objectSection(JSON.parse(readFileSync(path, 'utf8'))) === undefined) {
+      return `${LOCAL_DEPLOYMENT_FILE} must contain a JSON object.`;
+    }
     return null;
   } catch (error) {
     return (

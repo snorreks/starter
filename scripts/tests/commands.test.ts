@@ -204,6 +204,22 @@ describe('guard command', () => {
 // ── secrets ───────────────────────────────────────────────────────────────────
 
 describe('secrets command', () => {
+  test.each(
+    [
+      ['decrypt', 'file', '--out'],
+      ['decrypt', '--', 'file', '--out'],
+      ['decrypt', 'file', '--out', '--env'],
+      ['exec', '--env'],
+      ['exec', '--env', '--', 'sh'],
+      ['exec', '--env', 'MISSING_EQUALS', '--', 'sh'],
+      ['exec', '--env', '=ciphertext', '--', 'sh'],
+      ['exec', '--env', 'KEY=', '--', 'sh'],
+      ['exec', '--env', 'INVALID-KEY=value', '--', 'sh'],
+    ].map((args) => ({ args })),
+  )('rejects malformed secret options before execution: %j', async ({ args }) => {
+    expect(await quiet(() => secretsCommand.run(args))).toBe(EXIT.usage);
+  });
+
   test('an operation with no argument is a usage error, not a refusal', async () => {
     // These were all "not implemented" once, exiting 3. They are implemented now, so
     // the exit code for a missing argument is 2 — the caller mistyped, and saying

@@ -16,7 +16,13 @@ import { afterEach, describe, expect, test } from 'bun:test';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
-import { provisionDatabase, setAccount } from '../src/deploy/configure.ts';
+import { planMigrate } from '../src/db/migrate.ts';
+import {
+  inspectConfig,
+  provisionDatabase,
+  setAccount,
+  writeLocalValues,
+} from '../src/deploy/configure.ts';
 import { DEPLOYMENT_CONFIG } from '../src/registry/app_registry.ts';
 import {
   describeResolution,
@@ -142,6 +148,45 @@ describe('resolveDeploymentValues', () => {
 
     expect(values.d1DatabaseIds.api).toBeNull();
     expect(localConfigProblem(root)).toContain('not valid JSON');
+  });
+
+  test.each([null, false, 42, 'invalid', []].map((section) => ({ section })))(
+    'ignores non-object sections: %j',
+    ({ section }) => {
+      const root = makeTree({
+        [LOCAL_DEPLOYMENT_FILE]: local({
+          workerNames: section,
+          d1DatabaseIds: section,
+          r2BucketNames: section,
+          customDomains: section,
+          environments: { staging: { workerNames: section, d1DatabaseIds: section } },
+        }),
+      });
+      const values = resolveDeploymentValues({}, root);
+      expect(values.workerNames.api).toBeNull();
+      expect(values.d1DatabaseIds.api).toBeNull();
+      expect(values.r2BucketNames.uploads).toBeNull();
+      expect(values.customDomains.api).toBeNull();
+      expect(values.environments?.staging?.workerNames.api).toBeNull();
+      expect(values.environments?.staging?.d1DatabaseIds.api).toBeNull();
+    },
+  );
+
+  test('CI database overrides reach the selected environment without changing its Worker', () => {
+    const root = makeTree({
+      [LOCAL_DEPLOYMENT_FILE]: local({
+        environments: {
+          staging: {
+            workerNames: { api: 'staging-api' },
+            d1DatabaseIds: { api: 'local-db' },
+          },
+        },
+      }),
+    });
+    setDeploymentValues(resolveDeploymentValues({ CLOUDFLARE_D1_DATABASE_ID: 'ci-db' }, root));
+    expect(targetsFor('staging')?.d1DatabaseIds.api).toBe('ci-db');
+    expect(targetsFor('staging')?.workerNames.api).toBe('staging-api');
+    expect(targetsFor('production')).toBeNull();
   });
 
   test('no local file is not a problem', () => {
@@ -322,6 +367,11 @@ describe('provisionDatabase', () => {
       'apps/backend/api/wrangler.jsonc': '{\n  "d1_databases": []\n}\n',
     });
     const restore = quiet();
+    const output: string[] = [];
+    process.stdout.write = ((text: string) => {
+      output.push(String(text));
+      return true;
+    }) as typeof process.stdout.write;
 
     try {
       provisionDatabase({
@@ -333,6 +383,11 @@ describe('provisionDatabase', () => {
       const values = resolveDeploymentValues({}, root);
       expect(values.workerNames.api).toBe('starter-api');
       expect(values.d1DatabaseIds.api).toBe(UUID);
+      expect(output.join('')).not.toContain('written to wrangler.jsonc');
+      expect(output.join('')).toContain(`written to ${LOCAL_DEPLOYMENT_FILE}`);
+      expect(readFileSync(join(root, 'apps/backend/api/wrangler.jsonc'), 'utf8')).toBe(
+        '{\n  "d1_databases": []\n}\n',
+      );
     } finally {
       restore();
     }
@@ -609,5 +664,104 @@ describe('setAccount', () => {
     } finally {
       restore();
     }
+  });
+});
+
+describe('local configuration writes', () => {
+  test('preserves the raw local layer without persisting CI overrides', () => {
+    const root = makeTree({
+      [LOCAL_DEPLOYMENT_FILE]: local({
+        accountId: 'local-account',
+        d1DatabaseIds: { api: 'local-db' },
+        extra: { keep: true },
+      }),
+    });
+    const savedAccount = process.env.CLOUDFLARE_ACCOUNT_ID;
+    const savedDatabase = process.env.CLOUDFLARE_D1_DATABASE_ID;
+    try {
+      process.env.CLOUDFLARE_ACCOUNT_ID = 'ci-account';
+      process.env.CLOUDFLARE_D1_DATABASE_ID = 'ci-db';
+      writeLocalValues((current) => ({ ...current, workerNames: { api: 'new-worker' } }), root);
+      expect(JSON.parse(readFileSync(join(root, LOCAL_DEPLOYMENT_FILE), 'utf8'))).toEqual({
+        accountId: 'local-account',
+        d1DatabaseIds: { api: 'local-db' },
+        workerNames: { api: 'new-worker' },
+        extra: { keep: true },
+      });
+    } finally {
+      if (savedAccount === undefined) {
+        delete process.env.CLOUDFLARE_ACCOUNT_ID;
+      } else {
+        process.env.CLOUDFLARE_ACCOUNT_ID = savedAccount;
+      }
+      if (savedDatabase === undefined) {
+        delete process.env.CLOUDFLARE_D1_DATABASE_ID;
+      } else {
+        process.env.CLOUDFLARE_D1_DATABASE_ID = savedDatabase;
+      }
+    }
+  });
+
+  test('refuses to overwrite a malformed local file', () => {
+    const root = makeTree({ [LOCAL_DEPLOYMENT_FILE]: '{ invalid' });
+    expect(() => writeLocalValues(() => ({ accountId: 'new' }), root)).toThrow('not valid JSON');
+    expect(readFileSync(join(root, LOCAL_DEPLOYMENT_FILE), 'utf8')).toBe('{ invalid');
+  });
+});
+
+describe('environment configuration consumers', () => {
+  const values = () =>
+    resolveDeploymentValues(
+      {},
+      makeTree({
+        [LOCAL_DEPLOYMENT_FILE]: local({
+          accountId: 'a'.repeat(32),
+          environments: {
+            staging: {
+              workerNames: { client: 'staging-client', api: 'staging-api' },
+              d1DatabaseIds: { api: 'staging-db' },
+            },
+          },
+        }),
+      }),
+    );
+
+  test('checks environment targets instead of unconfigured top-level names', () => {
+    const saved = process.env.CLOUDFLARE_API_TOKEN;
+    try {
+      process.env.CLOUDFLARE_API_TOKEN = 'fixture-token';
+      const configured = values();
+      expect(inspectConfig(configured).ok).toBe(true);
+      const staging = configured.environments?.staging;
+      if (staging === undefined) {
+        throw new Error('Missing staging fixture');
+      }
+      staging.workerNames.api = null;
+      staging.d1DatabaseIds.api = null;
+      expect(inspectConfig(configured).problems).toEqual([
+        'No Worker name configured for "api" in staging.',
+        'No D1 database id configured for the API in staging.',
+      ]);
+    } finally {
+      if (saved === undefined) {
+        delete process.env.CLOUDFLARE_API_TOKEN;
+      } else {
+        process.env.CLOUDFLARE_API_TOKEN = saved;
+      }
+    }
+  });
+
+  test('migration accepts a configured environment and refuses missing or null scopes', () => {
+    const configured = values();
+    setDeploymentValues(configured);
+    expect(planMigrate('staging').ok).toBe(true);
+    configured.d1DatabaseIds.api = 'single-db';
+    expect(planMigrate('production').ok).toBe(false);
+    const staging = configured.environments?.staging;
+    if (staging === undefined) {
+      throw new Error('Missing staging fixture');
+    }
+    staging.d1DatabaseIds.api = null;
+    expect(planMigrate('staging').ok).toBe(false);
   });
 });

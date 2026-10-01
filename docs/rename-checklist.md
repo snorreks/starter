@@ -41,25 +41,19 @@ same code build as a mobile library as well as a desktop binary, and dropping
 bun run deploy:configure -- --provision
 ```
 
-This creates the D1 database and writes its id into `wrangler.jsonc` and
-`DEPLOYMENT_CONFIG`. It creates no Worker and deploys nothing.
+This creates the D1 database and records its id in
+`.starter/deployment.local.json`, plus the database entry in `wrangler.jsonc`.
+It creates no Worker and deploys nothing.
 
-Then set Worker names:
+Then set the account and Worker names in the gitignored local configuration:
 
-**`scripts/src/registry/app_registry.ts`**
-
-```ts
-export const DEPLOYMENT_CONFIG: DeploymentConfig = {
-  workerNames: { client: 'your-app-client', api: 'your-app-api' },
-  d1DatabaseIds: { api: '<provisioned id>' },
-  r2BucketNames: { uploads: null },
-  customDomains: { client: null, api: null },
-};
+```bash
+bun run deploy:configure -- --account <account-id> --worker api your-app-api
+bun run deploy:configure -- --account <account-id> --worker client your-app-client
 ```
 
-Use `null`, never `''`, for anything unprovisioned. Guard 5 fails the build on a
-literal resource id, and it is there because a template that ships an id points
-every new user at one account.
+Keep unprovisioned values in `scripts/src/registry/app_registry.ts` as `null`.
+Guard 5 rejects literal resource IDs in that committed template configuration.
 
 ## 3. Replace the demo entity
 

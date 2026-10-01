@@ -236,7 +236,6 @@ export const queryObservability = async (
         '  ("Workers Observability Write").',
     };
   }
-  clearTimeout(timeout);
 
   let body: string;
   try {
@@ -248,6 +247,8 @@ export const queryObservability = async (
       status: 'retrieval_failed',
       message: `The Observability response body could not be read: ${detail}`,
     };
+  } finally {
+    clearTimeout(timeout);
   }
 
   if (body.length > MAX_RESPONSE_BYTES) {

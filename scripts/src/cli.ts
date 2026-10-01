@@ -49,7 +49,7 @@ const renderHelp = async (): Promise<string> => {
     'Commands:',
     ...summaries,
     '',
-    'Exit codes: 0 ok, 1 the work failed, 2 bad invocation, 3 prerequisite unavailable.',
+    'Exit codes: 0 ok, 1 the work failed, 2 bad invocation, 3 prerequisite unavailable, 4 refused.',
   ].join('\n');
 };
 

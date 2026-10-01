@@ -46,9 +46,7 @@ reviews:
         - "!**/*.min.js"
         - "!**/*.min.css"
         - "!**/*.map"
-        - "!**/*.lock"
         - "!**/*.lockb"
-        - "!bun.lock"
         - "!.wrangler/**"
         # Drizzle emits these; hand-review the schema, not the migration.
         - "!packages/backend/database/drizzle*/**/*.sql"
