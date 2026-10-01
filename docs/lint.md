@@ -44,7 +44,7 @@ Each is a file whose purpose is to violate the rule it would trip.
 | File | Rule | Why |
 |---|---|---|
 | `packages/shared/logger/src/lib/console_logger.ts` | `noConsole` | This is the logger's console backend. The rule exists to stop ad-hoc console calls in favour of the logger. |
-| `scripts/src/guards/**/*.ts` | `useBlockStatements`, `useConsistentTypeDefinitions` | The guards contain the literal patterns they search for. A guard that failed on its own source would never report anything. `guardNoLeftovers` already exempts them for the same reason. |
+| `scripts/src/lib/guards/**/*.ts` | `useBlockStatements`, `useConsistentTypeDefinitions` | The guards contain the literal patterns they search for. A guard that failed on its own source would never report anything. `guardNoLeftovers` already exempts them for the same reason. |
 | `apps/frontend/client/src/lib/test_setup.ts` | `noConsole`, `noRestrictedImports` | The Bun unit lane's preload. It mocks `bun:test` and silences the logger — both are the file's job. |
 | `apps/backend/api/src/lib/container.ts` | `useConsistentTypeDefinitions` | `DrizzleD1Database<T>` constrains `T` to `Record<string, unknown>`, and an interface has no implicit index signature. This one is a type error, not a preference. |
 | `**/*.svelte` | `noUnusedVariables`, `noUnusedImports` | Biome does not resolve Svelte 5's `$props()` destructuring, so every prop and every component import reads as unused. Running its autofix over these files **deletes live imports**. |
