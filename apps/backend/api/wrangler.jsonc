@@ -16,6 +16,18 @@
   "observability": {
     "enabled": true
   },
+  // DEPLOYMENT_ENV is required and is the only thing that decides whether
+  // development defaults are permitted. It is set explicitly here rather than
+  // inferred from BETTER_AUTH_URL, because a deploy that forgets BETTER_AUTH_URL
+  // is exactly the deploy that must not be treated as local.
+  //
+  // `local` here is the default *top-level* environment used by `wrangler dev`,
+  // which is why it must not be the value a deployed Worker inherits. Every
+  // `--env staging` / `--env production` deployment overrides it; the Worker
+  // refuses to start if the resolved value is absent or unrecognised.
+  "vars": {
+    "DEPLOYMENT_ENV": "local"
+  },
   "d1_databases": [
     {
       "binding": "DB",

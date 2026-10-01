@@ -1,6 +1,10 @@
-// .pi/extensions/logs.test.ts
+// .pi/tests/logs_args.test.ts
 //
 // The argument builder for the agent-facing log tool.
+//
+// Lives outside .pi/extensions on purpose: that directory is Pi's discovery input
+// and every module in it is loaded as an extension. A test there imports bun:test
+// and breaks the extension load.
 //
 // This is the whole contract: the tool turns a model's parameters into argv for
 // `bun run logs`. A wrong flag is not a crash — it is a flag the CLI silently
@@ -12,7 +16,7 @@
 import { describe, expect, test } from 'bun:test';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { buildArgs } from './logs.ts';
+import { buildArgs } from '../lib/logs_args.ts';
 
 const CLI_SOURCE = readFileSync(
   join(import.meta.dirname, '..', '..', 'scripts', 'src', 'lib', 'logs', 'cli.ts'),

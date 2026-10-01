@@ -29,8 +29,13 @@ import { type BetterAuthInstance, createBetterAuth } from '@starter/auth';
 import { accounts, deviceCodes, sessions, users } from '@starter/database';
 import { parseTrustedOrigins } from '@starter/schemas/registry';
 import { type DrizzleD1Database, drizzle } from 'drizzle-orm/d1';
-import type { ApiEnv } from '../env.ts';
-import { resolveAuthSecret } from '../env.ts';
+import {
+  type ApiEnv,
+  type DeploymentEnvName,
+  LOCAL_DEFAULT_AUTH_URL,
+  resolveAuthSecret,
+  resolveDeploymentEnvironment,
+} from '../env.ts';
 
 // A `type`, not an `interface`, on purpose: `DrizzleD1Database<T>` constrains T
 // to `Record<string, unknown>`, and an interface has no implicit index signature,
@@ -46,7 +51,9 @@ export interface Container {
   env: ApiEnv;
   db: DrizzleD1Database<Schema>;
   auth: BetterAuthInstance;
-  /** True when this deployment is local, which relaxes the auth secret rule. */
+  /** Resolved, validated deployment environment name. */
+  environment: DeploymentEnvName;
+  /** True only when `DEPLOYMENT_ENV` explicitly names a local environment. */
   isLocal: boolean;
 }
 
@@ -68,6 +75,10 @@ export const requireBindings = (env: unknown): ApiEnv => {
  *
  * The auth instance is created here rather than per request: Better Auth is
  * expensive to construct and is stateless with respect to a request.
+ *
+ * Note that `DEPLOYMENT_ENV` is not validated here, so a misconfigured deployment
+ * fails on the first request rather than at module load. That is deliberate and is
+ * the only correct place for it: `fetch` is where `env` first exists.
  */
 export const getContainer = (rawEnv: unknown): Container => {
   const env = requireBindings(rawEnv);
@@ -77,16 +88,22 @@ export const getContainer = (rawEnv: unknown): Container => {
     return existing;
   }
 
-  const isLocal = env.BETTER_AUTH_URL === undefined || env.BETTER_AUTH_URL.includes('localhost');
+  const resolved = resolveDeploymentEnvironment(env);
+  if (!resolved.ok) {
+    throw new Error(`Refusing to start: ${resolved.problem}\n\n${resolved.remedy}`);
+  }
+
+  const { environment, isLocal } = resolved;
   const db = drizzle(env.DB, { schema: { users, sessions, accounts, deviceCodes } });
 
   const container: Container = {
     env,
     db,
+    environment,
     isLocal,
     auth: createBetterAuth(db, {
-      baseURL: env.BETTER_AUTH_URL ?? 'http://localhost:8787',
-      secret: resolveAuthSecret(env, !isLocal),
+      baseURL: env.BETTER_AUTH_URL ?? LOCAL_DEFAULT_AUTH_URL,
+      secret: resolveAuthSecret(env, isLocal),
       trustedOrigins: parseTrustedOrigins(env.TRUSTED_ORIGINS),
       ...(env.AUTH_RATE_LIMIT_MAX === undefined
         ? {}

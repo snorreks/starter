@@ -1,7 +1,7 @@
 # Testing
 
-Six lanes. Each answers a different question, and none of them can answer the
-question the others exist for.
+Four lanes plus a visual capture. Each answers a different question, and none of
+them can answer the question the others exist for.
 
 Every lane runs **without credentials and without a network account**. That is a
 constraint, not a convenience: a check that cannot run on a fresh clone is one
@@ -12,37 +12,105 @@ the suite rather than to fix it.
 bun run test               # unit, every project
 bun run test:browser       # real Svelte in Chromium
 bun run test:integration   # real Worker + real D1
-bun run e2e                # built client + real Worker + real D1
-bun run test:all           # all four
+bun run e2e                # built client + real Worker + real D1 + real browser
+bun run test:all           # all four, in that order, no duplicates
 bun run e2e:visual         # screenshots for review
 ```
 
+`bun run e2e` and `bun run test:e2e` are the same command. Use whichever reads
+better where you are.
+
+## Why the lanes are separate tasks
+
+They are separate Moon tasks — `client:test`, `client:test-browser`,
+`api:test-integration`, `e2e:e2e` — and not one fan-out, for two reasons.
+
+**They fail independently.** A Chromium that will not launch must not fail the
+unit lane, or a broken system library reads as a broken product.
+
+**`test:all` is a nonduplicating composition.** The client's `test` script used to
+be `test:unit && test:browser`, so `moon run :test` already ran the browser lane
+and the root `test:all` ran it a second time explicitly. The client's `test` is now
+unit only, and `test:all` lists each lane exactly once.
+
+## The E2E entrypoint is real, and here is the proof
+
+`bun run e2e` used to reach an `echo`:
+
+```
+bun run e2e -> moon run e2e:test -> echo "e2e is not a unit lane; run: bun run e2e"
+```
+
+CI applied migrations, installed Chromium, printed that message and went green. The
+17 Playwright tests were never executed. `e2e:test` was also reported `cached`,
+because its `inputs` were `src/**/*` and `apps/e2e` has no `src/` directory — a
+file group that matches nothing hashes to a key that never changes.
+
+Both are fixed, and the fix is verified rather than asserted:
+
+```bash
+# 1. The suite runs.
+$ bun run e2e
+  17 passed (11.7s)
+
+# 2. It runs again immediately, and nothing leaks. This was the other half of the
+#    problem: the launcher spawned workerd detached, so each run left a server
+#    holding port 8788 and the *next* run refused with "already used".
+$ bun run e2e && bun run e2e
+  17 passed
+  17 passed
+
+# 3. A failing browser assertion fails the public command.
+#    (add a bogus expectation to apps/e2e/tests/auth.spec.ts, run, restore)
+$ bun run e2e
+  1 failed
+    [chromium] > tests/auth.spec.ts:64:3 > a wrong password is refused
+  16 passed
+  exit 1
+```
+
+Step 3 is the one that matters. A green E2E job that ran nothing is worse than no
+E2E job at all.
+
+## The E2E and integration lanes need `node` on PATH
+
+`wrangler dev` is a Node program that spawns `workerd`. On a NixOS host with only
+Bun installed, `wrangler dev` exits with `env: 'node': No such file or directory`
+and the readiness probe times out after four minutes — a failure that reads like a
+hang rather than like a missing prerequisite.
+
+CI's runner image has Node. If you are on Nix, provide one (`nix-shell -p nodejs`)
+or the Worker will never start. Chromium's shared libraries are a second such
+prerequisite: see `docs/capability-matrix.md`.
+
 ## What each lane is for
 
-| Lane | Count | Question it answers |
+| Lane | Command | Question it answers |
 |---|---|---|
-| Unit | 333 | Is this function correct? |
-| Browser | 15 | Does this reactivity actually reach the DOM? |
-| Integration | 12 | Does the Worker route, authenticate and authorize correctly? |
-| E2E | 17 | Does the whole path work, through a build? |
+| Unit | `bun run test` | Is this function correct? |
+| Browser | `bun run test:browser` | Does this reactivity actually reach the DOM? |
+| Integration | `bun run test:integration` | Does the Worker route, authenticate and authorize correctly? |
+| E2E | `bun run e2e` | Does the whole path work, through a build and a browser? |
 
-### Unit — 333 tests
+Counts are derived by running the lanes, not recorded here:
 
-Across `packages/shared/*` (171), `scripts` (130), the client's Bun lane (15) and
-the agent extension (17).
+```bash
+bun run test:all          # each lane prints its own count
+```
+
+### Unit
+
+Across `packages/shared/*`, `scripts`, `apps/backend/api` (deployment-mode
+resolution and the real `worker.fetch` entrypoint), the client's Bun lane, and the
+Pi extensions plus their loader smoke test.
 
 Pure logic, schema refusals, redaction, flag parsing, deploy and migration plans,
-error classification. No DOM, no database, no clock dependency.
+process-tree teardown, and the contract state machine.
 
 The shared packages are where this matters most: everything else imports them, so
-a bug there surfaces as a confusing failure somewhere unrelated. Writing them
-found four — `redactValue` throwing on a hostile Proxy, the log registry failing
-its own schema, `slugify` producing a trailing hyphen, and `createObserver`
-silently deduping two registrations.
+a bug there surfaces as a confusing failure somewhere unrelated.
 
-### Browser — 15 tests
-
-`apps/frontend/client/src/browser_tests`, Chromium via Vitest.
+### Browser — `src/browser_tests`, Chromium via Vitest
 
 This lane exists because the unit lane **cannot** test reactivity. Bun has no Svelte
 compiler, so `$state` and `$derived` are stubbed with identity functions there. A
@@ -64,10 +132,9 @@ Two things to know when adding tests here:
 - **Effects need a macrotask.** `flushSync()` alone is not always enough after
   mount; `await tick()` is the reliable form.
 
-### Integration — 12 tests
+### Integration — `apps/backend/api/tests/worker_integration.test.ts`
 
-`apps/backend/api/tests/worker_integration.test.ts`, against a real
-`wrangler dev` with real local D1.
+Against a real `wrangler dev` with real local D1, on an OS-assigned port.
 
 The only lane that exercises the Worker as a Worker. A unit test of a handler that
 needs bindings and D1 tests the mock, not the handler.
@@ -75,21 +142,23 @@ needs bindings and D1 tests the mock, not the handler.
 Covers routing, auth, cross-user authorization denial, oversized telemetry
 refusal, and health.
 
-One hazard, handled: a **stale `workerd` on the port answers `/api/health` just as
-readily as a correct one.** The suite generates a run id, passes it to the Worker
-as a var, and requires `/api/health` to echo it. A stale process fails the check
-rather than silently running the suite against the wrong database.
+Two hazards, both handled:
 
-```bash
-ss -lptn 'sport = :8788'     # find it
-kill <pid>                    # NOT pkill -f: that pattern matches this shell too
-```
+- **A stale `workerd` on the port answers `/api/health` just as readily as a
+  correct one.** The suite generates a run id, passes it to the Worker as a var,
+  and requires `/api/health` to echo it.
+- **Signalling `wrangler` does not stop `workerd`.** Wrangler is a Node shim whose
+  `workerd` child is what holds the port, so teardown walks the process tree from
+  the recorded pid (`killTree` in `@starter/utils/process`).
 
-### E2E — 17 tests
+Every run also passes `DEPLOYMENT_ENV` and `BETTER_AUTH_URL`. The Worker now fails
+closed without them, so a harness that omitted them would wait four minutes for a
+server that was refusing every request with a 503 that names the binding.
 
-`apps/e2e/tests`, Playwright against the **built** client — not `vite dev`. A
-dev-only success would certify something the deploy does not do, and a build-only
-failure is invisible to every other lane.
+### E2E — `apps/e2e/tests`, Playwright against the **built** client
+
+Not `vite dev`. A dev-only success would certify something the deploy does not do,
+and a build-only failure is invisible to every other lane.
 
 Two files:
 
@@ -101,17 +170,11 @@ Two files:
   delete another's note; each case also asserts the row still exists afterwards,
   so a `403` from a handler that deleted it anyway would fail.
 
-It also caught three setup bugs nothing else could see, each of which presented as
-a product bug: `vite preview` had no proxy, so `/api` 404'd and the sign-in form
-said "The request failed" against a healthy Worker; the client's preview proxy
-pointed at the wrong port because `webServer.env` *replaces* rather than merges;
-and the E2E origin was not on the API's allowlist, so Better Auth returned 403.
-
 Preflight runs first and **aborts** if the API is not this run's Worker:
 
 ```
 The API on port 8788 is a leftover process from an earlier run.
-  It reports run id "e2e_…" , not this run's.
+  It reports run id "e2e_..." , not this run's.
 ```
 
 ### Visual — reports as SKIPPED
@@ -121,13 +184,22 @@ The API on port 8788 is a leftover process from an earlier run.
 Image inspection is **not wired up in this round**, and the output says so:
 
 ```
-SKIPPED: visual inspection did not run — image inspection is not wired up in this
+SKIPPED: visual inspection did not run - image inspection is not wired up in this
          round; the screenshots are on disk for a human to review.
 ```
 
 A check that prints green because the step was unavailable is worse than one that
 says it did not run. Nothing is uploaded anywhere, ever — screenshots can contain
 unreleased UI, and that is not a default the tool gets to choose.
+
+## Not run here
+
+Stated plainly rather than left to discover. See `docs/capability-matrix.md`.
+
+- **Live Cloudflare.** No deployment, provisioning, remote migration or log query
+  was executed against a real account.
+- **Native builds.** No Tauri bundle was produced; `cargo` is absent on this host.
+- **Mobile.** No Android or iOS build was attempted.
 
 ## Rate limits and the clock
 
@@ -141,29 +213,39 @@ environment.
 export const AUTH_RATE_LIMIT_MAX = '500';
 ```
 
-**No test depends on wall-clock time.** `Timer` is tested by asserting that
-`end()` freezes the value and that `reset()` restarts it, not by sleeping.
+**No test depends on wall-clock time.** `Timer` is tested by asserting that `end()`
+freezes the value and that `reset()` restarts it, not by sleeping. Where a budget
+must be *proved* — the contract runner's per-stage deadline — it is injected rather
+than waited out, so the test asserts the mechanism instead of sleeping for ten
+minutes.
 
 ## Writing a test that is not vacuous
 
 A guard that has only ever run clean is unverified. A test that has never failed is
 a test that checks nothing.
 
-Two techniques used in this repository:
+Three techniques used in this repository:
 
 **Make the failure reachable.** `scripts/src/lib/guards/guards.test.ts` writes
 throwaway trees under a temp directory rather than asserting against the
-repository — otherwise proving a guard fails would require breaking the repository
-to prove it.
+repository. The Pi loader smoke test does the same: it writes a deliberately
+misplaced module into a *temporary* extensions directory and asserts the loader
+reports it, so "no errors" cannot pass merely because nothing was loaded.
 
-**Break it and watch.** Several bugs here were found by deleting the behaviour and
-confirming exactly one test failed:
+**Break it and watch.** Bugs here were found by restoring the old behaviour and
+confirming exactly which tests failed:
 
 ```bash
-# Removing --assets-only from the client deploy step
-$ bun test src/lib/deploy
-(fail) planDeploy: steps > the client step deploys assets only
+# Restoring the old locality heuristic in container.ts
+$ bun run --cwd apps/backend/api test
+(fail) worker.fetch configuration handling > a deployed-looking env with no
+       DEPLOYMENT_ENV is refused, not treated as local
 ```
+
+**Reproduce the recorded bug beside the fix.** `contract/reproduction.test.ts`
+states the old inference — "an attempt count means done" — as a local function, and
+asserts what it would have done, right next to an assertion about what the current
+code does. The regression is demonstrated, not remembered.
 
 If a change should break a test and does not, the test is not testing that thing.
 
@@ -174,5 +256,5 @@ the interesting failures here are about *what was asserted* — whether a schema
 refuses an unknown field, whether an aborted request reports as a failure. A
 coverage percentage would be a number to improve rather than a thing to read.
 
-What is measured instead: five guards with no baselines, and assertions written so
-that each one names a specific failure someone could observe.
+What is measured instead: guards with no baselines, and assertions written so that
+each one names a specific failure someone could observe.

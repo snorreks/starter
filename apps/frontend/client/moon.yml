@@ -1,25 +1,33 @@
 $schema: 'https://moonrepo.dev/schemas/v2/project.json'
 
-# Moon v2 dropped `type`, `platform`, `source` and `implicitDependencies` from the
-# project schema. `layer` distinguishes a library from something runnable;
-# `dependsOn` is the build-order graph that the removed workspace-level
-# `layers` and `dependencyRules` blocks used to declare.
+# Tasks are delegations to this project's own package.json script, which is the
+# authority for what the script does. Two exceptions, both stated here because a
+# task that is not a delegation is worth a reader noticing:
 #
-# Tasks are written out rather than extended from a shared template. Each is a
-# delegation to this project's own package.json script, which stays the
-# authority for what the script does. See .moon/workspace.yml.
+#   * `build` was `echo "nothing to build (TypeScript source)"`, which made
+#     `bun run build` at the repository root a command that printed a message.
+#     This is a SvelteKit SPA: it produces `build/`, and both the E2E lane and
+#     `check:bundle` need it to exist.
+#   * `test-browser` is separate from `test` so the browser lane can be invoked,
+#     cached and failed independently. Folding it into `test` meant `test:all`
+#     ran it twice, once via `moon run :test` and once explicitly.
 layer: 'application'
 
 fileGroups:
   sources:
     - 'src/**/*'
+    - '*.ts'
+    - 'static/**/*'
   configs:
     - 'package.json'
     - 'tsconfig*.json'
     - 'moon.yml'
+    - 'vite.config.ts'
+    - 'vitest.config.ts'
   tests:
     - 'src/**/*.test.ts'
     - 'src/**/*.spec.ts'
+    - 'src/browser_tests/**/*'
     - 'tests/**/*'
 
 toolchains:
@@ -34,56 +42,93 @@ dependsOn:
   - utils
 
 tasks:
+  # `preset: server` is Moon's own: cache off, persistent on, not run in CI. A dev
+  # task that exited, or that CI tried to run, would both be wrong.
+  dev:
+    command: 'bun'
+    args: ['run', 'dev']
+    preset: 'server'
+
   typecheck:
     command: 'bun'
     args: ['run', 'typecheck']
     inputs:
       - '@group(sources)'
+      - '@group(configs)'
   lint:
     command: 'bun'
     args: ['run', 'lint']
     inputs:
       - '@group(sources)'
+      - '@group(configs)'
   format:
     command: 'bun'
     args: ['run', 'format']
     inputs:
       - '@group(sources)'
+      - '@group(configs)'
   fix:
     command: 'bun'
     args: ['run', 'fix']
     inputs:
       - '@group(sources)'
+      - '@group(configs)'
+
+  # Unit only. The browser lane is `test-browser` and is not folded in.
   test:
     command: 'bun'
     args: ['run', 'test']
     inputs:
       - '@group(sources)'
+      - '@group(configs)'
+
+  test-browser:
+    command: 'bun'
+    args: ['run', 'test:browser']
+    # Needs a real Chromium and the Svelte compiler; a cached hit would be a
+    # legitimate optimisation, but the input set must be real first — which
+    # `sources` now is. `output` stays unset because vitest writes reports into
+    # the tree, so there is no clean artifact to restore.
+    inputs:
+      - '@group(sources)'
+      - '@group(configs)'
+
   build:
-    command: 'echo'
-    args: ['nothing to build (TypeScript source)']
+    command: 'bun'
+    args: ['run', 'build']
     inputs:
       - '@group(sources)'
-  tauri:
-    command: 'echo'
-    args: ['nothing to build (TypeScript source)']
-    inputs:
-      - '@group(sources)'
+      - '@group(configs)'
+    outputs:
+      - 'build'
+
+  check-bundle:
+    command: 'bun'
+    args: ['run', 'check:bundle']
+    deps:
+      - 'build'
+    # Never cached: it inspects `build/`, and a restored result would be a claim
+    # about an artifact this run did not produce.
+    options:
+      cache: false
+
   tauri-dev:
     command: 'bun'
     args: ['run', 'tauri:dev']
-    inputs:
-      - '@group(sources)'
+    preset: 'server'
+
   tauri-build:
     command: 'bun'
     args: ['run', 'tauri:build']
-    inputs:
-      - '@group(sources)'
+    options:
+      cache: false
+
   tauri-icon:
     command: 'bun'
     args: ['run', 'tauri:icon']
-    inputs:
-      - '@group(sources)'
+    options:
+      cache: false
+
   validate:
     deps:
       - '~:lint'

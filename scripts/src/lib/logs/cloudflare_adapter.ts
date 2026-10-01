@@ -15,6 +15,7 @@
 //   - live tail: `wrangler tail <worker> --format json`, bounded by `--duration`
 
 import { spawn } from 'node:child_process';
+import { missingToolMessage, wranglerBin } from '../tools.ts';
 import { parseDuration } from './duration.ts';
 import { buildFilter, buildLogpushFilter } from './filter.ts';
 import { APP_LOG_CONFIG, capabilitiesFor, prerequisiteFor, resolveLogAdapter } from './registry.ts';
@@ -175,7 +176,22 @@ export const tailCloudflare = (
 
   const durationMs = Math.min(requested?.ms ?? DEFAULT_TAIL_MS, MAX_TAIL_MS);
 
-  const child = spawn('bunx', ['wrangler', 'tail', worker, '--format', 'json'], {
+  // The pinned workspace copy, not `bunx`. `bunx wrangler` from the repository
+  // root does not find a binary that only `apps/backend/api` depends on, so it
+  // downloads whatever the registry serves that day.
+  const bin = wranglerBin();
+  if (bin === null) {
+    return {
+      result: {
+        status: 'unavailable',
+        events: [],
+        message: missingToolMessage('wrangler', 'apps/backend/api'),
+      },
+      handle: { stop: () => {} },
+    };
+  }
+
+  const child = spawn(bin, ['tail', worker, '--format', 'json'], {
     stdio: ['ignore', 'pipe', 'pipe'],
   });
 

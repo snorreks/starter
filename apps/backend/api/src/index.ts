@@ -155,7 +155,7 @@ export const createApi = (container: Container) => {
       .get('/api/health', () => ({
         ok: true,
         service: 'api',
-        environment: container.isLocal ? 'local' : 'production',
+        environment: container.environment,
         authRateLimitMax: container.env.AUTH_RATE_LIMIT_MAX ?? '10 (default)',
         trustedOriginCount: trustedOrigins.length,
         ...(container.env.TEST_RUN_ID === undefined
@@ -216,10 +216,27 @@ export const createApi = (container: Container) => {
  * is passed straight into `getContainer`, which memoizes per binding set, and
  * the app is then built against that container. Nothing is stored in a module
  * variable.
+ *
+ * A configuration failure is caught here rather than allowed to escape. An
+ * uncaught throw from `fetch` reaches the caller as a generic 500 whose body says
+ * nothing about which binding is missing, which is exactly what a misconfigured
+ * deploy produces. This response names the problem; it contains no secret.
  */
 export const worker = {
-  fetch(request: Request, env: unknown): Promise<Response> {
-    return createApi(getContainer(env)).handle(request);
+  async fetch(request: Request, env: unknown): Promise<Response> {
+    let container: Container;
+    try {
+      container = getContainer(env);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      apiLogger.error('config.invalid', { message });
+      return new Response(
+        `The API is not configured correctly and refused to start.\n\n${message}\n`,
+        { status: 503, headers: { 'content-type': 'text/plain; charset=utf-8' } },
+      );
+    }
+
+    return createApi(container).handle(request);
   },
 };
 

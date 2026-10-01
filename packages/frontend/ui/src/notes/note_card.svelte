@@ -4,8 +4,8 @@
   would give the list two sources of truth for the same note.
 -->
 <script lang="ts">
-import type { Note } from '@starter/schemas/notes';
 import { formatAbsoluteTime, formatRelativeTime } from '@starter/frontend-services/platform';
+import type { Note } from '@starter/schemas/notes';
 import { previewText } from '@starter/utils';
 
 type Props = {

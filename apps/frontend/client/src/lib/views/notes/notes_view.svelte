@@ -10,8 +10,8 @@
 -->
 <script lang="ts">
 import { BaseViewModelContainer, EmptyState, ErrorState, NoteCard, Spinner } from '@starter/ui';
-import type { NotesViewModel } from './notes_view_model.svelte.ts';
 import NoteForm from './note_form.svelte';
+import type { NotesViewModel } from './notes_view_model.svelte.ts';
 
 type Props = {
   viewModel: NotesViewModel;

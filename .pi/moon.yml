@@ -1,26 +1,24 @@
 $schema: 'https://moonrepo.dev/schemas/v2/project.json'
 
-# Moon v2 dropped `type`, `platform`, `source` and `implicitDependencies` from the
-# project schema. `layer` distinguishes a library from something runnable;
-# `dependsOn` is the build-order graph that the removed workspace-level
-# `layers` and `dependencyRules` blocks used to declare.
+# Tasks are delegations to this project's own package.json script.
 #
-# Tasks are written out rather than extended from a shared template. Each is a
-# delegation to this project's own package.json script, which stays the
-# authority for what the script does. See .moon/workspace.yml.
+# `sources` covers `extensions/`, `lib/` and `tests/`. The previous group was
+# `src/**/*`, which matched nothing in this project at all — so every task here
+# hashed an empty input set.
 layer: 'tool'
 
 fileGroups:
   sources:
-    - 'src/**/*'
+    - 'extensions/**/*.ts'
+    - 'lib/**/*.ts'
+    - 'tests/**/*.ts'
+    - 'settings.json'
+  entrypoints:
+    - 'extensions/**/*.ts'
   configs:
     - 'package.json'
     - 'tsconfig*.json'
     - 'moon.yml'
-  tests:
-    - 'src/**/*.test.ts'
-    - 'src/**/*.spec.ts'
-    - 'tests/**/*'
 
 toolchains:
   bun:
@@ -35,28 +33,46 @@ tasks:
     args: ['run', 'typecheck']
     inputs:
       - '@group(sources)'
+      - '@group(configs)'
   lint:
     command: 'bun'
     args: ['run', 'lint']
     inputs:
       - '@group(sources)'
+      - '@group(configs)'
   format:
     command: 'bun'
     args: ['run', 'format']
     inputs:
       - '@group(sources)'
+      - '@group(configs)'
   fix:
     command: 'bun'
     args: ['run', 'fix']
     inputs:
       - '@group(sources)'
+      - '@group(configs)'
+
   test:
     command: 'bun'
     args: ['run', 'test']
     inputs:
       - '@group(sources)'
+      - '@group(configs)'
+
+  # Named separately because it is a different question: does Pi's real resource
+  # loader accept this layout? A green `test` does not answer it — the whole point
+  # of the defect was that the unit tests passed while every extension load failed.
+  loader-smoke:
+    command: 'bun'
+    args: ['run', 'loader:smoke']
+    inputs:
+      - '@group(sources)'
+      - '@group(configs)'
+
   validate:
     deps:
       - '~:lint'
       - '~:format'
       - '~:typecheck'
+      - '~:loader-smoke'

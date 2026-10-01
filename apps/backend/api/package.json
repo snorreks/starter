@@ -9,18 +9,17 @@
     ".": "./src/index.ts"
   },
   "scripts": {
-    "dev": "wrangler dev --port 8787",
-    "deploy": "bun run scripts/src/lib/deploy/index.ts",
-    "deploy:dry-run": "bun run scripts/src/lib/deploy/index.ts --dry-run",
+    "dev": "bash ../../../scripts/dev/api.sh",
+    "deploy": "bun run --cwd ../../.. scripts/src/lib/deploy/index.ts",
+    "deploy:dry-run": "bun run --cwd ../../.. scripts/src/lib/deploy/index.ts --dry-run",
     "lint": "biome lint src",
     "format": "biome format src",
     "fix": "biome check --write src --error-on-warnings",
     "typecheck": "tsgo --noEmit",
-    "test": "echo \"no unit tests: the api is covered by test:integration (run: bun run test:integration)\"",
+    "test": "bun test src",
     "test:prepare": "bun run scripts/ensure_local_d1.ts",
-    "test:unit": "bun test",
-    "db:migrate": "bun run --cwd ../.. scripts/src/lib/db/migrate.ts --local",
-    "test:integration": "bun test tests/worker_integration.test.ts"
+    "db:migrate": "bun run --cwd ../../.. scripts/src/lib/db/migrate.ts --local",
+    "test:integration": "bun run test:prepare && bun test tests/worker_integration.test.ts"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "5.20260929.1",

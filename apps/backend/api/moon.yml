@@ -1,13 +1,16 @@
 $schema: 'https://moonrepo.dev/schemas/v2/project.json'
 
-# Moon v2 dropped `type`, `platform`, `source` and `implicitDependencies` from the
-# project schema. `layer` distinguishes a library from something runnable;
-# `dependsOn` is the build-order graph that the removed workspace-level
-# `layers` and `dependencyRules` blocks used to declare.
+# Tasks are delegations to this project's own package.json script.
 #
-# Tasks are written out rather than extended from a shared template. Each is a
-# delegation to this project's own package.json script, which stays the
-# authority for what the script does. See .moon/workspace.yml.
+# Two things worth noting:
+#
+#   * `test` was `echo "no unit tests: ..."`. An `echo` that exits 0 inside a
+#     `:test` fan-out is indistinguishable from a passing lane, which is how a
+#     suite can report green having run nothing. It now runs `bun test src`, which
+#     discovers the environment-resolution tests in `src/env.test.ts`.
+#   * `test-integration` is a distinct task from `test` because it needs a local
+#     D1 database and takes minutes. Folding it into `test` would make every unit
+#     run pay for it, and excluding it would make `test` look like coverage.
 layer: 'application'
 
 fileGroups:
@@ -17,9 +20,9 @@ fileGroups:
     - 'package.json'
     - 'tsconfig*.json'
     - 'moon.yml'
+    - 'wrangler.jsonc'
   tests:
     - 'src/**/*.test.ts'
-    - 'src/**/*.spec.ts'
     - 'tests/**/*'
 
 toolchains:
@@ -39,41 +42,59 @@ tasks:
     args: ['run', 'typecheck']
     inputs:
       - '@group(sources)'
+      - '@group(configs)'
   lint:
     command: 'bun'
     args: ['run', 'lint']
     inputs:
       - '@group(sources)'
+      - '@group(configs)'
   format:
     command: 'bun'
     args: ['run', 'format']
     inputs:
       - '@group(sources)'
+      - '@group(configs)'
   fix:
     command: 'bun'
     args: ['run', 'fix']
     inputs:
       - '@group(sources)'
+      - '@group(configs)'
+
   test:
     command: 'bun'
     args: ['run', 'test']
     inputs:
       - '@group(sources)'
-  build:
-    command: 'echo'
-    args: ['nothing to build (TypeScript source)']
-    inputs:
-      - '@group(sources)'
-  db-generate:
-    command: 'echo'
-    args: ['nothing to build (TypeScript source)']
-    inputs:
-      - '@group(sources)'
+      - '@group(configs)'
+
+  # Starts a local D1 database, applies migrations and drives the real Worker.
+  # Never cached: it asserts against a database and a running workerd, so a
+  # restored "pass" would certify processes this run never started.
   test-integration:
     command: 'bun'
     args: ['run', 'test:integration']
-    inputs:
-      - '@group(sources)'
+    deps:
+      - '~:db-migrate-local'
+    options:
+      cache: false
+
+  # A remote-capable migration is never a task; this is the local-only helper the
+  # integration lane depends on. `bun run db:migrate --remote <env> --yes` is the
+  # operator command and stays outside Moon on purpose.
+  db-migrate-local:
+    command: 'bun'
+    args: ['run', '--cwd', '../../..', 'db:migrate']
+    options:
+      cache: false
+
+  # No build step: the deployable unit is Wrangler's bundle of `src/`, produced
+  # at deploy time. See docs/cloudflare.md.
+  build:
+    command: 'echo'
+    args: ['nothing to build (Worker source; wrangler bundles it at deploy time)']
+
   validate:
     deps:
       - '~:lint'

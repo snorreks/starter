@@ -25,16 +25,34 @@ import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { type ChildProcess, spawn } from 'node:child_process';
 import { existsSync, openSync, rmSync } from 'node:fs';
 import { createServer } from 'node:net';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { createId } from '@starter/utils';
+import { killTree } from '@starter/utils/process';
 import { MAX_BODY_BYTES } from '../src/lib/telemetry.ts';
 
-// `import.meta.url` is the file's URL: four levels up from
+// `import.meta.url` is this file's URL: four levels up from
 // apps/backend/api/tests/ reaches the repository root.
-const REPO_ROOT = new URL('../../../../', import.meta.url).pathname.replace(/\/$/, '');
+const REPO_ROOT = fileURLToPath(new URL('../../../../', import.meta.url)).replace(/\/$/, '');
 const API_DIR = join(REPO_ROOT, 'apps/backend/api');
 const API_CONFIG = join(API_DIR, 'wrangler.jsonc');
 const LOCAL_STATE = join(API_DIR, '.wrangler/state');
+
+/**
+ * The pinned workspace copy of wrangler.
+ *
+ * `bunx wrangler` from here or from the repository root does not find a binary
+ * that only `apps/backend/api` depends on, so it downloads whatever npm serves
+ * that day. This suite then prepares a database and boots a Worker with a tool
+ * version the project never validated.
+ */
+const WRANGLER = join(
+  dirname(fileURLToPath(import.meta.url)),
+  '..',
+  'node_modules',
+  '.bin',
+  'wrangler',
+);
 
 const WORKER_LOG = process.env.WORKER_LOG ?? '/tmp/starter-integration-worker.log';
 
@@ -113,6 +131,11 @@ beforeAll(async () => {
   if (!existsSync(API_CONFIG)) {
     throw new Error(`Missing ${API_CONFIG}`);
   }
+  if (!existsSync(WRANGLER)) {
+    throw new Error(
+      `wrangler is not installed at ${WRANGLER}. Run \`bun install\` from the repository root.`,
+    );
+  }
 
   port = await findFreePort();
 
@@ -121,7 +144,7 @@ beforeAll(async () => {
   rmSync(LOCAL_STATE, { recursive: true, force: true });
 
   const migrate = Bun.spawnSync(
-    ['bunx', 'wrangler', 'd1', 'migrations', 'apply', 'DB', '--local', '--config', API_CONFIG],
+    [WRANGLER, 'd1', 'migrations', 'apply', 'DB', '--local', '--config', API_CONFIG],
     { cwd: REPO_ROOT, stdout: 'pipe', stderr: 'pipe' },
   );
   if (migrate.exitCode !== 0) {
@@ -131,9 +154,8 @@ beforeAll(async () => {
   const logFd = openSync(WORKER_LOG, 'w');
 
   server = spawn(
-    'bunx',
+    WRANGLER,
     [
-      'wrangler',
       'dev',
       '--port',
       String(port),
@@ -142,6 +164,17 @@ beforeAll(async () => {
       API_CONFIG,
       '--var',
       `TEST_RUN_ID:${RUN_ID}`,
+      // Explicit, and the default in wrangler.jsonc too. The Worker decides
+      // whether development defaults are permitted from this binding alone, so a
+      // suite that omitted it would be exercising a different code path from the
+      // one a developer runs.
+      '--var',
+      'DEPLOYMENT_ENV:local',
+      // Required in every environment now. The Worker validates it structurally,
+      // and a local run without it fails closed with a 503 naming the binding —
+      // which is what made this suite hang before it was passed.
+      '--var',
+      `BETTER_AUTH_URL:http://127.0.0.1:${port}`,
       // The sign-in rate limit is real and stays on. A test run creates an
       // account per case, which exceeds a production-sane per-minute budget, so
       // the budget is raised for the run rather than disabled — disabling it
@@ -161,14 +194,24 @@ beforeAll(async () => {
 
   const readiness = await waitForOurWorker();
   if (!readiness.ready) {
-    server.kill('SIGKILL');
+    if (server?.pid !== undefined) {
+      killTree(server.pid, { graceMs: 200, attempts: 10 });
+    }
     throw new Error(readiness.reason);
   }
 }, 240_000);
 
 afterAll(() => {
-  // Only ever the process this file started.
-  server?.kill('SIGKILL');
+  // Only ever the process this file started, and its whole tree.
+  //
+  // `server.kill()` alone leaves `workerd` — wrangler's own child, and the thing
+  // actually holding the port — running. A `killTree` walk from the recorded pid
+  // takes both. Walk the tree rather than use a pattern: `pkill -f wrangler` also
+  // matches the shell that launched this suite, which kills the caller.
+  if (server?.pid !== undefined) {
+    killTree(server.pid, { graceMs: 200, attempts: 20 });
+  }
+  server = undefined;
 });
 
 // ── Helpers ──────────────────────────────────────────────────────────────────

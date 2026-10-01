@@ -9,11 +9,54 @@ Run from the repository root:
 
 ```bash
 bun run tauri:dev         # desktop, with dev reload
-bun run tauri:build       # production bundle for this platform
+bun run tauri:build       # release bundle for this platform
 bun run tauri:icon        # regenerate icons from src-tauri/icons/icon.svg
+
+bun run tauri:build -- --target android
+bun run --cwd apps/frontend/client tauri android init
+bun run --cwd apps/frontend/client tauri ios init
 ```
 
-Each delegates to the client's own `package.json`.
+Every *build* goes through the launcher, including mobile: `tauri build` run
+directly sets no native-build flag, so an Android or iOS bundle made that way ships
+the throwing `@tauri-apps/*` stub — an app whose native calls throw. The two `init`
+commands compile nothing, so they need no flag and stay as the direct invocations
+they are.
+
+### Why there is a launcher script
+
+`tauri:build` is `scripts/build_tauri.ts`, not `tauri build`, and each of the four
+things below is a reason:
+
+1. **The `@tauri-apps/*` stub must be off for every native target.** `vite.config.ts`
+   replaces the Tauri packages with a throwing stub unless a native-build flag is
+   set. The flag was called `TAURI_DESKTOP_BUILD`, which reads as desktop-only — so
+   an Android or iOS build launched without it shipped stubbed Tauri packages, i.e.
+   an app whose native calls throw. It is now `TAURI_NATIVE_BUILD`, set for every
+   target. The old name is still accepted.
+
+2. **`tauri` must resolve to the pinned workspace copy.** It is declared by the
+   client, so `bunx tauri` from the repository root does not find it and downloads
+   whatever the registry serves. Same failure mode as `bunx wrangler`.
+
+3. **The dev-server port has to match `tauri.conf.json`.** Tauri v2 does not
+   substitute environment variables into its config, so `build.devUrl` is a literal.
+   If `PORT` disagrees with it, `tauri dev` opens a window on a port nothing is
+   listening on — a blank webview that names neither file. The launcher detects the
+   mismatch and refuses. The default is 5173, in one place:
+   `apps/frontend/client/dev_ports.ts`.
+
+4. **A host that cannot build the target says so.** `bun run tauri:build
+   -- --target ios` on Linux names Xcode and macOS; `--target android` names a
+   missing `ANDROID_HOME` or a missing NDK; a desktop build with no `cargo` names
+   rustup. "tauri exits with a linker error" is a worse message than naming the
+   missing prerequisite.
+
+`bun run check:bundle` then verifies the artifact: `index.html` present, the
+SvelteKit entry referenced, assets emitted, and — the part that matters — that the
+bundle matches the mode it was built for. A browser bundle carrying real Tauri
+imports and a native bundle still carrying the stub are both caught, because both
+compile and both look fine.
 
 `cargo check` in `src-tauri/` is enough to verify the Rust compiles. It needs GTK
 and WebKitGTK, which on Nix means:
@@ -112,16 +155,27 @@ The same `src/lib.rs` builds for iOS and Android — it is a `staticlib`, not on
 binary, so the mobile entry point is the same function.
 
 ```bash
-bunx tauri android init
-bunx tauri ios init
+bun run --cwd apps/frontend/client tauri android init
+bun run --cwd apps/frontend/client tauri ios init
 ```
 
 Both generate a `gen/` directory, which **is committed** — without it a fresh
 clone cannot build for mobile.
 
-Building for mobile needs the Android NDK and Xcode. Neither is present in this
-environment, so **the mobile path is documented and structured but has not been
-built here.** The desktop path is what was verified.
+Note the `--cwd`: `tauri` is a dependency of the client, so `bunx tauri` from the
+repository root would fetch a different version from npm. Every `tauri` invocation
+here goes through the client's own `node_modules/.bin`.
+
+Building for mobile needs the Android NDK and Xcode. Neither is present in the
+environment this documentation was written in, so **the mobile path is documented and
+structured but has not been built here.** The desktop path was also not built there:
+`cargo` is absent. See [capability-matrix.md](capability-matrix.md).
+
+Build through the launcher so the native-build flag is set:
+
+```bash
+bun run tauri:build -- --target android
+```
 
 Origins for the mobile webview are already in the API's allowlist:
 
@@ -161,8 +215,11 @@ so one `bun run logs` covers the app and the Worker. See [logs.md](logs.md).
 
 ## Not verified here
 
-Stated plainly rather than left for you to discover:
+Stated plainly rather than left for you to discover. See
+[capability-matrix.md](capability-matrix.md) for the full table.
 
-- **Mobile builds.** Need the Android NDK and Xcode.
-- **`cargo clippy`.** Not installed in this environment.
+- **Desktop bundles.** No Tauri bundle was produced. `cargo` is not installed in the
+  environment this documentation was written in, and the launcher says so by name.
+- **Mobile builds.** Need the Android SDK/NDK and Xcode.
+- **`cargo clippy`.** Not installed in that environment.
 - **Code signing.** No keys are shipped, so nothing is signed.

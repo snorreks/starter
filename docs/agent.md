@@ -24,11 +24,42 @@ habit. `defaultProjectTrust` is `ask`, not `always`, for that reason.
 | | |
 |---|---|
 | `.pi/settings.json` | Tool and resource defaults |
-| `.pi/extensions/logs.ts` | The `read_logs` tool |
+| `.pi/extensions/logs.ts` | The `read_logs` tool — entrypoint only |
+| `.pi/lib/logs_args.ts` | argv construction, no Pi imports, testable without a runtime |
+| `.pi/lib/process.ts` | Bounded, cancellable subprocess runner |
+| `.pi/tests/` | Tests, including the loader smoke test |
 | `.pi/skills/adding-a-feature/` | The conventions, as a skill |
 | `.pi/skills/debugging-with-logs/` | How to read logs, and what refusals mean |
 | `.pi/prompts/review.md` | `/prompt:review` |
 | `.pi/prompts/check.md` | `/prompt:check` |
+
+## `.pi/extensions` is executable input, not a source folder
+
+**Pi loads every module it finds in `.pi/extensions` as an extension.** A helper or
+a test placed there is loaded on every start.
+
+This repository had `.pi/extensions/logs.test.ts`. It imported `bun:test`, so
+starting the agent produced an extension error every time — and `bun test` passed,
+because Bun does not care what Pi can load. A passing suite told you nothing about
+whether the agent started.
+
+The layout is now: **entrypoints in `extensions/`, helpers in `lib/`, tests in
+`tests/`.**
+
+That is enforced, not documented:
+
+```bash
+bun run --cwd .pi loader:smoke
+```
+
+`tests/pi_loader.test.ts` drives the real pinned Pi `DefaultResourceLoader` with an
+isolated `agentDir` and asserts that `.pi/extensions` loads with **zero** errors and
+that each tool is registered exactly once. It also writes a deliberately misplaced
+module into a *temporary* extensions directory and asserts the loader **reports**
+it — without that negative control, "no errors" could pass merely because nothing
+was loaded.
+
+It makes no LLM request and reads no credentials.
 
 ## The log tool
 
@@ -42,12 +73,20 @@ capability rules and redaction a human does. An agent with its own quieter log p
 is an agent that debugs against different data, and the two eventually disagree
 about what happened.
 
-Two deliberate constraints:
+Three deliberate bounds:
 
-- **Output is capped at 200 lines.** Unbounded output ends the useful part of the
-  conversation.
+- **At most 200 lines.** Unbounded output ends the useful part of the conversation.
 - **`--follow` is never emitted.** A tool call that never returns blocks the agent
   indefinitely.
+- **512 KB of output, a real timeout, and a cancellation signal.** A line limit
+  bounds lines, not bytes, and bounds what the CLI chooses to emit — not what the
+  process writes. Output past the byte budget is truncated and spilled to a file
+  whose path the model is told, because a tool that silently drops the interesting
+  part is worse than one that says where to look. A process killed by the timeout
+  reports exit 124 rather than 0, so "timed out" never reads as "succeeded".
+
+`.pi/lib/process.ts` is shared, not per-extension, and is exercised against real
+processes rather than mocks.
 
 A non-zero exit is an answer, not a tool failure. The CLI's refusals are phrased to
 be relayed — `capability_unsupported` says which adapter and which filter, so the
@@ -57,7 +96,7 @@ The argv builder is tested against the CLI's own source, so a renamed flag fails
 test instead of becoming a silently-ignored argument:
 
 ```
-17 tests, including "the CLI parses every flag this tool can emit"
+the CLI parses every flag this tool can emit
 ```
 
 ## Skills
