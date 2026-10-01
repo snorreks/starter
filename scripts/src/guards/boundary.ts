@@ -11,7 +11,7 @@
 // to pass is not a check; it is a report.
 
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
-import { join, relative } from 'node:path';
+import { dirname, join, relative } from 'node:path';
 
 export interface Violation {
   rule: string;
@@ -803,10 +803,47 @@ export const guardDocumentedPaths = (root = REPO_ROOT): GuardResult => {
   const NARRATED =
     /\b(once had|once was|used to be|previously|former(ly)?|no longer|removed|renamed|moved|pointed at|does not exist|doesn'?t exist|is gone)\b/i;
 
+  /**
+   * Removal language only, for markdown links.
+   *
+   * Narrower than `NARRATED` on purpose. The broader list includes "used to be" and
+   * "previously", which are what a writer reaches for when describing a change that
+   * *is* still documented — so reusing it here made "This used to be true: see
+   * [gone](nope.md)" exempt the broken link in the same line. An exemption that any
+   * clause can satisfy is not an exemption, it is a hole.
+   *
+   * The backticked-path check keeps the broader list because its whole purpose is
+   * catching prose like "the scripts restructure moved `scripts/src/lib/**`", where
+   * the verb is the point.
+   */
+  const LINK_NARRATED_REMOVAL =
+    /\b(was removed|were removed|has been removed|have been removed|is gone|no longer|renamed to|was moved|were moved|does not exist|doesn'?t exist)\b/i;
+
   /** A repo-root-relative path in backticks. Narrow on purpose, so prose is not
    * mistaken for a reference. Globs and placeholders are skipped by the caller. */
   const PATH_PATTERN =
     /`((?:scripts|apps|packages|docs|\.pi|\.github|\.moon|config)\/[A-Za-z0-9_./-]+)`/g;
+
+  /**
+   * A markdown link, in the two forms these documents actually use.
+   *
+   * This was the guard's largest hole, found by negative control rather than by
+   * reading: it checked backticked paths only, and the documentation index is made
+   * of markdown links. A `[x](y)` that rots is a broken link in rendered Markdown —
+   * the failure is quieter and more visible than a stale backtick, and nothing
+   * noticed. Both shapes occur in these documents and both are checked:
+   *
+   *   [docs/logs.md](docs/logs.md)   repo-root-relative, from the top level
+   *   [logs.md](logs.md)             relative to the containing document
+   */
+  const LINK_PATTERN = /\[[^\]]*\]\(([^)\s]+)\)/g;
+
+  /** Anchors and URLs are not filesystem paths. */
+  const isNotAPath = (target: string): boolean =>
+    target.startsWith('#') ||
+    target.startsWith('http://') ||
+    target.startsWith('https://') ||
+    target.startsWith('mailto:');
 
   const files: string[] = [
     'README.md',
@@ -831,6 +868,52 @@ export const guardDocumentedPaths = (root = REPO_ROOT): GuardResult => {
     }
 
     const text = readFileSync(full, 'utf8');
+    const docDir = dirname(full);
+
+    /**
+     * Where a link target should be looked for.
+     *
+     * A leading `./` or `../` is unambiguously relative to the document. A bare
+     * `docs/…` is *also* valid from the top level, and the documentation index uses
+     * that shape, so a target that does not resolve relative to its own document is
+     * retried from the repository root before being called missing. Checking both is
+     * what lets one rule cover `docs/README.md` and `README.md` without either
+     * producing a false positive.
+     *
+     * Resolved **exactly**, with no `.md` fallback, and that is deliberate. A
+     * Markdown renderer resolves a link literally, so `[x](docs/testing)` is a broken
+     * link even though `docs/testing.md` exists. The lenient version was tried and
+     * removed: it made a negative control pass that should have failed, and no real
+     * link in these documents omits its extension.
+     */
+    const resolves = (target: string): boolean =>
+      existsSync(join(docDir, target)) || existsSync(join(root, target));
+
+    for (const match of text.matchAll(LINK_PATTERN)) {
+      const target = match[1];
+      if (target === undefined || isNotAPath(target) || target.includes('*') || resolves(target)) {
+        continue;
+      }
+
+      const lineStart = text.lastIndexOf('\n', match.index) + 1;
+      const lineEnd = text.indexOf('\n', match.index);
+      const line = text.slice(lineStart, lineEnd === -1 ? text.length : lineEnd);
+
+      if (LINK_NARRATED_REMOVAL.test(line)) {
+        continue;
+      }
+
+      violations.push({
+        rule: 'documented-paths',
+        file: relativePath,
+        line: text.slice(0, match.index).split('\n').length,
+        message:
+          `This document links to ${target}, which does not exist.\n` +
+          '  A reader who follows the link concludes the thing it describes is not\n' +
+          '  implemented, and a broken link renders as broken. If the target really was\n' +
+          '  removed, say so in the same sentence and the guard will leave it alone.',
+      });
+    }
 
     for (const match of text.matchAll(PATH_PATTERN)) {
       const path = match[1].replace(/[.,;:]$/, '');

@@ -22,7 +22,7 @@ Start here. Nothing below is required reading before running a command — the
 - [native.md](native.md) — Tauri desktop and mobile, build modes, signing
   prerequisites
 - [logs.md](logs.md) — the `bun run logs` family and what each refusal means
-- [secrets.md](secrets.md) — SOPS, and which commands are not implemented yet
+- [secrets.md](secrets.md) — SOPS: the operations, and what each one refuses
 - [lint.md](lint.md) — Biome, the whole-repository guards, and what each refuses
 - [toolchain.md](toolchain.md) — which versions are pinned, and where
 - [rename-checklist.md](rename-checklist.md) — before your first release

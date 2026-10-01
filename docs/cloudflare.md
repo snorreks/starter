@@ -179,52 +179,148 @@ expand, deploy, migrate, contract.
 | Environment | Adapter | History | Filters by user id |
 |---|---|---|---|
 | `local` | local file | yes | yes |
-| staging / production (api) | Cloudflare Logpush | **claimed, not implemented** | claimed |
+| staging / production (api) | Workers Observability query | yes — **no live call has been made** | yes |
 | staging / production (api), live | `wrangler tail` | no | **no** |
 | staging / production (client) | none | — | — |
 
-**The historical row is a claim, not a capability.** `queryCloudflareHistory` never
-sends a provider request: once configuration checks pass it returns
-`retrieval_failed`. It also conflates the Workers Logs query API with Logpush, which
-are separate things — the Workers Observability REST API should be the default
-source, and Logpush an optional export. Do not read this repository as evidence that
-Cloudflare log querying works. See [capability-matrix.md](capability-matrix.md).
+### The historical query, and what is actually verified about it
 
-The `wrangler tail` row is why `--uid` can be `capability_unsupported`. A live event
-stream has no provider-side index, so `--uid` cannot be applied by the provider —
-but a bounded client-side filter is still possible over what arrives, and where
-filtering happens should be stated rather than implied either way. Declaring the
-capability in `app_registry.ts` turns a silently-unfiltered dump into a clear
-error — see [logs.md](logs.md).
+`queryCloudflareHistory` sends a real request to
 
-The live tail also assumes each input line is already an application `LogEvent`
-rather than validating and extracting events from the provider envelope, and has no
-coverage of its process lifecycle or exit reporting.
+```
+POST https://api.cloudflare.com/client/v4/accounts/{account_id}/workers/observability/telemetry/query
+Authorization: Bearer $CLOUDFLARE_API_TOKEN
+```
+
+and parses the response. The contract it is written against, recorded here because
+it is not guessable:
+
+| | |
+|---|---|
+| Body | `queryId`, `timeframe: { from, to }` (Unix ms), `view: 'events'`, `limit` (max 2000), `datasets`, `parameters.filters` |
+| Filter leaf | `{ key, operation, type, value }` — **not** a filter string |
+| Operations | `includes`, `not_includes`, `starts_with`, `ends_with`, `regex`, `exists`, `is_null`, `in`, `not_in`, `eq`, `neq`, `gt`, `gte`, `lt`, `lte` |
+| Token scope | `Workers Observability Write` — even for a read |
+| Response | `{ result: { data: [...], statistics: { rows_read } } }`, each row carrying the logged object plus a `$metadata` sub-object |
+
+Two things about that contract are easy to get wrong, and this repository got both
+wrong until it was rewritten against the documentation:
+
+- **There is no `filter` string field.** The previous translation built
+  `timestamp >= "…" AND level >= "ERROR"`, which is *Logpush's* format. It either
+  returned a 400, or had its narrowing ignored and returned every event in the
+  window while the caller reported a filtered count. Its tests were green because
+  they asserted that string.
+- **Severity is an `in` set, not a comparison.** The provider orders no levels, so
+  `level >= "WARNING"` is not a meaningful expression for it. The levels at or above
+  the threshold are enumerated instead.
+
+**Verified:** the request shape, against the documented endpoint; the response
+handling, against a recorded fixture in `scripts/tests/fixtures/`. A negative
+control reintroduces a `filter` string into the body and fails the test that pins
+the contract.
+
+**NOT RUN:** a request against a provisioned account. The first thing to check with
+a credential is the token scope, which is a *write* scope.
+
+One provider behaviour worth knowing before you trust an empty result: `rows_read: 0`
+has been reported for API-token queries that the Cloudflare dashboard answers with
+data. The CLI therefore reports `rows_read` when the provider supplies it and says
+plainly when it is zero, rather than treating it as authoritative.
+
+The account id is required and has no default — the endpoint is account-scoped, so
+`wrangler` cannot infer it the way it does for its own subcommands. Set it with
+`bun run deploy:configure -- --account <hex>`, or export `CLOUDFLARE_ACCOUNT_ID`.
+
+### Logpush is not implemented
+
+The registry lists Logpush for staging and production. No job is created, no filter
+is registered, and nothing reads the bucket. Treat it as absent — the Observability
+query above is the default source, and Logpush is a separate optional export that
+this repository does not provide.
+
+### The live tail cannot filter by user id
+
+`wrangler tail` is a live event stream with no provider-side index, so `--uid` and
+`--trace` are refused with `capability_unsupported` *before* wrangler is spawned.
+Forwarding them would have the provider ignore the narrowing while the client-side
+predicate narrowed — so the answer would look filtered and would not be. The refusal
+is a feature.
+
+`--follow` selects the tail adapter by capability rather than taking the first
+configured one. It used to take the first, which was the *historical* adapter, so
+`bun run logs api --mode staging --follow` was dead in every remote environment while
+the registry listed a working tail adapter two entries further down the same array.
+
+Each line the tail receives is a provider *envelope*, not an application event, and
+an unparseable line is dropped rather than printed as one — wrangler prints banners
+and diagnostics on stdout, and passing those downstream is what produced
+plausible-looking nonsense before. A session that reaches its bound reports failure,
+so a `--follow` that hit `--duration` does not read as a clean finish. See
+[logs.md](logs.md).
 
 ## Configuration
 
-`scripts/src/registry/app_registry.ts` is the only place an app
-maps to a Worker, a bucket or a database. Nothing else is allowed to hold its own
-map, because a duplicated map is how a staging query silently reads production.
+A resource id belongs to a person, not to a project. There are therefore **three
+layers**, and the order is the feature — a value that exists in more than one place
+is a value nobody can tell is in effect.
 
-Everything is `null` in the template:
+| Layer | Where | Holds |
+|---|---|---|
+| 1. Committed defaults | `scripts/src/registry/app_registry.ts` | always `null` for resource ids, enforced by the `registry-valid` guard |
+| 2. Local overlay | `.starter/deployment.local.json` (gitignored) | the real ids, written by `deploy:configure` |
+| 3. Environment | `CLOUDFLARE_ACCOUNT_ID`, `CLOUDFLARE_D1_DATABASE_ID` | what CI injects instead of persisting |
 
-```ts
-export const DEPLOYMENT_CONFIG: DeploymentConfig = {
-  workerNames: { client: null, api: null },
-  d1DatabaseIds: { api: null },
-  r2BucketNames: { uploads: null },
-  customDomains: { client: null, api: null },
-};
+Read order is 3, then 2, then 1. `bun run deploy:check` names the layer that
+answered, so the next question — *is this id mine, and where did it come from?* —
+has an answer.
+
+**This layer did not exist before, and that is why provisioning never worked.**
+`deploy:configure --provision` wrote a D1 id into `wrangler.jsonc`, which is one of
+two files the tooling reads, so `deploy:check` and `db:migrate` saw `null` forever.
+The documented remedy — "add the id by hand" — pointed at `app_registry.ts`, a module
+the `registry-valid` guard *fails the build* on when it holds a literal. The one
+instruction offered could not be followed.
+
+```bash
+bun run deploy:configure -- --account <32-hex>   # the account id, no provisioning
+bun run deploy:configure -- --provision          # create D1, record the id and account
+bun run deploy:configure -- --worker api <name>  # a Worker name
 ```
+
+### Staging and production are different deployments
+
+A Worker is named once per account, so staging and production are two Workers and
+two databases. Before this was expressed, `--env staging` and `--env production`
+produced *identical plans* — the flag changed a notice and nothing else, which is
+the worst kind of no-op because the plan looked environment-specific.
+
+The overlay takes an optional `environments` map:
+
+```json
+{
+  "accountId": "…",
+  "environments": {
+    "staging":    { "workerNames": { "api": "starter-api-staging" }, "d1DatabaseIds": { "api": "…" } },
+    "production": { "workerNames": { "api": "starter-api-prod" },    "d1DatabaseIds": { "api": "…" } }
+  }
+}
+```
+
+| Overlay state | `deploy --env <that environment>` |
+|---|---|
+| no `environments` key | uses the single set — a one-environment project keeps working |
+| entry present | uses that environment's names |
+| **absent from the map** | **refused, not defaulted** |
+
+That last row is the point. Falling back for an unconfigured environment is the one
+behaviour that must not happen: a production request served by staging names would
+publish staging's Worker while the plan claimed production.
 
 `workerName` is `string | null` rather than `''`, and that is not pedantry. An
 empty string satisfies `string` while violating `minLength: 1` — the registry
 shipped failing its own schema until this was fixed, and nothing noticed. `null`
 fails the type, so the compiler catches it.
-
-Guard 5 (`bun run guard`) checks that no registry value is a literal, so a template
-cannot acquire somebody else's resource id.
 
 ## Costs
 

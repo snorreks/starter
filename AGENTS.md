@@ -16,9 +16,13 @@ explanation** rather than printing advice and exiting 0:
 
 | Command | Exit | Why |
 |---|---|---|
-| `bun run secrets:encrypt` / `secrets:decrypt` | 3 | Not implemented yet. Prints the raw `sops` invocation. |
-| `bun run scripts -- secrets init\|doctor\|edit\|exec\|update-recipients` | 3 | Advertised, not implemented. Same rule: an operation never reports a success it did not perform. |
+| `bun run secrets:edit` | 4 | Refused on purpose. `sops <file>` already edits in place; a wrapper would be a second code path to the same file. |
 | `bun run contract run <path>` (without `--dry-run`) | 3 | No execution adapter yet. `--dry-run` works. |
+
+The secrets operations that used to sit in that table now work. `encrypt`,
+`decrypt`, `init`, `doctor`, `exec` and `update-recipients` run the real `sops`
+binary and report its status; `docs/secrets.md` records what is verified against a
+real `sops` and a real `age` identity, and what is not.
 
 ## Commands
 
@@ -181,7 +185,7 @@ bun run --cwd packages/backend/database db:generate
 | [docs/cloudflare.md](docs/cloudflare.md) | deploy, D1, workers, credentials |
 | [docs/native.md](docs/native.md) | Tauri desktop and mobile |
 | [docs/logs.md](docs/logs.md) | the log CLI and its refusals |
-| [docs/secrets.md](docs/secrets.md) | SOPS, and what is not implemented |
+| [docs/secrets.md](docs/secrets.md) | SOPS: the operations, and what each one refuses |
 | [docs/agent.md](docs/agent.md) | Pi extensions and trust |
 | [docs/lint.md](docs/lint.md) | Biome and the guards |
 | [docs/toolchain.md](docs/toolchain.md) | versions and how they are pinned |

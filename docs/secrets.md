@@ -86,30 +86,90 @@ also needs.
 bun run setup:secrets            # doctor: what is installed, what is configured
 ```
 
-### `secrets:encrypt` and `secrets:decrypt` are not implemented yet
+Every operation below runs the real `sops` binary and reports **its** exit status.
+The tool refuses rather than guessing, and says which refusal applied.
 
-Both commands exist, and both currently print the raw `sops` invocations and **exit
-3**. They do not read, write or encrypt anything.
+### Getting started
 
 ```bash
-bun run secrets:encrypt -- secrets/production.env
-# NOT IMPLEMENTED. Nothing was read, written or encrypted.
-#   sops -e secrets/production.enc.env   > secrets/production.enc.env.new
-#   sops -d secrets/production.enc.env   > apps/backend/api/.dev.vars
+age-keygen -o .age/key.txt                     # your PRIVATE key. Never committed.
+grep -o 'age1.*' .age/key.txt                  # your PUBLIC key
+bun run secrets:init -- age1…                  # writes .sops.yaml with one recipient
+
+bun run secrets:encrypt -- secrets/app.enc.env # in place, requires a gitignored path
+bun run secrets:decrypt -- secrets/app.enc.env # to stdout; nothing written
 ```
 
-They used to print the same guidance and exit 0. That is worse than not having the
-commands: anything wrapping `bun run secrets:encrypt` — a script, a CI step — saw
-success and concluded a file had been encrypted.
+`secrets:init` never generates a key for you. `age-keygen` writes a private key and
+this tooling has no business creating one; you supply the public half, which is the
+only part that belongs in a repository.
 
-Real `init`, `doctor`, `edit`, `encrypt`, `decrypt`, `exec` and `update-keys`
-arrive with the phase that also wires direnv. Until then, run `sops` directly and
-keep the target path explicit.
+It also **refuses to overwrite an existing `.sops.yaml`**. Replacing one silently
+drops every other person's recipient, and their files become unreadable to them.
+
+### Running a command with a secret
+
+```bash
+bun run secrets:exec --env CLOUDFLARE_API_TOKEN=<ciphertext> -- ./scripts/deploy.sh
+```
+
+The value reaches the process's environment and never reaches a file. If any value
+fails to decrypt, **nothing is executed** — a process started with some of its
+secrets missing fails in a way that blames the program rather than the missing
+secret.
+
+A ciphertext decrypts to a whole JSON *document*, not to a bare value, so the key is
+extracted from it. Using sops' stdout directly would put `{"TOKEN":"…"}` into the
+environment — a secret that is subtly wrong in a way nothing notices until something
+tries to authenticate with it.
+
+### Adding a colleague
+
+```bash
+bun run secrets:update-recipients -- age1…
+```
+
+Existing recipients are kept. A file encrypted **before** someone joined still
+cannot be read by them — that is sops being correct, because every holder of the data
+key can read every secret, so widening access is a decision a person makes per
+file. There is deliberately no bulk re-key.
+
+### What the commands refuse, and why
+
+| Refusal | Exit | Reason |
+|---|---|---|
+| `secrets:edit` | 4 | Deliberate. `sops <file>` already edits in place; a wrapper would be a second code path to the same file. It says so. |
+| Encrypting a path git tracks | 4 | Ciphertext belongs under a name that says so. Encrypting `.dev.vars` in place commits a file that reads as a plain env file. |
+| `decrypt --out` into a tracked path | 4 | A decrypted secret in a tracked file is committed by the next `git add`. Asks `git check-ignore` rather than reimplementing ignore rules. |
+| `encrypt` with no file | 2 | The target is never guessed. Encrypting the wrong file publishes it to your team. |
+| Encrypt with no recipient configured | 3 | A file nobody can decrypt is not protected, it is lost. |
+| `update-recipients` with no config | 3 | "Update" that silently creates is how a colleague's recipient list gets replaced by yours. |
+
+`decrypt` with no `--out` writes **nothing** — the plaintext goes to stdout. That is
+the safe default: `sops -d f > somewhere` is where secrets end up in files nobody
+chose. With `--out` the file is created mode `600`.
+
+### Two things about the config that are easy to get wrong
+
+Both were found by running `sops`, not by reading its documentation carefully, and
+both are asserted in `scripts/tests/secrets.test.ts` against a real ephemeral
+`age-keygen` identity:
+
+- **`age` must be a YAML list, not a folded scalar.** `age: >-` joins its lines
+  with a space, so a *second* recipient becomes one 124-character token and every
+  subsequent encrypt fails with `failed to parse input as age key … invalid
+  character`. Verified by trying all four config shapes: only a list accepts more
+  than one recipient.
+- **`path_regex` is matched against the path as given on the command line**, not
+  resolved and not absolute. A rule for `\.env$` does **not** match `.dev.vars`. The
+  generated rules cover the names this repository uses.
 
 ### What the template ships
 
 The doctor reports the real state on a fresh clone: `sops` and `age` availability,
-whether `.sops.yaml` exists, and how many recipients it names.
+whether `.sops.yaml` exists, and how many recipients it names. It exits `3` when
+either tool is missing and `0` otherwise — an unconfigured recipient is the expected
+state of a fresh clone, not a failure.
 
 The template ships **no `.sops.yaml`, no `.age/recipients.txt` and no ciphertext**,
 because recipients identify the people who ran the extraction, not you. Create
@@ -119,6 +179,18 @@ because recipients identify the people who ran the extraction, not you. Create
 whether ciphertext belongs in the repository is your call — SOPS ciphertext is
 designed to be committed — but note that a committed encrypted file still discloses
 its recipient set and filename, which is often enough to identify who holds what.
+
+### What is verified, and what is not
+
+**Verified** by 15 tests that drive the real binaries with an identity generated per
+run: the encrypt/decrypt round trip returns the original bytes; a tracked `--out` is
+refused and the file is untouched; a recipient added later cannot read what was
+encrypted before they joined; `exec` hands the child a bare value; and each refusal
+above leaves the file exactly as it was.
+
+**NOT RUN:** these are round trips against a real `sops` in a temporary repository.
+No ciphertext produced here is committed, and nothing has been exercised against a
+real team's shared configuration.
 
 ## Checking before you publish
 
@@ -151,5 +223,7 @@ SOPS ciphertext          : 0
 Cloudflare resource ids  : all null
 ```
 
-That last one is enforced by guard 5, which fails the build if a resource id
-becomes a literal — so a template cannot acquire somebody else's account.
+That last one is enforced by the `registry-valid` guard, which fails the build if a
+resource id becomes a literal in the committed registry — so a template cannot
+acquire somebody else's account. Real ids live in the gitignored
+`.starter/deployment.local.json` instead; see [cloudflare.md](cloudflare.md).

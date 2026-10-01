@@ -596,3 +596,117 @@ describe('workspace-boundary: import scanning', () => {
     expect(guardWorkspaceBoundary(root).violations[0]?.line).toBe(6);
   });
 });
+
+describe('documented-paths: markdown links', () => {
+  // The guard originally checked backticked paths only, and its own documentation
+  // index is made of markdown links. A negative control — injecting
+  // `[nope](nope.md)` into a document — passed, which is how this was found: by
+  // asking whether the guard could fail, not by reading it.
+  //
+  // A rotten link is worse than a rotten backtick, too. The backtick is a wall of
+  // text a reader must parse; the link looks like a working reference until clicked.
+
+  const withDoc = (contents: string): string =>
+    makeTree({ 'docs/logs.md': contents, 'docs/cloudflare.md': 'exists\n' });
+
+  test('rejects a link to a file that does not exist', () => {
+    const root = withDoc('See [cloudflare](cloudflare-gone.md) for the adapter.\n');
+
+    const violations = guardDocumentedPaths(root).violations;
+    expect(violations).toHaveLength(1);
+    expect(violations[0].file).toBe('docs/logs.md');
+    expect(violations[0].message).toContain('cloudflare-gone.md');
+  });
+
+  test('rejects a repo-root-relative link, as the index uses', () => {
+    // `[docs/logs.md](docs/logs.md)` from the top level is the shape AGENTS.md and
+    // README.md use. Resolved relative to its own document it would be
+    // `docs/docs/logs.md`, so this is the case that made a doc-relative-only check
+    // look correct.
+    const root = makeTree({
+      'AGENTS.md': 'See [docs/logs.md](docs/logs.md) for the log CLI.\n',
+      'docs/logs.md': 'real\n',
+    });
+
+    expect(guardDocumentedPaths(root).violations).toEqual([]);
+  });
+
+  test('rejects a root-relative link whose target is gone', () => {
+    const root = makeTree({
+      'AGENTS.md': 'See [docs/logs.md](docs/logs-OLD.md) for the log CLI.\n',
+      'docs/logs.md': 'real\n',
+    });
+
+    const violations = guardDocumentedPaths(root).violations;
+    expect(violations).toHaveLength(1);
+    expect(violations[0].message).toContain('docs/logs-OLD.md');
+  });
+
+  test('a link that omits the extension is a broken link, and is reported', () => {
+    // A renderer resolves `[x](docs/testing)` literally, so it is broken even though
+    // `docs/testing.md` exists. A `.md` fallback was tried and removed: it made this
+    // negative control pass, and no real link here omits its extension.
+    const root = makeTree({
+      'AGENTS.md': 'See [docs/testing](docs/testing) for the four lanes.\n',
+      'docs/testing.md': 'real\n',
+    });
+
+    const violations = guardDocumentedPaths(root).violations;
+    expect(violations).toHaveLength(1);
+    expect(violations[0].message).toContain('docs/testing');
+  });
+
+  test('resolves a link relative to the document it appears in', () => {
+    // `docs/logs.md` linking to `cloudflare.md` is a sibling reference, not a
+    // repo-root one.
+    const root = withDoc('See [cloudflare](cloudflare.md) for the endpoint.\n');
+
+    expect(guardDocumentedPaths(root).violations).toEqual([]);
+  });
+
+  test('ignores anchors, and http and mailto links', () => {
+    const root = withDoc(
+      'See [the table](#where-the-events-are), [the API](https://example.com/x) and\n' +
+        '[mail](mailto:a@example.com).\n',
+    );
+
+    expect(guardDocumentedPaths(root).violations).toEqual([]);
+  });
+
+  test('exempts a link narrated as removed, so a document can record the change', () => {
+    // A document describing a removal must be able to name what was removed, or it
+    // cannot record the incident.
+    const root = withDoc('The [adapter](scripts/src/logs/gone.ts) was removed in this phase.\n');
+
+    expect(guardDocumentedPaths(root).violations).toEqual([]);
+  });
+
+  test('a link that merely looks historical is still reported', () => {
+    // The exemption is for records of removals, not a general escape hatch. My first
+    // version reused the backticked path's broader list, which contains "used to be"
+    // and "previously" — so the sentence "This used to be true: see [gone](nope.md)"
+    // waved a broken link through. That is the loophole this asserts closed: a stale
+    // link must not be dismissible with a clause that has nothing to do with it.
+    const root = withDoc('This used to be true: see [gone](nope.md).\n');
+
+    const violations = guardDocumentedPaths(root).violations;
+    expect(violations).toHaveLength(1);
+    expect(violations[0].message).toContain('nope.md');
+  });
+
+  test('the same holds for "previously" and "formerly"', () => {
+    // Both are in the broader list, and both are things a writer reaches for when
+    // describing a change that *is* still documented — not when justifying a link
+    // that no longer resolves.
+    for (const opener of ['Previously,', 'Formerly,']) {
+      const root = withDoc(`${opener} see [gone](nope.md) for the old layout.\n`);
+      expect(guardDocumentedPaths(root).violations).toHaveLength(1);
+    }
+  });
+
+  test('reports the line the link is on', () => {
+    const root = withDoc('one\ntwo\nSee [gone](nope.md) here.\n');
+
+    expect(guardDocumentedPaths(root).violations[0]?.line).toBe(3);
+  });
+});
