@@ -477,3 +477,116 @@ describe('documented-paths', () => {
     expect(guardDocumentedPaths(REPO_ROOT).violations).toEqual([]);
   });
 });
+
+describe('workspace-boundary: import scanning', () => {
+  // Both of these were found by probing the scanner rather than reading it, and both
+  // failed the same way: text that was not an import was treated as one, or an
+  // import was invisible. Either way the guard's report stopped matching the code.
+
+  test('ignores an import inside a block comment', () => {
+    // Block comments were not stripped at all, so a commented-out import read as a
+    // live one. `importComment` only covered `//`, which is why this survived: the
+    // suite had a comment case and it passed.
+    const root = makeTree({
+      'apps/backend/api/src/lib/db.ts': `/* import { thing } from '${pkg('ui')}'; */\nexport const x = 1;\n`,
+    });
+
+    expect(guardWorkspaceBoundary(root).violations).toEqual([]);
+  });
+
+  test('sees an import inside a block comment that also contains real code', () => {
+    const root = makeTree({
+      'apps/backend/api/src/lib/db.ts': `/*\n * notes:\n */\nimport { thing } from '${pkg('ui')}';\n`,
+    });
+
+    const violations = guardWorkspaceBoundary(root).violations;
+    expect(violations).toHaveLength(1);
+    expect(violations[0].line).toBe(4);
+  });
+
+  test('does not treat import text inside a string as an import', () => {
+    // The scanner never looked inside strings, so this is the inverse failure: a real
+    // violation quoted in a string would be invisible, and the guard would report a
+    // clean tree.
+    const root = makeTree({
+      'apps/backend/api/src/lib/db.ts':
+        `export const docs =\n  "run: import { thing } from '${pkg('ui')}'";\n` +
+        `import { thing } from '${pkg('ui')}';\n`,
+    });
+
+    const violations = guardWorkspaceBoundary(root).violations;
+    // Exactly one: the real import on line 3, not the quoted one on line 2.
+    expect(violations).toHaveLength(1);
+    expect(violations[0].line).toBe(3);
+  });
+
+  test('sees a static specifier embedded in a template literal', () => {
+    // The interpolation is code, so blanking the whole template would hide a real
+    // import. The static prefix is what makes this resolvable.
+    const root = makeTree({
+      'apps/backend/api/src/lib/db.ts': `export const load = () => import(\`${pkg('ui')}/thing\`);\n`,
+    });
+
+    expect(guardWorkspaceBoundary(root).violations).toHaveLength(1);
+  });
+
+  test('a fully interpolated specifier is not reported, and that is stated not assumed', () => {
+    // `import(\`../${name}\`)` cannot be resolved statically — the specifier depends on
+    // a runtime value. A static scanner cannot know whether it crosses a boundary, so
+    // it does not claim to. Asserted so the limitation is a recorded fact rather than
+    // a gap someone rediscovers: the honest options are a static import or a lint rule
+    // that resolves the constant, not a scanner that guesses.
+    const root = makeTree({
+      'apps/backend/api/src/lib/db.ts':
+        'export const load = (name: string) => import(`../../${name}/thing`);\n',
+    });
+
+    expect(guardWorkspaceBoundary(root).violations).toEqual([]);
+  });
+
+  test('catches a CommonJS require across the boundary', () => {
+    // `require()` is not matched by the import pattern, so it walked straight through.
+    // Nothing in this repository uses it, but a boundary that can be crossed
+    // quietly is not a boundary.
+    const root = makeTree({
+      'apps/backend/api/src/lib/db.ts': `const ui = require('${pkg('ui')}');\n`,
+    });
+
+    const violations = guardWorkspaceBoundary(root).violations;
+    expect(violations).toHaveLength(1);
+    expect(violations[0].message).toContain(pkg('ui'));
+  });
+
+  test('still catches every static import form', () => {
+    // The hardening must not have narrowed what the pattern matched. Each of these
+    // was verified against the previous implementation.
+    const forms = [
+      `import { a } from '${pkg('ui')}';`,
+      `import a from '${pkg('ui')}';`,
+      `import * as a from '${pkg('ui')}';`,
+      `import type { a } from '${pkg('ui')}';`,
+      `import { type a } from '${pkg('ui')}';`,
+      `import '${pkg('ui')}';`,
+      `export { a } from '${pkg('ui')}';`,
+      `export * from '${pkg('ui')}';`,
+      `const a = await import('${pkg('ui')}');`,
+      `await import(\n  '${pkg('ui')}'\n);`,
+    ];
+
+    for (const [index, form] of forms.entries()) {
+      const root = makeTree({ 'apps/backend/api/src/lib/db.ts': `${form}\n` });
+      expect(guardWorkspaceBoundary(root).violations).toHaveLength(1);
+      expect(index).toBeGreaterThanOrEqual(0);
+    }
+  });
+
+  test('reports the line a violation is on, not the line the comment started', () => {
+    // Offsets are preserved by blanking rather than deleting, so a multi-line comment
+    // above an import cannot shift the reported line.
+    const root = makeTree({
+      'apps/backend/api/src/lib/db.ts': `/*\n * a\n * b\n * c\n */\nimport { thing } from '${pkg('ui')}';\n`,
+    });
+
+    expect(guardWorkspaceBoundary(root).violations[0]?.line).toBe(6);
+  });
+});

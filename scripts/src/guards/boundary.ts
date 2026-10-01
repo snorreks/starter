@@ -76,6 +76,7 @@ export const listSourceFiles = (root: string): string[] => {
   return found;
 };
 
+const textOf = (file: string): string => readFileSync(file, 'utf8');
 const linesOf = (file: string): string[] => readFileSync(file, 'utf8').split('\n');
 
 /**
@@ -163,21 +164,200 @@ const ALLOWED_IMPORTS: Record<string, readonly string[]> = {
   tool: ['@starter/schemas', '@starter/logger', '@starter/utils'],
 };
 
-const IMPORT_PATTERN = /(?:from|import)\s*\(?\s*['"]([^'"]+)['"]/g;
+/**
+ * Static specifiers, from one pattern.
+ *
+ * Covers every form TypeScript and Svelte use: named, default, namespace,
+ * type-only, inline `type`, side-effect, `export … from`, and dynamic `import()`
+ * with a literal argument — including one spread across lines, because `\s*`
+ * matches newlines.
+ *
+ * The backtick is in the delimiter set because `` import(`…`) `` is legal and common.
+ * The previous `[^'"]+` could not match a template-literal specifier at all, so a
+ * static import written that way was invisible — and `codeOnly` goes to real trouble
+ * to preserve it.
+ */
+const IMPORT_PATTERN = /(?:from|import)\s*\(?\s*['"`]([^'"`]+)['"`]/g;
 
-const importsIn = (lines: readonly string[]): { specifier: string; line: number }[] => {
+/**
+ * `require()`, which the pattern above does not match.
+ *
+ * Nothing in this repository uses it — Bun and the Workers runtime both resolve ESM
+ * — but a CommonJS call reaching across a boundary would otherwise walk straight
+ * through this guard, and the whole point of the rule is that the boundary cannot be
+ * crossed quietly.
+ */
+const REQUIRE_PATTERN = /\brequire\s*\(\s*['"`]([^'"`]+)['"`]\s*\)/g;
+
+/**
+ * Code only: comments blanked, ordinary strings blanked, import specifiers kept.
+ *
+ * The ordering is the whole difficulty, and getting it wrong fails in opposite
+ * directions:
+ *
+ *  - Blank comments and strings *first*, and the specifier quotes go with them —
+ *    `import { a } from '@x'` becomes `import { a } from    ` and every import in
+ *    the repository disappears. That failure is silent: the guard reports a clean
+ *    tree because it sees nothing.
+ *  - Scan quotes *first*, and a commented-out import is read as a live one.
+ *
+ * So one pass handles all three, left to right: comments blank, specifier quotes
+ * kept, other quotes blanked.
+ */
+const codeOnly = (text: string): string => {
+  const KEYWORDS = ['from', 'import', 'require'];
+  const isSpecifierStart = (before: string): boolean =>
+    KEYWORDS.some((keyword) => new RegExp(`${keyword}\\s*\\(?\\s*$`).test(before));
+
+  let out = '';
+  let index = 0;
+
+  while (index < text.length) {
+    const rest = text.slice(index);
+
+    // A comment wins over anything else at this position: nothing inside it is code,
+    // so there is no reason to look for a quote in it at all.
+    const lineComment = rest.startsWith('//') ? 0 : rest.indexOf('//');
+    const blockComment = rest.startsWith('/*') ? 0 : rest.indexOf('/*');
+    const commentAt = [lineComment, blockComment]
+      .filter((at) => at !== -1)
+      .sort((a, b) => a - b)[0];
+
+    if (commentAt !== undefined && commentAt !== -1) {
+      const isBlock = rest.startsWith('/*', commentAt);
+      const end = isBlock ? rest.indexOf('*/', commentAt + 2) : rest.indexOf('\n', commentAt);
+      if (end === -1) {
+        out += ' '.repeat(rest.length);
+        break;
+      }
+      // The newline itself is kept so line numbering downstream is unaffected.
+      out += ' '.repeat(end - commentAt) + (isBlock ? '  ' : '');
+      index += isBlock ? end + 2 : end;
+      continue;
+    }
+
+    const quote = rest.search(/['"`]/);
+    if (quote === -1) {
+      out += rest;
+      break;
+    }
+
+    // Append the text before the quote first, so the lookbehind below sees it.
+    // Reading `out` before appending looks equivalent and is not: on the first
+    // iteration `out` is empty, every quote looks like an ordinary string, and the
+    // whole file reports zero imports.
+    out += rest.slice(0, quote);
+
+    if (!isSpecifierStart(out.slice(-12))) {
+      // An ordinary string. Blank it and carry on past it rather than stopping:
+      // a line can hold a string *and* a real import, and `break` here would hide
+      // the import that follows. This was the third version of this loop to get it
+      // wrong in a different direction, which is why each step has a test.
+      const opener = rest[quote];
+      const closer = CLOSER_FOR[opener] ?? opener;
+      let cursor = quote + 1;
+      let blanked = '';
+
+      while (cursor < rest.length) {
+        if (rest[cursor] === '\\') {
+          blanked += '  ';
+          cursor += 2;
+          continue;
+        }
+        if (rest[cursor] === closer) {
+          blanked += closer;
+          cursor += 1;
+          break;
+        }
+
+        // A template's `${…}` is code, not text. Blanking it would hide a real
+        // dynamic import — `` import(`./${name}.ts`) `` — behind the literal chunks
+        // around it, so the interpolation is kept and scanned normally.
+        if (opener === '`' && rest[cursor] === '$' && rest[cursor + 1] === '{') {
+          let depth = 1;
+          let scan = cursor + 2;
+          while (scan < rest.length && depth > 0) {
+            if (rest[scan] === '{') {
+              depth += 1;
+            }
+            if (rest[scan] === '}') {
+              depth -= 1;
+            }
+            scan += 1;
+          }
+          // The interpolation is code, so it is kept and scanned. Written as a template so the
+          // literal `${` and `}` around it are visible as such; a nested `${${…}}`
+          // reads as noise and Biome reports the interpolated variable as unused.
+          blanked += `\${${codeOnly(rest.slice(cursor + 2, scan - 1))}}`;
+          cursor = scan;
+          continue;
+        }
+
+        blanked += ' ';
+        cursor += 1;
+      }
+
+      out += blanked;
+      index += cursor;
+      continue;
+    }
+
+    // Keep the quotes so the pattern can read the specifier, then continue after it.
+    const opener = rest[quote];
+    const closer = CLOSER_FOR[opener] ?? opener;
+    const end = rest.indexOf(closer, quote + 1);
+    if (end === -1) {
+      out += rest.slice(quote);
+      break;
+    }
+    out += rest.slice(quote, end + 1);
+    index += end + 1;
+  }
+
+  return out;
+};
+
+/**
+ * Every static import in a file, with the line each one starts on.
+ *
+ * The whole file is scanned rather than line by line, because an import can span
+ * lines:
+ *
+ *     await import(
+ *       '@starter/ui'
+ *     );
+ *
+ * A per-line scanner sees the specifier without the `import(` that introduces it, so
+ * it misses exactly the case a boundary guard must not miss. Line numbers are
+ * recovered from the match offset against the original text, not from the blanked
+ * copy, so a multi-line block comment above an import cannot shift what is reported.
+ */
+/** The quote that closes a given opener. Identity for all three, but named so the lookup
+ * below is not a nested ternary. */
+const SINGLE = "'";
+const DOUBLE = '"';
+const BACKTICK = '`';
+const CLOSER_FOR: Record<string, string> = {
+  [SINGLE]: SINGLE,
+  [DOUBLE]: DOUBLE,
+  [BACKTICK]: BACKTICK,
+};
+
+const importsIn = (text: string): { specifier: string; line: number }[] => {
   const found: { specifier: string; line: number }[] = [];
 
-  lines.forEach((text, index) => {
-    // Only real code, not a mention inside a comment.
-    const code = text.replace(/\/\/.*$/, '').replace(/^\s*\*.*$/, '');
-    for (const match of code.matchAll(IMPORT_PATTERN)) {
+  // Blanked copy is the same length as the original, so an offset means the same line
+  // in both. That is what makes reporting a line number from the blanked scan safe.
+  const code = codeOnly(text);
+
+  for (const pattern of [IMPORT_PATTERN, REQUIRE_PATTERN]) {
+    for (const match of code.matchAll(pattern)) {
       const specifier = match[1];
       if (specifier !== undefined) {
-        found.push({ specifier, line: index + 1 });
+        found.push({ specifier, line: text.slice(0, match.index).split('\n').length });
       }
     }
-  });
+  }
 
   return found;
 };
@@ -200,7 +380,7 @@ export const guardWorkspaceBoundary = (root = REPO_ROOT): GuardResult => {
     }
 
     const allowed = ALLOWED_IMPORTS[layer] ?? [];
-    for (const { specifier, line } of importsIn(linesOf(file))) {
+    for (const { specifier, line } of importsIn(textOf(file))) {
       if (!specifier.startsWith('@starter/')) {
         continue;
       }
