@@ -21,6 +21,7 @@ import { contractCommand } from '../src/commands/contracts.ts';
 import { guardCommand } from '../src/commands/guard.ts';
 import { secretsCommand } from '../src/commands/secrets.ts';
 import { setupCommand } from '../src/commands/setup.ts';
+import { probeTools } from '../src/secrets/sops.ts';
 import { EXIT } from '../src/shared/command.ts';
 
 const quiet = async (body: () => number | Promise<number>): Promise<number> => {
@@ -232,11 +233,15 @@ describe('secrets command', () => {
     expect(code).toBe(EXIT.usage);
   });
 
-  test('doctor reports rather than refusing', async () => {
+  test('doctor reports rather than refusing, and its code reflects the host', async () => {
     const code = await quiet(() => secretsCommand.run(['doctor']));
-    // Zero when sops and age are both installed, which is the case here; the point is
-    // that it is no longer hard-coded to 3.
-    expect(code).toBe(EXIT.ok);
+
+    // Conditional on what is installed, because the whole point of `doctor` is to
+    // report the host. Asserting a fixed code made the suite green on a machine with
+    // sops and failed in CI, where neither is present — the test was asserting the
+    // host, not the command.
+    const tools = probeTools();
+    expect(code).toBe(tools.sops && tools.age ? EXIT.ok : EXIT.unavailable);
   });
 
   test('no operation at all is a usage error', async () => {

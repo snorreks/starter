@@ -264,6 +264,16 @@ export const planDeploy = (
   targets: readonly DeployTarget[],
   environment: DeploymentEnvironment,
   config: ConfigCheck = inspectConfig(),
+  /**
+   * Where the client's build output is expected.
+   *
+   * A parameter rather than a constant, because this check reads the working tree.
+   * Pointing it at the real `CLIENT_DIR` made the test suite depend on whether
+   * someone had run `bun run build`: locally green, and failing in CI, where the
+   * unit-test step runs before the build. A test that asserts against the repository
+   * is asserting against whoever cloned it last.
+   */
+  clientDir: string = CLIENT_DIR,
 ): Plan => {
   for (const target of targets) {
     if (!VALID_TARGETS.includes(target)) {
@@ -338,7 +348,7 @@ export const planDeploy = (
   // a successful deploy of a blank page. So the artifact is checked before the plan
   // is built, and the same rule as the API's `check:bundle` applies.
   const clientRequested = targets.includes('client');
-  if (clientRequested && !existsSync(join(CLIENT_DIR, 'build', 'index.html'))) {
+  if (clientRequested && !existsSync(join(clientDir, 'build', 'index.html'))) {
     return {
       ok: false,
       reason: 'The client build output is missing, so there is nothing to deploy.',

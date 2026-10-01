@@ -18,9 +18,13 @@
 // nothing. `planDeploy` takes its config check as a parameter so a plan can be
 // built and inspected here, while the refusal path is tested on its own terms.
 
-import { afterEach, describe, expect, test } from 'bun:test';
-import { existsSync, renameSync } from 'node:fs';
+import { afterAll, afterEach, describe, expect, test } from 'bun:test';
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+// For one assertion only, and deliberately: the check below is that the committed
+// `wrangler.jsonc` *is committed*, which is a fact about the repository rather than
+// about whoever last ran a build.
 import { CLIENT_DIR } from '../src/cloudflare/wrangler.ts';
 import type { ConfigCheck } from '../src/deploy/configure.ts';
 import { type DeployTarget, parseDeployArgs, planDeploy, type Step } from '../src/deploy/deploy.ts';
@@ -78,6 +82,36 @@ const withWorkerNames = <T>(body: () => T): T => {
   }
 };
 
+/**
+ * Temp client trees, one with a build output and one without.
+ *
+ * `planDeploy` refuses a client deploy whose `build/index.html` is absent, so every
+ * test that plans a client target has to say which world it is in. Reading the real
+ * `CLIENT_DIR` made the suite depend on build state — see the refusal test below for
+ * what that cost in CI.
+ */
+const makeClientTree = (withBuild: boolean): string => {
+  const dir = mkdtempSync(join(tmpdir(), 'starter-client-'));
+  created.push(dir);
+  if (withBuild) {
+    mkdirSync(join(dir, 'build'), { recursive: true });
+    writeFileSync(join(dir, 'build', 'index.html'), '<!doctype html><title>t</title>\n', 'utf8');
+  }
+  return dir;
+};
+
+/** Temp client trees, removed when the file finishes. */
+const created: string[] = [];
+
+afterAll(() => {
+  for (const dir of created.splice(0)) {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+const CLIENT_WITH_BUILD = makeClientTree(true);
+const CLIENT_WITHOUT_BUILD = makeClientTree(false);
+
 /** A plan that is guaranteed to be built, or the test fails loudly. */
 const planFor = (
   targets: readonly DeployTarget[],
@@ -85,7 +119,7 @@ const planFor = (
   config: ConfigCheck = READY,
 ): Step[] =>
   withWorkerNames(() => {
-    const plan = planDeploy(targets, environment, config);
+    const plan = planDeploy(targets, environment, config, CLIENT_WITH_BUILD);
     if (!plan.ok) {
       throw new Error(`expected a plan, got refusal: ${plan.reason}`);
     }
@@ -98,7 +132,7 @@ const planForFull = (
   config: ConfigCheck = READY,
 ) =>
   withWorkerNames(() => {
-    const plan = planDeploy(targets, environment, config);
+    const plan = planDeploy(targets, environment, config, CLIENT_WITH_BUILD);
     if (!plan.ok) {
       throw new Error(`expected a plan, got refusal: ${plan.reason}`);
     }
@@ -392,28 +426,29 @@ describe('planDeploy: steps', () => {
     // `--assets-only` against a missing `build/` does not fail loudly: wrangler
     // publishes an empty site and the command reports success. That is the failure
     // this guards — a green deploy of a blank page.
-    const buildIndex = join(CLIENT_DIR, 'build', 'index.html');
-    const existed = existsSync(buildIndex);
+    //
+    // A temp tree with no `build/`, rather than the repository's own. The first
+    // version of this test renamed the real `build/index.html` aside and restored it
+    // afterwards, which meant the suite's result depended on whether someone had run
+    // `bun run build`: green locally, and three failures in CI, where the unit-test
+    // step runs before the build. A test that asserts against the repository is
+    // asserting against whoever cloned it last.
+    const plan = withWorkerNames(() =>
+      planDeploy(['client'], 'production', READY, CLIENT_WITHOUT_BUILD),
+    );
 
-    if (existed) {
-      // Move it aside rather than deleting: the repository's own build output is not
-      // this test's to destroy, and `bun run build` is the documented way back.
-      renameSync(buildIndex, `${buildIndex}.test-away`);
+    expect(plan.ok).toBe(false);
+    if (!plan.ok) {
+      expect(plan.reason).toContain('build');
+      expect(plan.remedy).toContain('bun run build');
     }
+  });
 
-    try {
-      const plan = withWorkerNames(() => planDeploy(['client'], 'production', READY));
-
-      expect(plan.ok).toBe(false);
-      if (!plan.ok) {
-        expect(plan.reason).toContain('build');
-        expect(plan.remedy).toContain('bun run build');
-      }
-    } finally {
-      if (existed) {
-        renameSync(`${buildIndex}.test-away`, buildIndex);
-      }
-    }
+  test('a client deploy with a build is planned, so the refusal above is about the artifact', () => {
+    // The other half of the pair. Without this, a check that refused *everything*
+    // would satisfy the test above.
+    const [step] = planFor(['client'], 'production');
+    expect(step?.args).toContain('--assets-only');
   });
 
   test('the client step names its config, which now exists', () => {
