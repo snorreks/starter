@@ -19,7 +19,7 @@ import {
   type LogAdapterKind,
   resolveLogAdapter,
 } from '../registry/app_registry.ts';
-import { effectiveDeploymentValues, type DeploymentValues } from '../registry/deployment_values.ts';
+import { type DeploymentValues, effectiveDeploymentValues } from '../registry/deployment_values.ts';
 
 export type { AppId, DeploymentEnvironment, LogAdapterCapabilities, LogAdapterKind };
 export { APP_LOG_CONFIG, capabilitiesFor, resolveLogAdapter };

@@ -32,8 +32,15 @@
 
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import type { DeploymentEnvironment } from '@starter/schemas';
 import { REPO_ROOT } from '../shared/paths.ts';
-import { DEPLOYMENT_CONFIG, type DeploymentConfig } from './app_registry.ts';
+import {
+  DEPLOYMENT_CONFIG,
+  type DeploymentConfig,
+  type EnvironmentTargets,
+} from './app_registry.ts';
+
+export type { EnvironmentTargets };
 
 /** The gitignored overlay. One file, one shape, documented in docs/cloudflare.md. */
 export const LOCAL_DEPLOYMENT_FILE = '.starter/deployment.local.json';
@@ -44,6 +51,28 @@ export interface DeploymentValues {
   r2BucketNames: { uploads: string | null };
   customDomains: { client: string | null; api: string | null };
   accountId: string | null;
+  /**
+   * Per-environment targets, or absent when the project has only ever had one
+   * environment.
+   *
+   * One set of names cannot describe a real deployment: a Worker is named once per
+   * account, so staging and production are two Workers and two databases. With one
+   * set, `--env staging` and `--env production` produced identical plans — the flag
+   * changed a notice and nothing else.
+   *
+   * `Partial` because presence is the signal: a project that has only staging must
+   * be able to say so. Requiring every environment would force a placeholder entry
+   * for one that does not exist, and a placeholder is indistinguishable from a real
+   * name unless it is `null` — which is exactly the ambiguity this layer removes.
+   *
+   * `local` is included for completeness but never carries a Worker: there is no
+   * remote target for it, and `bun run dev:api` is the local story.
+   *
+   * Absent means "no per-environment layer", not "no environments": a single-set
+   * project keeps working, and `targetsFor` refuses only when the map exists and the
+   * requested environment is absent from it.
+   */
+  environments?: Partial<Record<DeploymentEnvironment, EnvironmentTargets>>;
 }
 
 const NULL_VALUES: DeploymentValues = {
@@ -107,6 +136,39 @@ const readLocalFile = (root: string): Partial<DeploymentValues> => {
     out.accountId = account;
   }
 
+  // Per-environment targets. Parsed rather than trusted: an environment whose entry
+  // is not an object is skipped, so one typo cannot make a whole plan `undefined`
+  // and silently fall back to the single set — which is the no-op this shape exists
+  // to prevent.
+  const environments = raw.environments;
+  if (typeof environments === 'object' && environments !== null) {
+    const parsed: Partial<Record<DeploymentEnvironment, EnvironmentTargets>> = {};
+    for (const [name, value] of Object.entries(environments)) {
+      if (name !== 'staging' && name !== 'production') {
+        continue;
+      }
+      if (typeof value !== 'object' || value === null) {
+        continue;
+      }
+      const entry = value as Record<string, unknown>;
+      const names = entry.workerNames as Record<string, unknown> | undefined;
+      const d1 = entry.d1DatabaseIds as Record<string, unknown> | undefined;
+
+      parsed[name] = {
+        workerNames: {
+          client: names === undefined ? null : (usable(names.client) ?? null),
+          api: names === undefined ? null : (usable(names.api) ?? null),
+        },
+        d1DatabaseIds: {
+          api: d1 === undefined ? null : (usable(d1.api) ?? null),
+        },
+      };
+    }
+    if (Object.keys(parsed).length > 0) {
+      out.environments = parsed as Record<DeploymentEnvironment, EnvironmentTargets>;
+    }
+  }
+
   return out;
 };
 
@@ -145,6 +207,9 @@ export const resolveDeploymentValues = (
   }
   if (local.accountId !== undefined) {
     merged.accountId = local.accountId;
+  }
+  if (local.environments !== undefined) {
+    merged.environments = local.environments;
   }
 
   // Layer 3: the environment, which is what CI injects instead of persisting.
@@ -243,3 +308,30 @@ export const setDeploymentValues = (next: DeploymentValues | null): void => {
 /** The effective values, honouring any injected test values. */
 export const effectiveDeploymentValues = (): DeploymentValues =>
   injected ?? resolveDeploymentValues();
+
+/**
+ * What a plan may use, given the environment it targets.
+ *
+ * Lives here rather than in `app_registry.ts` because it reads the resolved values,
+ * and putting it next to the committed defaults would make the two modules import
+ * each other.
+ *
+ * One set of names cannot describe a real deployment: a Worker is named once per
+ * account, so staging and production are two Workers and two databases. With one
+ * set, `--env staging` and `--env production` produced *identical* plans — the flag
+ * changed a notice and nothing else, which is the worst kind of no-op because the
+ * plan looked environment-specific.
+ *
+ * `null` means the caller asked for an environment this project has no topology for,
+ * and is refused rather than defaulted. Absent `environments` means the project has
+ * only ever had one, so the single set still applies.
+ */
+export const targetsFor = (environment: DeploymentEnvironment): EnvironmentTargets | null => {
+  const values = effectiveDeploymentValues();
+
+  if (values.environments === undefined) {
+    return { workerNames: values.workerNames, d1DatabaseIds: values.d1DatabaseIds };
+  }
+
+  return values.environments[environment] ?? null;
+};

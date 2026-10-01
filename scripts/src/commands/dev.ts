@@ -8,8 +8,8 @@
 // child survived teardown — so a command that worked from the repository root
 // failed from the API directory. One implementation, one owner.
 
-import { type Command, EXIT, fail, wantsHelp } from '../shared/command.ts';
 import { main as devApiMain } from '../dev-api.ts';
+import { type Command, EXIT, fail, wantsHelp } from '../shared/command.ts';
 
 const USAGE = [
   'Usage: dev api',

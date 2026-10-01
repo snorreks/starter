@@ -14,7 +14,7 @@
 // for the deploy, database and secrets modules to load, and the table has to be a
 // map of loaders rather than a static array of values for that to be true.
 
-import { EXIT, fail, type Command } from './shared/command.ts';
+import { type Command, EXIT, fail } from './shared/command.ts';
 
 type CommandLoader = () => Promise<Command>;
 

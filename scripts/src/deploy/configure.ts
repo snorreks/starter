@@ -14,18 +14,18 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import type { DeploymentEnvironment } from '@starter/schemas';
 import {
-  describeResolution,
-  localConfigProblem,
-  LOCAL_DEPLOYMENT_FILE,
-  resolveDeploymentValues,
-  type DeploymentValues,
-} from '../registry/deployment_values.ts';
-import {
   API_DIR,
   captureWrangler,
   hasCloudflareCredential,
   REPO_ROOT,
 } from '../cloudflare/wrangler.ts';
+import {
+  type DeploymentValues,
+  describeResolution,
+  LOCAL_DEPLOYMENT_FILE,
+  localConfigProblem,
+  resolveDeploymentValues,
+} from '../registry/deployment_values.ts';
 
 const WRANGLER_CONFIG = `${API_DIR}/wrangler.jsonc`;
 

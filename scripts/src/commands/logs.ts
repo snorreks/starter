@@ -22,7 +22,6 @@
 //     renderer that never interpolates them into a prompt.
 
 import { isDeploymentEnvironment, isLogLevel, type LogApp, type LogSource } from '@starter/schemas';
-import { APP_LOG_CONFIG, isAppId } from '../registry/app_registry.ts';
 import {
   DEFAULT_TAIL_MS,
   MAX_TAIL_MS,
@@ -34,6 +33,7 @@ import { buildFilter } from '../logs/filter.ts';
 import { readAllLocal, readLocal } from '../logs/local_file_adapter.ts';
 import { capabilitiesFor, resolveLogAdapter } from '../logs/registry.ts';
 import type { FlagDoc, LogQuery, LogQueryResult } from '../logs/types.ts';
+import { APP_LOG_CONFIG, isAppId } from '../registry/app_registry.ts';
 import type { Command } from '../shared/command.ts';
 
 const HARD_LIMIT_CAP = 500;

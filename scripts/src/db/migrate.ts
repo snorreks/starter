@@ -13,8 +13,8 @@
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { isDeploymentEnvironment } from '@starter/schemas';
-import { effectiveDeploymentValues } from '../registry/deployment_values.ts';
 import { runWrangler, wranglerAvailable } from '../cloudflare/wrangler.ts';
+import { effectiveDeploymentValues } from '../registry/deployment_values.ts';
 import { API_DIR, REPO_ROOT } from '../shared/paths.ts';
 
 const MIGRATIONS_DIR = join(REPO_ROOT, 'packages/backend/database/drizzle-d1');

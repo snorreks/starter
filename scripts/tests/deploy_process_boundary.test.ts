@@ -13,11 +13,11 @@
 // gate is exercised with the credential absent and present.
 
 import { afterEach, describe, expect, test } from 'bun:test';
-import { DEPLOYMENT_CONFIG } from '../src/registry/app_registry.ts';
 import { type ProcessRunner, setProcessRunner } from '../src/cloudflare/wrangler.ts';
+import { deployCommand } from '../src/commands/deploy.ts';
 import type { ConfigCheck } from '../src/deploy/configure.ts';
 import { executePlan, parseDeployArgs, planDeploy, renderPlan } from '../src/deploy/deploy.ts';
-import { deployCommand } from '../src/commands/deploy.ts';
+import { DEPLOYMENT_CONFIG } from '../src/registry/app_registry.ts';
 
 const READY: ConfigCheck = { ok: true, problems: [], notices: [] };
 

@@ -16,6 +16,8 @@ import { afterEach, describe, expect, test } from 'bun:test';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
+import { provisionDatabase } from '../src/deploy/configure.ts';
+import { DEPLOYMENT_CONFIG } from '../src/registry/app_registry.ts';
 import {
   describeResolution,
   effectiveDeploymentValues,
@@ -23,9 +25,8 @@ import {
   localConfigProblem,
   resolveDeploymentValues,
   setDeploymentValues,
+  targetsFor,
 } from '../src/registry/deployment_values.ts';
-import { DEPLOYMENT_CONFIG } from '../src/registry/app_registry.ts';
-import { provisionDatabase } from '../src/deploy/configure.ts';
 
 const created: string[] = [];
 
@@ -331,5 +332,156 @@ describe('provisionDatabase', () => {
     } finally {
       restore();
     }
+  });
+});
+
+describe('targetsFor', () => {
+  // Gap 4: one set of names cannot describe a real deployment. A Worker is named
+  // once per account, so staging and production are two Workers and two databases.
+  // With one set, `--env staging` and `--env production` produced identical plans —
+  // the flag changed a notice and nothing else.
+
+  const base = {
+    workerNames: { client: null, api: 'single-api' },
+    d1DatabaseIds: { api: 'single-db' },
+    r2BucketNames: { uploads: null },
+    customDomains: { client: null, api: null },
+    accountId: 'a'.repeat(32),
+  };
+
+  test('falls back to the single set when no per-environment layer exists', () => {
+    // A project that has only ever had one environment must keep working.
+    setDeploymentValues(base);
+
+    const staging = targetsFor('staging');
+    const production = targetsFor('production');
+
+    expect(staging?.workerNames.api).toBe('single-api');
+    expect(production?.workerNames.api).toBe('single-api');
+  });
+
+  test('gives each environment its own Worker and database', () => {
+    setDeploymentValues({
+      ...base,
+      environments: {
+        staging: {
+          workerNames: { client: 'client-staging', api: 'api-staging' },
+          d1DatabaseIds: { api: 'db-staging' },
+        },
+        production: {
+          workerNames: { client: 'client-prod', api: 'api-prod' },
+          d1DatabaseIds: { api: 'db-prod' },
+        },
+      },
+    });
+
+    const staging = targetsFor('staging');
+    const production = targetsFor('production');
+
+    expect(staging?.workerNames.api).toBe('api-staging');
+    expect(production?.workerNames.api).toBe('api-prod');
+    expect(staging?.d1DatabaseIds.api).toBe('db-staging');
+    expect(production?.d1DatabaseIds.api).toBe('db-prod');
+  });
+
+  test('refuses an environment the project has no topology for', () => {
+    // Only staging is configured. Defaulting to the single set here would be the
+    // worst outcome available: a production request served by staging names.
+    setDeploymentValues({
+      ...base,
+      environments: {
+        staging: {
+          workerNames: { client: null, api: 'api-staging' },
+          d1DatabaseIds: { api: 'db-staging' },
+        },
+      },
+    });
+
+    expect(targetsFor('staging')).not.toBeNull();
+    expect(targetsFor('production')).toBeNull();
+  });
+
+  test('an unprovisioned environment is null, not a fallback', () => {
+    // `null` for a name inside a configured environment means "not provisioned",
+    // which is a refusal at the plan level — distinct from the environment being
+    // absent from the map entirely.
+    setDeploymentValues({
+      ...base,
+      environments: {
+        staging: {
+          workerNames: { client: null, api: 'api-staging' },
+          d1DatabaseIds: { api: null },
+        },
+        production: {
+          workerNames: { client: null, api: 'api-prod' },
+          d1DatabaseIds: { api: 'db-prod' },
+        },
+      },
+    });
+
+    const staging = targetsFor('staging');
+    expect(staging?.workerNames.api).toBe('api-staging');
+    expect(staging?.d1DatabaseIds.api).toBeNull();
+  });
+
+  test('reads per-environment targets from the local file', () => {
+    const root = makeTree({
+      [LOCAL_DEPLOYMENT_FILE]: local({
+        accountId: 'a'.repeat(32),
+        environments: {
+          staging: {
+            workerNames: { api: 'from-file-staging' },
+            d1DatabaseIds: { api: 'db-staging' },
+          },
+          production: {
+            workerNames: { api: 'from-file-prod' },
+            d1DatabaseIds: { api: 'db-prod' },
+          },
+        },
+      }),
+    });
+
+    const values = resolveDeploymentValues({}, root);
+    expect(values.environments?.staging?.workerNames.api).toBe('from-file-staging');
+    expect(values.environments?.production?.d1DatabaseIds.api).toBe('db-prod');
+    // And the single set stays empty, so a project that configures per-environment
+    // is not also deployable against a nameless default.
+    expect(values.workerNames.api).toBeNull();
+  });
+
+  test('an unknown environment name in the file is ignored, not trusted', () => {
+    // A typo must not become a topology. `prodution` is not `production`, and
+    // treating it as one would make `targetsFor('production')` return null for a
+    // project that plainly meant to configure it.
+    const root = makeTree({
+      [LOCAL_DEPLOYMENT_FILE]: local({
+        environments: {
+          prodution: {
+            workerNames: { api: 'typo-api' },
+            d1DatabaseIds: { api: 'typo-db' },
+          },
+        },
+      }),
+    });
+
+    const values = resolveDeploymentValues({}, root);
+    expect(values.environments).toBeUndefined();
+  });
+
+  test('an environment entry that is not an object is skipped', () => {
+    // One malformed entry must not make the whole map `undefined` and fall back to
+    // the single set — which is the no-op this layer exists to prevent.
+    const root = makeTree({
+      [LOCAL_DEPLOYMENT_FILE]: local({
+        environments: {
+          staging: { workerNames: { api: 'ok-api' }, d1DatabaseIds: { api: 'ok-db' } },
+          production: 'not-an-object',
+        },
+      }),
+    });
+
+    const values = resolveDeploymentValues({}, root);
+    expect(values.environments?.staging?.workerNames.api).toBe('ok-api');
+    expect(values.environments?.production).toBeUndefined();
   });
 });

@@ -21,10 +21,10 @@
 // asserting on a constant, so a test can prove nothing was spawned on refusal.
 
 import { afterEach, describe, expect, test } from 'bun:test';
-import { setDeploymentValues } from '../src/registry/deployment_values.ts';
-import { DEFAULT_TAIL_MS, MAX_TAIL_MS, tailCloudflare } from '../src/logs/cloudflare_adapter.ts';
 import { setStreamBinary, setStreamRunner } from '../src/cloudflare/wrangler.ts';
+import { DEFAULT_TAIL_MS, MAX_TAIL_MS, tailCloudflare } from '../src/logs/cloudflare_adapter.ts';
 import type { LogQuery } from '../src/logs/types.ts';
+import { setDeploymentValues } from '../src/registry/deployment_values.ts';
 
 const NOW = 1_760_000_000_000;
 

@@ -28,10 +28,10 @@ export interface GuardResult {
   violations: Violation[];
 }
 
+import { checkMirrors } from '../setup/pins.ts';
 // Shared with every other module, so there is one answer to "where is the repo".
 // See scripts/src/shared/paths.ts for why this is not recomputed here.
 import { REPO_ROOT } from '../shared/paths.ts';
-import { checkMirrors } from '../setup/pins.ts';
 
 export { REPO_ROOT };
 

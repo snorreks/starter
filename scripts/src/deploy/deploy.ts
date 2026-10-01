@@ -37,7 +37,7 @@ import {
   setProcessRunner,
   wranglerAvailable,
 } from '../cloudflare/wrangler.ts';
-import { LOCAL_DEPLOYMENT_FILE, effectiveDeploymentValues } from '../registry/deployment_values.ts';
+import { LOCAL_DEPLOYMENT_FILE, targetsFor } from '../registry/deployment_values.ts';
 import { type ConfigCheck, inspectConfig } from './configure.ts';
 
 export type DeployTarget = 'api' | 'client';
@@ -301,8 +301,24 @@ export const planDeploy = (
 
   const notices = [...config.notices];
 
+  // The environment selects which Worker and database this plan touches. With one set
+  // of names for every environment, `--env staging` and `--env production` produced
+  // identical plans — the flag changed a notice and nothing else, which is the worst
+  // kind of no-op because the plan looked environment-specific.
+  const scoped = targetsFor(environment);
+  if (scoped === null) {
+    return {
+      ok: false,
+      reason: `This project has no "${environment}" targets configured.`,
+      remedy:
+        `Add an "environments" object with a "${environment}" entry to ${LOCAL_DEPLOYMENT_FILE},\n` +
+        `  or remove it to fall back to the single set of names. Refusing rather than\n` +
+        '  defaulting: a staging request served by production names is the worst outcome here.',
+    };
+  }
+
   for (const target of targets) {
-    const workerName = effectiveDeploymentValues().workerNames[target];
+    const workerName = scoped.workerNames[target];
     if (workerName === null) {
       return {
         ok: false,
@@ -345,7 +361,7 @@ export const planDeploy = (
       // that carried its own name would make the plan a description of one thing and
       // the execution another.
       '--name',
-      effectiveDeploymentValues().workerNames[target] as string,
+      scoped.workerNames[target] as string,
       ...(target === 'client' ? ['--assets-only', '--config', 'wrangler.jsonc'] : []),
       ...(target === 'api' ? ['--config', `${API_DIR}/wrangler.jsonc`] : []),
     ],

@@ -4,10 +4,10 @@
 // three entrypoints are one command with three actions rather than three commands
 // with overlapping names.
 
-import { type Command, EXIT, fail, wantsHelp } from '../shared/command.ts';
 import { main as migrateMain } from '../db/migrate.ts';
 import { main as seedMain } from '../db/seed.ts';
 import { main as statusMain } from '../db/status.ts';
+import { type Command, EXIT, fail, wantsHelp } from '../shared/command.ts';
 
 const USAGE = [
   'Usage: db migrate (--local | --remote <staging|production> [--yes]) [--dry-run]',

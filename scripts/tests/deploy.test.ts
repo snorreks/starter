@@ -22,13 +22,14 @@ import { afterEach, describe, expect, test } from 'bun:test';
 import { existsSync, renameSync } from 'node:fs';
 import { join } from 'node:path';
 import { CLIENT_DIR } from '../src/cloudflare/wrangler.ts';
+import type { ConfigCheck } from '../src/deploy/configure.ts';
+import { type DeployTarget, parseDeployArgs, planDeploy, type Step } from '../src/deploy/deploy.ts';
 import { DEPLOYMENT_CONFIG } from '../src/registry/app_registry.ts';
 import {
   effectiveDeploymentValues,
+  LOCAL_DEPLOYMENT_FILE,
   setDeploymentValues,
 } from '../src/registry/deployment_values.ts';
-import type { ConfigCheck } from '../src/deploy/configure.ts';
-import { type DeployTarget, parseDeployArgs, planDeploy, type Step } from '../src/deploy/deploy.ts';
 
 /** A configuration that passes every check. */
 const READY: ConfigCheck = { ok: true, problems: [], notices: [] };
@@ -564,5 +565,78 @@ describe('planDeploy: notices', () => {
     });
 
     expect(plan.notices).toContain('No custom domain configured; *.workers.dev only.');
+  });
+});
+
+describe('per-environment targets', () => {
+  // Gap 4. With one set of names, `--env staging` and `--env production` produced
+  // *identical* plans: the flag changed a notice and nothing else. The plan looked
+  // environment-specific, so the difference had to be asserted at the plan, not only
+  // at the resolver.
+
+  const withEnvironments = (body: () => void): void => {
+    const current = effectiveDeploymentValues();
+    setDeploymentValues({
+      ...current,
+      environments: {
+        staging: {
+          workerNames: { client: 'client-staging', api: 'api-staging' },
+          d1DatabaseIds: { api: 'db-staging' },
+        },
+        production: {
+          workerNames: { client: 'client-prod', api: 'api-prod' },
+          d1DatabaseIds: { api: 'db-prod' },
+        },
+      },
+    });
+    try {
+      body();
+    } finally {
+      setDeploymentValues(null);
+    }
+  };
+
+  test('staging and production deploy different Worker names', () => {
+    withEnvironments(() => {
+      const staging = planFor(['api'], 'staging');
+      const production = planFor(['api'], 'production');
+
+      const nameOf = (steps: Step[]): string => {
+        const index = steps[0]?.args.indexOf('--name') ?? -1;
+        return steps[0]?.args[index + 1] ?? '';
+      };
+
+      expect(nameOf(staging)).toBe('api-staging');
+      expect(nameOf(production)).toBe('api-prod');
+      // The decisive assertion: the two plans are not the same plan.
+      expect(staging[0]?.args).not.toEqual(production[0]?.args);
+    });
+  });
+
+  test('an environment with no configured targets is refused, not defaulted', () => {
+    const current = effectiveDeploymentValues();
+    // Only staging exists. A production request must not be served by the single set.
+    setDeploymentValues({
+      ...current,
+      environments: {
+        staging: {
+          workerNames: { client: 'client-staging', api: 'api-staging' },
+          d1DatabaseIds: { api: 'db-staging' },
+        },
+      },
+    });
+
+    try {
+      const plan = planDeploy(['api'], 'production', READY);
+
+      expect(plan.ok).toBe(false);
+      if (!plan.ok) {
+        expect(plan.reason).toContain('production');
+        // The remedy says what to write, not just that it is missing.
+        expect(plan.remedy).toContain(LOCAL_DEPLOYMENT_FILE);
+      }
+    } finally {
+      setDeploymentValues(null);
+    }
   });
 });

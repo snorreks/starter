@@ -268,6 +268,30 @@ export const APP_LOG_CONFIG: Record<AppId, AppLogConfig> = {
 };
 
 /**
+ * Per-environment resource identity.
+ *
+ * One set of names and ids could not describe a real deployment: a Worker is named
+ * once per account, so staging and production are two Workers, and a D1 database
+ * per environment. With one set, `--env staging` and `--env production` produced
+ * *identical* plans, so the flag changed a notice and nothing else — the worst kind
+ * of no-op, because the plan looked environment-specific and was not.
+ *
+ * Shape is deliberately `{ [environment]: { … } }` rather than a `Record` with an
+ * optional key: an environment with no entry must not silently fall back to
+ * another environment's Worker. A missing key is a refusal, and `deploy --env`
+ * refuses.
+ */
+export interface EnvironmentTargets {
+  workerNames: { client: string | null; api: string | null };
+  d1DatabaseIds: { api: string | null };
+}
+
+// `Partial`: presence is the signal. A project with only staging must be able to say so
+// without a placeholder for production, and a placeholder is indistinguishable from a
+// real name unless it is `null` — the ambiguity this layer removes.
+export type PerEnvironment = Partial<Record<DeploymentEnvironment, EnvironmentTargets>>;
+
+/**
  * Resolve the adapter kind that will serve a query, or an explicit reason.
  *
  * `follow` is what selects between the two, and getting that wrong is how
