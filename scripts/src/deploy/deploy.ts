@@ -25,6 +25,8 @@
 //     words out and defaulting to "both" turns `--app clientt` into a production
 //     deploy of the wrong app.
 
+import { existsSync } from 'node:fs';
+import { join } from 'node:path';
 import type { DeploymentEnvironment } from '@starter/schemas';
 import {
   API_DIR,
@@ -35,7 +37,7 @@ import {
   setProcessRunner,
   wranglerAvailable,
 } from '../cloudflare/wrangler.ts';
-import { DEPLOYMENT_CONFIG } from '../registry/app_registry.ts';
+import { LOCAL_DEPLOYMENT_FILE, targetsFor } from '../registry/deployment_values.ts';
 import { type ConfigCheck, inspectConfig } from './configure.ts';
 
 export type DeployTarget = 'api' | 'client';
@@ -262,6 +264,16 @@ export const planDeploy = (
   targets: readonly DeployTarget[],
   environment: DeploymentEnvironment,
   config: ConfigCheck = inspectConfig(),
+  /**
+   * Where the client's build output is expected.
+   *
+   * A parameter rather than a constant, because this check reads the working tree.
+   * Pointing it at the real `CLIENT_DIR` made the test suite depend on whether
+   * someone had run `bun run build`: locally green, and failing in CI, where the
+   * unit-test step runs before the build. A test that asserts against the repository
+   * is asserting against whoever cloned it last.
+   */
+  clientDir: string = CLIENT_DIR,
 ): Plan => {
   for (const target of targets) {
     if (!VALID_TARGETS.includes(target)) {
@@ -299,15 +311,51 @@ export const planDeploy = (
 
   const notices = [...config.notices];
 
+  // The environment selects which Worker and database this plan touches. With one set
+  // of names for every environment, `--env staging` and `--env production` produced
+  // identical plans — the flag changed a notice and nothing else, which is the worst
+  // kind of no-op because the plan looked environment-specific.
+  const scoped = targetsFor(environment);
+  if (scoped === null) {
+    return {
+      ok: false,
+      reason: `This project has no "${environment}" targets configured.`,
+      remedy:
+        `Add an "environments" object with a "${environment}" entry to ${LOCAL_DEPLOYMENT_FILE},\n` +
+        `  or remove it to fall back to the single set of names. Refusing rather than\n` +
+        '  defaulting: a staging request served by production names is the worst outcome here.',
+    };
+  }
+
   for (const target of targets) {
-    const workerName = DEPLOYMENT_CONFIG.workerNames[target];
+    const workerName = scoped.workerNames[target];
     if (workerName === null) {
       return {
         ok: false,
         reason: `No Worker name is configured for "${target}" in the ${environment} environment.`,
-        remedy: 'Set workerNames in packages/shared/schemas/src/registry/app_registry.ts.',
+        // Named the file the tooling reads, not the committed registry: the
+        // `registry-valid` guard fails the build on a literal id there, so telling
+        // an operator to edit that module sent them into a dead end.
+        remedy:
+          `bun run deploy:configure -- --worker ${target} <name>\n` +
+          `  (recorded in ${LOCAL_DEPLOYMENT_FILE}, which is gitignored)`,
       };
     }
+  }
+
+  // A static deploy needs something to deploy. `--assets-only` against a missing
+  // `build/` does not fail loudly: wrangler publishes an empty site, which reads as
+  // a successful deploy of a blank page. So the artifact is checked before the plan
+  // is built, and the same rule as the API's `check:bundle` applies.
+  const clientRequested = targets.includes('client');
+  if (clientRequested && !existsSync(join(clientDir, 'build', 'index.html'))) {
+    return {
+      ok: false,
+      reason: 'The client build output is missing, so there is nothing to deploy.',
+      remedy:
+        'Run `bun run build` first, then `bun run check:bundle` to confirm the artifact.\n' +
+        '  A client deploy with no build/ would publish an empty site and report success.',
+    };
   }
 
   const steps: Step[] = targets.map((target) => ({
@@ -318,7 +366,13 @@ export const planDeploy = (
       'deploy',
       '--env',
       environment,
-      ...(target === 'client' ? ['--assets-only'] : []),
+      // The Worker name is passed explicitly rather than read from each config, so
+      // the name `deploy:check` printed is the name that gets deployed. A config
+      // that carried its own name would make the plan a description of one thing and
+      // the execution another.
+      '--name',
+      scoped.workerNames[target] as string,
+      ...(target === 'client' ? ['--assets-only', '--config', 'wrangler.jsonc'] : []),
       ...(target === 'api' ? ['--config', `${API_DIR}/wrangler.jsonc`] : []),
     ],
     cwd: target === 'client' ? CLIENT_DIR : API_DIR,

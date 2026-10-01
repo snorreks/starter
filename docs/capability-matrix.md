@@ -48,9 +48,9 @@ Not meaningful until someone supplies the prerequisite.
 |---|---|---|
 | Real deploy | a Cloudflare account, a token, Worker names, a D1 id | `bun run deploy:configure` then `bun run deploy --yes` |
 | Remote migrations | the above, plus explicit confirmation | `bun run db:migrate --remote staging --yes` |
-| Cloudflare historical logs | the above | `bun run logs api --mode staging` |
-| Historical log query | **not implemented** — see below | `bun run logs api --mode staging` |
-| SOPS encrypt/decrypt | **not implemented** — exits 3 | `bun run secrets:encrypt` |
+| Cloudflare historical logs | the above, plus an account id | `bun run logs api --mode staging` |
+| Historical log query | implemented; **no live call has been made** — see below | `bun run logs api --mode staging` |
+| SOPS encrypt/decrypt | `sops` and `age` on PATH, plus your own recipient | `bun run secrets:encrypt -- <gitignored-path>` |
 | Visual inspection | a vision-capable provider and an adapter | `bun run e2e:visual` |
 | Contract execution | **not implemented** — exits 3 | `bun run contract run <path>` |
 
@@ -69,26 +69,54 @@ Deliberately absent. Each is the operator's to supply.
 
 Named so nobody discovers them as a surprise. Each is a later phase's scope.
 
-- **Cloudflare historical logging is a stub.** `queryCloudflareHistory` never sends
-  a provider request and returns `retrieval_failed` once configuration checks pass.
-  It also conflates the Workers Logs query API with Logpush. The Workers
-  Observability REST API is the right default; Logpush is a separate optional
-  capability. Nothing in this repository should be read as evidence that Cloudflare
-  log querying works.
-- **Live tail assumes each input line is an application `LogEvent`** rather than
-  validating and extracting events from the provider envelope, and has no coverage
-  of its process lifecycle or exit reporting.
-- **`deploy:configure` writes a D1 id to `wrangler.jsonc` but not to the registry**
-  that `deploy:check` reads, despite text that claimed it updated both.
-- **The deployment registry has one set of names and ids**, not distinct
-  staging/production targets, and Worker names are validated without being the
-  source of the actual Wrangler destination.
-- **No client Wrangler config exists** for the advertised client deployment, and the
-  static frontend's local Vite API proxy has no production equivalent.
-- **Whole-repository guards are declared with inputs limited to `scripts` source**,
-  so an unrelated application edit can evade their intended scope.
-- **Boundary guards use regexes and hardcoded package names**, so relative imports
-  crossing workspace boundaries and some import syntaxes evade them.
+### A historical log query has never been sent
+
+`queryCloudflareHistory` builds a real Workers Observability request and parses a
+real response. **It has not been run against a provisioned account.** The request
+shape is asserted against the endpoint's documented contract, and the response
+handling is driven against a recorded fixture in
+`scripts/tests/fixtures/observability_response.json` — so the transport is
+fixture-verified and the live path is NOT RUN.
+
+`docs/cloudflare.md` records the endpoint contract this is written against. The one
+thing to check first with a credential is the token scope, which is
+`Workers Observability Write` even for a read.
+
+This is a much smaller gap than it was. The previous version was not a stub that
+returned nothing — it sent a request built from a *free-text filter string*, which
+is Logpush's format, to an endpoint that takes structured filters. Its tests were
+green because they asserted that string. It either 400'd, or had its narrowing
+ignored and returned every event in the window while reporting a filtered count.
+A future gap worth naming: a `rows_read: 0` response with a populated `data` array
+has been reported for API-token queries the dashboard answers, so the CLI reports
+`rows_read` rather than treating it as authoritative.
+
+### Logpush is a claimed capability with no implementation
+
+The registry lists Logpush for staging and production. No Logpush job is created,
+no filter is registered, and nothing reads the bucket. Treat it as absent.
+
+### The static frontend has no production API equivalent of its Vite proxy
+
+In development the client's Vite server proxies `/api` to the Worker. A deployed
+client is static assets, so there is no proxy — a deployed client needs either a
+custom domain with a route on the same zone, or an absolute API base URL built at
+build time. Neither is wired.
+
+### Everything else in this list is closed
+
+Recorded here because a gap list that keeps entries which no longer exist is
+misleading in the same direction as one that omits real ones. Each was closed with
+a negative control, and each fix found something larger than the entry described:
+
+| Was listed as | Actually was | Now |
+|---|---|---|
+| Live tail has no coverage of its lifecycle | `bun run logs api --follow` was **dead** in every remote environment: `resolveLogAdapter` returned the historical adapter, and the tail then refused with "needs the wrangler-tail adapter" | resolves by capability; 8 tests, 6 of which fail if the old selection returns |
+| `deploy:configure` writes the D1 id only to `wrangler.jsonc` | the registry was **never written at all**, so provisioning could not complete — and the documented remedy pointed at a module the `registry-valid` guard fails the build on | three layers: committed defaults, a gitignored `.starter/deployment.local.json`, then the environment |
+| The registry has one set of names | `--env staging` and `--env production` produced **identical plans** | per-environment targets; an unconfigured environment is refused, not defaulted |
+| No client Wrangler config | `deploy --client` had nothing to deploy, and a missing `build/` publishes an empty site while reporting success | `wrangler.jsonc`; a client deploy is refused without `build/index.html` |
+| Whole-repo guards' inputs are limited to `scripts` | **not a real gap** — the guard task already sets `cache: false` and explains why, and both controls fire from `apps/` | verified, not changed |
+| Boundary guards use regexes | they reported imports inside **block comments** as violations, missed `require()`, missed template-literal specifiers, and missed imports spanning lines | scanner reads the whole file, blanks comments and strings while preserving specifiers |
 
 ## Host prerequisites the lanes need
 
@@ -98,9 +126,39 @@ Not part of the repository, but a missing one presents as a confusing failure.
 |---|---|---|
 | `node` on PATH | `test:integration`, `e2e` | `env: 'node': No such file or directory`, then a 4-minute readiness timeout |
 | Chromium's shared libraries (`libglib-2.0.so.0`, `libnss3`, `libgbm`, X11, …) | `test:browser`, `e2e` | `error while loading shared libraries`, reported as `Target page, context or browser has been closed` |
+| `CHROMIUM_PATH` pointing at a runnable browser | `test:browser`, `e2e` | Playwright falls back to its own download, which is absent on NixOS |
+| the `chromium_headless_shell` store path | `test:browser` **only** | `Executable doesn't exist at …/bin/chromium_headless_shell-1243/…` |
 | `cargo` and the system webview libraries | `tauri:*` | `cargo is not on PATH` (named explicitly by the launcher) |
 | Xcode / Android SDK + NDK | mobile builds | named explicitly by the launcher |
 
 On NixOS these come from a dev shell, which arrives with the direnv phase. Until
 then, provide them yourself; the commands above name each missing one rather than
 failing silently.
+
+### `test:browser` needs one thing the dev shell does not provide
+
+`bun run test:browser` is the one lane that does not run on a stock
+`nix develop`, and the reason is worth stating rather than rediscovering:
+
+- `pkgs.chromium` is the browser **wrapper**. It runs, and `e2e` passes with it.
+- `chromium_headless_shell` is a **separate** store path. The dev shell does not
+  pull it in.
+- `vitest-browser` with `headless: true` resolves that shell, so it looks for an
+  executable that is not there. `playwright.config.ts` does not, because
+  `chromium.launch()` uses the full browser — which is why `e2e` (17 specs) and
+  `test:integration` (12 specs) pass while this lane cannot start.
+
+Setting `channel: 'chromium'` in the instance or in `launch` does **not** redirect
+the resolution; it was tried and reverted rather than shipped unverified.
+
+To run it, make the headless shell reachable, then re-run:
+
+```bash
+ls -d "$(dirname "$(readlink -f "$(command -v chromium)")")"/chromium_headless_shell-*
+nix develop -c bun run test:browser
+```
+
+As of the commit that closed the remaining capability gaps, this lane is **NOT
+RUN**. It fails identically on `main` in a clean worktree, so it is not a
+regression from that work — but it is also not verified, and the suite behind it has
+not been observed passing here.

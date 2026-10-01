@@ -12,14 +12,42 @@
 // network: `runBounded`/`setProcessRunner` replaces the spawn, and the consent
 // gate is exercised with the credential absent and present.
 
-import { afterEach, describe, expect, test } from 'bun:test';
-import { DEPLOYMENT_CONFIG } from '../src/registry/app_registry.ts';
+import { afterAll, afterEach, describe, expect, test } from 'bun:test';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { type ProcessRunner, setProcessRunner } from '../src/cloudflare/wrangler.ts';
+import { deployCommand } from '../src/commands/deploy.ts';
 import type { ConfigCheck } from '../src/deploy/configure.ts';
 import { executePlan, parseDeployArgs, planDeploy, renderPlan } from '../src/deploy/deploy.ts';
-import { deployCommand } from '../src/commands/deploy.ts';
+import { DEPLOYMENT_CONFIG } from '../src/registry/app_registry.ts';
 
 const READY: ConfigCheck = { ok: true, problems: [], notices: [] };
+
+/**
+ * A client tree with a build output, in a temp directory.
+ *
+ * `planDeploy` refuses a client deploy whose `build/index.html` is absent, so a test
+ * that plans one has to say which world it is in. Pointing it at the repository's own
+ * `CLIENT_DIR` made this suite's result depend on whether someone had run
+ * `bun run build` — green locally, failing in CI, where the unit-test step runs before
+ * the build.
+ */
+const CLIENT_WITH_BUILD = (): string => {
+  const dir = mkdtempSync(join(tmpdir(), 'starter-boundary-client-'));
+  mkdirSync(join(dir, 'build'), { recursive: true });
+  writeFileSync(join(dir, 'build', 'index.html'), '<!doctype html><title>t</title>\n', 'utf8');
+  created.push(dir);
+  return dir;
+};
+
+const created: string[] = [];
+
+afterAll(() => {
+  for (const dir of created.splice(0)) {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
 
 const savedWorkerNames = { ...DEPLOYMENT_CONFIG.workerNames };
 const savedToken = process.env.CLOUDFLARE_API_TOKEN;
@@ -246,7 +274,7 @@ describe('the process boundary', () => {
     const { spawned, runner } = recordSpawns({ run: () => 7 });
     setProcessRunner(runner);
 
-    const plan = planDeploy(['api', 'client'], 'staging', READY);
+    const plan = planDeploy(['api', 'client'], 'staging', READY, CLIENT_WITH_BUILD());
     expect(plan.ok).toBe(true);
     if (!plan.ok) {
       return;

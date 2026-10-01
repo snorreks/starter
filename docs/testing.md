@@ -226,7 +226,7 @@ a test that checks nothing.
 
 Three techniques used in this repository:
 
-**Make the failure reachable.** `scripts/src/lib/guards/guards.test.ts` writes
+**Make the failure reachable.** `scripts/tests/guards.test.ts` writes
 throwaway trees under a temp directory rather than asserting against the
 repository. The Pi loader smoke test does the same: it writes a deliberately
 misplaced module into a *temporary* extensions directory and asserts the loader

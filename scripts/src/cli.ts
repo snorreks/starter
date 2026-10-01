@@ -14,7 +14,7 @@
 // for the deploy, database and secrets modules to load, and the table has to be a
 // map of loaders rather than a static array of values for that to be true.
 
-import { EXIT, fail, type Command } from './shared/command.ts';
+import { type Command, EXIT, fail } from './shared/command.ts';
 
 type CommandLoader = () => Promise<Command>;
 
@@ -49,7 +49,7 @@ const renderHelp = async (): Promise<string> => {
     'Commands:',
     ...summaries,
     '',
-    'Exit codes: 0 ok, 1 the work failed, 2 bad invocation, 3 prerequisite unavailable.',
+    'Exit codes: 0 ok, 1 the work failed, 2 bad invocation, 3 prerequisite unavailable, 4 refused.',
   ].join('\n');
 };
 

@@ -23,7 +23,7 @@ nobody runs.
 
 | App | Local | staging / production |
 |---|---|---|
-| `api` | `/tmp/starter-logs/api.ndjson` | Cloudflare Logpush, then `wrangler tail` |
+| `api` | `/tmp/starter-logs/api.ndjson` | Workers Observability query, or `wrangler tail` for `--follow` |
 | `client` | the **same file** | not available |
 
 There is no `client.ndjson`, and that is not an oversight: **a browser cannot
@@ -89,13 +89,13 @@ cannot filter by user id or trace id:
 $ bun run logs api --mode production --uid user_abc --follow
 [api] status=capability_unsupported
 This adapter cannot filter by user id. `wrangler tail` is a live event stream
-with no index, so it cannot filter by any field. Use `--mode local` or an
-environment with Logpush enabled.
+with no index, so it cannot filter by any field. Drop --follow to use the
+Workers Observability query, which can filter by user id, or use --mode local.
 ```
 
 Silently returning everything in answer to `--uid` would look exactly like "this
 user has no events" — so it is an error instead. The capabilities each adapter
-declares live in `packages/shared/schemas/src/registry/app_registry.ts`, and the
+declares live in `scripts/src/registry/app_registry.ts`, and the
 CLI checks them *before* building a filter.
 
 ## Redaction

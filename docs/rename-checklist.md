@@ -41,25 +41,19 @@ same code build as a mobile library as well as a desktop binary, and dropping
 bun run deploy:configure -- --provision
 ```
 
-This creates the D1 database and writes its id into `wrangler.jsonc` and
-`DEPLOYMENT_CONFIG`. It creates no Worker and deploys nothing.
+This creates the D1 database and records its id in
+`.starter/deployment.local.json`, plus the database entry in `wrangler.jsonc`.
+It creates no Worker and deploys nothing.
 
-Then set Worker names:
+Then set the account and Worker names in the gitignored local configuration:
 
-**`packages/shared/schemas/src/registry/app_registry.ts`**
-
-```ts
-export const DEPLOYMENT_CONFIG: DeploymentConfig = {
-  workerNames: { client: 'your-app-client', api: 'your-app-api' },
-  d1DatabaseIds: { api: '<provisioned id>' },
-  r2BucketNames: { uploads: null },
-  customDomains: { client: null, api: null },
-};
+```bash
+bun run deploy:configure -- --account <account-id> --worker api your-app-api
+bun run deploy:configure -- --account <account-id> --worker client your-app-client
 ```
 
-Use `null`, never `''`, for anything unprovisioned. Guard 5 fails the build on a
-literal resource id, and it is there because a template that ships an id points
-every new user at one account.
+Keep unprovisioned values in `scripts/src/registry/app_registry.ts` as `null`.
+Guard 5 rejects literal resource IDs in that committed template configuration.
 
 ## 3. Replace the demo entity
 
@@ -76,7 +70,7 @@ The pieces to remove, in dependency order:
 2. `packages/backend/database/src/lib/schema.ts` — the `notes` table
 3. a migration: `bun run db:generate && bun run db:migrate`
 4. `apps/backend/api/src/lib/notes.ts`, and its line in `index.ts`
-5. `apps/frontend/client/src/lib/views/notes/`, `services/notes_service*`
+5. `apps/frontend/client/src/lib/features/notes/`, `services/notes_service*`
 6. the client routes and their tests
 7. `apps/e2e/tests/notes.spec.ts`; keep `auth.spec.ts` and retarget it
 
@@ -93,7 +87,7 @@ grep -rn "Starter\|starter" --include=*.ts --include=*.svelte \
 
 Expect hits in: `README.md`, `src-tauri/tauri.conf.json`, `src-tauri/Cargo.toml`,
 `src-tauri/icons/icon.svg`, `apps/frontend/client/src/routes/+layout.svelte`,
-`apps/backend/api/wrangler.jsonc`, and `apps/backend/database/drizzle.config.ts`.
+`apps/backend/api/wrangler.jsonc`, and `packages/backend/database/drizzle.config.ts`.
 
 The `@starter/*` package scope can stay. It is not user-visible, and renaming it
 touches every import in the repository for no benefit. If you do rename it, change

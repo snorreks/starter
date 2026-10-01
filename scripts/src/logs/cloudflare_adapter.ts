@@ -2,21 +2,38 @@
 //
 // Cloudflare Workers log access: a historical query and a bounded live tail.
 //
-// **The historical adapter is still a stub.** `queryCloudflareHistory` validates
-// configuration and then returns `retrieval_failed` without sending a provider
-// request. Nothing in this repository should be read as evidence that Cloudflare
-// log querying works. Replacing it with real Workers Observability REST calls —
-// with response validation, pagination, output bounds and error mapping — is
-// phase 3's scope, along with keeping Logpush separate as an optional capability.
+// The historical path sends a real Workers Observability request
+// (`POST /accounts/{id}/workers/observability/telemetry/query`). Its translation
+// lives in `observability.ts` and its transport in `observability_client.ts`; the
+// split is deliberate, because the bug this replaced was invisible for a specific
+// reason — the request builder had tests, the transport did not, and the builder
+// was wrong. It emitted a free-text `filter` string, which is Logpush's shape, and
+// the Observability endpoint accepts structured `{key, operation, type, value}`
+// filters instead. The tests were green because they asserted the string.
 //
-// What *is* real and tested here: the request translation (`buildHistoricalRequest`)
-// and the live tail's process lifecycle. Both are exercisable without a credential,
-// and a translation bug is exactly the bug that would otherwise only surface
-// against a production account.
+// So: the translation is pure and asserted against the API's documented shape, and
+// the transport is driven against a recorded response. Neither needs a credential.
+// **A live call has not been made** — see docs/cloudflare.md for exactly what is
+// verified and what is not.
+//
+// Logpush stays a separate, optional capability. It is a different product with a
+// different index, and conflating the two is what made the old translation wrong.
+//
+// The live tail is unchanged in shape: `wrangler tail` prints a provider envelope
+// per event, so each line is parsed and an unparseable line is skipped rather than
+// passed downstream as if it were an application event.
 
 import { streamWrangler } from '../cloudflare/wrangler.ts';
-import { buildFilter, buildObservabilityQuery, type ObservabilityQuery } from './filter.ts';
-import { APP_LOG_CONFIG, capabilitiesFor, prerequisiteFor, resolveLogAdapter } from './registry.ts';
+import { effectiveDeploymentValues, targetsFor } from '../registry/deployment_values.ts';
+import { buildFilter } from './filter.ts';
+import { buildObservabilityRequest, type ObservabilityRequest } from './observability.ts';
+import {
+  type FetchLike,
+  MAX_EVENTS_KEPT,
+  prerequisite as observabilityPrerequisite,
+  queryObservability,
+} from './observability_client.ts';
+import { type AppId, capabilitiesFor, prerequisiteFor, resolveLogAdapter } from './registry.ts';
 import type { LogEvent, LogQuery, LogQueryResult } from './types.ts';
 
 /** Upper bound on a single tail session, so `--follow` cannot run unbounded. */
@@ -25,18 +42,33 @@ export const MAX_TAIL_MS = 15 * 60_000;
 /** Default tail budget when `--follow` is given without a duration. */
 export const DEFAULT_TAIL_MS = 60_000;
 
+/** The window a query covers when `--since` is absent. */
+export const DEFAULT_WINDOW_MS = 60 * 60_000;
+
+/** Ceiling on one historical read, so `--since 30d` cannot fetch forever. */
+export const MAX_WINDOW_MS = 7 * 24 * 60 * 60_000;
+
+/**
+ * The configured Cloudflare account id, or null when unprovisioned.
+ */
+const accountId = (): string | null => effectiveDeploymentValues().accountId;
+
+/** Resolve only the requested environment's Worker; absent targets are refused. */
+const workerNameFor = (app: AppId, mode: LogQuery['mode']): string | null =>
+  targetsFor(mode)?.workerNames[app] ?? null;
+
 /**
  * The provider request this query would send.
  *
- * Exported so the translation can be asserted without a credential. This is the
- * part that must be right for `--uid` and `--trace` to mean anything: if the
- * narrowing is dropped here, the provider returns every event and the client-side
- * predicate still reports a filtered count.
+ * Exported so the translation can be asserted without a credential, which is the
+ * whole point of splitting it out: the previous translation built a free-text
+ * filter string that the Observability endpoint does not accept, and its tests
+ * passed because they asserted that string.
  */
 export const buildHistoricalRequest = (
   query: LogQuery,
 ):
-  | { ok: true; request: ObservabilityQuery; limit: number; since: number | undefined }
+  | { ok: true; request: ObservabilityRequest; since: number | undefined }
   | { ok: false; reason: string } => {
   const decision = buildFilter(query, capabilitiesFor('cloudflare-observability'));
 
@@ -44,30 +76,54 @@ export const buildHistoricalRequest = (
     return { ok: false, reason: decision.unsupported };
   }
 
+  if (targetsFor(query.mode) === null) {
+    return { ok: false, reason: `No deployment targets configured for "${query.mode}".` };
+  }
+
+  const windowMs = Math.min(decision.since ?? DEFAULT_WINDOW_MS, MAX_WINDOW_MS);
+  const worker = workerNameFor(query.app, query.mode);
+
   return {
     ok: true,
-    request: buildObservabilityQuery(query, decision.since),
-    limit: query.limit ?? 50,
+    // `Date.now()` is injected rather than read here so the window is assertable
+    // without freezing the clock, and so the caller can pin both ends.
+    request: buildObservabilityRequest(
+      query,
+      { from: Date.now() - windowMs, to: Date.now() },
+      worker,
+    ),
     since: decision.since,
   };
 };
 
 /**
- * Historical query against Cloudflare.
+ * Historical query against Cloudflare Workers Observability.
  *
- * NOT IMPLEMENTED. Configuration is validated so a caller learns about a missing
- * Worker name or an absent credential, then the function stops with an explicit
- * status. It does not fall back to local files, because "here are your local
- * logs" in answer to "show me the last hour of production" is a misleading answer
- * rather than a helpful one.
+ * Sends a real request to `POST /accounts/{id}/workers/observability/telemetry/query`
+ * and parses the response. Failures stay distinguishable from an empty window: a
+ * rejected query reports `retrieval_failed` with what the provider said, and a
+ * successful query with no rows reports `rows_read` when the provider supplied it,
+ * because `rows_read: 0` has been observed for API-token queries that the
+ * dashboard answers with data.
+ *
+ * `fetchImpl` is a parameter so the response handling can be driven against a
+ * recorded payload. No credential is used or required by the tests.
  */
-export const queryCloudflareHistory = async (query: LogQuery): Promise<LogQueryResult> => {
-  const prerequisite = prerequisiteFor(query.app, query.mode);
-  if (prerequisite !== null) {
-    return { status: 'credentials_unavailable', events: [], message: prerequisite };
+export const queryCloudflareHistory = async (
+  query: LogQuery,
+  fetchImpl?: FetchLike,
+): Promise<LogQueryResult> => {
+  const gate = prerequisiteFor(query.app, query.mode);
+  if (gate !== null) {
+    return { status: 'credentials_unavailable', events: [], message: gate };
   }
 
-  const worker = APP_LOG_CONFIG[query.app].workerName;
+  const observabilityGate = observabilityPrerequisite(accountId());
+  if (observabilityGate !== null) {
+    return { status: 'credentials_unavailable', events: [], message: observabilityGate };
+  }
+
+  const worker = workerNameFor(query.app, query.mode);
   if (worker === null) {
     return {
       status: 'credentials_unavailable',
@@ -76,24 +132,57 @@ export const queryCloudflareHistory = async (query: LogQuery): Promise<LogQueryR
     };
   }
 
-  const request = buildHistoricalRequest(query);
-  if (!request.ok) {
-    return { status: 'capability_unsupported', events: [], message: request.reason };
+  const built = buildHistoricalRequest(query);
+  if (!built.ok) {
+    return { status: 'capability_unsupported', events: [], message: built.reason };
   }
 
-  // NOT IMPLEMENTED — see the file header. Phase 3 sends the Observability REST
-  // request built above. `retrieval_failed` is the honest status: returning an
-  // empty *successful* result would read as "no events matched" when nothing was
-  // ever asked.
-  return {
-    status: 'retrieval_failed',
-    events: [],
-    message:
-      `Historical log retrieval is NOT IMPLEMENTED for Worker "${worker}". ` +
-      'This repository does not yet send a Workers Observability request, so no ' +
-      'result here reflects anything stored at the provider. Live tail and the ' +
-      'local adapter do work: try --follow, or --mode local.',
-  };
+  // A supported filter is not the same as one the provider honours. The predicate
+  // still runs over the response, so a narrowing the provider silently ignored
+  // cannot present itself as a filtered result.
+  const decision = buildFilter(query, capabilitiesFor('cloudflare-observability'));
+  if (!decision.ok) {
+    return { status: 'capability_unsupported', events: [], message: decision.unsupported };
+  }
+
+  const outcome = await queryObservability({
+    accountId: accountId() as string,
+    token: process.env.CLOUDFLARE_API_TOKEN as string,
+    worker,
+    request: built.request,
+    fetchImpl,
+  });
+
+  if (!outcome.ok) {
+    return { status: outcome.status, events: [], message: outcome.message };
+  }
+
+  const events =
+    decision.predicate === undefined ? outcome.events : outcome.events.filter(decision.predicate);
+
+  const rows =
+    outcome.rowsRead === null ? '' : ` The provider reported ${outcome.rowsRead} rows read.`;
+
+  const suffix = outcome.truncated
+    ? `\n  Stopped at the ${MAX_EVENTS_KEPT}-event ceiling; narrow the window for the rest.`
+    : '';
+
+  if (events.length === 0) {
+    // An empty result and a rejected query must never read the same. This one
+    // succeeded, so the honest message is "the window held no matching events",
+    // plus the provider's own row count when it gave one.
+    return {
+      status: 'ok',
+      events: [],
+      message:
+        `No events matched in the queried window for Worker "${worker}".${rows}` +
+        `\n  If you expected some: rows_read of 0 has been reported for API-token` +
+        `\n  queries that the Cloudflare dashboard answers with data, so this may be` +
+        `\n  a permissions or index-lag issue rather than an empty window.${suffix}`,
+    };
+  }
+
+  return { status: 'ok', events, message: `${events.length} event(s).${rows}${suffix}` };
 };
 
 /**
@@ -107,7 +196,11 @@ export const queryCloudflareHistory = async (query: LogQuery): Promise<LogQueryR
  * reached, so a forgotten `--follow` does not leave a process holding a port.
  */
 export const tailCloudflare = async (query: LogQuery): Promise<LogQueryResult> => {
-  const resolution = resolveLogAdapter(query.app, query.mode);
+  // `follow` selects the live adapter. Passing it matters: resolving without it
+  // returned the historical adapter, and the check below then refused with "needs
+  // the wrangler-tail adapter" — so `--follow` was dead for the API in every remote
+  // environment even though the registry listed a tail adapter.
+  const resolution = resolveLogAdapter(query.app, query.mode, true);
   if ('unsupported' in resolution) {
     return { status: 'capability_unsupported', events: [], message: resolution.unsupported };
   }
@@ -124,7 +217,7 @@ export const tailCloudflare = async (query: LogQuery): Promise<LogQueryResult> =
     return { status: 'credentials_unavailable', events: [], message: prerequisite };
   }
 
-  const worker = APP_LOG_CONFIG[query.app].workerName;
+  const worker = workerNameFor(query.app, query.mode);
   if (worker === null) {
     return {
       status: 'credentials_unavailable',

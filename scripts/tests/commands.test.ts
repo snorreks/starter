@@ -21,6 +21,7 @@ import { contractCommand } from '../src/commands/contracts.ts';
 import { guardCommand } from '../src/commands/guard.ts';
 import { secretsCommand } from '../src/commands/secrets.ts';
 import { setupCommand } from '../src/commands/setup.ts';
+import { probeTools } from '../src/secrets/sops.ts';
 import { EXIT } from '../src/shared/command.ts';
 
 const quiet = async (body: () => number | Promise<number>): Promise<number> => {
@@ -203,21 +204,60 @@ describe('guard command', () => {
 // ── secrets ───────────────────────────────────────────────────────────────────
 
 describe('secrets command', () => {
-  test('every advertised operation refuses with the not-implemented code', async () => {
-    // Each of these printed a report and exited 0. A script or a person read that
-    // as "the recipients file was created" / "the file was encrypted".
-    for (const operation of [
-      'encrypt',
-      'decrypt',
-      'init',
-      'doctor',
-      'edit',
-      'exec',
-      'update-recipients',
-    ]) {
+  test.each(
+    [
+      ['decrypt', 'file', '--out'],
+      ['decrypt', '--', 'file', '--out'],
+      ['decrypt', 'file', '--out', '--env'],
+      ['exec', '--env'],
+      ['exec', '--env', '--', 'sh'],
+      ['exec', '--env', 'MISSING_EQUALS', '--', 'sh'],
+      ['exec', '--env', '=ciphertext', '--', 'sh'],
+      ['exec', '--env', 'KEY=', '--', 'sh'],
+      ['exec', '--env', 'INVALID-KEY=value', '--', 'sh'],
+    ].map((args) => ({ args })),
+  )('rejects malformed secret options before execution: %j', async ({ args }) => {
+    expect(await quiet(() => secretsCommand.run(args))).toBe(EXIT.usage);
+  });
+
+  test('an operation with no argument is a usage error, not a refusal', async () => {
+    // These were all "not implemented" once, exiting 3. They are implemented now, so
+    // the exit code for a missing argument is 2 — the caller mistyped, and saying
+    // "unavailable" would send them looking for a missing package.
+    for (const [operation, expected] of [
+      ['encrypt', EXIT.usage],
+      ['decrypt', EXIT.usage],
+      ['init', EXIT.usage],
+      ['update-recipients', EXIT.usage],
+      ['exec', EXIT.usage],
+    ] as const) {
       const code = await quiet(() => secretsCommand.run([operation]));
-      expect(code).toBe(EXIT.unavailable);
+      expect(code).toBe(expected);
     }
+  });
+
+  test('edit refuses deliberately, and says what to run instead', async () => {
+    // A real operation, and deliberately narrow: `sops <file>` already edits in
+    // place, and a wrapper here would be a second code path to the same file. It
+    // refuses rather than pretending.
+    const code = await quiet(() => secretsCommand.run(['edit']));
+    expect(code).toBe(EXIT.refused);
+  });
+
+  test('an unknown operation names the ones that exist', async () => {
+    const code = await quiet(() => secretsCommand.run(['frobnicate']));
+    expect(code).toBe(EXIT.usage);
+  });
+
+  test('doctor reports rather than refusing, and its code reflects the host', async () => {
+    const code = await quiet(() => secretsCommand.run(['doctor']));
+
+    // Conditional on what is installed, because the whole point of `doctor` is to
+    // report the host. Asserting a fixed code made the suite green on a machine with
+    // sops and failed in CI, where neither is present — the test was asserting the
+    // host, not the command.
+    const tools = probeTools();
+    expect(code).toBe(tools.sops && tools.age ? EXIT.ok : EXIT.unavailable);
   });
 
   test('no operation at all is a usage error', async () => {

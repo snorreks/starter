@@ -18,24 +18,52 @@
 // nothing. `planDeploy` takes its config check as a parameter so a plan can be
 // built and inspected here, while the refusal path is tested on its own terms.
 
-import { afterEach, describe, expect, test } from 'bun:test';
-import { DEPLOYMENT_CONFIG } from '../src/registry/app_registry.ts';
+import { afterAll, afterEach, describe, expect, test } from 'bun:test';
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+// For one assertion only, and deliberately: the check below is that the committed
+// `wrangler.jsonc` *is committed*, which is a fact about the repository rather than
+// about whoever last ran a build.
+import { CLIENT_DIR } from '../src/cloudflare/wrangler.ts';
 import type { ConfigCheck } from '../src/deploy/configure.ts';
 import { type DeployTarget, parseDeployArgs, planDeploy, type Step } from '../src/deploy/deploy.ts';
+import { DEPLOYMENT_CONFIG } from '../src/registry/app_registry.ts';
+import {
+  effectiveDeploymentValues,
+  LOCAL_DEPLOYMENT_FILE,
+  setDeploymentValues,
+} from '../src/registry/deployment_values.ts';
 
 /** A configuration that passes every check. */
 const READY: ConfigCheck = { ok: true, problems: [], notices: [] };
 
 const savedWorkerNames = { ...DEPLOYMENT_CONFIG.workerNames };
 
+/**
+ * Set the Worker names for the duration of a test.
+ *
+ * This installs values through the resolver seam rather than mutating
+ * `DEPLOYMENT_CONFIG`. The old version assigned to the committed module, which
+ * production no longer reads — provisioning writes a gitignored overlay and the
+ * environment, and the module is only the floor. That gap is why every test here
+ * passed while `deploy:check` reported "no Worker name" for a project that had
+ * provisioned one: the tests set the one value the code did not read.
+ */
 const setWorkerNames = (names: Partial<Record<DeployTarget, string | null>>): void => {
-  for (const [target, value] of Object.entries(names)) {
-    DEPLOYMENT_CONFIG.workerNames[target as DeployTarget] = value;
-  }
+  const current = effectiveDeploymentValues();
+  setDeploymentValues({
+    ...current,
+    workerNames: { ...current.workerNames, ...names },
+  });
 };
 
 afterEach(() => {
+  // Clear the injection rather than restoring a snapshot: leaving values
+  // installed would leak into every later test file in this process, and a test
+  // that passes because of another file's leftovers is not a test.
   setWorkerNames(savedWorkerNames);
+  setDeploymentValues(null);
 });
 
 /**
@@ -54,6 +82,36 @@ const withWorkerNames = <T>(body: () => T): T => {
   }
 };
 
+/**
+ * Temp client trees, one with a build output and one without.
+ *
+ * `planDeploy` refuses a client deploy whose `build/index.html` is absent, so every
+ * test that plans a client target has to say which world it is in. Reading the real
+ * `CLIENT_DIR` made the suite depend on build state — see the refusal test below for
+ * what that cost in CI.
+ */
+const makeClientTree = (withBuild: boolean): string => {
+  const dir = mkdtempSync(join(tmpdir(), 'starter-client-'));
+  created.push(dir);
+  if (withBuild) {
+    mkdirSync(join(dir, 'build'), { recursive: true });
+    writeFileSync(join(dir, 'build', 'index.html'), '<!doctype html><title>t</title>\n', 'utf8');
+  }
+  return dir;
+};
+
+/** Temp client trees, removed when the file finishes. */
+const created: string[] = [];
+
+afterAll(() => {
+  for (const dir of created.splice(0)) {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+const CLIENT_WITH_BUILD = makeClientTree(true);
+const CLIENT_WITHOUT_BUILD = makeClientTree(false);
+
 /** A plan that is guaranteed to be built, or the test fails loudly. */
 const planFor = (
   targets: readonly DeployTarget[],
@@ -61,7 +119,7 @@ const planFor = (
   config: ConfigCheck = READY,
 ): Step[] =>
   withWorkerNames(() => {
-    const plan = planDeploy(targets, environment, config);
+    const plan = planDeploy(targets, environment, config, CLIENT_WITH_BUILD);
     if (!plan.ok) {
       throw new Error(`expected a plan, got refusal: ${plan.reason}`);
     }
@@ -74,7 +132,7 @@ const planForFull = (
   config: ConfigCheck = READY,
 ) =>
   withWorkerNames(() => {
-    const plan = planDeploy(targets, environment, config);
+    const plan = planDeploy(targets, environment, config, CLIENT_WITH_BUILD);
     if (!plan.ok) {
       throw new Error(`expected a plan, got refusal: ${plan.reason}`);
     }
@@ -127,7 +185,12 @@ describe('planDeploy: refusal', () => {
     }
     // Naming the target is what makes the message actionable.
     expect(plan.reason).toContain('"api"');
-    expect(plan.remedy).toContain('workerNames');
+    // And the remedy has to be a command that works. It used to say "Set
+    // workerNames in packages/shared/schemas/src/registry/app_registry.ts", which
+    // is a path that moved and a module `registry-valid` fails the build on when
+    // it holds a literal id — so following the advice was impossible.
+    expect(plan.remedy).toContain('deploy:configure');
+    expect(plan.remedy).not.toContain('app_registry.ts');
   });
 
   test('refuses when a different target has no Worker name', () => {
@@ -359,9 +422,57 @@ describe('planDeploy: steps', () => {
     expect(clientStep?.args).toContain('--assets-only');
   });
 
-  test('the client step passes no --config', () => {
+  test('a client deploy with no build output is refused, not published empty', () => {
+    // `--assets-only` against a missing `build/` does not fail loudly: wrangler
+    // publishes an empty site and the command reports success. That is the failure
+    // this guards — a green deploy of a blank page.
+    //
+    // A temp tree with no `build/`, rather than the repository's own. The first
+    // version of this test renamed the real `build/index.html` aside and restored it
+    // afterwards, which meant the suite's result depended on whether someone had run
+    // `bun run build`: green locally, and three failures in CI, where the unit-test
+    // step runs before the build. A test that asserts against the repository is
+    // asserting against whoever cloned it last.
+    const plan = withWorkerNames(() =>
+      planDeploy(['client'], 'production', READY, CLIENT_WITHOUT_BUILD),
+    );
+
+    expect(plan.ok).toBe(false);
+    if (!plan.ok) {
+      expect(plan.reason).toContain('build');
+      expect(plan.remedy).toContain('bun run build');
+    }
+  });
+
+  test('a client deploy with a build is planned, so the refusal above is about the artifact', () => {
+    // The other half of the pair. Without this, a check that refused *everything*
+    // would satisfy the test above.
+    const [step] = planFor(['client'], 'production');
+    expect(step?.args).toContain('--assets-only');
+  });
+
+  test('the client step names its config, which now exists', () => {
+    // It used to pass no `--config` at all, because `apps/frontend/client` had no
+    // wrangler config: `deploy --client` ran `--assets-only` against nothing and
+    // wrangler fell back to its own defaults. The assertion was written to pin that
+    // behaviour, so it was green while the deploy could not work.
     const [clientStep] = planFor(['client'], 'production');
-    expect(clientStep?.args).not.toContain('--config');
+    expect(clientStep?.args).toContain('--config');
+
+    const configIndex = clientStep?.args.indexOf('--config') ?? -1;
+    expect(clientStep?.args[configIndex + 1]).toBe('wrangler.jsonc');
+    // And the file it names is really there, relative to the step's cwd.
+    expect(existsSync(join(CLIENT_DIR, 'wrangler.jsonc'))).toBe(true);
+  });
+
+  test('the client step carries the Worker name the plan printed', () => {
+    // Otherwise the name in the plan is a description of one thing and the deploy
+    // is another: a config carrying its own name would make `deploy:check` lie
+    // about what would be published.
+    const [clientStep] = planFor(['client'], 'production');
+    const nameIndex = clientStep?.args.indexOf('--name') ?? -1;
+    expect(nameIndex).toBeGreaterThan(-1);
+    expect(clientStep?.args[nameIndex + 1]).toBe('test-client-worker');
   });
 
   test('a remote step always carries its environment', () => {
@@ -489,5 +600,78 @@ describe('planDeploy: notices', () => {
     });
 
     expect(plan.notices).toContain('No custom domain configured; *.workers.dev only.');
+  });
+});
+
+describe('per-environment targets', () => {
+  // Gap 4. With one set of names, `--env staging` and `--env production` produced
+  // *identical* plans: the flag changed a notice and nothing else. The plan looked
+  // environment-specific, so the difference had to be asserted at the plan, not only
+  // at the resolver.
+
+  const withEnvironments = (body: () => void): void => {
+    const current = effectiveDeploymentValues();
+    setDeploymentValues({
+      ...current,
+      environments: {
+        staging: {
+          workerNames: { client: 'client-staging', api: 'api-staging' },
+          d1DatabaseIds: { api: 'db-staging' },
+        },
+        production: {
+          workerNames: { client: 'client-prod', api: 'api-prod' },
+          d1DatabaseIds: { api: 'db-prod' },
+        },
+      },
+    });
+    try {
+      body();
+    } finally {
+      setDeploymentValues(null);
+    }
+  };
+
+  test('staging and production deploy different Worker names', () => {
+    withEnvironments(() => {
+      const staging = planFor(['api'], 'staging');
+      const production = planFor(['api'], 'production');
+
+      const nameOf = (steps: Step[]): string => {
+        const index = steps[0]?.args.indexOf('--name') ?? -1;
+        return steps[0]?.args[index + 1] ?? '';
+      };
+
+      expect(nameOf(staging)).toBe('api-staging');
+      expect(nameOf(production)).toBe('api-prod');
+      // The decisive assertion: the two plans are not the same plan.
+      expect(staging[0]?.args).not.toEqual(production[0]?.args);
+    });
+  });
+
+  test('an environment with no configured targets is refused, not defaulted', () => {
+    const current = effectiveDeploymentValues();
+    // Only staging exists. A production request must not be served by the single set.
+    setDeploymentValues({
+      ...current,
+      environments: {
+        staging: {
+          workerNames: { client: 'client-staging', api: 'api-staging' },
+          d1DatabaseIds: { api: 'db-staging' },
+        },
+      },
+    });
+
+    try {
+      const plan = planDeploy(['api'], 'production', READY);
+
+      expect(plan.ok).toBe(false);
+      if (!plan.ok) {
+        expect(plan.reason).toContain('production');
+        // The remedy says what to write, not just that it is missing.
+        expect(plan.remedy).toContain(LOCAL_DEPLOYMENT_FILE);
+      }
+    } finally {
+      setDeploymentValues(null);
+    }
   });
 });

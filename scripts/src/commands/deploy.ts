@@ -3,7 +3,7 @@
 // Thin adapter: argv, help, exit code. Planning and execution are in
 // `../deploy/deploy.ts`.
 
-import { type Command, EXIT, fail, wantsHelp } from '../shared/command.ts';
+import { wranglerAvailable } from '../cloudflare/wrangler.ts';
 import {
   executePlan,
   parseDeployArgs,
@@ -11,7 +11,7 @@ import {
   renderPlan,
   usageText,
 } from '../deploy/deploy.ts';
-import { wranglerAvailable } from '../cloudflare/wrangler.ts';
+import { type Command, EXIT, fail, wantsHelp } from '../shared/command.ts';
 
 export const deployCommand: Command = {
   name: 'deploy',

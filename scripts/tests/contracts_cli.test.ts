@@ -32,8 +32,8 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { listRuns, loadManifest, main, RUNS_DIR, saveManifest } from '../src/commands/contracts.ts';
-import { EXIT } from '../src/shared/command.ts';
 import { createManifest, type RunManifest, type StageEvidence } from '../src/contracts/runner.ts';
+import { EXIT } from '../src/shared/command.ts';
 
 const CONTRACT_ID = 'C-900';
 // A run's deadline is `startedAt + maxRunMs`, so a fixture stamped in the past is

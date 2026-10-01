@@ -1,0 +1,38 @@
+{
+  // Cloudflare Pages / Workers static assets configuration for the client.
+  //
+  // `deploy --client` runs `wrangler deploy --assets-only` in this directory, and
+  // until this file existed there was nothing for it to read: no `assets` binding,
+  // no entrypoint, no name. Wrangler would have looked for a config, not found one,
+  // and deployed from its defaults — which means either a failed deploy or, worse, a
+  // successful deploy of something other than the built site.
+  //
+  // `directory` is the output of `vite build` (adapter-static), and
+  // `check_bundle` asserts that directory exists and holds a real bundle before any
+  // deploy can run. So a deploy cannot ship an empty site: the artifact check fails
+  // first.
+  //
+  // No `compatibility_flags` and no bindings: the client is static. There is no
+  // Worker code here to run, and a `nodejs_compat` flag here would imply there is.
+  //
+  // The Worker name is not set here on purpose. Resource identity belongs in
+  // `.starter/deployment.local.json`, which is gitignored; `wrangler deploy` reads
+  // `--name` from the plan that `deploy:check` prints.
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "starter-client",
+  "compatibility_date": "2026-09-01",
+  "assets": {
+    "directory": "./build",
+    // A missing asset must 404, not fall through to an index that does not exist
+    // either. Without this, a deep link on a static host can resolve to the SPA
+    // shell with a 200 and then fail in the router, which reads as a client bug.
+    "not_found_handling": "404-page",
+    "html_handling": "auto-trailing-slash"
+  },
+  "observability": {
+    // Matches the API Worker. The browser's own logs are forwarded through the
+    // client telemetry path, not by Workers Logs, so this is here for parity and
+    // for the (currently disabled) forwarder rather than for local debugging.
+    "enabled": false
+  }
+}

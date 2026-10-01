@@ -16,9 +16,13 @@ explanation** rather than printing advice and exiting 0:
 
 | Command | Exit | Why |
 |---|---|---|
-| `bun run secrets:encrypt` / `secrets:decrypt` | 3 | Not implemented yet. Prints the raw `sops` invocation. |
-| `bun run scripts -- secrets init\|doctor\|edit\|exec\|update-recipients` | 3 | Advertised, not implemented. Same rule: an operation never reports a success it did not perform. |
+| `bun run secrets:edit` | 4 | Refused on purpose. `sops <file>` already edits in place; a wrapper would be a second code path to the same file. |
 | `bun run contract run <path>` (without `--dry-run`) | 3 | No execution adapter yet. `--dry-run` works. |
+
+The secrets operations that used to sit in that table now work. `encrypt`,
+`decrypt`, `init`, `doctor`, `exec` and `update-recipients` run the real `sops`
+binary and report its status; `docs/secrets.md` records what is verified against a
+real `sops` and a real `age` identity, and what is not.
 
 ## Commands
 
@@ -89,6 +93,7 @@ own:
 |---|---|---|
 | `node` on PATH | `test:integration`, `e2e` | `env: 'node': No such file or directory`, then a 4-minute timeout |
 | Chromium's shared libraries | `test:browser`, `e2e` | `error while loading shared libraries` |
+| the `chromium_headless_shell` store path | `test:browser` **only** | `Executable doesn't exist at …/chromium_headless_shell-1243/…` — see [docs/capability-matrix.md](docs/capability-matrix.md) |
 | `cargo` + system webview libs | `tauri:*` | named explicitly by the launcher |
 
 See [docs/capability-matrix.md](docs/capability-matrix.md).
@@ -139,7 +144,7 @@ bun run --cwd apps/frontend/client tauri build
 bun run --cwd packages/backend/database db:generate
 ```
 
-`scripts/src/lib/tools.ts` does this in TypeScript for the tooling workspace.
+`scripts/src/shared/tools.ts` does this in TypeScript for the tooling workspace.
 
 ## Writing tests here
 
@@ -157,7 +162,7 @@ bun run --cwd packages/backend/database db:generate
 
 ## Conventions worth knowing
 
-- **Config lives in one place.** Repository paths in `scripts/src/lib/paths.ts`
+- **Config lives in one place.** Repository paths in `scripts/src/shared/paths.ts`
   (with a test, because the wrong `../` depth is silent and reads as a missing
   file). Dev ports in `apps/frontend/client/dev_ports.ts`. App-to-Worker mapping in
   the app registry.
@@ -181,7 +186,7 @@ bun run --cwd packages/backend/database db:generate
 | [docs/cloudflare.md](docs/cloudflare.md) | deploy, D1, workers, credentials |
 | [docs/native.md](docs/native.md) | Tauri desktop and mobile |
 | [docs/logs.md](docs/logs.md) | the log CLI and its refusals |
-| [docs/secrets.md](docs/secrets.md) | SOPS, and what is not implemented |
+| [docs/secrets.md](docs/secrets.md) | SOPS: the operations, and what each one refuses |
 | [docs/agent.md](docs/agent.md) | Pi extensions and trust |
 | [docs/lint.md](docs/lint.md) | Biome and the guards |
 | [docs/toolchain.md](docs/toolchain.md) | versions and how they are pinned |

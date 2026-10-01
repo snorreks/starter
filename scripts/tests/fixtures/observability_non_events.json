@@ -1,0 +1,63 @@
+{
+  "_comment": [
+    "A response whose `data` rows are NOT application log events.",
+    "",
+    "The behaviour this pins: a row missing `message`, `level` or `source`, or",
+    "carrying a timestamp that is not a time, is dropped rather than coerced.",
+    "Inventing a missing `level` would produce an event that looks real and that",
+    "no log ever emitted it — which is the failure mode the whole parser exists to",
+    "prevent. Three unusable rows, so a parser that returned them would report 3",
+    "events instead of 0.",
+    "",
+    "Row 3 is the subtle one: it has all three required fields, and only the",
+    "timestamp is unusable. Accepting it would put NaN into `LogEvent.timestamp`,",
+    "which makes every `--since` comparison false — so the event would survive the",
+    "provider filter and then be dropped by the local predicate for the wrong",
+    "reason, or render as `NaN` in the human output.",
+    "",
+    "`rows_read: 0` alongside them is the other thing worth pinning: the provider can",
+    "report having read nothing while rows are present, so `rows_read` is reported",
+    "rather than used to decide whether a result is empty."
+  ],
+  "success": true,
+  "errors": [],
+  "messages": [],
+  "result": {
+    "run": {
+      "id": "9f1c2b44-0000-4000-8000-000000000001",
+      "accountId": "00000000000000000000000000000000",
+      "dry": true,
+      "query": { "id": "adhoc-starter-logs", "adhoc": true, "name": "adhoc-starter-logs" }
+    },
+    "statistics": {
+      "rows_read": 0
+    },
+    "data": [
+      {
+        "$metadata": {
+          "id": "ev_not_an_event_1",
+          "timestamp": "2026-09-30T12:00:00.000Z",
+          "service": "starter-api"
+        },
+        "$metadata_only_row": true
+      },
+      {
+        "$metadata": {
+          "id": "ev_not_an_event_2",
+          "timestamp": "2026-09-30T12:00:01.000Z"
+        },
+        "message": "has a message but no level and no source"
+      },
+      {
+        "$metadata": {
+          "id": "ev_not_an_event_3",
+          "timestamp": "not-a-date",
+          "service": "starter-api"
+        },
+        "level": "ERROR",
+        "message": "level, message and source, but an unparseable timestamp",
+        "source": "worker"
+      }
+    ]
+  }
+}

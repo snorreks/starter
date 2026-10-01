@@ -280,6 +280,24 @@ export const setStreamRunner = (next: StreamRunner | null): void => {
 };
 
 /**
+ * The binary the stream runner is handed. Overridable so a test can drive the
+ * streaming path on a host where wrangler is not installed.
+ *
+ * `streamWrangler` refuses before reaching the runner when `wranglerBin()` is null,
+ * which is right in production and useless in a test: it means the injected runner
+ * is never called and the caller is told "wrangler is missing" instead of the
+ * behaviour under test. So the *binary* is the seam, not just the runner.
+ */
+let streamBinaryOverride: string | null = null;
+
+export const setStreamBinary = (next: string | null): void => {
+  streamBinaryOverride = next;
+};
+
+/** Resolve the streaming binary, honouring any override. */
+export const streamBinary = (): string | null => streamBinaryOverride ?? wranglerBin();
+
+/**
  * Run wrangler as a bounded stream.
  *
  * `wranglerArgs` must NOT include the `wrangler` token, for the same reason as
@@ -296,7 +314,7 @@ export const streamWrangler = (
     onStderr: (line: string) => void;
   },
 ): Promise<number> => {
-  const bin = wranglerBin();
+  const bin = streamBinary();
   if (bin === null) {
     options.onStderr(missingToolMessage('wrangler', 'apps/backend/api'));
     return Promise.resolve(1);

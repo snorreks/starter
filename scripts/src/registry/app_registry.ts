@@ -154,6 +154,20 @@ export const DEPLOYMENT_CONFIG_SCHEMA = Type.Object(
       },
       { additionalProperties: false },
     ),
+    /**
+     * Cloudflare account id, or `null` when unprovisioned.
+     *
+     * Required by every account-scoped API endpoint, including the Workers
+     * Observability query the log adapter now sends. `wrangler` infers it from its
+     * own auth, which is why nothing needed it until now: a historical log query
+     * goes over plain HTTP, where the account is part of the URL and has to be
+     * stated.
+     *
+     * Not an inherited resource id in the sense the others are: it identifies an
+     * account rather than a resource inside one, and `null` still means "nothing
+     * has been configured", so a fresh clone targets nobody.
+     */
+    accountId: Type.Union([Type.String(), Type.Null()]),
   },
   { additionalProperties: false },
 );
@@ -170,6 +184,7 @@ export const DEPLOYMENT_CONFIG: DeploymentConfig = {
   d1DatabaseIds: { api: null },
   r2BucketNames: { uploads: null },
   customDomains: { client: null, api: null },
+  accountId: null,
 };
 
 /** Apps that exist in this project. Used for CLI validation and docs. */
@@ -252,15 +267,58 @@ export const APP_LOG_CONFIG: Record<AppId, AppLogConfig> = {
   },
 };
 
-/** Resolve the adapter kind that will serve a query, or an explicit reason. */
+/**
+ * Per-environment resource identity.
+ *
+ * One set of names and ids could not describe a real deployment: a Worker is named
+ * once per account, so staging and production are two Workers, and a D1 database
+ * per environment. With one set, `--env staging` and `--env production` produced
+ * *identical* plans, so the flag changed a notice and nothing else — the worst kind
+ * of no-op, because the plan looked environment-specific and was not.
+ *
+ * Shape is deliberately `{ [environment]: { … } }` rather than a `Record` with an
+ * optional key: an environment with no entry must not silently fall back to
+ * another environment's Worker. A missing key is a refusal, and `deploy --env`
+ * refuses.
+ */
+export interface EnvironmentTargets {
+  workerNames: { client: string | null; api: string | null };
+  d1DatabaseIds: { api: string | null };
+}
+
+// `Partial`: presence is the signal. A project with only staging must be able to say so
+// without a placeholder for production, and a placeholder is indistinguishable from a
+// real name unless it is `null` — the ambiguity this layer removes.
+export type PerEnvironment = Partial<Record<DeploymentEnvironment, EnvironmentTargets>>;
+
+/**
+ * Resolve the adapter kind that will serve a query, or an explicit reason.
+ *
+ * `follow` is what selects between the two, and getting that wrong is how
+ * `bun run logs api --mode staging --follow` came to be dead in every remote
+ * environment: this function returned `candidates[0]`, which for the API is
+ * `cloudflare-observability`, and `tailCloudflare` then refused with "needs the
+ * wrangler-tail adapter". The registry listed `wrangler-tail` in the same array
+ * two entries down, so the topology said yes and the resolution said no.
+ *
+ * A live tail is a *different request* from a historical one, not a preference,
+ * so it selects its adapter rather than taking the first:
+ *
+ *   - `follow`         needs an adapter with `liveTail`. `wrangler-tail` has it;
+ *                      `local-file` streams; the historical one does not.
+ *   - historical read  needs `historicalQuery`.
+ *
+ * With no request kind, the first configured adapter wins, which is what this did
+ * before and is still the right answer for a bare `bun run logs api`.
+ */
 export const resolveLogAdapter = (
   app: AppId,
   environment: DeploymentEnvironment,
+  follow = false,
 ): { kind: LogAdapterKind } | { unsupported: string } => {
   const candidates = APP_LOG_CONFIG[app].adapters[environment];
-  const kind = candidates[0];
 
-  if (!kind) {
+  if (candidates.length === 0) {
     return {
       unsupported:
         `No log adapter is configured for app "${app}" in environment "${environment}". ` +
@@ -269,7 +327,25 @@ export const resolveLogAdapter = (
     };
   }
 
-  return { kind };
+  if (follow) {
+    const live = candidates.find((candidate) => ADAPTER_CAPABILITIES[candidate].liveTail);
+    if (live === undefined) {
+      const named = candidates.map((candidate) => `"${candidate}"`).join(', ');
+      return {
+        unsupported:
+          `No live-tail adapter is configured for app "${app}" in environment "${environment}" ` +
+          `(configured: ${named}).\n` +
+          '  A tail needs an adapter that streams; the historical adapters read stored events.',
+      };
+    }
+    return { kind: live };
+  }
+
+  const historical = candidates.find(
+    (candidate) => ADAPTER_CAPABILITIES[candidate].historicalQuery,
+  );
+
+  return { kind: historical ?? candidates[0] };
 };
 
 /** Every adapter kind -> its declared capabilities. */

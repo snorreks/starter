@@ -13,10 +13,11 @@
 // stayed clean and every test passed. That is what Rule 4 exists to catch.
 
 import { afterAll, describe, expect, test } from 'bun:test';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import {
+  guardDocumentedPaths,
   guardNoLeftovers,
   guardRequestState,
   guardSourceIsTracked,
@@ -403,5 +404,347 @@ describe('version-mirrors', () => {
   test('the live repository agrees with itself', () => {
     // The fixture cases prove the rule; this proves the rule is currently met.
     expect(guardVersionMirrors(REPO_ROOT).violations).toEqual([]);
+  });
+});
+
+describe('documented-paths', () => {
+  // The scripts restructure moved `scripts/src/lib/**` and nine documents kept
+  // pointing at the old layout. Nothing failed: a reader following the link
+  // concluded the rule it described was not enforced, which is the opposite of
+  // the truth and the more expensive mistake, because it gets acted on.
+  test('accepts a document pointing at an existing path', () => {
+    const root = makeTree({
+      'docs/logs.md': 'The adapter lives in `scripts/src/logs/filter.ts`.\n',
+      'scripts/src/logs/filter.ts': 'export const f = 1;\n',
+    });
+
+    expect(guardDocumentedPaths(root).violations).toEqual([]);
+  });
+
+  test('reports the stale path, with the file and line', () => {
+    const root = makeTree({
+      'docs/logs.md': 'See `scripts/src/logs/gone.ts` for the adapter.\n',
+    });
+
+    const violations = guardDocumentedPaths(root).violations;
+    expect(violations).toHaveLength(1);
+    expect(violations[0].file).toBe('docs/logs.md');
+    expect(violations[0].message).toContain('scripts/src/logs/gone.ts');
+  });
+
+  test('accepts a path narrated as removed, so history is not falsified', () => {
+    // "This repository once had X" is a true statement about a file that is gone.
+    // Reporting it would train the reader to ignore the guard.
+    const root = makeTree({
+      'docs/agent.md': 'This repository once had `.pi/extensions/logs.test.ts`.\n',
+    });
+
+    expect(guardDocumentedPaths(root).violations).toEqual([]);
+  });
+
+  test('reads the paragraph, not the line, because prose wraps', () => {
+    // The verb sits on the previous line from the path it governs, which is how
+    // a wrapped Markdown paragraph reads.
+    const root = makeTree({
+      'docs/logs.md': 'The previous application was removed from\n`apps/frontend/hub`.\n',
+    });
+
+    expect(guardDocumentedPaths(root).violations).toEqual([]);
+  });
+
+  test('reports the same wrapped path without historical narration', () => {
+    const root = makeTree({
+      'docs/logs.md': 'The application lives\nat `apps/frontend/hub`.\n',
+    });
+    expect(guardDocumentedPaths(root).violations).toHaveLength(1);
+  });
+
+  test('exempts the incident write-ups entirely', () => {
+    // These record paths that were correct when written. Rewriting them would
+    // erase the evidence for the .gitignore bug that hid eight source files.
+    const root = makeTree({
+      'docs/first-round-review.md': 'Fixed: `scripts/src/lib/tools.ts` resolves the pinned copy.\n',
+      'docs/starter-extraction.md': 'Silently excluded `scripts/src/lib/logs/`.\n',
+    });
+
+    expect(guardDocumentedPaths(root).violations).toEqual([]);
+  });
+
+  test('ignores globs and placeholders, which are not paths', () => {
+    const root = makeTree({
+      'docs/architecture.md': 'Layers live under `packages/shared/**` and `apps/<app>/src`.\n',
+    });
+
+    expect(guardDocumentedPaths(root).violations).toEqual([]);
+  });
+
+  test('the live documentation agrees with the live tree', () => {
+    // A missing document must fail before the guard's absent-file handling.
+    for (const doc of [
+      'AGENTS.md',
+      'README.md',
+      'docs/logs.md',
+      'docs/cloudflare.md',
+      'docs/secrets.md',
+      'docs/rename-checklist.md',
+      'docs/README.md',
+      'docs/adding-a-feature.md',
+      'docs/agent.md',
+      'docs/architecture.md',
+      'docs/capability-matrix.md',
+      'docs/first-round-review.md',
+      'docs/lint.md',
+      'docs/native.md',
+      'docs/starter-extraction.md',
+      'docs/testing.md',
+      'docs/toolchain.md',
+    ]) {
+      expect(existsSync(join(REPO_ROOT, doc)), `Expected document is missing: ${doc}`).toBe(true);
+    }
+    expect(guardDocumentedPaths(REPO_ROOT).violations).toEqual([]);
+  });
+});
+
+describe('workspace-boundary: import scanning', () => {
+  // Both of these were found by probing the scanner rather than reading it, and both
+  // failed the same way: text that was not an import was treated as one, or an
+  // import was invisible. Either way the guard's report stopped matching the code.
+
+  test('ignores an import inside a block comment', () => {
+    // Block comments were not stripped at all, so a commented-out import read as a
+    // live one. `importComment` only covered `//`, which is why this survived: the
+    // suite had a comment case and it passed.
+    const root = makeTree({
+      'apps/backend/api/src/lib/db.ts': `/* import { thing } from '${pkg('ui')}'; */\nexport const x = 1;\n`,
+    });
+
+    expect(guardWorkspaceBoundary(root).violations).toEqual([]);
+  });
+
+  test('sees an import inside a block comment that also contains real code', () => {
+    const root = makeTree({
+      'apps/backend/api/src/lib/db.ts': `/*\n * notes:\n */\nimport { thing } from '${pkg('ui')}';\n`,
+    });
+
+    const violations = guardWorkspaceBoundary(root).violations;
+    expect(violations).toHaveLength(1);
+    expect(violations[0].line).toBe(4);
+  });
+
+  test('does not treat import text inside a string as an import', () => {
+    // The scanner never looked inside strings, so this is the inverse failure: a real
+    // violation quoted in a string would be invisible, and the guard would report a
+    // clean tree.
+    const root = makeTree({
+      'apps/backend/api/src/lib/db.ts':
+        `export const docs =\n  "run: import { thing } from '${pkg('ui')}'";\n` +
+        `import { thing } from '${pkg('ui')}';\n`,
+    });
+
+    const violations = guardWorkspaceBoundary(root).violations;
+    // Exactly one: the real import on line 3, not the quoted one on line 2.
+    expect(violations).toHaveLength(1);
+    expect(violations[0].line).toBe(3);
+  });
+
+  test.each(['"/*"', "'// comment'", '`/* template`'])(
+    'sees a forbidden import after a literal containing a comment marker: %s',
+    (literal) => {
+      const root = makeTree({
+        'apps/backend/api/src/lib/db.ts': `const value = ${literal};\nimport { thing } from '${pkg('ui')}';\n`,
+      });
+      const violations = guardWorkspaceBoundary(root).violations;
+      expect(violations).toHaveLength(1);
+      expect(violations[0].line).toBe(2);
+    },
+  );
+
+  test('sees a static specifier embedded in a template literal', () => {
+    // The interpolation is code, so blanking the whole template would hide a real
+    // import. The static prefix is what makes this resolvable.
+    const root = makeTree({
+      'apps/backend/api/src/lib/db.ts': `export const load = () => import(\`${pkg('ui')}/thing\`);\n`,
+    });
+
+    expect(guardWorkspaceBoundary(root).violations).toHaveLength(1);
+  });
+
+  test('a fully interpolated specifier is not reported, and that is stated not assumed', () => {
+    // `import(\`../${name}\`)` cannot be resolved statically — the specifier depends on
+    // a runtime value. A static scanner cannot know whether it crosses a boundary, so
+    // it does not claim to. Asserted so the limitation is a recorded fact rather than
+    // a gap someone rediscovers: the honest options are a static import or a lint rule
+    // that resolves the constant, not a scanner that guesses.
+    //
+    // The `${…}` belongs to the *generated* code under test, not to this file, so it is
+    // assembled from parts: written literally in a plain string, Biome correctly reads
+    // it as a stray template placeholder. No suppression is used, because this
+    // repository has none and the fix is to build the string rather than silence the
+    // rule.
+    const INTERPOLATION = '$' + '{name}';
+    const fixture = `export const load = (name: string) => import(\`../../${INTERPOLATION}/thing\`);\n`;
+
+    const root = makeTree({ 'apps/backend/api/src/lib/db.ts': fixture });
+
+    expect(guardWorkspaceBoundary(root).violations).toEqual([]);
+  });
+
+  test('catches a CommonJS require across the boundary', () => {
+    // `require()` is not matched by the import pattern, so it walked straight through.
+    // Nothing in this repository uses it, but a boundary that can be crossed
+    // quietly is not a boundary.
+    const root = makeTree({
+      'apps/backend/api/src/lib/db.ts': `const ui = require('${pkg('ui')}');\n`,
+    });
+
+    const violations = guardWorkspaceBoundary(root).violations;
+    expect(violations).toHaveLength(1);
+    expect(violations[0].message).toContain(pkg('ui'));
+  });
+
+  test('still catches every static import form', () => {
+    // The hardening must not have narrowed what the pattern matched. Each of these
+    // was verified against the previous implementation.
+    const forms = [
+      `import { a } from '${pkg('ui')}';`,
+      `import a from '${pkg('ui')}';`,
+      `import * as a from '${pkg('ui')}';`,
+      `import type { a } from '${pkg('ui')}';`,
+      `import { type a } from '${pkg('ui')}';`,
+      `import '${pkg('ui')}';`,
+      `export { a } from '${pkg('ui')}';`,
+      `export * from '${pkg('ui')}';`,
+      `const a = await import('${pkg('ui')}');`,
+      `await import(\n  '${pkg('ui')}'\n);`,
+    ];
+
+    for (const form of forms) {
+      const root = makeTree({ 'apps/backend/api/src/lib/db.ts': `${form}\n` });
+      expect(guardWorkspaceBoundary(root).violations, form).toHaveLength(1);
+    }
+  });
+
+  test('reports the line a violation is on, not the line the comment started', () => {
+    // Offsets are preserved by blanking rather than deleting, so a multi-line comment
+    // above an import cannot shift the reported line.
+    const root = makeTree({
+      'apps/backend/api/src/lib/db.ts': `/*\n * a\n * b\n * c\n */\nimport { thing } from '${pkg('ui')}';\n`,
+    });
+
+    expect(guardWorkspaceBoundary(root).violations[0]?.line).toBe(6);
+  });
+});
+
+describe('documented-paths: markdown links', () => {
+  // The guard originally checked backticked paths only, and its own documentation
+  // index is made of markdown links. A negative control — injecting
+  // `[nope](nope.md)` into a document — passed, which is how this was found: by
+  // asking whether the guard could fail, not by reading it.
+  //
+  // A rotten link is worse than a rotten backtick, too. The backtick is a wall of
+  // text a reader must parse; the link looks like a working reference until clicked.
+
+  const withDoc = (contents: string): string =>
+    makeTree({ 'docs/logs.md': contents, 'docs/cloudflare.md': 'exists\n' });
+
+  test('rejects a link to a file that does not exist', () => {
+    const root = withDoc('See [cloudflare](cloudflare-gone.md) for the adapter.\n');
+
+    const violations = guardDocumentedPaths(root).violations;
+    expect(violations).toHaveLength(1);
+    expect(violations[0].file).toBe('docs/logs.md');
+    expect(violations[0].message).toContain('cloudflare-gone.md');
+  });
+
+  test('accepts a repo-root-relative link, as the index uses', () => {
+    // `[docs/logs.md](docs/logs.md)` from the top level is the shape AGENTS.md and
+    // README.md use. Resolved relative to its own document it would be
+    // `docs/docs/logs.md`, so this is the case that made a doc-relative-only check
+    // look correct.
+    const root = makeTree({
+      'AGENTS.md': 'See [docs/logs.md](docs/logs.md) for the log CLI.\n',
+      'docs/logs.md': 'real\n',
+    });
+
+    expect(guardDocumentedPaths(root).violations).toEqual([]);
+  });
+
+  test('rejects a root-relative link whose target is gone', () => {
+    const root = makeTree({
+      'AGENTS.md': 'See [docs/logs.md](docs/logs-OLD.md) for the log CLI.\n',
+      'docs/logs.md': 'real\n',
+    });
+
+    const violations = guardDocumentedPaths(root).violations;
+    expect(violations).toHaveLength(1);
+    expect(violations[0].message).toContain('docs/logs-OLD.md');
+  });
+
+  test('a link that omits the extension is a broken link, and is reported', () => {
+    // A renderer resolves `[x](docs/testing)` literally, so it is broken even though
+    // `docs/testing.md` exists. A `.md` fallback was tried and removed: it made this
+    // negative control pass, and no real link here omits its extension.
+    const root = makeTree({
+      'AGENTS.md': 'See [docs/testing](docs/testing) for the four lanes.\n',
+      'docs/testing.md': 'real\n',
+    });
+
+    const violations = guardDocumentedPaths(root).violations;
+    expect(violations).toHaveLength(1);
+    expect(violations[0].message).toContain('docs/testing');
+  });
+
+  test('resolves a link relative to the document it appears in', () => {
+    // `docs/logs.md` linking to `cloudflare.md` is a sibling reference, not a
+    // repo-root one.
+    const root = withDoc('See [cloudflare](cloudflare.md) for the endpoint.\n');
+
+    expect(guardDocumentedPaths(root).violations).toEqual([]);
+  });
+
+  test('ignores anchors, and http and mailto links', () => {
+    const root = withDoc(
+      'See [the table](#where-the-events-are), [the API](https://example.com/x) and\n' +
+        '[mail](mailto:a@example.com).\n',
+    );
+
+    expect(guardDocumentedPaths(root).violations).toEqual([]);
+  });
+
+  test('exempts a link narrated as removed, so a document can record the change', () => {
+    // A document describing a removal must be able to name what was removed, or it
+    // cannot record the incident.
+    const root = withDoc('The [adapter](scripts/src/logs/gone.ts) was removed in this phase.\n');
+
+    expect(guardDocumentedPaths(root).violations).toEqual([]);
+  });
+
+  test('a link that merely looks historical is still reported', () => {
+    // The exemption is for records of removals, not a general escape hatch. My first
+    // version reused the backticked path's broader list, which contains "used to be"
+    // and "previously" — so the sentence "This used to be true: see [gone](nope.md)"
+    // waved a broken link through. That is the loophole this asserts closed: a stale
+    // link must not be dismissible with a clause that has nothing to do with it.
+    const root = withDoc('This used to be true: see [gone](nope.md).\n');
+
+    const violations = guardDocumentedPaths(root).violations;
+    expect(violations).toHaveLength(1);
+    expect(violations[0].message).toContain('nope.md');
+  });
+
+  test('the same holds for "previously" and "formerly"', () => {
+    // Both are in the broader list, and both are things a writer reaches for when
+    // describing a change that *is* still documented — not when justifying a link
+    // that no longer resolves.
+    for (const opener of ['Previously,', 'Formerly,']) {
+      const root = withDoc(`${opener} see [gone](nope.md) for the old layout.\n`);
+      expect(guardDocumentedPaths(root).violations).toHaveLength(1);
+    }
+  });
+
+  test('reports the line the link is on', () => {
+    const root = withDoc('one\ntwo\nSee [gone](nope.md) here.\n');
+
+    expect(guardDocumentedPaths(root).violations[0]?.line).toBe(3);
   });
 });

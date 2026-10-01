@@ -11,7 +11,7 @@
 // to pass is not a check; it is a report.
 
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
-import { join, relative } from 'node:path';
+import { dirname, join, relative } from 'node:path';
 
 export interface Violation {
   rule: string;
@@ -28,10 +28,10 @@ export interface GuardResult {
   violations: Violation[];
 }
 
+import { checkMirrors } from '../setup/pins.ts';
 // Shared with every other module, so there is one answer to "where is the repo".
 // See scripts/src/shared/paths.ts for why this is not recomputed here.
 import { REPO_ROOT } from '../shared/paths.ts';
-import { checkMirrors } from '../setup/pins.ts';
 
 export { REPO_ROOT };
 
@@ -76,6 +76,7 @@ export const listSourceFiles = (root: string): string[] => {
   return found;
 };
 
+const textOf = (file: string): string => readFileSync(file, 'utf8');
 const linesOf = (file: string): string[] => readFileSync(file, 'utf8').split('\n');
 
 /**
@@ -163,21 +164,201 @@ const ALLOWED_IMPORTS: Record<string, readonly string[]> = {
   tool: ['@starter/schemas', '@starter/logger', '@starter/utils'],
 };
 
-const IMPORT_PATTERN = /(?:from|import)\s*\(?\s*['"]([^'"]+)['"]/g;
+/**
+ * Static specifiers, from one pattern.
+ *
+ * Covers every form TypeScript and Svelte use: named, default, namespace,
+ * type-only, inline `type`, side-effect, `export … from`, and dynamic `import()`
+ * with a literal argument — including one spread across lines, because `\s*`
+ * matches newlines.
+ *
+ * The backtick is in the delimiter set because `` import(`…`) `` is legal and common.
+ * The previous `[^'"]+` could not match a template-literal specifier at all, so a
+ * static import written that way was invisible — and `codeOnly` goes to real trouble
+ * to preserve it.
+ */
+const IMPORT_PATTERN = /(?:from|import)\s*\(?\s*['"`]([^'"`]+)['"`]/g;
 
-const importsIn = (lines: readonly string[]): { specifier: string; line: number }[] => {
+/**
+ * `require()`, which the pattern above does not match.
+ *
+ * Nothing in this repository uses it — Bun and the Workers runtime both resolve ESM
+ * — but a CommonJS call reaching across a boundary would otherwise walk straight
+ * through this guard, and the whole point of the rule is that the boundary cannot be
+ * crossed quietly.
+ */
+const REQUIRE_PATTERN = /\brequire\s*\(\s*['"`]([^'"`]+)['"`]\s*\)/g;
+
+/**
+ * Code only: comments blanked, ordinary strings blanked, import specifiers kept.
+ *
+ * The ordering is the whole difficulty, and getting it wrong fails in opposite
+ * directions:
+ *
+ *  - Blank comments and strings *first*, and the specifier quotes go with them —
+ *    `import { a } from '@x'` becomes `import { a } from    ` and every import in
+ *    the repository disappears. That failure is silent: the guard reports a clean
+ *    tree because it sees nothing.
+ *  - Scan quotes *first*, and a commented-out import is read as a live one.
+ *
+ * So one pass handles all three, left to right: comments blank, specifier quotes
+ * kept, other quotes blanked.
+ */
+const codeOnly = (text: string): string => {
+  const KEYWORDS = ['from', 'import', 'require'];
+  const isSpecifierStart = (before: string): boolean =>
+    KEYWORDS.some((keyword) => new RegExp(`${keyword}\\s*\\(?\\s*$`).test(before));
+
+  let out = '';
+  let index = 0;
+
+  while (index < text.length) {
+    const rest = text.slice(index);
+
+    // Only markers before the next quote start comments. Literal contents are
+    // handled by the quote scanner below.
+    const quote = rest.search(/['"`]/);
+    const lineComment = rest.startsWith('//') ? 0 : rest.indexOf('//');
+    const blockComment = rest.startsWith('/*') ? 0 : rest.indexOf('/*');
+    const commentAt = [lineComment, blockComment]
+      .filter((at) => at !== -1)
+      .sort((a, b) => a - b)[0];
+
+    if (commentAt !== undefined && (quote === -1 || commentAt < quote)) {
+      out += rest.slice(0, commentAt);
+      const isBlock = rest.startsWith('/*', commentAt);
+      const end = isBlock ? rest.indexOf('*/', commentAt + 2) : rest.indexOf('\n', commentAt);
+      if (end === -1) {
+        out += rest.slice(commentAt).replace(/[^\n]/g, ' ');
+        break;
+      }
+      // The newline itself is kept so line numbering downstream is unaffected.
+      out += rest.slice(commentAt, end).replace(/[^\n]/g, ' ') + (isBlock ? '  ' : '');
+      index += isBlock ? end + 2 : end;
+      continue;
+    }
+
+    if (quote === -1) {
+      out += rest;
+      break;
+    }
+
+    // Append the text before the quote first, so the lookbehind below sees it.
+    // Reading `out` before appending looks equivalent and is not: on the first
+    // iteration `out` is empty, every quote looks like an ordinary string, and the
+    // whole file reports zero imports.
+    out += rest.slice(0, quote);
+
+    if (!isSpecifierStart(out.slice(-12))) {
+      // An ordinary string. Blank it and carry on past it rather than stopping:
+      // a line can hold a string *and* a real import, and `break` here would hide
+      // the import that follows. This was the third version of this loop to get it
+      // wrong in a different direction, which is why each step has a test.
+      const opener = rest[quote];
+      const closer = CLOSER_FOR[opener] ?? opener;
+      let cursor = quote + 1;
+      let blanked = '';
+
+      while (cursor < rest.length) {
+        if (rest[cursor] === '\\') {
+          blanked += '  ';
+          cursor += 2;
+          continue;
+        }
+        if (rest[cursor] === closer) {
+          blanked += closer;
+          cursor += 1;
+          break;
+        }
+
+        // A template's `${…}` is code, not text. Blanking it would hide a real
+        // dynamic import — `` import(`./${name}.ts`) `` — behind the literal chunks
+        // around it, so the interpolation is kept and scanned normally.
+        if (opener === '`' && rest[cursor] === '$' && rest[cursor + 1] === '{') {
+          let depth = 1;
+          let scan = cursor + 2;
+          while (scan < rest.length && depth > 0) {
+            if (rest[scan] === '{') {
+              depth += 1;
+            }
+            if (rest[scan] === '}') {
+              depth -= 1;
+            }
+            scan += 1;
+          }
+          // The interpolation is code, so it is kept and scanned. Written as a template so the
+          // literal `${` and `}` around it are visible as such; a nested `${${…}}`
+          // reads as noise and Biome reports the interpolated variable as unused.
+          blanked += `\${${codeOnly(rest.slice(cursor + 2, scan - 1))}}`;
+          cursor = scan;
+          continue;
+        }
+
+        blanked += ' ';
+        cursor += 1;
+      }
+
+      out += blanked;
+      index += cursor;
+      continue;
+    }
+
+    // Keep the quotes so the pattern can read the specifier, then continue after it.
+    const opener = rest[quote];
+    const closer = CLOSER_FOR[opener] ?? opener;
+    const end = rest.indexOf(closer, quote + 1);
+    if (end === -1) {
+      out += rest.slice(quote);
+      break;
+    }
+    out += rest.slice(quote, end + 1);
+    index += end + 1;
+  }
+
+  return out;
+};
+
+/**
+ * Every static import in a file, with the line each one starts on.
+ *
+ * The whole file is scanned rather than line by line, because an import can span
+ * lines:
+ *
+ *     await import(
+ *       '@starter/ui'
+ *     );
+ *
+ * A per-line scanner sees the specifier without the `import(` that introduces it, so
+ * it misses exactly the case a boundary guard must not miss. Line numbers are
+ * recovered from the match offset against the original text, not from the blanked
+ * copy, so a multi-line block comment above an import cannot shift what is reported.
+ */
+/** The quote that closes a given opener. Identity for all three, but named so the lookup
+ * below is not a nested ternary. */
+const SINGLE = "'";
+const DOUBLE = '"';
+const BACKTICK = '`';
+const CLOSER_FOR: Record<string, string> = {
+  [SINGLE]: SINGLE,
+  [DOUBLE]: DOUBLE,
+  [BACKTICK]: BACKTICK,
+};
+
+const importsIn = (text: string): { specifier: string; line: number }[] => {
   const found: { specifier: string; line: number }[] = [];
 
-  lines.forEach((text, index) => {
-    // Only real code, not a mention inside a comment.
-    const code = text.replace(/\/\/.*$/, '').replace(/^\s*\*.*$/, '');
-    for (const match of code.matchAll(IMPORT_PATTERN)) {
+  // Blanked copy is the same length as the original, so an offset means the same line
+  // in both. That is what makes reporting a line number from the blanked scan safe.
+  const code = codeOnly(text);
+
+  for (const pattern of [IMPORT_PATTERN, REQUIRE_PATTERN]) {
+    for (const match of code.matchAll(pattern)) {
       const specifier = match[1];
       if (specifier !== undefined) {
-        found.push({ specifier, line: index + 1 });
+        found.push({ specifier, line: text.slice(0, match.index).split('\n').length });
       }
     }
-  });
+  }
 
   return found;
 };
@@ -200,7 +381,7 @@ export const guardWorkspaceBoundary = (root = REPO_ROOT): GuardResult => {
     }
 
     const allowed = ALLOWED_IMPORTS[layer] ?? [];
-    for (const { specifier, line } of importsIn(linesOf(file))) {
+    for (const { specifier, line } of importsIn(textOf(file))) {
       if (!specifier.startsWith('@starter/')) {
         continue;
       }
@@ -593,6 +774,185 @@ export const guardVersionMirrors = (root = REPO_ROOT): GuardResult => {
   };
 };
 
+// ── Rule 7 — documented paths exist ──────────────────────────────────────────
+
+/**
+ * Rule 7 — every repository path a document points at must exist.
+ *
+ * The scripts restructure moved `scripts/src/lib/**` into a dispatcher plus
+ * domain modules, and nine documents kept pointing at the old layout. Nothing
+ * failed. A reader following `docs/architecture.md` to the guard that enforces
+ * the request-state rule landed on a path that does not exist, and the natural
+ * conclusion is that the rule is not enforced — which is the opposite of the
+ * truth, and the more expensive mistake, because it is acted on.
+ *
+ * Two exclusions, both because the alternative is falsifying a record:
+ *
+ *   - Documents that narrate the past. "This repository once had
+ *     `.pi/extensions/logs.test.ts`" is a true statement about a file that is
+ *     gone, and so is "the previous config pointed at `apps/frontend/hub`". The
+ *     check reads the surrounding paragraph, not the line, because prose wraps
+ *     and the verb is often on the previous line.
+ *   - The incident write-ups themselves (`docs/first-round-review.md`,
+ *     `docs/starter-extraction.md`), which record paths that were correct when
+ *     written. Rewriting those would erase the evidence for the `.gitignore`
+ *     bug that hid eight source files from git.
+ */
+export const guardDocumentedPaths = (root = REPO_ROOT): GuardResult => {
+  const violations: Violation[] = [];
+
+  const NARRATED =
+    /\b(once had|once was|used to be|previously|former(ly)?|no longer|removed|renamed|moved|pointed at|does not exist|doesn'?t exist|is gone)\b/i;
+
+  /**
+   * Removal language only, for markdown links.
+   *
+   * Narrower than `NARRATED` on purpose. The broader list includes "used to be" and
+   * "previously", which are what a writer reaches for when describing a change that
+   * *is* still documented — so reusing it here made "This used to be true: see
+   * [gone](nope.md)" exempt the broken link in the same line. An exemption that any
+   * clause can satisfy is not an exemption, it is a hole.
+   *
+   * The backticked-path check keeps the broader list because its whole purpose is
+   * catching prose like "the scripts restructure moved `scripts/src/lib/**`", where
+   * the verb is the point.
+   */
+  const LINK_NARRATED_REMOVAL =
+    /\b(was removed|were removed|has been removed|have been removed|is gone|no longer|renamed to|was moved|were moved|does not exist|doesn'?t exist)\b/i;
+
+  /** A repo-root-relative path in backticks. Narrow on purpose, so prose is not
+   * mistaken for a reference. Globs and placeholders are skipped by the caller. */
+  const PATH_PATTERN =
+    /`((?:scripts|apps|packages|docs|\.pi|\.github|\.moon|config)\/[A-Za-z0-9_./-]+)`/g;
+
+  /**
+   * A markdown link, in the two forms these documents actually use.
+   *
+   * This was the guard's largest hole, found by negative control rather than by
+   * reading: it checked backticked paths only, and the documentation index is made
+   * of markdown links. A `[x](y)` that rots is a broken link in rendered Markdown —
+   * the failure is quieter and more visible than a stale backtick, and nothing
+   * noticed. Both shapes occur in these documents and both are checked:
+   *
+   *   [docs/logs.md](docs/logs.md)   repo-root-relative, from the top level
+   *   [logs.md](logs.md)             relative to the containing document
+   */
+  const LINK_PATTERN = /\[[^\]]*\]\(([^)\s]+)\)/g;
+
+  /** Anchors and URLs are not filesystem paths. */
+  const isNotAPath = (target: string): boolean =>
+    target.startsWith('#') ||
+    target.startsWith('http://') ||
+    target.startsWith('https://') ||
+    target.startsWith('mailto:');
+
+  const files: string[] = [
+    'README.md',
+    'AGENTS.md',
+    ...(existsSync(join(root, 'docs')) ? readdirSync(join(root, 'docs')) : [])
+      .filter((entry) => entry.endsWith('.md'))
+      .map((entry) => join('docs', entry)),
+  ];
+
+  for (const relativePath of files) {
+    // The incident records are history, not instructions.
+    if (relativePath === 'docs/first-round-review.md') {
+      continue;
+    }
+    if (relativePath === 'docs/starter-extraction.md') {
+      continue;
+    }
+
+    const full = join(root, relativePath);
+    if (!existsSync(full)) {
+      continue;
+    }
+
+    const text = readFileSync(full, 'utf8');
+    const docDir = dirname(full);
+
+    /**
+     * Where a link target should be looked for.
+     *
+     * A leading `./` or `../` is unambiguously relative to the document. A bare
+     * `docs/…` is *also* valid from the top level, and the documentation index uses
+     * that shape, so a target that does not resolve relative to its own document is
+     * retried from the repository root before being called missing. Checking both is
+     * what lets one rule cover `docs/README.md` and `README.md` without either
+     * producing a false positive.
+     *
+     * Resolved **exactly**, with no `.md` fallback, and that is deliberate. A
+     * Markdown renderer resolves a link literally, so `[x](docs/testing)` is a broken
+     * link even though `docs/testing.md` exists. The lenient version was tried and
+     * removed: it made a negative control pass that should have failed, and no real
+     * link in these documents omits its extension.
+     */
+    const resolves = (target: string): boolean =>
+      existsSync(join(docDir, target)) || existsSync(join(root, target));
+
+    for (const match of text.matchAll(LINK_PATTERN)) {
+      const target = match[1];
+      if (target === undefined || isNotAPath(target) || target.includes('*') || resolves(target)) {
+        continue;
+      }
+
+      const lineStart = text.lastIndexOf('\n', match.index) + 1;
+      const lineEnd = text.indexOf('\n', match.index);
+      const line = text.slice(lineStart, lineEnd === -1 ? text.length : lineEnd);
+
+      if (LINK_NARRATED_REMOVAL.test(line)) {
+        continue;
+      }
+
+      violations.push({
+        rule: 'documented-paths',
+        file: relativePath,
+        line: text.slice(0, match.index).split('\n').length,
+        message:
+          `This document links to ${target}, which does not exist.\n` +
+          '  A reader who follows the link concludes the thing it describes is not\n' +
+          '  implemented, and a broken link renders as broken. If the target really was\n' +
+          '  removed, say so in the same sentence and the guard will leave it alone.',
+      });
+    }
+
+    for (const match of text.matchAll(PATH_PATTERN)) {
+      const path = match[1].replace(/[.,;:]$/, '');
+      if (path.includes('*') || path.includes('<') || existsSync(join(root, path))) {
+        continue;
+      }
+
+      const lineStart = text.lastIndexOf('\n', match.index) + 1;
+      const paragraphStart = text.lastIndexOf('\n\n', match.index) + 2;
+      const lineEnd = text.indexOf('\n', match.index);
+      const line = text.slice(lineStart, lineEnd === -1 ? text.length : lineEnd);
+      const paragraph = text.slice(paragraphStart, lineEnd === -1 ? text.length : lineEnd);
+
+      if (NARRATED.test(line) || NARRATED.test(paragraph)) {
+        continue;
+      }
+
+      violations.push({
+        rule: 'documented-paths',
+        file: relativePath,
+        line: text.slice(0, match.index).split('\n').length,
+        message:
+          `This document points at ${path}, which does not exist.\n` +
+          '  A reader who follows the link concludes the thing it describes is not\n' +
+          '  implemented. To describe something that was removed, say so in the same\n' +
+          '  sentence — the guard exempts a path narrated in the past tense.',
+      });
+    }
+  }
+
+  return {
+    id: 'documented-paths',
+    label: 'Documented paths exist',
+    baselineCount: 0,
+    violations,
+  };
+};
+
 /**
  * The guard set, each paired with the id it reports under.
  *
@@ -606,4 +966,5 @@ export const ALL_GUARDS = [
   { id: 'source-is-tracked', run: guardSourceIsTracked },
   { id: 'registry-valid', run: guardRegistryIsValid },
   { id: 'version-mirrors', run: guardVersionMirrors },
+  { id: 'documented-paths', run: guardDocumentedPaths },
 ] as const;

@@ -88,7 +88,7 @@ object for a given binding set in workerd, so a `WeakMap` keyed on it gives one
 container without a module-level singleton that could outlive its bindings. User
 identity is *not* memoized — it is rebuilt per request.
 
-**Request state is never module-level.** `scripts/src/lib/guards/boundary.ts`
+**Request state is never module-level.** `scripts/src/guards/boundary.ts`
 fails the build on a module-level `let env`, because a Worker isolate serves many
 concurrent requests and the last writer wins for all of them. The failure is rare,
 non-reproducible, and looks like a bug in the business logic.

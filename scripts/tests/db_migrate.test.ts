@@ -12,8 +12,8 @@
 // exactly this reason.
 
 import { afterEach, describe, expect, test } from 'bun:test';
-import { DEPLOYMENT_CONFIG } from '../src/registry/app_registry.ts';
 import { type MigrateTarget, parseTarget, planMigrate } from '../src/db/migrate.ts';
+import { DEPLOYMENT_CONFIG } from '../src/registry/app_registry.ts';
 
 const savedDatabaseId = DEPLOYMENT_CONFIG.d1DatabaseIds.api;
 
