@@ -1,0 +1,88 @@
+{
+  "_comment": [
+    "A recorded Workers Observability `view: events` response, shape-only.",
+    "",
+    "This is NOT a capture from a live account: values are invented and no request",
+    "was sent. It exists because the previous translation had tests that asserted a",
+    "request shape the endpoint does not accept, and a test pinned to a",
+    "hand-written object only proves the code agrees with the test. Recording the",
+    "envelope is what makes the parser's assumptions checkable.",
+    "",
+    "Shape verified 2026-10-01 against",
+    "  POST /accounts/{account_id}/workers/observability/telemetry/query",
+    "  https://developers.cloudflare.com/api/resources/workers/subresources/observability/subresources/telemetry/methods/query",
+    "",
+    "The parts this fixture pins:",
+    "  - the envelope is `{ result: { data: [...] } }`, not a bare array",
+    "  - each row carries the logged object with a `$metadata` sub-object",
+    "  - `$metadata.timestamp` is an ISO-8601 string, while LogEvent needs epoch ms",
+    "  - `statistics.rows_read` is available and is what distinguishes an empty",
+    "    window from an unindexed one",
+    "",
+    "A second fixture below carries rows that are NOT events, because dropping them",
+    "rather than coercing them is the behaviour that matters."
+  ],
+  "success": true,
+  "errors": [],
+  "messages": [],
+  "result": {
+    "run": {
+      "id": "9f1c2b44-0000-4000-8000-000000000000",
+      "accountId": "00000000000000000000000000000000",
+      "dry": true,
+      "granularity": 1,
+      "query": {
+        "id": "adhoc-starter-logs",
+        "adhoc": true,
+        "name": "adhoc-starter-logs",
+        "description": "starter logs"
+      }
+    },
+    "statistics": {
+      "rows_read": 3
+    },
+    "data": [
+      {
+        "$metadata": {
+          "id": "ev_0000000000000001",
+          "timestamp": "2026-09-30T12:00:00.123Z",
+          "service": "starter-api",
+          "trigger": "http",
+          "outcome": "exception"
+        },
+        "timestamp": "2026-09-30T12:00:00.123Z",
+        "level": "ERROR",
+        "message": "Unhandled exception in /api/notes",
+        "source": "worker",
+        "traceId": "tr_fixture_2",
+        "userId": "user_verified"
+      },
+      {
+        "$metadata": {
+          "id": "ev_0000000000000002",
+          "timestamp": "2026-09-30T12:00:01.500Z",
+          "service": "starter-api",
+          "trigger": "http",
+          "outcome": "success"
+        },
+        "timestamp": "2026-09-30T12:00:01.500Z",
+        "level": "WARNING",
+        "message": "Slow query took 1200ms",
+        "source": "worker"
+      },
+      {
+        "$metadata": {
+          "id": "ev_0000000000000003",
+          "timestamp": "2026-09-30T12:00:02.750Z",
+          "service": "starter-client",
+          "trigger": "http",
+          "outcome": "success"
+        },
+        "timestamp": "2026-09-30T12:00:02.750Z",
+        "level": "INFO",
+        "message": "notes listed",
+        "source": "browser"
+      }
+    ]
+  }
+}

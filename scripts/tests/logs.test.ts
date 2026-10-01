@@ -7,8 +7,16 @@
 // filter, and the decision to refuse an unsupported filter, are the parts that
 // can silently be wrong, and both are testable offline.
 //
-// What is NOT covered here: a live Cloudflare query. That needs a provisioned
-// account and is reported as unverified in docs/first-round-review.md.
+// What is NOT covered here: a live Cloudflare query. The request shape and the
+// response handling are pinned against the documented endpoint contract and a
+// recorded response fixture, but no request has been sent to a provisioned
+// account. docs/cloudflare.md records that distinction explicitly.
+//
+// The previous version of this file tested a translation that was wrong: it
+// asserted a free-text `filter` string, which is Logpush's shape, while the
+// Observability query endpoint takes structured `{key, operation, type, value}`
+// filters. Those tests passed, which is the part worth remembering — a test that
+// pins the wrong contract reads as evidence the code is correct.
 
 import { describe, expect, test } from 'bun:test';
 import { Value } from '@sinclair/typebox/value';
@@ -20,7 +28,7 @@ import {
   parseEnvelopeEvent,
 } from '../src/logs/cloudflare_adapter.ts';
 import { parseDuration } from '../src/logs/duration.ts';
-import { buildFilter, buildObservabilityQuery } from '../src/logs/filter.ts';
+import { buildFilter } from '../src/logs/filter.ts';
 import { parseNdjson } from '../src/logs/local_file_adapter.ts';
 import { capabilitiesFor, resolveLogAdapter } from '../src/logs/registry.ts';
 import type { LogQuery } from '../src/logs/types.ts';
@@ -195,72 +203,6 @@ describe('buildFilter', () => {
   });
 });
 
-// ── Provider filter translation ──────────────────────────────────────────────
-
-describe('buildObservabilityQuery', () => {
-  test('produces a clause per active filter, ANDed', () => {
-    const request = buildObservabilityQuery(
-      { ...baseQuery, level: 'ERROR', source: 'worker', trace: 'tr_2' },
-      60_000,
-    );
-    expect(request.filter).toContain('level >= "ERROR"');
-    expect(request.filter).toContain('source = "worker"');
-    expect(request.filter).toContain('traceId = "tr_2"');
-    expect(request.filter?.match(/ AND /g)).toHaveLength(3);
-  });
-
-  test('narrows the window without emitting a Logpush `_time` clause', () => {
-    // The old translation emitted Logpush's `_time`/`jsonPayload.*` fields, which
-    // the Observability endpoint does not accept. A translation aimed at the wrong
-    // API fails only against the provider, so it is asserted here instead.
-    const request = buildObservabilityQuery({ ...baseQuery, level: 'ERROR' }, 60_000);
-    expect(request.filter).not.toContain('_time');
-    expect(request.filter).not.toContain('jsonPayload');
-    expect(request.filter).toContain('level >= "ERROR"');
-  });
-
-  test('emits no clause for a level of DEBUG', () => {
-    expect(
-      buildObservabilityQuery({ ...baseQuery, level: 'DEBUG' }, undefined).filter,
-    ).toBeUndefined();
-  });
-
-  test('returns an empty request when nothing needs narrowing', () => {
-    expect(buildObservabilityQuery(baseQuery, undefined)).toEqual({});
-  });
-
-  test('a user filter names the verified field, not client-reported data', () => {
-    const request = buildObservabilityQuery({ ...baseQuery, uid: 'user_verified' }, undefined);
-    expect(request.filter).toBe('userId = "user_verified"');
-    expect(request.filter).not.toContain('clientReported');
-  });
-
-  // The filter is a quoted expression, so an unescaped `"` in an operator-supplied
-  // value closes the clause and the rest of the argument becomes part of the
-  // filter. The provider then returns rows the local predicate would have dropped,
-  // and the provider's rows are what get rendered.
-  test('a quote in a value cannot close the clause', () => {
-    const request = buildObservabilityQuery(
-      { ...baseQuery, trace: 'tr" OR level >= "DEBUG' },
-      undefined,
-    );
-    expect(request.filter).toBe('traceId = "tr\\" OR level >= \\"DEBUG"');
-  });
-
-  test('a backslash in a value is escaped too', () => {
-    const request = buildObservabilityQuery({ ...baseQuery, uid: 'a\\b"c' }, undefined);
-    expect(request.filter).toBe('userId = "a\\\\b\\"c"');
-  });
-
-  test('a value without those characters is unchanged', () => {
-    const request = buildObservabilityQuery(
-      { ...baseQuery, trace: 'tr_1', uid: 'user_1' },
-      undefined,
-    );
-    expect(request.filter).toBe('traceId = "tr_1" AND userId = "user_1"');
-  });
-});
-
 // ── Tail envelope parsing ─────────────────────────────────────────────────────
 
 describe('parseEnvelopeEvent', () => {
@@ -319,8 +261,15 @@ describe('buildHistoricalRequest', () => {
     });
     expect(request.ok).toBe(true);
     if (request.ok) {
-      expect(request.request.filter).toContain('userId = "user_verified"');
-      expect(request.limit).toBe(50);
+      // Structured filters, per the endpoint contract. See observability.test.ts
+      // for why this cannot be a filter string.
+      expect(request.request.parameters.filters).toContainEqual({
+        key: 'userId',
+        operation: 'eq',
+        type: 'string',
+        value: 'user_verified',
+      });
+      expect(request.request.limit).toBe(50);
     }
   });
 
@@ -332,7 +281,13 @@ describe('buildHistoricalRequest', () => {
     const request = buildHistoricalRequest({ ...baseQuery, uid: 'user_verified' });
     expect(request.ok).toBe(true);
     if (request.ok) {
-      expect(request.request.filter).toContain('userId = "user_verified"');
+      expect(request.request.parameters.filters).toContainEqual({
+        key: 'userId',
+        operation: 'eq',
+        type: 'string',
+        value: 'user_verified',
+      });
+      expect(JSON.stringify(request.request)).not.toContain('clientReported');
     }
   });
 });

@@ -104,56 +104,23 @@ export const buildFilter = (
   return { ok: true, predicate, since };
 };
 
-/** The query the Workers Observability endpoint accepts. */
-export interface ObservabilityQuery {
-  /** ISO timestamp lower bound, when `--since` narrowed the window. */
-  since?: string;
-  /** Free-form filter over the indexed JSON fields. */
-  filter?: string;
-}
-
-/**
- * Build the provider-side filter for the fields the Observability index covers.
- *
- * Returned separately from the predicate so the provider request and the local
- * scan share one set of semantics, and so the predicate still runs afterwards: a
- * provider filter that is wrong must not be able to present itself as a filtered
- * result.
- *
- * Returns an empty object rather than `null` when no narrowing is needed, so a
- * caller can spread it into a request body without a conditional.
- */
-export const buildObservabilityQuery = (
-  query: LogQuery,
-  since: number | undefined,
-): ObservabilityQuery => {
-  const clauses: string[] = [];
-  // The filter is a quoted expression, so a value containing `"` closes the clause
-  // and the rest of the argument becomes part of the filter. A trace id or user id
-  // is operator-supplied, but `--trace 'a" OR level >= "DEBUG'` would widen the
-  // query at the provider while the local predicate still narrowed it — and the
-  // provider result is what gets rendered. Values without these characters are
-  // unchanged.
-  const quoted = (value: string): string =>
-    `"${value.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`;
-
-  if (since !== undefined) {
-    clauses.push(`timestamp >= "${new Date(Date.now() - since).toISOString()}"`);
-  }
-  if (query.level !== undefined && query.level !== 'DEBUG') {
-    clauses.push(`level >= "${toThreshold(query.level)}"`);
-  }
-  if (query.source !== undefined) {
-    clauses.push(`source = "${query.source}"`);
-  }
-  if (query.trace !== undefined) {
-    clauses.push(`traceId = ${quoted(query.trace)}`);
-  }
-  if (query.uid !== undefined) {
-    clauses.push(`userId = ${quoted(query.uid)}`);
-  }
-
-  return clauses.length === 0 ? {} : { filter: clauses.join(' AND ') };
-};
-
 export { CLIENT_REPORTED_USER };
+
+// ── Moved ─────────────────────────────────────────────────────────────────────
+//
+// The free-text `ObservabilityQuery` builder that used to live here emitted
+//
+//   timestamp >= "…" AND level >= "ERROR" AND source = "worker"
+//
+// which is Logpush's filter shape. The Workers Observability *query* endpoint has
+// no `filter` string field: it takes structured `{key, operation, type, value}`
+// filters under `parameters.filters`. So the translation either produced a 400 or,
+// worse, had its narrowing ignored and returned every event in the window while
+// the caller reported a filtered count.
+//
+// It lived here, next to the predicate, and had tests — and the tests passed,
+// because they asserted the string it produced. A test that pins the wrong
+// contract is worse than no test: it reads as evidence the code is right.
+//
+// The correct translation is in `observability.ts`, and its tests assert the
+// endpoint's documented shape rather than a format chosen here.

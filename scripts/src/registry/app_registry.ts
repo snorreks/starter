@@ -154,6 +154,20 @@ export const DEPLOYMENT_CONFIG_SCHEMA = Type.Object(
       },
       { additionalProperties: false },
     ),
+    /**
+     * Cloudflare account id, or `null` when unprovisioned.
+     *
+     * Required by every account-scoped API endpoint, including the Workers
+     * Observability query the log adapter now sends. `wrangler` infers it from its
+     * own auth, which is why nothing needed it until now: a historical log query
+     * goes over plain HTTP, where the account is part of the URL and has to be
+     * stated.
+     *
+     * Not an inherited resource id in the sense the others are: it identifies an
+     * account rather than a resource inside one, and `null` still means "nothing
+     * has been configured", so a fresh clone targets nobody.
+     */
+    accountId: Type.Union([Type.String(), Type.Null()]),
   },
   { additionalProperties: false },
 );
@@ -170,6 +184,7 @@ export const DEPLOYMENT_CONFIG: DeploymentConfig = {
   d1DatabaseIds: { api: null },
   r2BucketNames: { uploads: null },
   customDomains: { client: null, api: null },
+  accountId: null,
 };
 
 /** Apps that exist in this project. Used for CLI validation and docs. */
