@@ -34,7 +34,7 @@ export interface LogParams {
 /**
  * Build argv for the log CLI.
  *
- * Every flag emitted here must be one `scripts/src/lib/logs/cli.ts` actually
+ * Every flag emitted here must be one `scripts/src/commands/logs.ts` actually
  * parses. A typo is not a crash — it is a flag the CLI ignores, and a model
  * reading "no matching logs" concludes the request never happened.
  */

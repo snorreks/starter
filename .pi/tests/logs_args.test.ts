@@ -14,14 +14,25 @@
 // has the right length.
 
 import { describe, expect, test } from 'bun:test';
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { buildArgs } from '../lib/logs_args.ts';
 
-const CLI_SOURCE = readFileSync(
-  join(import.meta.dirname, '..', '..', 'scripts', 'src', 'lib', 'logs', 'cli.ts'),
-  'utf8',
-);
+// The flags the log CLI parses live in the `logs` command of the single
+// dispatcher, not in a module of their own. This path moved when `scripts/`
+// became one dispatcher plus domain modules, and the test failed with a bare
+// ENOENT naming a file that no longer exists — which reads like a broken
+// checkout rather than a moved file.
+const CLI_PATH = join(import.meta.dirname, '..', '..', 'scripts', 'src', 'commands', 'logs.ts');
+
+if (!existsSync(CLI_PATH)) {
+  throw new Error(
+    `The log CLI is expected at ${CLI_PATH}. It parses the flag list this test checks against, ` +
+      'so a missing file is a broken invariant, not a skipped check.',
+  );
+}
+
+const CLI_SOURCE = readFileSync(CLI_PATH, 'utf8');
 
 /** Flags the CLI actually parses. */
 const CLI_FLAGS = new Set(

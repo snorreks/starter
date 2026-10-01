@@ -12,7 +12,7 @@ import { fileURLToPath } from 'node:url';
 
 // `import.meta.url` is this file's URL: four levels up from
 // apps/backend/api/scripts/ reaches the repository root. Getting this depth
-// wrong is silent and reads as a missing config file, so `scripts/src/lib/paths.test.ts`
+// wrong is silent and reads as a missing config file, so `scripts/tests/paths.test.ts`
 // guards the shared copy and `test:prepare` fails loudly on the wrong path.
 const REPO_ROOT = fileURLToPath(new URL('../../../../', import.meta.url)).replace(/\/$/, '');
 

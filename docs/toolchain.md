@@ -53,7 +53,7 @@ rules live elsewhere and do not depend on Moon:
 
 - Biome, for import boundaries and globals — see [lint.md](lint.md)
 - `bun run guard`, for layer membership, request state, gitignored source and
-  registry self-consistency — see `scripts/src/lib/guards/boundary.ts`
+  registry self-consistency — see `scripts/src/guards/boundary.ts`
 
 A Moon upgrade therefore cannot silently drop an architectural rule.
 

@@ -65,7 +65,7 @@ different undo.
 - no `d1 execute`, no migrations
 - no credentials in any command
 
-There are tests asserting exactly that (`scripts/src/lib/deploy/deploy.test.ts`).
+There are tests asserting exactly that (`scripts/tests/deploy.test.ts`).
 Publishing a repository does not deploy it. Creating a database does not deploy
 code. A deploy does not publish anything.
 
@@ -116,7 +116,7 @@ one-off exploration, not for a command that mutates something.
 
 ### Before any remote-capable process starts
 
-`scripts/src/lib/deploy/process_boundary.test.ts` substitutes the process runner and
+`scripts/tests/deploy_process_boundary.test.ts` substitutes the process runner and
 asserts the argv that would actually be spawned, and that **nothing** is spawned on
 refusal. Four cases, each of which previously either spawned or guessed:
 
