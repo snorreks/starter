@@ -121,6 +121,23 @@ export const runBounded = (
     const child = spawn(command, [...args], {
       cwd: options.cwd,
       stdio: ['ignore', 'pipe', 'pipe'],
+      // Its own process group, so a kill reaches the whole tree.
+      //
+      // Signalling only the direct child is not enough, and the failure is
+      // invisible on a laptop: `sh -c 'sleep 30'` under bash makes the shell
+      // `exec` the sleep, so the signal lands on the only process and `close`
+      // fires in 4 ms. Under dash — which is what `/bin/sh` is on Ubuntu, and
+      // therefore on every GitHub runner — the shell forks instead, and the
+      // orphaned `sleep` inherits the stdout pipe. `close` waits for that pipe,
+      // so it never fires: the run hangs until the test framework kills it. That
+      // is exactly what CI showed, with both timeout tests hitting 5000 ms while
+      // the three tests that do not wait for a kill finished in 40 ms.
+      //
+      // Reproduced before fixing: with `sh` resolving to dash, `close` never
+      // fired; with bash, it fired in 4 ms. `detached` plus a negative process
+      // group is the portable form, and it is what makes the bound a bound
+      // rather than a request.
+      detached: true,
     });
 
     const stdoutBuffer = new BoundedBuffer(
@@ -142,10 +159,33 @@ export const runBounded = (
       if (child.exitCode !== null || child.signalCode !== null) {
         return;
       }
-      child.kill(signal);
+      // Signal the group, not just the child, for the reason `detached` explains.
+      //
+      // `child.pid` is `undefined` only if the spawn failed, in which case the
+      // `error` handler settles the promise and there is no process and no group
+      // to signal; falling back to `child.kill` is then a no-op that cannot throw.
+      // The exit-status guard above already covers the reaped case, so a throw
+      // from the group signal would only turn a working timeout into a crash.
+      const signalTree = (which: NodeJS.Signals): void => {
+        if (child.pid === undefined) {
+          child.kill(which);
+          return;
+        }
+        try {
+          process.kill(-child.pid, which);
+        } catch {
+          child.kill(which);
+        }
+      };
+
+      signalTree(signal);
+
+      // SIGKILL after the grace period, and SIGKILL specifically: a process that
+      // ignored or is blocked on SIGTERM does not get a second SIGTERM, it gets
+      // the one signal it cannot catch.
       setTimeout(() => {
         if (child.exitCode === null && child.signalCode === null) {
-          child.kill('SIGKILL');
+          signalTree('SIGKILL');
         }
       }, killGraceMs).unref?.();
     };

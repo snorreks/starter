@@ -115,6 +115,43 @@ describe('runBounded', () => {
     expect(result.code).not.toBe(0);
   });
 
+  test('a forked grandchild cannot hold the run open', async () => {
+    // The regression this file's other timeout test could not catch.
+    //
+    // `sh -c 'sleep 30'` makes the shell `exec` the sleep, so the shell and the
+    // sleep are one process and a signal to the child is enough. `sleep 30 & wait`
+    // forces a fork: the sleep is a separate process holding the inherited stdout
+    // pipe. Signalling only the direct child then kills the shell, but `close`
+    // waits on that pipe forever, so the run never settles.
+    //
+    // This is not a shell-dialect curiosity. It is why both timeout tests above
+    // passed on a laptop in 484 ms and failed on every GitHub runner at exactly
+    // 5000 ms: Ubuntu's `/bin/sh` is dash, which forks where bash execs. The
+    // runner logs showed `Terminate orphan process: sleep`, which is the orphan
+    // outliving the shell that was supposed to have killed it.
+    //
+    // So the bound has to hold for a command that leaves something behind, not
+    // only for one that is a single process.
+    const root = artifactRoot();
+    cleanups.push(root);
+
+    const started = Date.now();
+    const result = await runBounded('sh', ['-c', 'sleep 30 & wait'], {
+      cwd: root,
+      timeoutMs: 300,
+      killGraceMs: 200,
+      maxBytes: 64 * 1024,
+      artifactRoot: root,
+    });
+
+    expect(result.timedOut).toBe(true);
+    expect(result.code).not.toBe(0);
+    // Without the process-group kill this never returns, and the test framework
+    // reports a timeout rather than an assertion failure. A generous ceiling still
+    // catches a hang, but on the assertion rather than on the framework.
+    expect(Date.now() - started).toBeLessThan(4_000);
+  });
+
   test('a missing binary rejects rather than hanging', async () => {
     const root = artifactRoot();
     cleanups.push(root);
