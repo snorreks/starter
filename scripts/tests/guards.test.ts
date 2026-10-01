@@ -536,10 +536,16 @@ describe('workspace-boundary: import scanning', () => {
     // it does not claim to. Asserted so the limitation is a recorded fact rather than
     // a gap someone rediscovers: the honest options are a static import or a lint rule
     // that resolves the constant, not a scanner that guesses.
-    const root = makeTree({
-      'apps/backend/api/src/lib/db.ts':
-        'export const load = (name: string) => import(`../../${name}/thing`);\n',
-    });
+    //
+    // The `${…}` belongs to the *generated* code under test, not to this file, so it is
+    // assembled from parts: written literally in a plain string, Biome correctly reads
+    // it as a stray template placeholder. No suppression is used, because this
+    // repository has none and the fix is to build the string rather than silence the
+    // rule.
+    const INTERPOLATION = '$' + '{name}';
+    const fixture = `export const load = (name: string) => import(\`../../${INTERPOLATION}/thing\`);\n`;
+
+    const root = makeTree({ 'apps/backend/api/src/lib/db.ts': fixture });
 
     expect(guardWorkspaceBoundary(root).violations).toEqual([]);
   });

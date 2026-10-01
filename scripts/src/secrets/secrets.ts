@@ -1,30 +1,38 @@
-// scripts/src/secrets/index.ts
+// scripts/src/secrets/secrets.ts
 //
-//   bun run secrets:encrypt -- <file>...
-//   bun run secrets:decrypt -- <file>...
-//   bun run setup:secrets            # doctor
+//   bun run secrets:doctor                        # what is installed and configured
+//   bun run secrets:init -- age1...               # write .sops.yaml
+//   bun run secrets:encrypt -- <file>...          # encrypt in place
+//   bun run secrets:decrypt -- <file> [--out p]   # decrypt to stdout or a file
+//   bun run secrets:exec --env K=<ct> -- <cmd>    # run with secrets in the env
+//   bun run secrets:update-recipients -- age1...  # add a person
 //
-// A generic secret workflow with **no inherited configuration**. The source
-// project shipped a `.sops.yaml` naming two specific age recipients and two
-// files of ciphertext for a different project; both are gone. What remains is
-// the mechanism plus an onboarding path that requires the operator to supply
-// their own recipients.
+// A generic secret workflow with **no inherited configuration**. The source project
+// shipped a `.sops.yaml` naming two specific age recipients and two files of
+// ciphertext for a different project; both are gone. Recipients identify people, not
+// projects, so nothing here is committed that names one.
 //
-// Nothing here decrypts, generates or re-keys anything on its own.
+// Every operation runs the real `sops` binary and reports *its* exit status. The
+// refusal that used to stand here — "NOT IMPLEMENTED, exit 3" — was correct and
+// incomplete; the operation that replaced it refuses for real reasons (no recipient,
+// tracked output path, wrong usage) and names which one applied.
 
-import { spawnSync } from 'node:child_process';
-import { existsSync, readFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { existsSync } from 'node:fs';
 import { REPO_ROOT } from '../shared/paths.ts';
+import {
+  decryptFile,
+  EXIT,
+  encryptFile,
+  execWithSecrets,
+  initConfig,
+  isGitIgnored,
+  probeTools,
+  readRecipients,
+  SOPS_CONFIG,
+  updateRecipients,
+} from './sops.ts';
 
-export const SOPS_CONFIG = join(REPO_ROOT, '.sops.yaml');
-export const RECIPIENTS_FILE = join(REPO_ROOT, '.age/recipients.txt');
-
-/** Exit codes, so a caller can distinguish "unavailable" from "worked". */
-export const EXIT = {
-  ok: 0,
-  notImplemented: 3,
-} as const;
+export { EXIT, SOPS_CONFIG };
 
 export interface SecretsReport {
   sopsAvailable: boolean;
@@ -35,101 +43,237 @@ export interface SecretsReport {
   nextSteps: string[];
 }
 
-const available = (command: string, args: readonly string[]): boolean =>
-  spawnSync(command, [...args], { stdio: 'ignore' }).status === 0;
-
 export const inspectSecrets = (): SecretsReport => {
   const problems: string[] = [];
   const nextSteps: string[] = [];
 
-  const sopsAvailable = available('sops', ['--version']);
-  const ageAvailable = available('age', ['--version']);
+  const tools = probeTools();
 
-  if (!sopsAvailable) {
-    problems.push('sops is not installed. Secret encryption needs it.');
+  if (!tools.sops) {
+    problems.push('sops is not installed, or does not run. Secret encryption needs it.');
     nextSteps.push('Install sops: https://github.com/getsops/sops');
   }
-  if (!ageAvailable) {
-    problems.push('age is not installed. Secret encryption needs it.');
+  if (!tools.age) {
+    problems.push('age is not installed, or does not run. sops needs it for age recipients.');
     nextSteps.push('Install age: https://github.com/FiloSottile/age');
   }
 
-  let recipients = 0;
   const configured = existsSync(SOPS_CONFIG);
+  const recipients = readRecipients(SOPS_CONFIG);
 
-  if (configured) {
-    const text = readFileSync(SOPS_CONFIG, 'utf8');
-    recipients = (text.match(/age1[0-9a-z]{20,}/g) ?? []).length;
-
-    if (recipients === 0) {
-      problems.push(
-        '.sops.yaml exists but names no age recipient. Encryption would produce ' +
-          'a file nobody can decrypt.',
-      );
-      nextSteps.push('Add your own public key to .sops.yaml');
-    }
-  } else {
+  if (configured && recipients.length === 0) {
     problems.push(
-      'No .sops.yaml. This is expected in a fresh template: recipients are ' +
-        'project-specific and must not be inherited.',
+      '.sops.yaml exists but names no age recipient. Encryption would produce ' +
+        'a file nobody can decrypt.',
     );
-    nextSteps.push('Create .sops.yaml with your own age recipient (see docs/secrets.md)');
+    nextSteps.push('Add your own public key: bun run secrets:update-recipients -- age1...');
+  } else if (!configured) {
+    // Not an error: this is the state of a fresh clone, and saying so is more useful
+    // than refusing. It *is* a problem for `encrypt`, which checks separately.
+    problems.push(
+      'No .sops.yaml. Expected in a fresh clone: recipients are project-specific and ' +
+        'must not be inherited.',
+    );
+    nextSteps.push('bun run secrets:init -- age1...   (after: age-keygen -o .age/key.txt)');
   }
 
-  return { sopsAvailable, ageAvailable, configured, recipients, problems, nextSteps };
+  return {
+    sopsAvailable: tools.sops,
+    ageAvailable: tools.age,
+    configured,
+    recipients: recipients.length,
+    problems,
+    nextSteps,
+  };
 };
 
-/** Operations this module does not perform. */
-const NOT_IMPLEMENTED = [
-  'encrypt',
-  'decrypt',
-  'init',
-  'doctor',
-  'edit',
-  'exec',
-  'update-recipients',
-];
+const USAGE = [
+  'Usage:',
+  '  bun run secrets:doctor                        report what is installed',
+  '  bun run secrets:init -- age1...               write .sops.yaml',
+  '  bun run secrets:encrypt -- <file>...          encrypt in place',
+  '  bun run secrets:decrypt -- <file> [--out p]   decrypt to stdout or a gitignored path',
+  '  bun run secrets:exec --env KEY=<ct> -- <cmd>  run a command with secrets in its env',
+  '  bun run secrets:update-recipients -- age1...  add a recipient, keeping the existing ones',
+].join('\n');
+
+/** Everything after a bare `--`, which is what a wrapped command receives. */
+const afterDoubleDash = (args: readonly string[]): string[] => {
+  const index = args.indexOf('--');
+  return index === -1 ? [] : args.slice(index + 1);
+};
+
+/** Positional arguments, skipping flags and the values they consume. */
+const positional = (args: readonly string[]): string[] => {
+  const out: string[] = [];
+  let skipNext = false;
+
+  for (const arg of args) {
+    if (skipNext) {
+      skipNext = false;
+      continue;
+    }
+    if (arg === '--out' || arg === '--env') {
+      skipNext = true;
+      continue;
+    }
+    if (arg.startsWith('-')) {
+      continue;
+    }
+    out.push(arg);
+  }
+
+  return out;
+};
+
+/** `--env KEY=<ciphertext>` pairs. */
+const envPairs = (args: readonly string[]): Record<string, string> => {
+  const pairs: Record<string, string> = {};
+
+  for (let index = 0; index < args.length; index += 1) {
+    if (args[index] !== '--env') {
+      continue;
+    }
+    const value = args[index + 1];
+    if (value === undefined) {
+      continue;
+    }
+    const split = value.indexOf('=');
+    if (split > 0) {
+      pairs[value.slice(0, split)] = value.slice(split + 1);
+    }
+  }
+
+  return pairs;
+};
+
+/**
+ * Print what the operation said, and return the code *it* chose.
+ *
+ * The first version returned `result.ok ? EXIT.ok : EXIT.failed`, discarding the
+ * code the operation had carefully computed. Every distinct outcome therefore
+ * arrived at the caller as `failed` — a typo, a missing tool and a deliberate refusal
+ * were indistinguishable. That is the same defect as the "not implemented" exit 3
+ * this replaced, one level up: the exit code is the machine-readable part, and
+ * flattening it makes a caller guess from stderr.
+ */
+const report = (result: { ok: boolean; code: number; stderr: string }): number => {
+  if (result.stderr.trim() !== '') {
+    process.stderr.write(`${result.stderr}\n`);
+  }
+  return result.ok ? EXIT.ok : result.code;
+};
 
 export const main = (args: readonly string[]): number => {
-  // Every advertised operation is a refusal until it is implemented. The problem
-  // this replaces is not that they are missing — it is that they exit 0. A command
-  // named `secrets init` that printed a report and returned success was read by a
-  // script, a Makefile and a person alike as "the recipients file was created".
-  const operation = args.find((arg) => !arg.startsWith('-'));
-  if (operation !== undefined && NOT_IMPLEMENTED.includes(operation)) {
-    process.stderr.write(
-      `secrets ${operation} is NOT IMPLEMENTED. Nothing was read, written, encrypted or created.\n\n` +
-        'For encryption and decryption, run sops directly, so the target file is always\n' +
-        'explicit and never guessed:\n' +
-        '  sops -e secrets/production.enc.env   > secrets/production.enc.env.new\n' +
-        '  sops -d secrets/production.enc.env   > apps/backend/api/.dev.vars\n' +
-        '\nDecrypted output must go to a gitignored path.\n' +
-        'The remaining operations (init, edit, exec, update-recipients, doctor) arrive\n' +
-        'with the phase that also wires direnv. See docs/secrets.md.\n',
-    );
-    return EXIT.notImplemented;
-  }
+  const operation = positional(args)[0];
+  const rest = positional(args).slice(1);
+  const outIndex = args.indexOf('--out');
+  const out = outIndex === -1 ? undefined : args[outIndex + 1];
 
-  const report = inspectSecrets();
+  switch (operation) {
+    case 'doctor':
+      return doctor();
+
+    case 'init':
+      return initConfig(rest[0], REPO_ROOT);
+
+    case 'update-recipients':
+      return updateRecipients(rest, REPO_ROOT);
+
+    case 'encrypt': {
+      if (rest.length === 0) {
+        process.stderr.write(
+          'secrets:encrypt needs at least one file.\n' +
+            '  This command never guesses a target: encrypting the wrong file commits it\n' +
+            '  to your team. Usage: bun run secrets:encrypt -- .dev.vars\n' +
+            '  Nothing was encrypted.\n',
+        );
+        return EXIT.usage;
+      }
+      // Every file is attempted, so one bad path does not leave the rest silently
+      // unprocessed; the worst status wins, because a partial success that reports
+      // success is the failure mode this command existed to end.
+      // Every file is attempted, so one bad path does not silently leave the rest
+      // unprocessed. The code reported is the *first* failure, not the last: with
+      // several files the order the operator named them in is the order they will
+      // read the output in, so the first message is the one they will act on. A
+      // partial success must not report success — that is the failure this whole
+      // command existed to end.
+      let firstFailure: number = EXIT.ok;
+      for (const path of rest) {
+        const code = report(encryptFile(path, REPO_ROOT));
+        if (code !== EXIT.ok && firstFailure === EXIT.ok) {
+          firstFailure = code;
+        }
+      }
+      return firstFailure;
+    }
+
+    case 'decrypt': {
+      if (rest.length === 0) {
+        process.stderr.write(
+          'secrets:decrypt needs a file.\n' +
+            '  Nothing was decrypted.\n' +
+            '  Usage: bun run secrets:decrypt -- secrets/app.enc.env --out .dev.vars\n',
+        );
+        return EXIT.usage;
+      }
+      return report(decryptFile(rest[0], out, REPO_ROOT));
+    }
+
+    case 'exec':
+      return report(execWithSecrets(afterDoubleDash(args), envPairs(args), REPO_ROOT));
+
+    case 'edit': {
+      // A real operation, and deliberately narrow: sops already provides `sops edit`.
+      // Re-implementing it here would add a second code path to a file, so this
+      // refuses and says what to run — which is the honest answer for an operation
+      // that genuinely should not exist.
+      process.stderr.write(
+        'secrets:edit is NOT IMPLEMENTED, deliberately. sops owns editing a file in\n' +
+          '  place; a wrapper here would be a second code path to the same file.\n' +
+          '  Run: sops <file>\n' +
+          '  Nothing was opened or changed.\n',
+      );
+      return EXIT.refused;
+    }
+
+    case undefined:
+      return doctor();
+
+    default:
+      process.stderr.write(`Unknown operation "${operation}".\n\n${USAGE}\n`);
+      return EXIT.usage;
+  }
+};
+
+/** Print the report. Exits nonzero when a required prerequisite is missing. */
+const doctor = (): number => {
+  const state = inspectSecrets();
 
   process.stdout.write('Secrets\n');
-  process.stdout.write(`  sops       ${report.sopsAvailable ? 'available' : 'MISSING'}\n`);
-  process.stdout.write(`  age        ${report.ageAvailable ? 'available' : 'MISSING'}\n`);
+  process.stdout.write(`  sops       ${state.sopsAvailable ? 'available' : 'MISSING'}\n`);
+  process.stdout.write(`  age        ${state.ageAvailable ? 'available' : 'MISSING'}\n`);
   process.stdout.write(
-    `  configured ${report.configured ? `yes (${report.recipients} recipient(s))` : 'no'}\n`,
+    `  configured ${state.configured ? `yes (${state.recipients} recipient(s))` : 'no'}\n`,
+  );
+  process.stdout.write(
+    `  gitignored ${isGitIgnored(join('.dev.vars'), REPO_ROOT) ? '.dev.vars is ignored' : '.dev.vars is TRACKED'}\n`,
   );
 
-  for (const problem of report.problems) {
+  for (const problem of state.problems) {
     process.stdout.write(`\n  problem: ${problem}\n`);
   }
-  if (report.nextSteps.length > 0) {
+  if (state.nextSteps.length > 0) {
     process.stdout.write('\nNext:\n');
-    for (const step of report.nextSteps) {
+    for (const step of state.nextSteps) {
       process.stdout.write(`  - ${step}\n`);
     }
   }
 
-  // Reached only when no operation word matched at all — i.e. `secrets` with flags
-  // but no operation. Everything named in the usage was refused at the top.
-  return 0;
+  // A missing tool is the only thing that makes the whole family unusable; an
+  // unconfigured recipient is the expected state of a fresh clone.
+  return state.sopsAvailable && state.ageAvailable ? EXIT.ok : EXIT.unavailable;
 };
+
+import { join } from 'node:path';

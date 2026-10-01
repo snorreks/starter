@@ -38,6 +38,16 @@ export const EXIT = {
   usage: 2,
   /** A prerequisite for this operation is not available here. */
   unavailable: 3,
+  /**
+   * Refused on purpose, with a reason.
+   *
+   * Distinct from `failed` because the two call for different responses: a failure
+   * says "this did not work, investigate", a refusal says "this will not work, here
+   * is why, and here is what to do instead". Collapsing them into one code is what
+   * makes a refusal read as a bug — a caller retrying a refusal gets the same
+   * refusal, forever, and reports it as flakiness.
+   */
+  refused: 4,
 } as const;
 
 export type ExitCode = (typeof EXIT)[keyof typeof EXIT];

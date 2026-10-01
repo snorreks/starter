@@ -203,21 +203,40 @@ describe('guard command', () => {
 // ── secrets ───────────────────────────────────────────────────────────────────
 
 describe('secrets command', () => {
-  test('every advertised operation refuses with the not-implemented code', async () => {
-    // Each of these printed a report and exited 0. A script or a person read that
-    // as "the recipients file was created" / "the file was encrypted".
-    for (const operation of [
-      'encrypt',
-      'decrypt',
-      'init',
-      'doctor',
-      'edit',
-      'exec',
-      'update-recipients',
-    ]) {
+  test('an operation with no argument is a usage error, not a refusal', async () => {
+    // These were all "not implemented" once, exiting 3. They are implemented now, so
+    // the exit code for a missing argument is 2 — the caller mistyped, and saying
+    // "unavailable" would send them looking for a missing package.
+    for (const [operation, expected] of [
+      ['encrypt', EXIT.usage],
+      ['decrypt', EXIT.usage],
+      ['init', EXIT.usage],
+      ['update-recipients', EXIT.usage],
+      ['exec', EXIT.usage],
+    ] as const) {
       const code = await quiet(() => secretsCommand.run([operation]));
-      expect(code).toBe(EXIT.unavailable);
+      expect(code).toBe(expected);
     }
+  });
+
+  test('edit refuses deliberately, and says what to run instead', async () => {
+    // A real operation, and deliberately narrow: `sops <file>` already edits in
+    // place, and a wrapper here would be a second code path to the same file. It
+    // refuses rather than pretending.
+    const code = await quiet(() => secretsCommand.run(['edit']));
+    expect(code).toBe(EXIT.refused);
+  });
+
+  test('an unknown operation names the ones that exist', async () => {
+    const code = await quiet(() => secretsCommand.run(['frobnicate']));
+    expect(code).toBe(EXIT.usage);
+  });
+
+  test('doctor reports rather than refusing', async () => {
+    const code = await quiet(() => secretsCommand.run(['doctor']));
+    // Zero when sops and age are both installed, which is the case here; the point is
+    // that it is no longer hard-coded to 3.
+    expect(code).toBe(EXIT.ok);
   });
 
   test('no operation at all is a usage error', async () => {
