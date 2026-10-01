@@ -12,20 +12,22 @@
 //   * no `index.html`, so every deep link 404s
 //   * no emitted assets — a shell with no code, which renders blank rather than
 //     erroring
-//   * **the wrong build mode.** A browser bundle that still imports `@tauri-apps/*`
-//     ships native calls that throw; a native bundle built with the stub in place
-//     ships an app whose native layer is a stub. Both are silent.
+//   * **a native import that survived into the bundle.** `@tauri-apps/*` calls
+//     into a native shell that does not exist in this starter, so such a call
+//     throws at runtime, on whichever screen reaches it first. Nothing in the
+//     build reports it, which is why it is asserted here.
 //
-// It reads the real `build/` directory `vite build` wrote, and it takes the
-// *expected mode* as an argument, because "is this bundle native or browser" is not
-// something a static scan can infer — but "does this bundle match the mode it was
-// built for" is, and that is the defect worth catching.
+// The last one replaced a two-mode check. There were once a browser and a native
+// bundle, distinguished by a build flag, and the bundle had to carry the right
+// marker for the mode it was checked in. There is one target now, so the check
+// asserts the property directly instead of matching a bundle against a label.
 //
 // Note on what this deliberately does NOT assert: that the bundle contains no
-// loopback URL. It does contain `http://127.0.0.1:8787`, in a branch guarded by
-// `isTauri()`, and that is correct: a Tauri webview cannot use a relative `/api`
-// URL. A static scan cannot tell a guarded fallback from an unconditional
-// destination, so asserting on it would be asserting on nothing.
+// loopback URL. It can contain `http://127.0.0.1:8787`, in the branch that
+// resolves the API base URL during a server render where there is no origin to be
+// relative to, and that is correct. A static scan cannot tell a guarded fallback
+// from an unconditional destination, so asserting on it would be asserting on
+// nothing.
 
 import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
@@ -34,24 +36,15 @@ import { fileURLToPath } from 'node:url';
 const BUILD_DIR = fileURLToPath(new URL('../build', import.meta.url));
 
 /**
- * The marker string in `src/lib/platform/tauri_stub.ts`.
+ * A specifier for a native shell, matched against every emitted script.
  *
- * If that file's message changes, this check stops being able to tell a stubbed
- * bundle from a real one — and would then report success on a native build that is
- * actually stubbed. The guard below asserts the marker is still present.
+ * Kept as a plain string rather than a module name so a re-added `@tauri-apps/*`
+ * dependency fails this check instead of quietly reaching the browser.
  */
-const STUB_MARKER = 'is a Tauri API and is not available in a browser build';
-
-export type BuildMode = 'browser' | 'native';
+const NATIVE_SPECIFIER = '@tauri-apps/';
 
 export interface BundleProblem {
-  code:
-    | 'no_output'
-    | 'no_index'
-    | 'no_assets'
-    | 'stub_marker_missing'
-    | 'mode_mismatch'
-    | 'no_entry_script';
+  code: 'no_output' | 'no_index' | 'no_assets' | 'no_entry_script' | 'native_import';
   message: string;
   remedy: string;
 }
@@ -87,36 +80,14 @@ const readIfPresent = (path: string): string | null => {
   }
 };
 
-/** Whether this repository's stub still carries the marker this check looks for. */
-export const stubMarkerIntact = (): boolean => {
-  const stub = readIfPresent(
-    fileURLToPath(new URL('../src/lib/platform/tauri_stub.ts', import.meta.url)),
-  );
-  return stub?.includes(STUB_MARKER);
-};
-
 /**
  * Inspect a built bundle directory.
  *
- * `dir` and `mode` are parameters so a fixture bundle can be written to a
- * temporary directory and checked without building anything.
+ * `dir` is a parameter so a fixture bundle can be written to a temporary
+ * directory and checked without building anything.
  */
-export const checkBundle = (mode: BuildMode, dir: string = BUILD_DIR): BundleProblem[] => {
+export const checkBundle = (dir: string = BUILD_DIR): BundleProblem[] => {
   const files = listFiles(dir);
-
-  if (!stubMarkerIntact()) {
-    // Reported before anything else: without the marker, the mode check below
-    // would pass on a native bundle built with the stub in place.
-    return [
-      {
-        code: 'stub_marker_missing',
-        message:
-          'The Tauri stub marker string was not found in src/lib/platform/tauri_stub.ts, so this ' +
-          'check cannot distinguish a stubbed bundle from a real one.',
-        remedy: `Restore the phrase "${STUB_MARKER}" in the stub's error message, or update STUB_MARKER here.`,
-      },
-    ];
-  }
 
   if (files.length === 0) {
     return [
@@ -171,56 +142,34 @@ export const checkBundle = (mode: BuildMode, dir: string = BUILD_DIR): BundlePro
     }
   }
 
-  const scripts = files.filter((file) => file.endsWith('.js'));
-  let sawStubMarker = false;
-  for (const file of scripts) {
+  // Reported per file rather than once, because "which module" is the difference
+  // between a fixable report and a hunt.
+  for (const file of files.filter((name) => name.endsWith('.js'))) {
     const source = readIfPresent(join(dir, file));
-    if (source?.includes(STUB_MARKER)) {
-      sawStubMarker = true;
-      break;
+    if (source?.includes(NATIVE_SPECIFIER)) {
+      problems.push({
+        code: 'native_import',
+        message: `${file} imports "${NATIVE_SPECIFIER}…", and this starter has no native shell.`,
+        remedy:
+          'A `@tauri-apps/*` call reaches a shell that does not exist and throws when that ' +
+          'screen runs. Remove the import; `bun run check:bundle` fails it until you do.',
+      });
     }
-  }
-
-  if (mode === 'native' && sawStubMarker) {
-    problems.push({
-      code: 'mode_mismatch',
-      message: 'A native build still contains the browser Tauri stub.',
-      remedy:
-        'TAURI_NATIVE_BUILD was not set for this build, so vite.config.ts aliased ' +
-        '`@tauri-apps/*` to the throwing stub. `bun run tauri:build` sets it for every ' +
-        'native target, including Android and iOS.',
-    });
-  }
-
-  if (mode === 'browser' && !sawStubMarker) {
-    problems.push({
-      code: 'mode_mismatch',
-      message: 'A browser build does not contain the Tauri stub.',
-      remedy:
-        'Either the stub was not applied, or this is a native bundle being checked as a ' +
-        'browser bundle. A browser bundle without the stub would import @tauri-apps/* and ' +
-        'throw on first use.',
-    });
   }
 
   return problems;
 };
 
 export const main = (): number => {
-  const mode: BuildMode =
-    process.env.TAURI_NATIVE_BUILD === 'true' || process.env.TAURI_DESKTOP_BUILD === 'true'
-      ? 'native'
-      : 'browser';
-
-  const problems = checkBundle(mode);
+  const problems = checkBundle();
 
   if (problems.length === 0) {
     const files = listFiles(BUILD_DIR).length;
-    process.stdout.write(`bundle ok: ${files} file(s) in ${BUILD_DIR} (mode: ${mode})\n`);
+    process.stdout.write(`bundle ok: ${files} file(s) in ${BUILD_DIR}\n`);
     return 0;
   }
 
-  process.stderr.write(`bundle check failed for ${BUILD_DIR} (mode: ${mode})\n`);
+  process.stderr.write(`bundle check failed for ${BUILD_DIR}\n`);
   for (const problem of problems) {
     process.stderr.write(`  [${problem.code}] ${problem.message}\n`);
     process.stderr.write(`      ${problem.remedy}\n`);

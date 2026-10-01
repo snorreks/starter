@@ -1,41 +1,16 @@
 # Rename checklist
 
-Everything to change to make this yours. In order — the first three are the ones
-that are hard to change later.
+Everything to change to make this yours.
 
 The template is deliberately generic. It contains no name, no identifier, no
 domain, no resource id and no key belonging to anyone.
 
-## 1. Identity, before anything ships
+Your identity reaches your users through the **Worker name**, the **D1 database**
+and the **account** you provision into — not through a bundle id, because this is
+a web starter and there is no installed application to identify. Set those in
+step 2.
 
-These appear in your bundle id, your install path and your signing identity.
-Changing them after a first release is not free.
-
-**`apps/frontend/client/src-tauri/tauri.conf.json`**
-
-```json
-"productName": "Your App",
-"identifier": "com.yourcompany.yourapp",
-"version": "0.1.0"
-```
-
-**`apps/frontend/client/src-tauri/Cargo.toml`** — match it:
-
-```toml
-name = "your-app"
-
-[lib]
-name = "your_app_lib"
-```
-
-The `crate-type` must stay `["staticlib", "cdylib", "rlib"]`. It is what lets the
-same code build as a mobile library as well as a desktop binary, and dropping
-`staticlib` breaks mobile builds with an error that does not explain itself.
-
-**`apps/frontend/client/src-tauri/src/lib.rs`** — `starter_lib::run()` in
-`main.rs` must match the `[lib] name`.
-
-## 2. Provision your resources
+## 1. Provision your resources
 
 ```bash
 bun run deploy:configure -- --provision
@@ -55,7 +30,7 @@ bun run deploy:configure -- --account <account-id> --worker client your-app-clie
 Keep unprovisioned values in `scripts/src/registry/app_registry.ts` as `null`.
 Guard 5 rejects literal resource IDs in that committed template configuration.
 
-## 3. Replace the demo entity
+## 2. Replace the demo entity
 
 Notes is a demo, small on purpose. See
 [adding-a-feature.md](adding-a-feature.md) for the order that works:
@@ -77,23 +52,22 @@ The pieces to remove, in dependency order:
 Keep `auth.spec.ts`'s cross-account tests. They are about ownership, not about
 notes, and they are the most valuable thing in the E2E lane.
 
-## 4. Text and identity
+## 3. Text and identity
 
 ```bash
 grep -rn "Starter\|starter" --include=*.ts --include=*.svelte \
-  --include=*.json --include=*.rs --include=*.md --include=*.jsonc \
+  --include=*.json --include=*.md --include=*.jsonc \
   . | grep -v node_modules | grep -v '\.git/'
 ```
 
-Expect hits in: `README.md`, `src-tauri/tauri.conf.json`, `src-tauri/Cargo.toml`,
-`src-tauri/icons/icon.svg`, `apps/frontend/client/src/routes/+layout.svelte`,
+Expect hits in: `README.md`, `AGENTS.md`, `apps/frontend/client/src/routes/+layout.svelte`,
 `apps/backend/api/wrangler.jsonc`, and `packages/backend/database/drizzle.config.ts`.
 
 The `@starter/*` package scope can stay. It is not user-visible, and renaming it
 touches every import in the repository for no benefit. If you do rename it, change
 `name` in each `packages/**/package.json` and the `paths` in each `tsconfig.json`.
 
-## 5. Domain and origins
+## 4. Domain and origins
 
 If you add a custom domain, put it in both places:
 
@@ -104,16 +78,17 @@ They are different things: the first is documentation the deploy tooling reads, 
 second is what Better Auth and the origin check actually enforce. Setting only the
 first gives a sign-in form that returns 403 in production and works locally.
 
-## 6. Signing keys
+Nothing is pre-trusted: `TRUSTED_ORIGINS` is the entire allowlist, in both Better
+Auth's origin check and the API's CORS layer.
+
+## 5. Signing keys
 
 Nothing is signed, because no keys are shipped. When you add them:
 
 - Keep the private half out of the repository — [secrets.md](secrets.md)
 - Commit only the public half
-- Pin a Tauri updater keypair in your own secret store when you add an updater;
-  see [native.md](native.md)
 
-## 7. Before you publish
+## 6. Before you publish
 
 ```bash
 bun run typecheck && bun run guard && bun run lint && bun run format && bun run test
@@ -140,7 +115,7 @@ The last one should print nothing. Neither the provenance record nor this file
 names the source repository: the first records *what* was kept and removed, and
 this one records only that there is nothing to find.
 
-## 8. Optional: Moon, CI, direnv
+## 7. Optional: Moon, CI, direnv
 
 - **Moon** is task orchestration only. Drop `.moon/` and the per-project
   `moon.yml` files, and change the root scripts to call the packages directly.
@@ -153,7 +128,7 @@ this one records only that there is nothing to find.
 
 ## What you cannot inherit, and should not try to
 
-- Updater signing keys
+- Updater signing keys, if you ever add a native client
 - Age recipients and identities
 - Cloudflare account ids, database ids, bucket names, custom domains
 - OAuth client ids and secrets

@@ -1,19 +1,13 @@
 // apps/frontend/client/vite.config.ts
 //
-// One SvelteKit app, two build targets: a browser SPA and a native bundle.
-// Both are the same Vite build; a native build differs only by `TAURI_NATIVE_BUILD`,
-// which (a) stops the `@tauri-apps/*` packages from being stubbed away and (b)
-// marks the bundle as native at build time.
+// One SvelteKit app, one build target: a browser SPA.
 //
-// The flag is named for what it means, not for one platform. It used to be
-// `TAURI_DESKTOP_BUILD`, which reads as desktop-only: an Android or iOS build
-// launched without it shipped stubbed Tauri packages, i.e. an app whose native
-// calls throw. `scripts/build_tauri.ts` sets it for every native target, and the
-// old name is still accepted so an existing invocation keeps working.
-//
-// Keeping one config rather than a `vite.config.tauri.ts` is deliberate: a
-// second config is a second thing that can drift, and "works in the browser,
-// broken in Tauri" is the exact failure this avoids.
+// This configuration used to switch between a browser bundle and a native
+// bundle on a `TAURI_NATIVE_BUILD` environment variable, and to alias
+// `@tauri-apps/*` to a throwing stub for the browser case. There is one target
+// now, so there is no switch to set and no stub to substitute: a browser build
+// that still imports a native package is a defect, and `check:bundle` fails it
+// rather than papering over it here.
 //
 // SvelteKit 3 takes its whole configuration inline; there is no
 // svelte.config.js.
@@ -24,7 +18,6 @@
 // `@starter/schemas/notes`), which is also what the workspace boundary guard
 // reads. An alias map would let a file name a package the guard cannot see.
 
-import { fileURLToPath } from 'node:url';
 import adapter from '@sveltejs/adapter-static';
 import { sveltekit } from '@sveltejs/kit/vite';
 import { vitePreprocess } from '@sveltejs/vite-plugin-svelte';
@@ -32,31 +25,13 @@ import tailwindcss from '@tailwindcss/vite';
 import { defineConfig, type PluginOption } from 'vite';
 import { API_DEV_PORT, CLIENT_DEV_PORT, DEV_HOST } from './dev_ports.ts';
 
-const resolvePath = (relative: string) => fileURLToPath(new URL(relative, import.meta.url));
-
-const isNativeBuild =
-  process.env.TAURI_NATIVE_BUILD === 'true' || process.env.TAURI_DESKTOP_BUILD === 'true';
-
-// One authority for both ports: see dev_ports.ts. `src-tauri/tauri.conf.json`
-// hard-codes `devUrl` (Tauri v2 does not interpolate env vars into its config),
-// and a guard asserts the two agree so the literals cannot drift apart.
+// One authority for both ports: see dev_ports.ts.
 const PORT = {
   client: CLIENT_DEV_PORT,
   api: API_DEV_PORT,
 } as const;
 
 export default defineConfig({
-  // Tauri packages become a throwing stub for browser builds, so importing one
-  // by accident fails loudly at runtime instead of quietly shipping a dead
-  // native path. A plain Vite alias, not a SvelteKit one: SvelteKit has
-  // deprecated its `alias` option in favour of subpath imports, and this is a
-  // third-party substitution rather than a project path mapping.
-  resolve: {
-    alias: isNativeBuild
-      ? {}
-      : [{ find: /^@tauri-apps\/.*$/, replacement: resolvePath('src/lib/platform/tauri_stub.ts') }],
-  },
-
   plugins: [
     tailwindcss(),
     sveltekit({
@@ -134,15 +109,6 @@ export default defineConfig({
         secure: false,
       },
     },
-  },
-
-  define: {
-    // Nothing in `src/` reads this today; it is defined so a consumer that wants
-    // to branch on "am I bundled for a native shell" has a build-time constant
-    // rather than guessing from `navigator.userAgent`. Replace
-    // `check:bundle`'s assertion that no `@tauri-apps/*` import survives a native
-    // build if that day comes.
-    __TAURI_NATIVE_BUILD__: JSON.stringify(isNativeBuild),
   },
 
   build: {

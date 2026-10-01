@@ -18,13 +18,16 @@ import { index, integer, sqliteTable, text, uniqueIndex } from 'drizzle-orm/sqli
 //
 // These tables are owned by Better Auth's expectations, not by this project.
 // Round 1 enables email + password only — no OAuth provider, no email
-// verification — but the schema still carries the OAuth columns and the
-// device-code table, because Better Auth validates its expected shape against
-// the adapter at runtime and refuses to start when it is incomplete.
+// verification — but the schema still carries the OAuth columns, because Better
+// Auth validates its expected shape against the adapter at runtime and refuses
+// to start when it is incomplete.
 //
 // That is worth stating plainly: removing them would "simplify" the schema and
 // break sign-in at runtime, not at build time. Better Auth checks
-// `dist/db/schema.mjs` and `plugins/device-authorization/schema.mjs`.
+// `dist/db/schema.mjs`.
+//
+// `deviceCodes` is the exception: it is no longer required by any enabled
+// plugin, and it is retained only because its migration is applied.
 // -----------------------------------------------------------------------------
 
 export const users = sqliteTable('users', {
@@ -93,10 +96,18 @@ export const verifications = sqliteTable('verifications', {
 });
 
 /**
- * Device-authorization codes, for the Tauri client.
+ * Device-authorization codes. Unused, and kept on purpose.
  *
- * Not optional: the desktop webview cannot OAuth-popup, so it signs in by
- * presenting a short user code the user approves in a browser. See @starter/auth.
+ * This table served a native client that signed in by approving a short user code
+ * in a browser. That client no longer exists and the Better Auth
+ * `device-authorization` plugin is no longer enabled, so nothing reads or writes
+ * this table.
+ *
+ * It stays because it is in migrations that have been applied — locally and to
+ * deployed databases. Dropping it here would make the Drizzle schema disagree
+ * with the database, and rewriting or adding a migration is a reviewed change of
+ * its own rather than something to smuggle in with a schema edit. See the
+ * migration `0001_early_captain_cross.sql`.
  */
 export const deviceCodes = sqliteTable(
   'device_codes',

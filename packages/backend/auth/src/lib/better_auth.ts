@@ -9,19 +9,15 @@
 //   - email verification: NOT ENABLED (accounts are usable immediately)
 //   - password reset / forgot password: NOT ENABLED
 //
-// The device-authorization + bearer pair is what lets the Tauri webview sign in.
-// It is not a convenience: the webview's origin is `tauri://localhost`, so the
-// session cookie is cross-site and is never attached to a request it makes to
-// the API. Without `bearer`, a native client can read its session but can never
-// make an authenticated write — a half-working integration that is far worse
-// than an obvious failure.
+// No device-authorization or bearer plugin. Both existed for a native client
+// whose origin was cross-site and therefore never received the session cookie.
+// There is no such client: authentication is the session cookie and nothing
+// else. Re-adding either plugin would add a second identity path with no
+// consumer, and the browser flow below is the one that is exercised.
 
 import { betterAuthSchema } from '@starter/database';
-import { TAURI_WEBVIEW_ORIGINS } from '@starter/schemas/registry';
 import { betterAuth } from 'better-auth';
 import { drizzleAdapter } from 'better-auth/adapters/drizzle';
-import { bearer } from 'better-auth/plugins/bearer';
-import { deviceAuthorization } from 'better-auth/plugins/device-authorization';
 
 export interface BetterAuthEnv {
   /** Public base URL of the API, e.g. `http://localhost:8787` locally. */
@@ -48,8 +44,9 @@ export const createBetterAuth = (db: Parameters<typeof drizzleAdapter>[0], env: 
     secret: env.secret,
     // Both layers must agree: Better Auth's origin check and the API's CORS
     // layer. If they disagree the request is rejected at one of them, which
-    // presents as a confusing partial failure rather than a clear error.
-    trustedOrigins: [...(env.trustedOrigins ?? []), ...TAURI_WEBVIEW_ORIGINS],
+    // presents as a confusing partial failure rather than a clear error. The
+    // list is exactly what `TRUSTED_ORIGINS` holds — nothing is pre-trusted.
+    trustedOrigins: [...(env.trustedOrigins ?? [])],
     // Cloudflare sets `cf-connecting-ip` on every request. Without naming it,
     // Better Auth cannot resolve a client IP and silently falls back to a
     // single shared bucket — which turns the per-IP limit into a global one and
@@ -64,7 +61,6 @@ export const createBetterAuth = (db: Parameters<typeof drizzleAdapter>[0], env: 
       // Not enabled, and therefore not advertised anywhere in the UI:
       // requireEmailVerification: true,
     },
-    plugins: [deviceAuthorization(), bearer()],
 
     // Load-bearing: sign-in is the one endpoint reachable without
     // authentication. Disabled only if an operator explicitly opts out.

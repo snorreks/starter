@@ -1,8 +1,8 @@
-# Bun + SvelteKit + Tauri + Cloudflare starter
+# Bun + SvelteKit + Cloudflare starter
 
 A full-stack starter with one demo entity, worked end to end: a schema shared by
-client and server, a Cloudflare Worker with D1, a SvelteKit client, a Tauri shell,
-and a test suite that runs without a single credential.
+client and server, a Cloudflare Worker with D1, a SvelteKit client, and a test
+suite that runs without a single credential.
 
 The demo is a notes app. It is small on purpose — enough to exercise every
 convention, little enough that you will replace it.
@@ -14,9 +14,12 @@ convention, little enough that you will replace it.
 | **Runtime** | Bun, strict TypeScript, Moon for task orchestration, Biome for lint and format |
 | **Frontend** | SvelteKit 3 + Svelte 5, real-browser tests via Vitest |
 | **Backend** | Elysia 1.4 on Cloudflare Workers, D1 via Drizzle, Better Auth (email/password) |
-| **Native** | Tauri 2 shell for desktop and mobile |
 | **Tests** | 377 tests across six lanes, all running without credentials |
 | **Tooling** | `logs` CLI, database and deploy scripts, five architectural guards, Pi agent config |
+
+This is a web starter. There is no native shell: no desktop or mobile bundle, no
+Rust toolchain, and no `@tauri-apps/*` dependency to upgrade. A product that needs
+one should add a client and an authenticated API boundary deliberately.
 
 Nothing is provisioned. There are no Cloudflare resource ids, no signing keys, no
 domains, and no tokens anywhere in the repository — see
@@ -34,10 +37,9 @@ bun run dev:api        # Worker on :8787, logs to /tmp/starter-logs/api.ndjson
 
 Then sign up at <http://127.0.0.1:5173/login>.
 
-The client dev port is decided in one place,
-`apps/frontend/client/dev_ports.ts`, because `tauri.conf.json` cannot read an
-environment variable and the two used to disagree — so `tauri dev` opened a window
-on a port nothing was listening on. Override with `PORT`.
+The client dev port is decided in one place, `apps/frontend/client/dev_ports.ts`,
+because the dev server, the `/api` proxy target and the documented URL used to be
+able to disagree. Override it with `PORT`.
 
 Nothing above needs a Cloudflare account. The local Worker runs against Wrangler's
 local D1.
@@ -83,7 +85,7 @@ fixture-verified, and what has not been run at all.
 
 ```
 apps/
-  frontend/client    SvelteKit app, browser and Tauri webview
+  frontend/client    SvelteKit app, served to a browser
   backend/api        Elysia Worker
   e2e                Playwright
 packages/
@@ -136,7 +138,6 @@ Start at [AGENTS.md](AGENTS.md) for commands and navigation.
 | [docs/lint.md](docs/lint.md) | Biome, and the rules that are off and why |
 | [docs/toolchain.md](docs/toolchain.md) | Version pinning, and what Moon is for |
 | [docs/cloudflare.md](docs/cloudflare.md) | Provisioning, deploying, what is separate from what |
-| [docs/native.md](docs/native.md) | Tauri: renaming, capabilities, mobile, adding an updater |
 | [docs/secrets.md](docs/secrets.md) | SOPS, what is not implemented, and what never goes in the repository |
 | [docs/agent.md](docs/agent.md) | The Pi setup, skills, and the log tool |
 | [docs/rename-checklist.md](docs/rename-checklist.md) | Everything to change to make this yours |
@@ -147,7 +148,6 @@ Run through [docs/rename-checklist.md](docs/rename-checklist.md). The short vers
 
 ```bash
 bun run deploy:configure -- --provision   # create your D1, set your ids
-# then set productName/identifier in src-tauri/tauri.conf.json
 ```
 
 The template provisions nothing on purpose. A fresh clone should reach a working

@@ -494,7 +494,6 @@ describe('documented-paths', () => {
       'docs/capability-matrix.md',
       'docs/first-round-review.md',
       'docs/lint.md',
-      'docs/native.md',
       'docs/starter-extraction.md',
       'docs/testing.md',
       'docs/toolchain.md',

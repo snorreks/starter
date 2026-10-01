@@ -63,11 +63,6 @@ bun run db:migrate:remote   # requires an explicit environment and --yes
 bun run db:status
 bun run db:seed
 
-# Native
-bun run tauri:dev
-bun run tauri:build
-bun run tauri:icon
-
 # Deploy — reads a plan; nothing happens without --yes
 bun run deploy:configure
 bun run deploy:check
@@ -94,14 +89,13 @@ own:
 | `node` on PATH | `test:integration`, `e2e` | `env: 'node': No such file or directory`, then a 4-minute timeout |
 | Chromium's shared libraries | `test:browser`, `e2e` | `error while loading shared libraries` |
 | the `chromium_headless_shell` store path | `test:browser` **only** | `Executable doesn't exist at …/chromium_headless_shell-1243/…` — see [docs/capability-matrix.md](docs/capability-matrix.md) |
-| `cargo` + system webview libs | `tauri:*` | named explicitly by the launcher |
 
 See [docs/capability-matrix.md](docs/capability-matrix.md).
 
 ## Layout, and the boundaries that matter
 
 ```
-apps/frontend/client     SvelteKit SPA; also the Tauri shell
+apps/frontend/client     SvelteKit SPA
 apps/backend/api         Worker: routes, auth, D1
 apps/e2e                 Playwright specs + the harness that starts the servers
 packages/shared/*        portable; no project dependencies
@@ -132,15 +126,14 @@ Two directory rules that are *not* stylistic:
 ## Tool resolution
 
 Never `bunx <tool>` for anything that mutates state or runs a build. `wrangler`,
-`drizzle-kit`, `playwright` and `tauri` are declared by single workspace packages,
-so `bunx` from the repository root does not find them and downloads whatever the
+`drizzle-kit` and `playwright` are declared by single workspace packages, so
+`bunx` from the repository root does not find them and downloads whatever the
 registry serves. Observed drift: lockfile 4.142.0, `bunx wrangler --version`
 4.144.0.
 
 Go through the package that declares the tool:
 
 ```bash
-bun run --cwd apps/frontend/client tauri build
 bun run --cwd packages/backend/database db:generate
 ```
 
@@ -184,7 +177,6 @@ bun run --cwd packages/backend/database db:generate
 | [docs/first-round-review.md](docs/first-round-review.md) | fixed and open findings |
 | [docs/architecture.md](docs/architecture.md) | boundaries and why |
 | [docs/cloudflare.md](docs/cloudflare.md) | deploy, D1, workers, credentials |
-| [docs/native.md](docs/native.md) | Tauri desktop and mobile |
 | [docs/logs.md](docs/logs.md) | the log CLI and its refusals |
 | [docs/secrets.md](docs/secrets.md) | SOPS: the operations, and what each one refuses |
 | [docs/agent.md](docs/agent.md) | Pi extensions and trust |

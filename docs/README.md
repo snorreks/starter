@@ -19,8 +19,6 @@ Start here. Nothing below is required reading before running a command — the
   verified
 - [cloudflare.md](cloudflare.md) — Workers, D1, deployment, credentials, and the
   Worker's deployment-mode binding
-- [native.md](native.md) — Tauri desktop and mobile, build modes, signing
-  prerequisites
 - [logs.md](logs.md) — the `bun run logs` family and what each refusal means
 - [secrets.md](secrets.md) — SOPS: the operations, and what each one refuses
 - [lint.md](lint.md) — Biome, the whole-repository guards, and what each refuses

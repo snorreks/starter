@@ -1,19 +1,18 @@
 # The pinned development environment for Linux and macOS.
 #
 # Why a flake: a starter that documents "install Bun, Moon, Wrangler, Biome,
-# Playwright, SOPS, age, cargo…" gets six of those and not the seventh, and the
+# Playwright, SOPS, age…" gets six of those and not the seventh, and the
 # failure surfaces as a broken browser lane rather than as a missing
 # prerequisite. This pins them.
 #
-# Three profiles, because the needs are not nested the way they look:
+# Two profiles, because the needs are not nested the way they look:
 #
-#   minimal   web work. install, unit tests, lint, build. No Rust, no browser.
+#   minimal   web work. install, unit tests, lint, build. No browser.
 #   default   the above, plus a Chromium linked against this Nix store.
-#   native    the above, plus the Tauri toolchain.
 #
 # What is deliberately NOT here:
 #
-#   * Wrangler, Drizzle Kit, Playwright CLI, Tauri CLI, Biome, Moon, TypeScript.
+#   * Wrangler, Drizzle Kit, Playwright CLI, Biome, Moon, TypeScript.
 #     Those are pinned by the workspace lockfile and must resolve through
 #     `node_modules/.bin`. A second copy on PATH is how a local run validates
 #     against version X while CI runs version Y. `setup` installs them and
@@ -77,37 +76,6 @@
               nix-direnv
             ];
 
-            # The Rust and native-linker set Tauri's build needs. Listed by name so
-            # `tauri:build` fails complaining about a specific missing library
-            # rather than a build script probing and guessing.
-            nativePackages = with pkgs; [
-              cargo
-              rustc
-              rustfmt
-              clippy
-              rust-analyzer
-              cmake
-              pkg-config
-              libGL
-              openssl
-            ]
-            ++ pkgs.lib.optionals pkgs.stdenv.hostPlatform.isLinux [
-              # Tauri on Linux is WebKitGTK 4.1. nixpkgs removed the bare
-              # `webkitgtk` attribute — an unversioned webkit is the exact failure
-              # mode this comment keeps you out of, since a Linux shell built
-              # against WebKitGTK 2 does not compile Tauri's webview at all.
-              # On macOS the equivalent comes from Xcode's command line tools,
-              # which a shell cannot supply.
-              webkitgtk_4_1
-              gtk3
-              glib
-              pango
-              cairo
-              gdk-pixbuf
-              at-spi2-atk
-              libxkbcommon
-            ];
-
             # ── the browser ─────────────────────────────────────────────────
             # Playwright's own `playwright install chromium` downloads a Linux
             # build linked against glibc and fixed `.so` names. On NixOS those
@@ -119,7 +87,7 @@
             # resolves its own libraries without LD_LIBRARY_PATH.
             browser = pkgs.chromium;
 
-            # ── one shell, three profiles ───────────────────────────────────
+            # ── one shell, profiles below ────────────────────────────────
             mkShellFor = extraPackages:
               pkgs.mkShell {
                 # Watching the pin file means a version bump invalidates the
@@ -144,16 +112,15 @@
             });
           in
           f {
-            inherit pkgs corePackages nativePackages browser pinsFile mkShellFor;
+            inherit pkgs corePackages browser pinsFile mkShellFor;
           });
     in
     {
-      devShells = forEachSystem ({ mkShellFor, corePackages, nativePackages, browser, ... }: {
+      # ── one shell, two profiles ─────────────────────────────────────────
+      devShells = forEachSystem ({ mkShellFor, corePackages, browser, ... }: {
         minimal = mkShellFor corePackages;
 
         default = mkShellFor (corePackages ++ [ browser ]);
-
-        native = mkShellFor (corePackages ++ nativePackages ++ [ browser ]);
       });
 
       # Chromium, so a caller can reach it without the shell's env:

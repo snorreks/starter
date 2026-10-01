@@ -112,23 +112,6 @@ tasks:
     options:
       cache: false
 
-  tauri-dev:
-    command: 'bun'
-    args: ['run', 'tauri:dev']
-    preset: 'server'
-
-  tauri-build:
-    command: 'bun'
-    args: ['run', 'tauri:build']
-    options:
-      cache: false
-
-  tauri-icon:
-    command: 'bun'
-    args: ['run', 'tauri:icon']
-    options:
-      cache: false
-
   validate:
     deps:
       - '~:lint'

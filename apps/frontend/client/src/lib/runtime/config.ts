@@ -3,15 +3,11 @@
 // Runtime configuration.
 //
 // One module resolves the API base URL, because getting it wrong is the single
-// most common reason "it works in the browser but not in Tauri":
+// most common reason "it works locally but not when deployed":
 //
-//   - browser dev      -> same origin, proxied by Vite to the local Worker
-//   - Tauri webview    -> `tauri://localhost` cannot proxy, so the local Worker
-//                         is addressed directly on 127.0.0.1
-//   - deployed web     -> PUBLIC_API_BASE_URL, or same origin
-//   - Tauri, deployed  -> PUBLIC_API_BASE_URL (an absolute https origin)
-
-import { isTauri } from '@starter/frontend-services/platform';
+//   - browser dev  -> same origin, proxied by Vite to the local Worker
+//   - server pass  -> no origin to be relative to, so the local Worker address
+//   - deployed web -> PUBLIC_API_BASE_URL, or same origin
 
 export interface ClientConfig {
   apiBaseUrl: string;
@@ -59,12 +55,6 @@ const resolveApiBaseUrl = (): string => {
 
   if (typeof window === 'undefined') {
     // Server/SSR render pass: there is no origin to be relative to.
-    return `http://127.0.0.1:${readPublicEnv('PUBLIC_API_PORT') ?? '8787'}`;
-  }
-
-  if (isTauri()) {
-    // A Tauri webview has a non-HTTP origin, so a relative `/api` URL and a
-    // dev-server proxy both fail here.
     return `http://127.0.0.1:${readPublicEnv('PUBLIC_API_PORT') ?? '8787'}`;
   }
 
