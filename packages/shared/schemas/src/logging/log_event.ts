@@ -1,7 +1,7 @@
 // packages/shared/schemas/src/logging/log_event.ts
 //
-// The one structured event shape used by every producer (client, Worker, native
-// shell) and every consumer (console, `bun run logs`, Pi log tool). Keeping a
+// The one structured event shape used by every producer (browser, Worker) and
+// every consumer (console, `bun run logs`, Pi log tool). Keeping a
 // single schema here is what makes cross-plane correlation possible: a browser
 // event and a Worker event are queryable with the same field names.
 //
@@ -193,7 +193,7 @@ export const SCHEMA_UNION_ASSERTIONS = [
 // -----------------------------------------------------------------------------
 
 /**
- * Context a browser or native client asserts about itself.
+ * Context a browser client asserts about itself.
  *
  * Sent as its own object so a server-side reader can never mistake a
  * self-reported identity for a verified one: `LogEvent.userId` is filled in by
