@@ -30,7 +30,8 @@
 //    linker error" is a worse message than naming the missing prerequisite.
 
 import { spawnSync } from 'node:child_process';
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync } from 'node:fs';
+import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { CLIENT_DEV_PORT, DEV_HOST } from '../dev_ports.ts';
 
@@ -56,6 +57,21 @@ const TARGET_FLAG: Record<NativeTarget, string> = {
   ios: '--ios',
 };
 
+/**
+ * Which platform this invocation is for.
+ *
+ * Two spellings are accepted, and both matter. `--android` / `--ios` / `--desktop`
+ * name the platform directly; `--target android` is the form the tauri CLI
+ * documents and the one `docs/native.md` uses.
+ *
+ * Reading both is not tidiness. `hostBlocker` is asked about the target, so a
+ * launcher that did not recognise `--target android` would check for cargo, report
+ * nothing about the SDK, and let the build fail later inside Gradle — which is the
+ * "tauri exits with a linker error" outcome this script exists to replace.
+ *
+ * A `--target` triple (`aarch64-apple-ios`) is passed through untouched and is not
+ * resolved to a platform here; no bundled target needs that today.
+ */
 export const parseTarget = (args: readonly string[]): NativeTarget | null => {
   if (args.includes('--android')) {
     return 'android';
@@ -65,6 +81,14 @@ export const parseTarget = (args: readonly string[]): NativeTarget | null => {
   }
   if (args.includes('--desktop')) {
     return 'desktop';
+  }
+  const flagIndex = args.indexOf('--target');
+  const named = flagIndex === -1 ? undefined : args[flagIndex + 1];
+  if (named === 'android') {
+    return 'android';
+  }
+  if (named === 'ios') {
+    return 'ios';
   }
   return null;
 };
@@ -83,6 +107,31 @@ export const readConfiguredDevUrl = (path: string = TAURI_CONF): string | null =
   }
   const match = /"devUrl"\s*:\s*"([^"]+)"/.exec(readFileSync(path, 'utf8'));
   return match?.[1] ?? null;
+};
+
+/**
+ * The NDK an Android build would link against, or null when there is none.
+ *
+ * Gradle looks under `$ANDROID_HOME/ndk/<version>`, and several versions can be
+ * installed side by side — so any of them can link, and the highest is the one a
+ * build would pick. `ANDROID_NDK_HOME` / `NDK_HOME` are the escape hatches for an
+ * NDK installed outside the SDK.
+ */
+const androidNdk = (sdk: string): string | null => {
+  const configured = process.env.ANDROID_NDK_HOME ?? process.env.NDK_HOME;
+  if (configured !== undefined && configured.length > 0) {
+    return existsSync(configured) ? configured : null;
+  }
+
+  const ndkRoot = join(sdk, 'ndk');
+  if (!existsSync(ndkRoot)) {
+    return null;
+  }
+  const versions = readdirSync(ndkRoot)
+    .filter((name) => existsSync(join(ndkRoot, name, 'toolchains')))
+    .sort();
+  const latest = versions.at(-1);
+  return latest === undefined ? null : join(ndkRoot, latest);
 };
 
 /** What this host is missing, or null when it can build the target. */
@@ -114,6 +163,18 @@ export const hostBlocker = (target: NativeTarget): string | null => {
     // Homebrew's android-ndk supplies the toolchain but the SDK root still has to
     // be pointed at; the message above covers the unset case.
     return null;
+  }
+  // `null` is a claim that this host *can* build the target, so the NDK is checked
+  // rather than assumed. An SDK root with no NDK otherwise fails as a linker error
+  // several minutes in, and naming the missing prerequisite is the entire point of
+  // this function. macOS returned above because Homebrew can supply the NDK outside
+  // the SDK.
+  if (androidNdk(sdk) === null) {
+    return (
+      `${sdk} has no Android NDK. Install one into the SDK with ` +
+      '`sdkmanager "ndk;<version>"` (then accept its licences), or point ANDROID_NDK_HOME at an ' +
+      'existing NDK. Android builds link native libraries, so the NDK is required.'
+    );
   }
   return null;
 };
@@ -164,7 +225,10 @@ export const resolveInvocation = (
   const passthrough = args.filter(
     (arg) => arg !== '--android' && arg !== '--ios' && arg !== '--desktop',
   );
-  const flag = TARGET_FLAG[target];
+  // Synthesised only for the `--android` / `--ios` spelling. A caller who wrote
+  // `--target android` already named the platform, and `tauri build --android
+  // --target android` asks for two things.
+  const flag = args.includes('--target') ? '' : TARGET_FLAG[target];
 
   const tauriArgs =
     mode === 'dev'
