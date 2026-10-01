@@ -63,6 +63,10 @@ jobs:
           # checkout happened to create a local `main` there — the bug was latent,
           # not absent. `fetch-depth: 0` is what Moon's own warning asks for.
           fetch-depth: 0
+          # No job commits or pushes, so the token has no reason to outlive the
+          # checkout. Left in `.git/config` it is readable by anything that runs
+          # repository code — which is every test in this file.
+          persist-credentials: false
 
       - uses: oven-sh/setup-bun@v2
         with:
@@ -108,6 +112,10 @@ jobs:
           # checkout happened to create a local `main` there — the bug was latent,
           # not absent. `fetch-depth: 0` is what Moon's own warning asks for.
           fetch-depth: 0
+          # No job commits or pushes, so the token has no reason to outlive the
+          # checkout. Left in `.git/config` it is readable by anything that runs
+          # repository code — which is every test in this file.
+          persist-credentials: false
 
       - uses: oven-sh/setup-bun@v2
         with:
@@ -123,7 +131,12 @@ jobs:
         #
         # Only Chromium. The browser lane runs one provider; running three would
         # triple the time to catch a divergence nobody has hit.
-        run: bunx playwright install --with-deps chromium
+        #
+        # Through the workspace script, not `bunx`: `bunx playwright` from the
+        # repository root does not resolve the pinned copy and installs whatever
+        # version the registry serves, which does not match the `@playwright/test`
+        # these lanes run against.
+        run: bun run --cwd apps/e2e browsers:install
 
       - name: Unit tests
         # `moon run :test` fans out to each project's own `test` script, so a new
@@ -149,6 +162,10 @@ jobs:
           # checkout happened to create a local `main` there — the bug was latent,
           # not absent. `fetch-depth: 0` is what Moon's own warning asks for.
           fetch-depth: 0
+          # No job commits or pushes, so the token has no reason to outlive the
+          # checkout. Left in `.git/config` it is readable by anything that runs
+          # repository code — which is every test in this file.
+          persist-credentials: false
 
       - uses: oven-sh/setup-bun@v2
         with:
@@ -177,6 +194,10 @@ jobs:
           # checkout happened to create a local `main` there — the bug was latent,
           # not absent. `fetch-depth: 0` is what Moon's own warning asks for.
           fetch-depth: 0
+          # No job commits or pushes, so the token has no reason to outlive the
+          # checkout. Left in `.git/config` it is readable by anything that runs
+          # repository code — which is every test in this file.
+          persist-credentials: false
 
       - uses: oven-sh/setup-bun@v2
         with:
@@ -191,7 +212,8 @@ jobs:
         run: bun run db:migrate
 
       - name: Install Playwright's Chromium
-        run: bunx playwright install --with-deps chromium
+        # Pinned copy, same reason as in the unit job.
+        run: bun run --cwd apps/e2e browsers:install
 
       - name: End-to-end tests
         # `e2e:e2e` is the real Playwright suite: it builds the client, starts a

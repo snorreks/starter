@@ -122,10 +122,24 @@ export interface KillTreeOptions {
  * Deepest-first matters: signalling a parent first can let it reap or reparent
  * children, and a reparented child is no longer findable.
  *
+ * `root` is refused rather than coerced when it is not a real process id. To
+ * `process.kill`, 0 means "every process in my own group" and 1 means init, and
+ * `childPidsOf` would walk init's whole descendant list — so a caller that lost a
+ * pid would get every process it owns signalled. A throw is the honest answer: the
+ * caller has lost track of what it spawned, and that is not something to guess at.
+ *
  * Returns the pids that were still alive when the call returned, so a caller can
  * report "these survived" rather than assuming success.
  */
 export const killTree = (root: number, options: KillTreeOptions = {}): number[] => {
+  if (!Number.isInteger(root) || root <= 1) {
+    throw new Error(
+      `killTree: ${String(root)} is not a usable root pid. ` +
+        'Pass the pid of a process this process started; 0 and 1 would signal ' +
+        'everything and init respectively.',
+    );
+  }
+
   const { signal = 'SIGTERM', forceSignal = 'SIGKILL', graceMs = 200, attempts = 25 } = options;
 
   const tree = childPidsOf(root).reverse();

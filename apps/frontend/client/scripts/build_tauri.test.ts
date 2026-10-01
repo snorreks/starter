@@ -16,6 +16,9 @@
 //   * a host that cannot build the target says which prerequisite is missing.
 
 import { describe, expect, test } from 'bun:test';
+import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { CLIENT_DEV_PORT, expectedTauriDevUrl } from '../dev_ports.ts';
 import {
   hostBlocker,
@@ -49,6 +52,13 @@ describe('parseTarget', () => {
     expect(parseTarget(args as string[])).toBe(expected);
   });
 
+  test.each([
+    [['--target', 'android'], 'android'],
+    [['--target', 'ios'], 'ios'],
+  ])('names a --target platform: %p -> %s', (args, expected) => {
+    expect(parseTarget(args as string[])).toBe(expected);
+  });
+
   test('returns null when no target flag is given', () => {
     // `null` means "not specified", which is different from "desktop": it lets
     // `resolveInvocation` apply the default without this function claiming the
@@ -76,18 +86,44 @@ describe('resolveInvocation: the native-build flag', () => {
   });
 
   test('the tauri subcommand carries the target flag', () => {
-    expect(resolveInvocation('release', ['--android']).tauriArgs).toEqual(['build', '--android']);
-    expect(resolveInvocation('release', []).tauriArgs).toEqual(['build']);
-    expect(resolveInvocation('dev', ['--ios']).tauriArgs).toEqual(['dev', '--ios']);
+    // `blocker` and `devUrl` are both injected so these assert the argument shape
+    // and nothing else: the host check would otherwise ask this machine about
+    // cargo, and `devUrl` would otherwise be read from the real tauri.conf.json —
+    // so a `tauri dev` assertion would depend on a file that has nothing to do
+    // with the argv.
+    expect(
+      resolveInvocation('release', ['--android'], { blocker: capableHost, devUrl: null }).tauriArgs,
+    ).toEqual(['build', '--android']);
+    expect(resolveInvocation('release', [], { blocker: capableHost, devUrl: null }).tauriArgs).toEqual([
+      'build',
+    ]);
+    expect(resolveInvocation('dev', ['--ios'], { blocker: capableHost, devUrl: null }).tauriArgs).toEqual(
+      ['dev', '--ios'],
+    );
   });
 
   test('unknown passthrough flags reach tauri', () => {
-    expect(resolveInvocation('release', ['--debug', '--bundles', 'deb']).tauriArgs).toEqual([
-      'build',
-      '--debug',
-      '--bundles',
-      'deb',
-    ]);
+    expect(
+      resolveInvocation('release', ['--debug', '--bundles', 'deb'], {
+        blocker: capableHost,
+        devUrl: null,
+      }).tauriArgs,
+    ).toEqual(['build', '--debug', '--bundles', 'deb']);
+  });
+
+  test('a --target platform reaches tauri once and names the target here too', () => {
+    // The spelling the documentation uses. It has to survive to tauri intact *and*
+    // be understood here, because the host check is asked about the target: a
+    // launcher that passed `--target android` through but did not read it would
+    // check for cargo and say nothing about the SDK.
+    const invocation = resolveInvocation('release', ['--target', 'android'], {
+      blocker: capableHost,
+      devUrl: null,
+    });
+
+    expect(invocation.target).toBe('android');
+    expect(invocation.tauriArgs).toEqual(['build', '--target', 'android']);
+    expect(invocation.blocked).toBeNull();
   });
 });
 
@@ -160,6 +196,50 @@ describe('hostBlocker', () => {
       }
       if (saved.ANDROID_SDK_ROOT !== undefined) {
         process.env.ANDROID_SDK_ROOT = saved.ANDROID_SDK_ROOT;
+      }
+    }
+  });
+
+  test('android names a missing NDK even when the SDK is there', () => {
+    // `null` claims this host can build the target, so the NDK is part of that
+    // claim: an SDK root without one fails later as a linker error inside Gradle.
+    // A fixture directory rather than the machine's real SDK, so the assertion is
+    // about this rule and not about what happens to be installed.
+    const sdk = mkdtempSync(join(tmpdir(), 'android-sdk-'));
+    const saved = {
+      ANDROID_HOME: process.env.ANDROID_HOME,
+      ANDROID_SDK_ROOT: process.env.ANDROID_SDK_ROOT,
+      ANDROID_NDK_HOME: process.env.ANDROID_NDK_HOME,
+      NDK_HOME: process.env.NDK_HOME,
+    };
+    process.env.ANDROID_HOME = sdk;
+    delete process.env.ANDROID_SDK_ROOT;
+    delete process.env.ANDROID_NDK_HOME;
+    delete process.env.NDK_HOME;
+
+    try {
+      const blocked = hostBlocker('android');
+      // macOS can take the NDK from Homebrew rather than the SDK, so there the
+      // SDK alone is enough.
+      expect(blocked === null || blocked.includes('NDK')).toBe(true);
+
+      if (blocked !== null && process.platform !== 'darwin') {
+        expect(blocked).toContain('NDK');
+        expect(blocked).toContain('ANDROID_NDK_HOME');
+      }
+
+      // With an NDK installed the target is no longer blocked, which is what makes
+      // the previous assertion a rule about the NDK rather than about the fixture.
+      mkdirSync(join(sdk, 'ndk', '27.0.12077973', 'toolchains'), { recursive: true });
+      expect(hostBlocker('android')).toBeNull();
+    } finally {
+      rmSync(sdk, { recursive: true, force: true });
+      for (const [name, value] of Object.entries(saved)) {
+        if (value === undefined) {
+          delete process.env[name];
+        } else {
+          process.env[name] = value;
+        }
       }
     }
   });

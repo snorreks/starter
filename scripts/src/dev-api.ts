@@ -70,7 +70,14 @@ const stopWorker = (child: ChildProcess): number[] => {
   if (child.exitCode !== null || child.signalCode !== null) {
     return [];
   }
-  return killTree(child.pid ?? 0, { graceMs: 300, attempts: 25 });
+  // No pid means the spawn failed, and there is no tree to take down. It must not
+  // become a `0` for `killTree`: pid 0 means "every process in my group" to
+  // `process.kill`, so a failed spawn would have signalled the launcher and
+  // whatever else it owns.
+  if (child.pid === undefined) {
+    return [];
+  }
+  return killTree(child.pid, { graceMs: 300, attempts: 25 });
 };
 
 /** Stop whatever a previous run of this checkout left behind. */

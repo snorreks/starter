@@ -12,12 +12,16 @@ bun run tauri:dev         # desktop, with dev reload
 bun run tauri:build       # release bundle for this platform
 bun run tauri:icon        # regenerate icons from src-tauri/icons/icon.svg
 
-bun run --cwd apps/frontend/client tauri build --target android
+bun run tauri:build -- --target android
 bun run --cwd apps/frontend/client tauri android init
 bun run --cwd apps/frontend/client tauri ios init
 ```
 
-Each delegates to the client's own `package.json`.
+Every *build* goes through the launcher, including mobile: `tauri build` run
+directly sets no native-build flag, so an Android or iOS bundle made that way ships
+the throwing `@tauri-apps/*` stub — an app whose native calls throw. The two `init`
+commands compile nothing, so they need no flag and stay as the direct invocations
+they are.
 
 ### Why there is a launcher script
 
@@ -43,9 +47,10 @@ things below is a reason:
    `apps/frontend/client/dev_ports.ts`.
 
 4. **A host that cannot build the target says so.** `bun run tauri:build
-   -- --target ios` on Linux names Xcode and macOS; `--target android` names
-   `ANDROID_HOME`; a desktop build with no `cargo` names rustup. "tauri exits with a
-   linker error" is a worse message than naming the missing prerequisite.
+   -- --target ios` on Linux names Xcode and macOS; `--target android` names a
+   missing `ANDROID_HOME` or a missing NDK; a desktop build with no `cargo` names
+   rustup. "tauri exits with a linker error" is a worse message than naming the
+   missing prerequisite.
 
 `bun run check:bundle` then verifies the artifact: `index.html` present, the
 SvelteKit entry referenced, assets emitted, and — the part that matters — that the
@@ -169,7 +174,7 @@ structured but has not been built here.** The desktop path was also not built th
 Build through the launcher so the native-build flag is set:
 
 ```bash
-bun run --cwd apps/frontend/client tauri build --target android
+bun run tauri:build -- --target android
 ```
 
 Origins for the mobile webview are already in the API's allowlist:

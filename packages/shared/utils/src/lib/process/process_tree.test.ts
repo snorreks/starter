@@ -84,4 +84,18 @@ describe('killTree', () => {
   test('an already-dead tree is a no-op', () => {
     expect(() => killTree(999_998, { attempts: 1 })).not.toThrow();
   });
+
+  // pid 0 to `process.kill` is "my own process group" and pid 1 is init, so a
+  // caller that lost a pid and passed 0 back would signal the launcher, the test
+  // runner and everything else it owns. This is the shape `stopWorker` used to
+  // produce when a spawn failed.
+  test('refuses a root that is not a real pid', () => {
+    for (const bad of [0, 1, -1, Number.NaN, 1.5]) {
+      expect(() => killTree(bad, { attempts: 1 })).toThrow(/not a usable root pid/);
+    }
+  });
+
+  test('the refusal names the pid it refused', () => {
+    expect(() => killTree(0)).toThrow('0');
+  });
 });
