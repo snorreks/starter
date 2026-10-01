@@ -25,6 +25,8 @@
 //     words out and defaulting to "both" turns `--app clientt` into a production
 //     deploy of the wrong app.
 
+import { existsSync } from 'node:fs';
+import { join } from 'node:path';
 import type { DeploymentEnvironment } from '@starter/schemas';
 import {
   API_DIR,
@@ -315,6 +317,21 @@ export const planDeploy = (
     }
   }
 
+  // A static deploy needs something to deploy. `--assets-only` against a missing
+  // `build/` does not fail loudly: wrangler publishes an empty site, which reads as
+  // a successful deploy of a blank page. So the artifact is checked before the plan
+  // is built, and the same rule as the API's `check:bundle` applies.
+  const clientRequested = targets.includes('client');
+  if (clientRequested && !existsSync(join(CLIENT_DIR, 'build', 'index.html'))) {
+    return {
+      ok: false,
+      reason: 'The client build output is missing, so there is nothing to deploy.',
+      remedy:
+        'Run `bun run build` first, then `bun run check:bundle` to confirm the artifact.\n' +
+        '  A client deploy with no build/ would publish an empty site and report success.',
+    };
+  }
+
   const steps: Step[] = targets.map((target) => ({
     target,
     description: `Deploy the ${target} Worker to Cloudflare (${environment})`,
@@ -323,7 +340,13 @@ export const planDeploy = (
       'deploy',
       '--env',
       environment,
-      ...(target === 'client' ? ['--assets-only'] : []),
+      // The Worker name is passed explicitly rather than read from each config, so
+      // the name `deploy:check` printed is the name that gets deployed. A config
+      // that carried its own name would make the plan a description of one thing and
+      // the execution another.
+      '--name',
+      effectiveDeploymentValues().workerNames[target] as string,
+      ...(target === 'client' ? ['--assets-only', '--config', 'wrangler.jsonc'] : []),
       ...(target === 'api' ? ['--config', `${API_DIR}/wrangler.jsonc`] : []),
     ],
     cwd: target === 'client' ? CLIENT_DIR : API_DIR,

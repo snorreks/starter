@@ -19,6 +19,9 @@
 // built and inspected here, while the refusal path is tested on its own terms.
 
 import { afterEach, describe, expect, test } from 'bun:test';
+import { existsSync, renameSync } from 'node:fs';
+import { join } from 'node:path';
+import { CLIENT_DIR } from '../src/cloudflare/wrangler.ts';
 import { DEPLOYMENT_CONFIG } from '../src/registry/app_registry.ts';
 import {
   effectiveDeploymentValues,
@@ -384,9 +387,56 @@ describe('planDeploy: steps', () => {
     expect(clientStep?.args).toContain('--assets-only');
   });
 
-  test('the client step passes no --config', () => {
+  test('a client deploy with no build output is refused, not published empty', () => {
+    // `--assets-only` against a missing `build/` does not fail loudly: wrangler
+    // publishes an empty site and the command reports success. That is the failure
+    // this guards — a green deploy of a blank page.
+    const buildIndex = join(CLIENT_DIR, 'build', 'index.html');
+    const existed = existsSync(buildIndex);
+
+    if (existed) {
+      // Move it aside rather than deleting: the repository's own build output is not
+      // this test's to destroy, and `bun run build` is the documented way back.
+      renameSync(buildIndex, `${buildIndex}.test-away`);
+    }
+
+    try {
+      const plan = withWorkerNames(() => planDeploy(['client'], 'production', READY));
+
+      expect(plan.ok).toBe(false);
+      if (!plan.ok) {
+        expect(plan.reason).toContain('build');
+        expect(plan.remedy).toContain('bun run build');
+      }
+    } finally {
+      if (existed) {
+        renameSync(`${buildIndex}.test-away`, buildIndex);
+      }
+    }
+  });
+
+  test('the client step names its config, which now exists', () => {
+    // It used to pass no `--config` at all, because `apps/frontend/client` had no
+    // wrangler config: `deploy --client` ran `--assets-only` against nothing and
+    // wrangler fell back to its own defaults. The assertion was written to pin that
+    // behaviour, so it was green while the deploy could not work.
     const [clientStep] = planFor(['client'], 'production');
-    expect(clientStep?.args).not.toContain('--config');
+    expect(clientStep?.args).toContain('--config');
+
+    const configIndex = clientStep?.args.indexOf('--config') ?? -1;
+    expect(clientStep?.args[configIndex + 1]).toBe('wrangler.jsonc');
+    // And the file it names is really there, relative to the step's cwd.
+    expect(existsSync(join(CLIENT_DIR, 'wrangler.jsonc'))).toBe(true);
+  });
+
+  test('the client step carries the Worker name the plan printed', () => {
+    // Otherwise the name in the plan is a description of one thing and the deploy
+    // is another: a config carrying its own name would make `deploy:check` lie
+    // about what would be published.
+    const [clientStep] = planFor(['client'], 'production');
+    const nameIndex = clientStep?.args.indexOf('--name') ?? -1;
+    expect(nameIndex).toBeGreaterThan(-1);
+    expect(clientStep?.args[nameIndex + 1]).toBe('test-client-worker');
   });
 
   test('a remote step always carries its environment', () => {

@@ -267,15 +267,34 @@ export const APP_LOG_CONFIG: Record<AppId, AppLogConfig> = {
   },
 };
 
-/** Resolve the adapter kind that will serve a query, or an explicit reason. */
+/**
+ * Resolve the adapter kind that will serve a query, or an explicit reason.
+ *
+ * `follow` is what selects between the two, and getting that wrong is how
+ * `bun run logs api --mode staging --follow` came to be dead in every remote
+ * environment: this function returned `candidates[0]`, which for the API is
+ * `cloudflare-observability`, and `tailCloudflare` then refused with "needs the
+ * wrangler-tail adapter". The registry listed `wrangler-tail` in the same array
+ * two entries down, so the topology said yes and the resolution said no.
+ *
+ * A live tail is a *different request* from a historical one, not a preference,
+ * so it selects its adapter rather than taking the first:
+ *
+ *   - `follow`         needs an adapter with `liveTail`. `wrangler-tail` has it;
+ *                      `local-file` streams; the historical one does not.
+ *   - historical read  needs `historicalQuery`.
+ *
+ * With no request kind, the first configured adapter wins, which is what this did
+ * before and is still the right answer for a bare `bun run logs api`.
+ */
 export const resolveLogAdapter = (
   app: AppId,
   environment: DeploymentEnvironment,
+  follow = false,
 ): { kind: LogAdapterKind } | { unsupported: string } => {
   const candidates = APP_LOG_CONFIG[app].adapters[environment];
-  const kind = candidates[0];
 
-  if (!kind) {
+  if (candidates.length === 0) {
     return {
       unsupported:
         `No log adapter is configured for app "${app}" in environment "${environment}". ` +
@@ -284,7 +303,25 @@ export const resolveLogAdapter = (
     };
   }
 
-  return { kind };
+  if (follow) {
+    const live = candidates.find((candidate) => ADAPTER_CAPABILITIES[candidate].liveTail);
+    if (live === undefined) {
+      const named = candidates.map((candidate) => `"${candidate}"`).join(', ');
+      return {
+        unsupported:
+          `No live-tail adapter is configured for app "${app}" in environment "${environment}" ` +
+          `(configured: ${named}).\n` +
+          '  A tail needs an adapter that streams; the historical adapters read stored events.',
+      };
+    }
+    return { kind: live };
+  }
+
+  const historical = candidates.find(
+    (candidate) => ADAPTER_CAPABILITIES[candidate].historicalQuery,
+  );
+
+  return { kind: historical ?? candidates[0] };
 };
 
 /** Every adapter kind -> its declared capabilities. */

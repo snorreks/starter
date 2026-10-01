@@ -209,7 +209,11 @@ export const queryCloudflareHistory = async (
  * reached, so a forgotten `--follow` does not leave a process holding a port.
  */
 export const tailCloudflare = async (query: LogQuery): Promise<LogQueryResult> => {
-  const resolution = resolveLogAdapter(query.app, query.mode);
+  // `follow` selects the live adapter. Passing it matters: resolving without it
+  // returned the historical adapter, and the check below then refused with "needs
+  // the wrangler-tail adapter" — so `--follow` was dead for the API in every remote
+  // environment even though the registry listed a tail adapter.
+  const resolution = resolveLogAdapter(query.app, query.mode, true);
   if ('unsupported' in resolution) {
     return { status: 'capability_unsupported', events: [], message: resolution.unsupported };
   }
