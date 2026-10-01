@@ -10,7 +10,7 @@
 //
 // Everything the client needs to know about the network lives here:
 //   - base URL resolution
-//   - credentials (cookie in a browser, bearer token in a Tauri webview)
+//   - the session cookie every authenticated call carries
 //   - a uniform error shape (`AppError`), so no screen parses a status code
 //   - one place to log, bound to a request id for correlation
 
@@ -26,22 +26,6 @@ export interface ApiRequestOptions {
   traceId?: string;
 }
 
-type TokenProvider = () => string | undefined;
-
-let tokenProvider: TokenProvider = () => undefined;
-
-/**
- * Install the bearer-token source.
- *
- * A Tauri webview's origin is `tauri://localhost`, so the API is a different
- * *site* and the session cookie is never attached. The native client therefore
- * presents the session token as a bearer token instead. A browser never calls
- * this, and keeps using the cookie.
- */
-export const setApiTokenProvider = (provider: TokenProvider): void => {
-  tokenProvider = provider;
-};
-
 const buildHeaders = (options: ApiRequestOptions): Headers => {
   const headers = new Headers({ accept: 'application/json' });
 
@@ -50,11 +34,6 @@ const buildHeaders = (options: ApiRequestOptions): Headers => {
   }
   if (options.traceId !== undefined) {
     headers.set('x-trace-id', options.traceId);
-  }
-
-  const token = tokenProvider();
-  if (token !== undefined && token.length > 0) {
-    headers.set('authorization', `Bearer ${token}`);
   }
 
   return headers;
@@ -124,8 +103,9 @@ export class ApiClient extends BaseClass {
         method,
         headers: buildHeaders({ body, traceId }),
         ...(body === undefined ? {} : { body: JSON.stringify(body) }),
-        // Browser: the session cookie. Tauri: ignored, and the bearer token
-        // above is what authenticates instead.
+        // The session cookie. Same-origin in development through the Vite proxy,
+        // same-origin in production on the deployed origin, so `include` is what
+        // makes local sign-in behave like deployed sign-in.
         credentials: 'include',
         ...(signal === undefined ? {} : { signal }),
       });

@@ -57,10 +57,7 @@
     "test:integration": "moon run api:test-integration",
     "test:browser": "moon run client:test-browser",
     "test:e2e": "moon run e2e:e2e",
-    "test:all": "bun run test && bun run test:browser && bun run test:integration && bun run test:e2e",
-    "tauri:dev": "moon run client:tauri-dev",
-    "tauri:build": "moon run client:tauri-build",
-    "tauri:icon": "moon run client:tauri-icon"
+    "test:all": "bun run test && bun run test:browser && bun run test:integration && bun run test:e2e"
   },
   "devDependencies": {
     "@biomejs/biome": "2.5.13",

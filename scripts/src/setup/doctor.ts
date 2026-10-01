@@ -252,30 +252,6 @@ const playwrightCheck = (): Check => {
 
 // ── Optional capabilities, reported honestly ─────────────────────────────────
 
-const cargoCheck = (): Check => {
-  const reported = probe('cargo');
-  const rustc = probe('rustc');
-
-  if (reported === null) {
-    return {
-      name: 'cargo',
-      severity: 'optional',
-      ok: false,
-      detail: 'not on PATH',
-      remedy:
-        'Needed by `bun run tauri:*` only. `nix develop .#native` provides the Rust toolchain.',
-    };
-  }
-
-  return {
-    name: 'cargo',
-    severity: 'optional',
-    // cargo without rustc is a broken toolchain, not a present one.
-    ok: rustc !== null,
-    detail: rustc === null ? `${reported}, but rustc is missing` : `${reported}, ${rustc}`,
-  };
-};
-
 const sopsCheck = (): Check => {
   const sops = probe('sops');
   const age = probe('age');
@@ -297,51 +273,6 @@ const sopsCheck = (): Check => {
     // over a command that cannot work.
     ok: age !== null,
     detail: age === null ? `${sops}, but age is missing` : `${sops}, ${age}`,
-  };
-};
-
-const mobileCheck = (): Check => {
-  const android = process.env.ANDROID_HOME ?? process.env.ANDROID_SDK_ROOT;
-  const xcode = probe('xcodebuild');
-
-  if (process.platform === 'darwin') {
-    return {
-      name: 'mobile',
-      severity: 'optional',
-      ok: xcode !== null,
-      detail: xcode === null ? 'no Xcode command line tools' : `xcodebuild present`,
-      ...(xcode === null
-        ? {
-            remedy:
-              'iOS builds need Xcode: `xcode-select --install`. Android additionally needs an SDK ' +
-              'and a JDK, and an iOS build cannot be produced or signed on Linux at all.',
-          }
-        : {}),
-    };
-  }
-
-  if (process.platform !== 'linux') {
-    return {
-      name: 'mobile',
-      severity: 'optional',
-      ok: false,
-      detail: `host is ${process.platform}; neither Xcode nor the Android SDK is usable here`,
-      remedy: 'Mobile builds need macOS with Xcode, or Linux with the Android SDK and a JDK.',
-    };
-  }
-
-  return {
-    name: 'mobile',
-    severity: 'optional',
-    ok: Boolean(android),
-    detail: android === undefined ? 'no ANDROID_HOME' : `ANDROID_HOME=${android}`,
-    ...(android === undefined
-      ? {
-          remedy:
-            'Set ANDROID_HOME to an SDK with the NDK. iOS is not buildable on Linux at all — that ' +
-            'needs macOS with Xcode.',
-        }
-      : {}),
   };
 };
 
@@ -410,9 +341,7 @@ const CHECKS = [
   configCheck,
   playwrightCheck,
   browserCheck,
-  cargoCheck,
   sopsCheck,
-  mobileCheck,
 ] as const;
 
 export interface Report {

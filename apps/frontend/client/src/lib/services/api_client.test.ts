@@ -13,7 +13,7 @@
 
 import { describe, expect, test } from 'bun:test';
 import { AppError, type AppErrorType, isAbortError } from '@starter/utils';
-import { ApiClient, type FetchLike, setApiTokenProvider } from '#lib/services/api_client.ts';
+import { ApiClient, type FetchLike } from '#lib/services/api_client.ts';
 
 const jsonResponse = (body: unknown, status = 200): Response =>
   new Response(JSON.stringify(body), {
@@ -66,36 +66,16 @@ describe('ApiClient', () => {
     expect(seenUrl).toBe('https://api.example.test/api/health');
   });
 
-  // Observed values are collected into arrays rather than assigned to a
-  // `let`: a `let` initialized to `null` is narrowed to `null` at the
-  // assertion, because the writes happen inside a callback the compiler does
-  // not follow.
-  const authHeaderSeenBy = async (
-    tokenProvider: () => string | undefined,
-  ): Promise<(string | null)[]> => {
+  test('sends no authorization header of its own', async () => {
+    // The session cookie is the only credential this client has. An
+    // `authorization` header here would be a second, unaccounted-for identity
+    // path; asserting its absence is what keeps that from creeping back in with
+    // the client that used to need it.
     const seen: (string | null)[] = [];
-    setApiTokenProvider(tokenProvider);
-    try {
-      await client(async (_input, init) => {
-        seen.push(new Headers(init?.headers).get('authorization'));
-        return jsonResponse({});
-      }).get('/api/whoami');
-    } finally {
-      setApiTokenProvider(() => undefined);
-    }
-    return seen;
-  };
-
-  test('adds a bearer token when one is available', async () => {
-    const seen = await authHeaderSeenBy(() => 'tok_abc');
-
-    // How a Tauri webview authenticates: its origin is cross-site, so the
-    // session cookie is never attached.
-    expect(seen).toEqual(['Bearer tok_abc']);
-  });
-
-  test('sends no authorization header when there is no token', async () => {
-    const seen = await authHeaderSeenBy(() => undefined);
+    await client(async (_input, init) => {
+      seen.push(new Headers(init?.headers).get('authorization'));
+      return jsonResponse({});
+    }).get('/api/whoami');
 
     expect(seen).toEqual([null]);
   });

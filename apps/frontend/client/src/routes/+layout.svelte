@@ -8,7 +8,6 @@ import '../app.css';
 import '#lib/runtime/logger';
 import { setDialogCapabilities } from '@starter/frontend-services/base';
 import type { Snippet } from 'svelte';
-import { installNativeSessionBridge } from '#lib/platform/native_session';
 import { sessionService, sessionState } from '#lib/services/session_service.svelte';
 import { goto } from '$app/navigation';
 
@@ -30,8 +29,6 @@ setDialogCapabilities({
     void goto('/login');
   },
 });
-
-void installNativeSessionBridge();
 
 let user = $state(sessionState.user);
 $effect(() => sessionState.subscribe((next) => (user = next)));

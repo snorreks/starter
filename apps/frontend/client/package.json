@@ -17,11 +17,7 @@
     "test": "bun run test:unit",
     "test:unit": "bun run test:unit:run",
     "test:unit:run": "bun test --isolate --path-ignore-patterns='src/browser_tests/**' --preload ./src/lib/test_setup.ts --tsconfig-override=tsconfig.test.json src/lib tests scripts",
-    "test:browser": "vitest run --config vitest.config.ts",
-    "tauri": "tauri",
-    "tauri:dev": "bun scripts/build_tauri.ts dev",
-    "tauri:build": "bun scripts/build_tauri.ts build",
-    "tauri:icon": "tauri icon src-tauri/icons/icon.svg"
+    "test:browser": "vitest run --config vitest.config.ts"
   },
   "dependencies": {
     "@starter/frontend-services": "workspace:*",
@@ -36,10 +32,6 @@
     "@sveltejs/kit": "3.0.0-next.30",
     "@sveltejs/vite-plugin-svelte": "7.3.1",
     "@tailwindcss/vite": "4.3.3",
-    "@tauri-apps/api": "^2.9.0",
-    "@tauri-apps/cli": "^2.9.0",
-    "@tauri-apps/plugin-log": "2.7.0",
-    "@tauri-apps/plugin-opener": "2.5.0",
     "@vitest/browser": "5.0.2",
     "@vitest/browser-playwright": "5.0.2",
     "playwright": "1.63.0",
