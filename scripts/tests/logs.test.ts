@@ -14,7 +14,11 @@ import { describe, expect, test } from 'bun:test';
 import { Value } from '@sinclair/typebox/value';
 import { type LogEvent, LogEventSchema } from '@starter/schemas';
 import { parseArgs, toQuery } from '../src/commands/logs.ts';
-import { buildHistoricalRequest, MAX_TAIL_MS } from '../src/logs/cloudflare_adapter.ts';
+import {
+  buildHistoricalRequest,
+  MAX_TAIL_MS,
+  parseEnvelopeEvent,
+} from '../src/logs/cloudflare_adapter.ts';
 import { parseDuration } from '../src/logs/duration.ts';
 import { buildFilter, buildObservabilityQuery } from '../src/logs/filter.ts';
 import { parseNdjson } from '../src/logs/local_file_adapter.ts';
@@ -229,6 +233,77 @@ describe('buildObservabilityQuery', () => {
     const request = buildObservabilityQuery({ ...baseQuery, uid: 'user_verified' }, undefined);
     expect(request.filter).toBe('userId = "user_verified"');
     expect(request.filter).not.toContain('clientReported');
+  });
+
+  // The filter is a quoted expression, so an unescaped `"` in an operator-supplied
+  // value closes the clause and the rest of the argument becomes part of the
+  // filter. The provider then returns rows the local predicate would have dropped,
+  // and the provider's rows are what get rendered.
+  test('a quote in a value cannot close the clause', () => {
+    const request = buildObservabilityQuery(
+      { ...baseQuery, trace: 'tr" OR level >= "DEBUG' },
+      undefined,
+    );
+    expect(request.filter).toBe('traceId = "tr\\" OR level >= \\"DEBUG"');
+  });
+
+  test('a backslash in a value is escaped too', () => {
+    const request = buildObservabilityQuery({ ...baseQuery, uid: 'a\\b"c' }, undefined);
+    expect(request.filter).toBe('userId = "a\\\\b\\"c"');
+  });
+
+  test('a value without those characters is unchanged', () => {
+    const request = buildObservabilityQuery(
+      { ...baseQuery, trace: 'tr_1', uid: 'user_1' },
+      undefined,
+    );
+    expect(request.filter).toBe('traceId = "tr_1" AND userId = "user_1"');
+  });
+});
+
+// ── Tail envelope parsing ─────────────────────────────────────────────────────
+
+describe('parseEnvelopeEvent', () => {
+  // The bare event form, and the `event`-wrapped form — the two this parser reads
+  // (it takes `envelope.event ?? envelope.logs ?? envelope`).
+  const bare = (overrides: Record<string, unknown> = {}): string =>
+    JSON.stringify({
+      timestamp: NOW,
+      level: 'ERROR',
+      message: 'notes.create_failed',
+      source: 'worker',
+      ...overrides,
+    });
+
+  const envelope = (overrides: Record<string, unknown> = {}): string =>
+    JSON.stringify({ event: { ...JSON.parse(bare(overrides)) } });
+
+  test('accepts the numeric timestamp wrangler emits', () => {
+    // `LogEvent.timestamp` is a number, and `wrangler tail --format json` sends
+    // one. Requiring a string rejected every real event.
+    expect(parseEnvelopeEvent(bare())?.timestamp).toBe(NOW);
+    expect(parseEnvelopeEvent(envelope())?.timestamp).toBe(NOW);
+  });
+
+  test('converts an ISO timestamp string to epoch milliseconds', () => {
+    // A string that was accepted before, but handed on as a string — and
+    // `event.timestamp < Date.now() - since` is false for every string, so `--since`
+    // silently excluded nothing.
+    const parsed = parseEnvelopeEvent(bare({ timestamp: new Date(NOW).toISOString() }));
+    expect(parsed?.timestamp).toBe(NOW);
+  });
+
+  test('refuses a timestamp that is neither a number nor a date', () => {
+    // Not converted to `Date.now()` and not passed through: either would be a
+    // timestamp that looks real and is not.
+    expect(parseEnvelopeEvent(bare({ timestamp: 'yesterday' }))).toBeNull();
+    expect(parseEnvelopeEvent(bare({ timestamp: null }))).toBeNull();
+    expect(parseEnvelopeEvent(bare({ timestamp: Number.NaN }))).toBeNull();
+  });
+
+  test('still refuses a non-JSON line and a banner', () => {
+    expect(parseEnvelopeEvent('Connected to Cloudflare')).toBeNull();
+    expect(parseEnvelopeEvent('[ERROR] A worker threw')).toBeNull();
   });
 });
 

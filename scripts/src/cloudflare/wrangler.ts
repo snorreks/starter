@@ -171,7 +171,15 @@ export interface StreamRunner {
   ): Promise<number>;
 }
 
-const defaultStreamRunner: StreamRunner = {
+/**
+ * The real streaming runner.
+ *
+ * Exported so the framing and the timeout can be driven against a real child
+ * process — `sh`, in practice — rather than through `streamWrangler`, which always
+ * spawns wrangler. The framing bug is only reachable when the pipe actually
+ * splits a line mid-way, and a mock decides for itself where the chunk ends.
+ */
+export const defaultStreamRunner: StreamRunner = {
   run: (command, args, options, handlers) =>
     new Promise<number>((resolve) => {
       const child = spawn(command, [...args], {
@@ -179,25 +187,65 @@ const defaultStreamRunner: StreamRunner = {
         stdio: ['ignore', 'pipe', 'pipe'],
       });
 
-      // Lines are split here rather than by the caller, so a partial final line
-      // still reaches the handler instead of being buffered forever waiting for a
-      // newline that never comes.
-      const lineSplitter =
-        (emit: (line: string) => void) =>
-        (chunk: Buffer): void => {
-          for (const line of chunk.toString('utf8').split('\n')) {
+      // Lines are split here rather than by the caller, and the trailing partial
+      // line is carried to the next chunk.
+      //
+      // A chunk boundary lands wherever the pipe buffer fills, not on a newline, so
+      // splitting each chunk on its own emits fragments: `{"outcome":"succ` and
+      // `ess",...}`. The NDJSON envelope then failed to parse and the event was
+      // dropped, which for a JSON stream is most of them. The remainder is held
+      // until the next chunk completes the line, and flushed at end/close so a final
+      // line with no trailing newline still reaches the handler instead of being
+      // buffered forever waiting for one that never comes.
+      const lineSplitter = (
+        emit: (line: string) => void,
+      ): ((chunk: Buffer) => void) & {
+        flush: () => void;
+      } => {
+        let carry = '';
+
+        const handle = (chunk: Buffer): void => {
+          const lines = (carry + chunk.toString('utf8')).split('\n');
+          // The last element is '' when the chunk ended on a newline, and an
+          // incomplete line otherwise. Only the incomplete one is carried.
+          carry = lines.pop() ?? '';
+          for (const line of lines) {
             if (line.trim() !== '') {
               emit(line);
             }
           }
         };
 
-      child.stdout?.on('data', lineSplitter(handlers.onStdout));
-      child.stderr?.on('data', lineSplitter(handlers.onStderr));
+        handle.flush = (): void => {
+          const rest = carry;
+          carry = '';
+          if (rest.trim() !== '') {
+            emit(rest);
+          }
+        };
 
+        return handle;
+      };
+
+      const onStdoutChunk = lineSplitter(handlers.onStdout);
+      const onStderrChunk = lineSplitter(handlers.onStderr);
+
+      child.stdout?.on('data', onStdoutChunk);
+      child.stderr?.on('data', onStderrChunk);
+
+      // `end` is the ordered half-close; `close` is the belt-and-braces one, since
+      // a stream that never ends cleanly can still close. `flush` clears its carry
+      // on the first call, so running twice is harmless.
+      child.stdout?.on('end', onStdoutChunk.flush);
+      child.stderr?.on('end', onStderrChunk.flush);
+      child.stdout?.on('close', onStdoutChunk.flush);
+      child.stderr?.on('close', onStderrChunk.flush);
+
+      let timedOut = false;
       const timer = setTimeout(() => {
+        timedOut = true;
         // Kill the tree, not just wrangler: workerd is its child and would
-        // otherwise keep the port. Reported as failure by the resolved code.
+        // otherwise keep the port.
         if (child.pid !== undefined) {
           killTree(child.pid, { graceMs: 200, attempts: 10 });
         }
@@ -211,7 +259,16 @@ const defaultStreamRunner: StreamRunner = {
 
       child.on('exit', (code) => {
         clearTimeout(timer);
-        resolve(code ?? 1);
+        // A process killed because *we* ran out of time reports success by the only
+        // signal it has left — a SIGTERM has no exit code. Resolving that as 0
+        // tells the caller the tail ran to completion and printed everything, which
+        // is the opposite of what happened, and `--follow --duration 60s` would
+        // read as a clean finish rather than a truncated stream. Reported as
+        // failure with the timeout named.
+        //
+        // Only when the exit *follows* the timeout: a run that finished first keeps
+        // its own code, because that is a real answer about the command.
+        resolve(timedOut ? 1 : (code ?? 1));
       });
     }),
 };

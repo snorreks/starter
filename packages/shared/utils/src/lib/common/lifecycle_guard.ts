@@ -179,7 +179,16 @@ export class OptimisticUpdate<Item extends { id: string }> {
         },
         commit: () => {
           settled = true;
-          this.#receipt = null;
+          // Only clear the slot when it is still *this* receipt's. Two overlapping
+          // deletes each hold a receipt, and `#receipt` names the newer one: the
+          // first to succeed would otherwise retire the other's claim, and the
+          // loser's rollback would then find `#receipt === null`, conclude the
+          // list moved on, and yield — leaving a genuinely failed delete with no
+          // row restored. Same key order, same claim; a different one is left
+          // alone.
+          if (this.#receipt?.applied === applied) {
+            this.#receipt = null;
+          }
         },
       },
     };

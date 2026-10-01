@@ -16,7 +16,8 @@
 // `flake.nix` sets it, the app configs read it, and `doctor` proves the binary
 // it names actually launches. One place decides; everything else obeys.
 
-import { existsSync } from 'node:fs';
+import { existsSync, readdirSync } from 'node:fs';
+import { homedir } from 'node:os';
 import { join } from 'node:path';
 
 /** The variable every consumer reads. Set by the flake; optional elsewhere. */
@@ -32,12 +33,72 @@ export interface ResolvedBrowser {
   reason: string;
 }
 
+/** Where Playwright keeps its downloads when the environment says nothing. */
+const defaultBrowsersRoot = (): string => {
+  if (process.platform === 'darwin') {
+    return join(homedir(), 'Library', 'Caches', 'ms-playwright');
+  }
+  if (process.platform === 'win32') {
+    const localAppData = process.env.LOCALAPPDATA ?? join(homedir(), 'AppData', 'Local');
+    return join(localAppData, 'ms-playwright');
+  }
+  return join(process.env.XDG_CACHE_HOME ?? join(homedir(), '.cache'), 'ms-playwright');
+};
+
 /**
- * Resolve the browser executable.
+ * Chromium executables inside one Playwright cache, as `executable -> directory`.
+ *
+ * The layout is Playwright's, and it is not one directory:
+ *   * `chromium-<build>/chrome-linux/chrome` — the Linux extraction
+ *   * `chromium-<build>/chrome-mac/Chromium.app/Contents/MacOS/Chromium` — macOS
+ *   * `chromium_headless_shell-<build>/chrome-linux/headless_shell` — the headless
+ *     shell newer Playwright versions install and prefer
+ *
+ * Every entry carries a `toolchains`/`swiftshader` check where it applies, so a
+ * half-extracted cache is not mistaken for a usable one.
+ */
+const chromiumExecutables = (root: string): Map<string, string> => {
+  const found = new Map<string, string>();
+  if (!existsSync(root)) {
+    return found;
+  }
+
+  let entries: string[];
+  try {
+    entries = readdirSync(root);
+  } catch {
+    return found;
+  }
+
+  // Newest build last in sort order, and the loop below lets a later hit win, so a
+  // stale `chromium-1000` beside a `chromium-1200` resolves to the newer one.
+  for (const entry of entries.filter((name) => name.startsWith('chromium')).sort()) {
+    const dir = join(root, entry);
+    const candidates = [
+      join(dir, 'chrome-linux', 'chrome'),
+      join(dir, 'chrome-linux', 'headless_shell'),
+      join(dir, 'chrome-mac', 'Chromium.app', 'Contents', 'MacOS', 'Chromium'),
+      join(dir, 'chrome-win', 'chrome.exe'),
+    ];
+    for (const candidate of candidates) {
+      if (existsSync(candidate)) {
+        found.set(candidate, dir);
+      }
+    }
+  }
+
+  return found;
+};
+
+/** Resolve the browser executable.
  *
  * Order is deliberate: an explicitly provided `CHROMIUM_PATH` wins, because an
- * operator who set it has a reason. Then a Nix store browser directory, because
- * Playwright's download cannot work there. Then whatever Playwright installed.
+ * operator who set it has a reason. Then the cache named by
+ * `PLAYWRIGHT_BROWSERS_PATH`, because the flake points that at the Nix store where
+ * Playwright's own download cannot work. Then Playwright's default cache — the
+ * previous version returned `source: 'none'` without ever looking there, so a host
+ * with a perfectly good download in `~/.cache/ms-playwright` was told it had no
+ * browser, and the browser lane failed on the advice rather than on the truth.
  */
 export const resolveBrowser = (env: NodeJS.ProcessEnv = process.env): ResolvedBrowser => {
   const explicit = env[BROWSER_PATH_ENV];
@@ -49,33 +110,65 @@ export const resolveBrowser = (env: NodeJS.ProcessEnv = process.env): ResolvedBr
     };
   }
 
-  const browsersPath = env.PLAYWRIGHT_BROWSERS_PATH;
+  const source = (root: string): BrowserSource =>
+    root.startsWith('/nix/store') ? 'nix-store' : 'playwright-download';
 
-  if (browsersPath !== undefined && browsersPath !== '') {
-    const candidate = join(browsersPath, 'chromium');
-    if (existsSync(candidate)) {
+  // Each cache searched on its own, and a miss is not an answer: the two roots are
+  // independent, and `PLAYWRIGHT_BROWSERS_PATH` pointing at an empty or
+  // Nix-populated directory says nothing about whether the default cache has one.
+  const named = env.PLAYWRIGHT_BROWSERS_PATH;
+  const roots: string[] = [];
+
+  if (named !== undefined && named !== '') {
+    roots.push(named);
+  }
+  roots.push(defaultBrowsersRoot());
+
+  const searched: string[] = [];
+
+  for (const root of roots) {
+    if (searched.includes(root)) {
+      continue;
+    }
+    searched.push(root);
+
+    const executables = chromiumExecutables(root);
+    const candidates = [...executables.keys()].sort();
+
+    if (candidates.length > 0) {
+      // A headless shell launches faster and is what the browser lane wants; the
+      // full browser is the fallback for a check that needs the whole product.
+      const shell = candidates.find((path) => path.endsWith('headless_shell'));
+      const executable = shell ?? (candidates.at(-1) as string);
       return {
-        source: browsersPath.startsWith('/nix/store') ? 'nix-store' : 'playwright-download',
-        executable: candidate,
-        reason: `PLAYWRIGHT_BROWSERS_PATH contains a chromium binary`,
+        source: source(root),
+        executable,
+        reason: `${root} contains ${executables.get(executable)}`,
       };
     }
+  }
 
+  const alsoSearched = ` Also searched ${searched.join(', ')}.`;
+
+  if (named === undefined || named === '') {
     return {
       source: 'none',
       executable: null,
-      reason: browsersPath.startsWith('/nix/store')
-        ? `PLAYWRIGHT_BROWSERS_PATH points into the Nix store but has no chromium: ${browsersPath}`
-        : `PLAYWRIGHT_BROWSERS_PATH is set but empty of chromium: ${browsersPath}`,
+      reason:
+        `No chromium in the Playwright cache (${searched.join(', ')}). Run \`bun run setup\`, ` +
+        'or use `nix develop` for one linked against the Nix store.',
     };
   }
 
+  // Two different reasons, because the remedy differs: inside the Nix store the
+  // Playwright download cannot work at all, so "run setup" would be advice that
+  // cannot succeed.
   return {
     source: 'none',
     executable: null,
-    reason:
-      'No browser configured. Run `bun run setup` for a Playwright download, or use `nix develop` ' +
-      'for one linked against the Nix store.',
+    reason: named.startsWith('/nix/store')
+      ? `PLAYWRIGHT_BROWSERS_PATH points into the Nix store but has no chromium: ${named}.${alsoSearched}`
+      : `PLAYWRIGHT_BROWSERS_PATH is set but holds no chromium: ${named}.${alsoSearched}`,
   };
 };
 

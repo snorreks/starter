@@ -5,15 +5,19 @@
 // activation runs setup, and a person runs doctor when something is wrong. The
 // implementation is shared either way.
 
-import { type Command, EXIT, wantsHelp } from '../shared/command.ts';
 import { inspect, renderReport, runSetup } from '../setup/setup.ts';
+import { type Command, EXIT, fail, wantsHelp } from '../shared/command.ts';
 
 const SETUP_USAGE = [
-  'Usage: setup',
+  'Usage: setup [--force] [--quiet]',
   '',
   'Idempotent. Prepares dependencies, local defaults and the Playwright browsers',
   'matching the locked version. Safe to run repeatedly, and cheap on a warm',
   'checkout because readiness is cached by lockfile, config and tool versions.',
+  '',
+  '  --force  re-run the steps a warm checkout would skip. It does not reinstall',
+  '           dependencies that are already present.',
+  '  --quiet  suppress progress output.',
 ].join('\n');
 
 const DOCTOR_USAGE = [
@@ -33,7 +37,16 @@ export const setupCommand: Command = {
       process.stdout.write(`${SETUP_USAGE}\n`);
       return EXIT.ok;
     }
-    return runSetup();
+    // Forwarded: the usage above documents `--force` and `--quiet`, and they did
+    // not reach `runSetup`, so a documented flag changed nothing.
+    const known = new Set(['--force', '--quiet']);
+    const unknown = argv.filter((arg) => !known.has(arg));
+
+    if (unknown.length > 0) {
+      return fail(`Unknown flag "${unknown[0]}".\n\n${SETUP_USAGE}`, EXIT.usage);
+    }
+
+    return runSetup(argv);
   },
 };
 

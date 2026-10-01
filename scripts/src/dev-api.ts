@@ -38,8 +38,8 @@ import {
 } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { killTree } from '@starter/utils/process';
-import { API_DIR, REPO_ROOT } from './shared/paths.ts';
 import { EXIT, fail } from './shared/command.ts';
+import { API_DIR, REPO_ROOT } from './shared/paths.ts';
 import { missingToolMessage, wranglerBin } from './shared/tools.ts';
 
 const WRANGLER = wranglerBin() ?? join(API_DIR, 'node_modules', '.bin', 'wrangler');
@@ -192,11 +192,46 @@ export const main = (): Promise<number> => {
     let stopped = false;
     let settled = false;
 
+    // One-time listeners, and removed at teardown.
+    //
+    // `process.on` registers on the *process*, not on this promise, so a `main()`
+    // that resolves leaves its handlers behind: a second SIGTERM would re-enter
+    // `shutdown`, and the listeners keep the process alive for whoever embedded it.
+    // `once` also restores default signal handling after the first delivery, so a
+    // second Ctrl-C is a normal kill.
+    const SIGNALS = ['SIGINT', 'SIGTERM', 'SIGHUP'] as const;
+    const onSignal = (signal: NodeJS.Signals): void => {
+      shutdown(signal);
+    };
+    // The path that delivers no signal: an uncaught throw, or a caller that simply
+    // exits. Synchronous because `exit` handlers may not await.
+    const onExit = (): void => {
+      teardown();
+    };
+
+    /** Remove everything this run added to the process. */
+    const unregister = (): void => {
+      for (const signal of SIGNALS) {
+        process.removeListener(signal, onSignal);
+      }
+      process.removeListener('exit', onExit);
+    };
+
+    for (const signal of SIGNALS) {
+      // `{ once: true }`: a second SIGTERM is a normal kill rather than a second
+      // teardown against a child that is already gone.
+      process.once(signal, onSignal);
+    }
+    process.on('exit', onExit);
+
     const teardown = (): void => {
       if (settled) {
         return;
       }
       settled = true;
+      // Before the kill, not after: `killTree` is synchronous and blocking, and a
+      // signal arriving during it would find the handlers still registered.
+      unregister();
       stopWorker(child);
       rmSync(PIDFILE, { force: true });
       log.end();
@@ -221,14 +256,6 @@ export const main = (): Promise<number> => {
       teardown();
       resolve(survivors.length === 0 ? EXIT.ok : EXIT.failed);
     };
-
-    for (const signal of ['SIGINT', 'SIGTERM', 'SIGHUP'] as const) {
-      process.on(signal, () => shutdown(signal));
-    }
-
-    // The paths that deliver no signal: an uncaught throw, or a caller that simply
-    // exits. Synchronous because `exit` handlers may not await.
-    process.on('exit', teardown);
 
     child.on('error', (error) => {
       process.stderr.write(`could not start wrangler: ${error.message}\n`);

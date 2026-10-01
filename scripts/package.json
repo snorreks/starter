@@ -12,8 +12,8 @@
     "fix": "biome check --write src tests --error-on-warnings",
     "typecheck": "tsgo --noEmit",
     "test": "bun test",
-    "guard": "bun run src/guards/run_guards.ts",
-    "guard:whole-repo": "bun run src/guards/run_guards.ts --whole-repo"
+    "guard": "bun run src/cli.ts guard",
+    "guard:whole-repo": "bun run src/cli.ts guard --whole-repo"
   },
   "dependencies": {
     "@starter/logger": "workspace:*",

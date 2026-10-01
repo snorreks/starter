@@ -79,7 +79,37 @@ export const inspectSecrets = (): SecretsReport => {
   return { sopsAvailable, ageAvailable, configured, recipients, problems, nextSteps };
 };
 
+/** Operations this module does not perform. */
+const NOT_IMPLEMENTED = [
+  'encrypt',
+  'decrypt',
+  'init',
+  'doctor',
+  'edit',
+  'exec',
+  'update-recipients',
+];
+
 export const main = (args: readonly string[]): number => {
+  // Every advertised operation is a refusal until it is implemented. The problem
+  // this replaces is not that they are missing — it is that they exit 0. A command
+  // named `secrets init` that printed a report and returned success was read by a
+  // script, a Makefile and a person alike as "the recipients file was created".
+  const operation = args.find((arg) => !arg.startsWith('-'));
+  if (operation !== undefined && NOT_IMPLEMENTED.includes(operation)) {
+    process.stderr.write(
+      `secrets ${operation} is NOT IMPLEMENTED. Nothing was read, written, encrypted or created.\n\n` +
+        'For encryption and decryption, run sops directly, so the target file is always\n' +
+        'explicit and never guessed:\n' +
+        '  sops -e secrets/production.enc.env   > secrets/production.enc.env.new\n' +
+        '  sops -d secrets/production.enc.env   > apps/backend/api/.dev.vars\n' +
+        '\nDecrypted output must go to a gitignored path.\n' +
+        'The remaining operations (init, edit, exec, update-recipients, doctor) arrive\n' +
+        'with the phase that also wires direnv. See docs/secrets.md.\n',
+    );
+    return EXIT.notImplemented;
+  }
+
   const report = inspectSecrets();
 
   process.stdout.write('Secrets\n');
@@ -99,30 +129,7 @@ export const main = (args: readonly string[]): number => {
     }
   }
 
-  // Encrypt/decrypt are not implemented here, and say so with a nonzero exit.
-  //
-  // They are one-line `sops -e/-d` invocations, and a wrapper that guesses the
-  // recipient or the in-place flag is how a secret gets written to the wrong file.
-  // The real commands (init, doctor, edit, encrypt, decrypt, exec, update-keys)
-  // arrive with the phase that also ships direnv; until then these two print the
-  // raw sops invocations and exit 3.
-  //
-  // Previously they printed the same guidance and exited 0, so a script — or CI —
-  // wrapping `bun run secrets:encrypt` saw success and concluded a file had been
-  // encrypted. Printing instructions and exiting zero is an always-success fake.
-  if (args.includes('encrypt') || args.includes('decrypt')) {
-    const operation = args.includes('encrypt') ? 'encrypt' : 'decrypt';
-    process.stderr.write(
-      `secrets:${operation} is NOT IMPLEMENTED. Nothing was read, written or encrypted.\n\n` +
-        'Run sops directly, so the target file is always explicit:\n' +
-        '  sops -e secrets/production.enc.env   > secrets/production.enc.env.new\n' +
-        '  sops -d secrets/production.enc.env   > apps/backend/api/.dev.vars\n' +
-        '\nDecrypted output must go to a gitignored path.\n' +
-        '\nThis repository wires real secrets:encrypt / secrets:decrypt (plus init,\n' +
-        'edit, exec and update-keys) in the phase that also adds direnv. See docs/secrets.md.\n',
-    );
-    return EXIT.notImplemented;
-  }
-
+  // Reached only when no operation word matched at all — i.e. `secrets` with flags
+  // but no operation. Everything named in the usage was refused at the top.
   return 0;
 };

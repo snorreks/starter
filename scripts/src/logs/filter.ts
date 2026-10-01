@@ -128,6 +128,14 @@ export const buildObservabilityQuery = (
   since: number | undefined,
 ): ObservabilityQuery => {
   const clauses: string[] = [];
+  // The filter is a quoted expression, so a value containing `"` closes the clause
+  // and the rest of the argument becomes part of the filter. A trace id or user id
+  // is operator-supplied, but `--trace 'a" OR level >= "DEBUG'` would widen the
+  // query at the provider while the local predicate still narrowed it — and the
+  // provider result is what gets rendered. Values without these characters are
+  // unchanged.
+  const quoted = (value: string): string =>
+    `"${value.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`;
 
   if (since !== undefined) {
     clauses.push(`timestamp >= "${new Date(Date.now() - since).toISOString()}"`);
@@ -139,10 +147,10 @@ export const buildObservabilityQuery = (
     clauses.push(`source = "${query.source}"`);
   }
   if (query.trace !== undefined) {
-    clauses.push(`traceId = "${query.trace}"`);
+    clauses.push(`traceId = ${quoted(query.trace)}`);
   }
   if (query.uid !== undefined) {
-    clauses.push(`userId = "${query.uid}"`);
+    clauses.push(`userId = ${quoted(query.uid)}`);
   }
 
   return clauses.length === 0 ? {} : { filter: clauses.join(' AND ') };

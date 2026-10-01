@@ -15,9 +15,9 @@
 // against a production account.
 
 import { streamWrangler } from '../cloudflare/wrangler.ts';
-import type { LogEvent, LogQuery, LogQueryResult } from './types.ts';
-import { type ObservabilityQuery, buildFilter, buildObservabilityQuery } from './filter.ts';
+import { buildFilter, buildObservabilityQuery, type ObservabilityQuery } from './filter.ts';
 import { APP_LOG_CONFIG, capabilitiesFor, prerequisiteFor, resolveLogAdapter } from './registry.ts';
+import type { LogEvent, LogQuery, LogQueryResult } from './types.ts';
 
 /** Upper bound on a single tail session, so `--follow` cannot run unbounded. */
 export const MAX_TAIL_MS = 15 * 60_000;
@@ -172,6 +172,25 @@ export const tailCloudflare = async (query: LogQuery): Promise<LogQueryResult> =
 };
 
 /**
+ * Epoch milliseconds, or null when the value is not a timestamp.
+ *
+ * A number passes through — that is what `wrangler tail --format json` emits. A
+ * string is accepted only when `Date.parse` understands it, so an ISO-8601 event
+ * from a hand-written or Logpush-shaped line still lands as a usable time rather
+ * than as a string that fails every comparison downstream.
+ */
+const toEpochMs = (value: unknown): number | null => {
+  if (typeof value === 'number') {
+    return Number.isFinite(value) ? value : null;
+  }
+  if (typeof value === 'string') {
+    const parsed = Date.parse(value);
+    return Number.isNaN(parsed) ? null : parsed;
+  }
+  return null;
+};
+
+/**
  * Pull an application event out of one line of `wrangler tail` output.
  *
  * Returns null for anything that is not an envelope carrying the required event
@@ -207,14 +226,20 @@ export const parseEnvelopeEvent = (line: string): LogEvent | null => {
   }
 
   const { timestamp, level, message, source } = candidate;
-  if (
-    typeof timestamp !== 'string' ||
-    typeof level !== 'string' ||
-    typeof message !== 'string' ||
-    typeof source !== 'string'
-  ) {
+  if (typeof level !== 'string' || typeof message !== 'string' || typeof source !== 'string') {
     return null;
   }
 
-  return { ...candidate, timestamp, level, message, source } as unknown as LogEvent;
+  // `LogEvent.timestamp` is a number, and the two things that read it assume one:
+  // `--since` compares `event.timestamp < Date.now() - since`, which is false for
+  // every string (NaN), and the human renderer formats it. Accepting only a string
+  // here therefore rejected a numeric timestamp outright — and accepting a string
+  // without converting it would pass the check while feeding NaN to both. So
+  // numbers pass through, ISO-8601 is converted, and anything else is refused.
+  const at = toEpochMs(timestamp);
+  if (at === null) {
+    return null;
+  }
+
+  return { ...candidate, timestamp: at, level, message, source } as unknown as LogEvent;
 };

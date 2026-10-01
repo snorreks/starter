@@ -7,8 +7,8 @@
 // an explicit operation rather than something reached by default. A read-only
 // check must never provision as a side effect.
 
-import { type Command, EXIT, wantsHelp } from '../shared/command.ts';
 import { main as configureMain } from '../deploy/configure.ts';
+import { type Command, EXIT, wantsHelp } from '../shared/command.ts';
 
 const USAGE = [
   'Usage: configure [--check | --provision]',
@@ -29,9 +29,19 @@ export const configureCommand: Command = {
       return EXIT.ok;
     }
 
-    // Absence is reported as its own code so a job can tell "not configured yet,
-    // which is expected in the template" from "configured wrongly".
     const code = configureMain(argv);
-    return code === 0 ? EXIT.ok : EXIT.unavailable;
+    if (code === 0) {
+      return EXIT.ok;
+    }
+
+    // Absence is reported as its own code so a job can tell "not configured yet,
+    // which is expected in the template" from "the thing I asked for did not
+    // work". `--check` and `--dry-run` report absence; `--provision` does not —
+    // it was asked to create a resource and failed, which is a failure. Mapping
+    // both to `unavailable` told a CI job that a failed provision was a missing
+    // prerequisite, and "unavailable" is the code that means "not my fault, retry
+    // later".
+    const reportingAbsence = argv.includes('--check') || argv.includes('--dry-run');
+    return reportingAbsence ? EXIT.unavailable : EXIT.failed;
   },
 };

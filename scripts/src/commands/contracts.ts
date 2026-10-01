@@ -28,7 +28,7 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { join } from 'node:path';
-import { REPO_ROOT } from '../shared/paths.ts';
+import { CONTRACTS_DIR, RUNS_DIR } from '../contracts/paths.ts';
 import {
   createManifest,
   type RunManifest,
@@ -39,9 +39,12 @@ import {
 } from '../contracts/runner.ts';
 import { readContracts } from '../contracts/status.ts';
 import type { Command } from '../shared/command.ts';
+import { REPO_ROOT } from '../shared/paths.ts';
 
-export const CONTRACTS_DIR = join(REPO_ROOT, 'docs/contracts');
-export const RUNS_DIR = join(REPO_ROOT, '.pi/contract-runs');
+// Re-exported so callers reach one module's answer: the domain owns where the
+// files are (`../contracts/paths.ts`), and a path redefined here is a path that
+// can disagree with it.
+export { CONTRACTS_DIR, RUNS_DIR } from '../contracts/paths.ts';
 
 // Named for this command's domain: `blocked` is a contract that cannot proceed,
 // not the same thing as `failed`. The shared EXIT in ../shared/command.ts uses
@@ -446,6 +449,6 @@ export const main = async (args: readonly string[]): Promise<number> => {
 export const contractCommand: Command = {
   name: 'contract',
   summary: 'create, run and inspect implementation contracts',
-  usage: 'contract new|run|status|list|cancel [options]',
+  usage: 'contract new|run|status [options]',
   run: main,
 };

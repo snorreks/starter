@@ -7,7 +7,7 @@
 
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { CONTRACTS_DIR } from '../commands/contracts.ts';
+import { CONTRACTS_DIR } from './paths.ts';
 
 export interface ContractRow {
   id: string;

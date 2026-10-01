@@ -156,19 +156,8 @@ export interface SetupOutcome {
  * printed output unless a step says so.
  */
 export const performSetup = (options: { force?: boolean; quiet?: boolean } = {}): SetupOutcome => {
-  const report = inspect();
   const stampPath = join(STATE_DIR, 'ready');
   const current = fingerprint();
-
-  const cached =
-    !options.force &&
-    existsSync(stampPath) &&
-    readFileSync(stampPath, 'utf8').trim() === current &&
-    cachesStillExist();
-
-  if (cached) {
-    return { cached: true, created: [], performed: [], report };
-  }
 
   const created: string[] = [];
   const performed: string[] = [];
@@ -178,24 +167,52 @@ export const performSetup = (options: { force?: boolean; quiet?: boolean } = {})
     }
   };
 
-  // A required capability missing means setup cannot complete. Say which, and stop
-  // before writing anything: a half-prepared checkout is harder to reason about
-  // than an unprepared one.
-  if (!report.ok) {
-    return { cached: false, created: [], performed: ['aborted'], report };
-  }
+  // 1. Dependencies, before anything inspects them.
+  //
+  //    `inspect` checks the *installed* tools, so on a fresh clone `wranglerCheck`
+  //    reports "not installed in the workspace" and the required check fails. With
+  //    install after that gate, `bun run setup` aborted before installing anything —
+  //    reporting the symptom and stopping, on precisely the checkout that needed
+  //    it. Nothing was written, and re-running changed nothing.
+  //
+  //    Gated on the absence of `node_modules/.bin` and deliberately *not* on
+  //    `--force`: `--force` bypasses the cache, it does not mean "reinstall what is
+  //    already there". A second `bun install` on a warm checkout is minutes of
+  //    work for no change.
+  //
+  //    `--frozen-lockfile` so setup cannot silently update the lockfile; a
+  //    developer who changed a dependency has already run install.
+  const dependenciesMissing = !existsSync(join(REPO_ROOT, 'node_modules', '.bin'));
 
-  // 1. Dependencies. `--frozen-lockfile` so setup cannot silently update the
-  //    lockfile; a developer who changed a dependency has already run install.
-  if (!existsSync(join(REPO_ROOT, 'node_modules', '.bin')) && !options.force) {
+  if (dependenciesMissing) {
     const install = spawnSync('bun', ['install', '--frozen-lockfile'], {
       cwd: REPO_ROOT,
       stdio: options.quiet ? 'ignore' : 'inherit',
     });
     performed.push('bun install');
     if (install.status !== 0) {
-      return { cached: false, created, performed, report };
+      return { cached: false, created, performed, report: inspect() };
     }
+  }
+
+  const report = inspect();
+
+  const cached =
+    !options.force &&
+    !dependenciesMissing &&
+    existsSync(stampPath) &&
+    readFileSync(stampPath, 'utf8').trim() === current &&
+    cachesStillExist();
+
+  if (cached) {
+    return { cached: true, created: [], performed: [], report };
+  }
+
+  // A required capability missing means setup cannot complete. Say which, and stop
+  // before writing anything: a half-prepared checkout is harder to reason about
+  // than an unprepared one.
+  if (!report.ok) {
+    return { cached: false, created: [], performed: [...performed, 'aborted'], report };
   }
 
   // 2. Local defaults.

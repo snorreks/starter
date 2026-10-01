@@ -26,7 +26,6 @@
 //     deploy of the wrong app.
 
 import type { DeploymentEnvironment } from '@starter/schemas';
-import { DEPLOYMENT_CONFIG } from '../registry/app_registry.ts';
 import {
   API_DIR,
   CLIENT_DIR,
@@ -36,6 +35,7 @@ import {
   setProcessRunner,
   wranglerAvailable,
 } from '../cloudflare/wrangler.ts';
+import { DEPLOYMENT_CONFIG } from '../registry/app_registry.ts';
 import { type ConfigCheck, inspectConfig } from './configure.ts';
 
 export type DeployTarget = 'api' | 'client';
@@ -60,13 +60,18 @@ const VALID_ENVIRONMENTS: readonly DeploymentEnvironment[] = ['staging', 'produc
 
 /**
  * Exit codes, so a caller can distinguish "you typed it wrong" from "this project
- * is not configured" from "it deployed".
+ * is not configured" from "prerequisite unavailable" from "it deployed".
+ *
+ * The shared table rather than a local one: `unavailable` means "the tool is not
+ * installed", and this module's own `notConfigured` was 1 — the same code the
+ * commands use for "the work failed". A deploy that could not find wrangler
+ * therefore reported failure indistinguishably from a step that failed, and the
+ * two need different responses from a job.
  */
-export const EXIT = {
-  ok: 0,
-  notConfigured: 1,
-  usage: 2,
-} as const;
+export { EXIT } from '../shared/command.ts';
+
+/** Re-exported so this module's own returns have a name to resolve against. */
+import { EXIT } from '../shared/command.ts';
 
 /** Flags that take a value. Anything else must be a boolean flag or an error. */
 const VALUE_FLAGS = new Set(['--env']);
@@ -416,7 +421,7 @@ export const main = (argv: readonly string[]): number => {
 
   if (!plan.ok) {
     process.stderr.write(`${plan.reason}\n${plan.remedy}\n`);
-    return EXIT.notConfigured;
+    return EXIT.failed;
   }
 
   if (parsed.json) {
@@ -444,7 +449,9 @@ export const main = (argv: readonly string[]): number => {
 
   if (!wranglerAvailable()) {
     process.stderr.write('wrangler is not available. Run `bun install` first.\n');
-    return EXIT.notConfigured;
+    // `unavailable`, not `failed`: the tool is missing, which is a different thing
+    // from a deploy step that ran and failed.
+    return EXIT.unavailable;
   }
 
   return executePlan(plan, parsed.environment, argv).code;
@@ -454,6 +461,6 @@ if (import.meta.main) {
   process.exitCode = main(process.argv.slice(2));
 }
 
+export { wranglerAvailable } from '../cloudflare/wrangler.ts';
 export type { DeploymentEnvironment, ProcessRunner };
 export { setProcessRunner };
-export { wranglerAvailable } from '../cloudflare/wrangler.ts';

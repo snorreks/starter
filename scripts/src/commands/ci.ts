@@ -7,11 +7,10 @@
 // pass, which is the failure mode this repository cares about most.
 
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { dirname } from 'node:path';
-import { type Command, EXIT, fail, wantsHelp } from '../shared/command.ts';
+import { dirname, join } from 'node:path';
 import { type CheckResult, renderSummary } from '../ci/report.ts';
+import { type Command, EXIT, fail, wantsHelp } from '../shared/command.ts';
 import { REPO_ROOT } from '../shared/paths.ts';
-import { join } from 'node:path';
 
 const USAGE = 'Usage: ci <results.json> [--out <path>]';
 
@@ -27,6 +26,16 @@ export const ciCommand: Command = {
     }
 
     const outIndex = argv.indexOf('--out');
+    const destination = outIndex === -1 ? undefined : argv[outIndex + 1];
+
+    // Validated before the positional filter runs, because the filter's whole job
+    // is to drop the `--out` operand — so `ci results.json --out` silently wrote the
+    // default evidence file and `ci results.json --out --json` wrote to a file
+    // named `--json`. Both read as "the evidence file was written where I asked".
+    if (outIndex !== -1 && (destination === undefined || destination.startsWith('-'))) {
+      return fail(`${USAGE}\n\n--out needs a path.`, EXIT.usage);
+    }
+
     const positional = argv.filter((_arg, index) => index !== outIndex && index !== outIndex + 1);
     const input = positional[0];
 
@@ -43,7 +52,6 @@ export const ciCommand: Command = {
 
     const summary = renderSummary(results);
 
-    const destination = outIndex === -1 ? undefined : argv[outIndex + 1];
     if (destination !== undefined) {
       mkdirSync(dirname(destination), { recursive: true });
       writeFileSync(destination, `${summary}\n`);

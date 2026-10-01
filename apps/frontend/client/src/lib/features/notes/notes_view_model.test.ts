@@ -181,6 +181,49 @@ describe('NotesViewModel overlapping optimistic deletions', () => {
     expect(ids(model)).toEqual([]);
   });
 
+  test('a delete that fails after a newer delete succeeded still restores its row', async () => {
+    // The order the guard's commit has to be careful about.
+    //
+    // A is applied, then B. `#receipt` names B, because a second `apply`
+    // overwrites it. If A succeeds and its `commit()` retires the slot
+    // unconditionally, B's receipt is left holding a claim that has been cleared —
+    // so when B then fails, its rollback sees `#receipt === null`, reads that as
+    // "another write owns the list now", and yields. The row B removed stays gone
+    // even though the server rejected the delete and the user was never told the
+    // note came back.
+    //
+    // Reversed from the test above on purpose: there the *newer* delete settled
+    // first, which the `applied` identity check already handled.
+    const gateA = new Deferred();
+    const gateB = new Deferred();
+    const model = new NotesViewModel({
+      className: 'NotesViewModel',
+      notes: service({
+        list: () => Promise.resolve([note('a', 3), note('b', 2), note('c', 1)]),
+        remove: (id) => (id === 'a' ? gateA.promise : gateB.promise),
+      }),
+    });
+
+    await model.initialize();
+
+    const deletingA = model.deleteNote('a');
+    const deletingB = model.deleteNote('b');
+    expect(ids(model)).toEqual(['c']);
+
+    // A succeeds first, while B's receipt is the one holding the slot.
+    gateA.resolve();
+    expect(await deletingA).toBe(true);
+    expect(ids(model)).toEqual(['c']);
+
+    // B then fails. Its row must come back — the server still has it.
+    gateB.reject(new Error('B failed'));
+    expect(await deletingB).toBe(false);
+
+    // c was deleted by the server. b was not, and the failed delete said so.
+    expect([...ids(model)].sort()).toEqual(['b', 'c']);
+    expect(ids(model)).not.toContain('a');
+  });
+
   test('a failed delete restores only its own row', async () => {
     const gate = new Deferred();
     const model = new NotesViewModel({
