@@ -35,7 +35,7 @@ export const LOG_ADAPTER_KINDS = [
   'cloudflare-observability',
   /** Bounded live tail via `wrangler tail`. Live only, no history. */
   'wrangler-tail',
-  /** Browser/native events forwarded to the API's telemetry endpoint. */
+  /** Browser events forwarded to the API's telemetry endpoint. */
   'client-forward',
 ] as const;
 
@@ -86,12 +86,7 @@ export const AppLogConfigSchema = Type.Object(
     workerName: Type.Union([Type.String({ minLength: 1 }), Type.Null()]),
     /** Which producer sources can appear for this app. */
     sources: Type.Array(
-      Type.Union([
-        Type.Literal('browser'),
-        Type.Literal('worker'),
-        Type.Literal('native'),
-        Type.Literal('cli'),
-      ]),
+      Type.Union([Type.Literal('browser'), Type.Literal('worker'), Type.Literal('cli')]),
     ),
     /**
      * environment -> ordered adapter preference. The first entry is the one used.
@@ -243,7 +238,7 @@ export const APP_LOG_CONFIG: Record<AppId, AppLogConfig> = {
   client: {
     app: 'client',
     workerName: null,
-    sources: ['browser', 'native'],
+    sources: ['browser'],
     adapters: {
       // In dev the browser writes NDJSON through the Vite logging middleware.
       local: ['local-file'],
@@ -322,7 +317,7 @@ export const resolveLogAdapter = (
     return {
       unsupported:
         `No log adapter is configured for app "${app}" in environment "${environment}". ` +
-        'Browser and native events are not server logs: they only exist in an ' +
+        'Browser events are not server logs: they only exist in an ' +
         'environment where client telemetry forwarding is enabled.',
     };
   }

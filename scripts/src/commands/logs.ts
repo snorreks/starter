@@ -47,7 +47,7 @@ const FLAG_DOCS: readonly FlagDoc[] = [
   { flag: '--level', arg: 'DEBUG|INFO|WARNING|ERROR', description: 'Minimum severity.' },
   {
     flag: '--source',
-    arg: 'browser|worker|native|cli',
+    arg: 'browser|worker|cli',
     description: 'Restrict to a producer source.',
   },
   { flag: '--trace', arg: '<trace-id>', description: 'Correlate to one request.' },
@@ -97,7 +97,7 @@ export const helpText = (): string => {
     '  bun run logs api --mode staging --follow --duration 60s',
     '',
     'Notes:',
-    '  Browser and native logs are NOT server logs. They only exist in an',
+    '  Browser logs are NOT server logs. They only exist in an',
     '  environment where client telemetry forwarding is enabled, and round 1',
     '  does not enable it. `bun run logs client --mode staging` will say so',
     '  rather than pretending otherwise.',
@@ -197,7 +197,7 @@ export const toQuery = (
   }
 
   const source = readString(parsed.flags, '--source');
-  const validSources: LogSource[] = ['browser', 'worker', 'native', 'cli'];
+  const validSources: LogSource[] = ['browser', 'worker', 'cli'];
   if (source !== undefined && !validSources.includes(source as LogSource)) {
     return { ok: false, message: `--source must be one of ${validSources.join(', ')}.` };
   }

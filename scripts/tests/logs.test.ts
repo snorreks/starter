@@ -20,8 +20,8 @@
 
 import { describe, expect, test } from 'bun:test';
 import { Value } from '@sinclair/typebox/value';
-import { type LogEvent, LogEventSchema } from '@starter/schemas';
-import { parseArgs, toQuery } from '../src/commands/logs.ts';
+import { LOG_SOURCES, type LogEvent, LogEventSchema } from '@starter/schemas';
+import { helpText, parseArgs, toQuery } from '../src/commands/logs.ts';
 import {
   buildHistoricalRequest,
   MAX_TAIL_MS,
@@ -416,6 +416,42 @@ describe('parseArgs / toQuery', () => {
     expect(toQuery(parseArgs(['api', '--level', 'LOUD'])).ok).toBe(false);
     expect(toQuery(parseArgs(['api', '--source', 'satellite'])).ok).toBe(false);
     expect(toQuery(parseArgs(['api', '--limit', '0'])).ok).toBe(false);
+  });
+
+  // PR A removed the native shell. The log vocabulary kept `native` afterwards, so
+  // `--source native` parsed successfully, matched no event that any producer can
+  // emit, and reported success — the exact shape of no-op this repository's first
+  // rule forbids.
+  //
+  // The assertion is written against `LOG_SOURCES` rather than against a literal
+  // list, so it fails whenever the schema and the CLI disagree — which is how this
+  // happened in the first place: the CLI carried its own copy of the vocabulary.
+  test('rejects a source no producer emits', () => {
+    expect(toQuery(parseArgs(['api', '--source', 'native'])).ok).toBe(false);
+
+    for (const source of LOG_SOURCES) {
+      expect(toQuery(parseArgs(['api', '--source', source])).ok).toBe(true);
+    }
+  });
+
+  // The negative control for the test above: with `native` back in the vocabulary,
+  // the first assertion fails and the second fails, because the CLI no longer
+  // accepts what the schema declares.
+  test('the two vocabularies cannot drift apart silently', () => {
+    const schemaAccepts = (source: string): boolean =>
+      (LOG_SOURCES as readonly string[]).includes(source);
+
+    for (const candidate of ['browser', 'worker', 'cli', 'native', 'tauri']) {
+      expect(toQuery(parseArgs(['api', '--source', candidate])).ok).toBe(schemaAccepts(candidate));
+    }
+  });
+
+  test('--help advertises exactly the sources the schema declares', () => {
+    // `--help` is the other place the vocabulary was copied. A flag list that names
+    // a value the parser then rejects is a contradiction the operator finds first.
+    const help = helpText();
+    expect(help).toContain(LOG_SOURCES.join('|'));
+    expect(help).not.toContain('native|');
   });
 
   test('rejects a second positional argument', () => {
