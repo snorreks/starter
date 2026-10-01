@@ -150,22 +150,43 @@ export const parseDeployArgs = (argv: readonly string[]): ArgvResult => {
       continue;
     }
 
-    const [flag] = token.split('=', 2) as [string];
-
-    if (BOOLEAN_FLAGS.has(flag)) {
-      if (flag === '--dry-run') {
+    // Matched against the whole token, not the part before `=`. Splitting first
+    // meant `--dry-run=false` set `dryRun = true` — the opposite of what was
+    // written — while `--yes=false` failed to grant the consent it appears to name.
+    if (BOOLEAN_FLAGS.has(token)) {
+      if (token === '--dry-run') {
         dryRun = true;
       }
-      if (flag === '--json') {
+      if (token === '--json') {
         json = true;
       }
-      if (flag === '--help' || flag === '-h') {
+      if (token === '--help' || token === '-h') {
         help = true;
       }
       continue;
     }
 
-    errors.push(`Unknown flag "${flag}". Run with --help.`);
+    if (token.includes('=')) {
+      const name = token.split('=', 2)[0] as string;
+      const inline = token.slice(name.length + 1);
+      // Named rather than "Unknown flag": the writer's mistake is the *form*, and
+      // saying so is the difference between a fixable error and a puzzle.
+      if (BOOLEAN_FLAGS.has(name)) {
+        errors.push(
+          `"${name}" is a flag, not a key=value pair. Pass "${name}" on its own, without a value.`,
+        );
+      } else if (VALUE_FLAGS.has(name)) {
+        errors.push(
+          `"${name}" takes its value as a separate argument, not after "=":` +
+            ` pass "${name} ${inline}".`,
+        );
+      } else {
+        errors.push(`Unknown flag "${name}". Run with --help.`);
+      }
+      continue;
+    }
+
+    errors.push(`Unknown flag "${token}". Run with --help.`);
   }
 
   if (errors.length > 0) {
@@ -301,7 +322,15 @@ export const planDeploy = (
   return { ok: true, steps, notices };
 };
 
-const renderPlan = (plan: Extract<Plan, { ok: true }>, environment: string): string => {
+/**
+ * What `--dry-run` prints.
+ *
+ * Exported so the dry-run path is asserted at the boundary it actually has — the
+ * text an operator reads — rather than on the flag that selects it. A dry run that
+ * renders nothing, or renders something other than what it would spawn, is a dry
+ * run that can lie, and that is the whole claim being tested.
+ */
+export const renderPlan = (plan: Extract<Plan, { ok: true }>, environment: string): string => {
   const lines = [`Deploy plan (${environment})`, ''];
   for (const [index, step] of plan.steps.entries()) {
     lines.push(`  ${index + 1}. ${step.description}`);

@@ -281,6 +281,44 @@ describe('parseDeployArgs: targets', () => {
     expect(parsed.ok && parsed.dryRun).toBe(true);
     expect(parsed.ok && parsed.json).toBe(true);
   });
+
+  // `--dry-run=false` used to set dryRun to true: the parser split on `=` and
+  // checked only the part before it, so the value was discarded and the flag's
+  // presence won. A deploy command that does the opposite of what was written is
+  // the worst shape this parser could have.
+  test('a boolean flag with a value is rejected rather than half-read', () => {
+    for (const token of ['--dry-run=false', '--yes=false', '--json=0']) {
+      const parsed = parseDeployArgs([token]);
+      expect(parsed.ok).toBe(false);
+      if (parsed.ok) {
+        return;
+      }
+      expect(parsed.errors.join('\n')).toContain('without a value');
+    }
+  });
+
+  test('a value flag written with = is rejected with the form to use instead', () => {
+    // `--env=production` used to fall through to "Unknown flag", which reads as a
+    // wrong flag name rather than a wrong syntax.
+    const parsed = parseDeployArgs(['--env=production']);
+
+    expect(parsed.ok).toBe(false);
+    if (parsed.ok) {
+      return;
+    }
+    expect(parsed.errors.join('\n')).toContain('--env production');
+    expect(parsed.errors.join('\n')).not.toContain('Unknown flag');
+  });
+
+  test('an unknown flag with a value still reports the unknown flag', () => {
+    const parsed = parseDeployArgs(['--forse=api']);
+
+    expect(parsed.ok).toBe(false);
+    if (parsed.ok) {
+      return;
+    }
+    expect(parsed.errors.join('\n')).toContain('Unknown flag "--forse"');
+  });
 });
 
 describe('planDeploy: steps', () => {

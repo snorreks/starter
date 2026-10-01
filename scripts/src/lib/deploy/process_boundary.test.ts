@@ -16,7 +16,7 @@ import { afterEach, describe, expect, test } from 'bun:test';
 import { DEPLOYMENT_CONFIG } from '@starter/schemas';
 import { type ProcessRunner, setProcessRunner } from '../cloudflare/wrangler.ts';
 import type { ConfigCheck } from './configure.ts';
-import { executePlan, main, parseDeployArgs, planDeploy } from './index.ts';
+import { executePlan, main, parseDeployArgs, planDeploy, renderPlan } from './index.ts';
 
 const READY: ConfigCheck = { ok: true, problems: [], notices: [] };
 
@@ -162,6 +162,12 @@ describe('the process boundary', () => {
     expect(spawned).toEqual([]);
   });
 
+  // The previous version of this test called `parseDeployArgs` and `planDeploy` and
+  // then asserted `parsed.dryRun === true`. That proved the flag parsed; it never
+  // reached the branch the flag selects, so a regression in the dry-run path — the
+  // one where output is printed instead of a process started — could not fail it.
+  // The renderer is the same function `main` calls, so this asserts on what a real
+  // dry run prints.
   test('a dry run against a ready config renders the plan and spawns nothing', () => {
     namesSet();
     tokenSet();
@@ -173,12 +179,26 @@ describe('the process boundary', () => {
     if (!parsed.ok) {
       return;
     }
+    expect(parsed.dryRun).toBe(true);
 
     const plan = planDeploy(parsed.targets, parsed.environment, READY);
     expect(plan.ok).toBe(true);
+    if (!plan.ok) {
+      return;
+    }
 
-    // Nothing to execute: `executePlan` is only reached when `dryRun` is false.
-    expect(parsed.dryRun).toBe(true);
+    const rendered = renderPlan(plan, parsed.environment);
+
+    // What a dry run prints is the command a real run would spawn, so this is the
+    // observable difference between the two paths rather than an internal flag.
+    expect(rendered).toContain('wrangler deploy --env production');
+    expect(rendered).toContain('Deploy the api Worker');
+    expect(rendered).toContain(plan.steps[0]?.cwd ?? 'missing');
+    // The notices a production deploy carries, rendered.
+    expect(rendered).toContain('changes live traffic');
+    expect(rendered).toContain(plan.notices.join('\n').slice(0, 40));
+
+    // And the whole point: the dry-run branch renders, it does not execute.
     expect(spawned).toEqual([]);
   });
 
@@ -264,5 +284,16 @@ describe('one plan, two consumers', () => {
     // printed: same steps, same args, same order, same working directory.
     expect(spawned[0]?.args).toEqual(plan.steps[0]?.args);
     expect(spawned[0]?.cwd).toBe(plan.steps[0]?.cwd);
+
+    // And the rendered text carries that same argv, token for token — so the plan a
+    // dry run shows is the plan a real run would execute, rather than a
+    // restatement of it. `renderPlan` joins `step.command` with `step.args`, so a
+    // mismatch here means the renderer and the process boundary disagree, which is
+    // the defect this file was written for.
+    const rendered = renderPlan(plan, parsed.environment);
+    for (const step of plan.steps) {
+      expect(rendered).toContain(`${step.command} ${step.args.join(' ')}`);
+      expect(rendered).toContain(step.description);
+    }
   });
 });
