@@ -58,7 +58,7 @@ export interface RequestContext {
   user: RequestUser | null;
   /**
    * This server's trace id for this request. Generated here, never taken from a
-   * header — see `resolveClientTraceId`.
+   * header — see `boundCorrelationLabel` and `clientTraceId`.
    */
   traceId: string;
   /**

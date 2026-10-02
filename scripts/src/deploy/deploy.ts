@@ -51,6 +51,7 @@ import {
   deployStep,
   HEALTH_PATH,
   migrationStep,
+  READINESS_PATH,
   renderApply,
 } from './apply.ts';
 import { hasApiToken, secretInArgvProblem } from './credentials.ts';
@@ -367,6 +368,13 @@ export const planDeploy = (
       description: `Verify the release at ${target.origin}${HEALTH_PATH}`,
       command: 'fetch',
       args: [`${target.origin}${HEALTH_PATH}`],
+      cwd: CLIENT_DIR,
+      remote: true,
+    },
+    {
+      description: `Verify readiness at ${target.origin}${READINESS_PATH}`,
+      command: 'fetch',
+      args: [`${target.origin}${READINESS_PATH}`],
       cwd: CLIENT_DIR,
       remote: true,
     },

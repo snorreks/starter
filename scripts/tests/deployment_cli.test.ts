@@ -312,7 +312,17 @@ describe('the offline plan names one destination and the commands for it', () =>
 
     const descriptions = plan.steps.map((step) => step.description).join(' ');
     expect(descriptions.indexOf('migrations')).toBeLessThan(descriptions.indexOf('Deploy'));
-    expect(descriptions).toContain('/health');
+    expect(
+      plan.steps
+        .filter((step) => step.command === 'fetch')
+        .map((step) => ({
+          args: step.args,
+          remote: step.remote,
+        })),
+    ).toEqual([
+      { args: [`${plan.target.origin}/health`], remote: true },
+      { args: [`${plan.target.origin}/health/ready`], remote: true },
+    ]);
   });
 
   test('the plan warns that a code rollback is not a schema rollback', () => {

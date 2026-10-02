@@ -173,8 +173,8 @@ A record's identity comes from the session, never from a payload.
 | `requestId` | The provider's `cf-ray`, bounded to `[A-Za-z0-9._:-]` and 200 characters, or omitted. |
 | `userId` | The verified session, or absent. |
 | `environment` | `container.environment`, after validation. A staging deployment records `staging`. |
-| `source`, `release` on a **forwarded** record | The client's, validated against the schema and kept — a browser event stays `source: 'browser'` with its own artifact release. |
-| anything the client asserted | `data.clientReported`, labelled, including a submitted top-level `userId` or `traceId`. |
+| `source`, `release`, `level`, `timestamp` on a **forwarded** record | Client claims, validated against the schema and kept — a browser event retains its source, artifact release, severity and event time. |
+| client identity claims | `data.clientReported`, labelled, including a submitted top-level `userId` or `traceId`. |
 | an incoming `x-trace-id` header | `data.clientTraceId` on the request record — never the trace id. |
 
 The redaction described above is applied to the forwarded payload, and the redacted

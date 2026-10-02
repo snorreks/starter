@@ -751,7 +751,10 @@ describe('verification asks whether the release can serve, not only whether it i
     // Injected, not slept through: an origin that accepts the connection and never
     // replies must not hold the deploy job open for the runner's own timeout.
     let observed: AbortSignal | undefined;
-    const hanging = (async (_input: unknown, init?: { signal?: AbortSignal }) => {
+    const hanging = (async (input: unknown, init?: { signal?: AbortSignal }) => {
+      if (!String(input).endsWith(READINESS_PATH)) {
+        return httpRecorder(healthy).fetch(String(input));
+      }
       observed = init?.signal;
       return await new Promise<Response>((_resolve, reject) => {
         init?.signal?.addEventListener('abort', () => {
@@ -765,11 +768,36 @@ describe('verification asks whether the release can serve, not only whether it i
     const elapsed = Date.now() - startedAt;
 
     expect(result.ok).toBe(false);
+    expect(result.path).toBe(READINESS_PATH);
     expect(observed).toBeDefined();
     // Generous upper bound, still an order of magnitude below the real timeout:
     // this asserts the budget is applied, not that the clock is fast.
     expect(elapsed).toBeLessThan(5_000);
   });
+
+  test.each(['AbortError', 'TimeoutError'])(
+    'a readiness body interrupted by %s reports a timeout',
+    async (name) => {
+      const interrupted = (async (input: unknown) => {
+        if (!String(input).endsWith(READINESS_PATH)) {
+          return httpRecorder(healthy).fetch(String(input));
+        }
+        return new Response(
+          new ReadableStream({
+            start(controller) {
+              controller.error(new DOMException('body interrupted', name));
+            },
+          }),
+        );
+      }) as typeof globalThis.fetch;
+
+      const result = await smoke(target(), interrupted, { timeoutMs: 50 });
+      expect(result.ok).toBe(false);
+      expect(result.path).toBe(READINESS_PATH);
+      expect(result.readiness?.status).toBe(200);
+      expect(result.problem).toContain(`Timed out reading ${READINESS_PATH} after 50ms`);
+    },
+  );
 
   test('apply records a release whose readiness failed, and does not claim success', async () => {
     const spawns = recorder();
@@ -820,6 +848,7 @@ describe('verification asks whether the release can serve, not only whether it i
       root: fixtureRoot('db-staging'),
     });
 
+    expect(result.record?.smoke?.readiness?.status).toBe(503);
     expect(JSON.stringify(result.record)).not.toContain('hunter2');
     expect(JSON.stringify(result.record)).not.toContain('postgres://');
   });

@@ -27,18 +27,16 @@
 //      the OS pick, and only processes this file started are ever stopped.
 
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:test';
+import assert from 'node:assert/strict';
 import { type ChildProcess, spawn } from 'node:child_process';
 import { closeSync, existsSync, openSync, readFileSync, rmSync } from 'node:fs';
 import { createServer } from 'node:net';
 import { join } from 'node:path';
+import type { LogEvent } from '@starter/schemas/logging';
 import { createId } from '@starter/utils';
 import { killTree } from '@starter/utils/process';
 import { sleep, spawnSync } from 'bun';
-import type { LogEvent } from '@starter/schemas/logging';
-import {
-  MAX_BODY_BYTES,
-  MAX_RECORDS_PER_SUBMISSION,
-} from '../src/lib/server/telemetry_service.ts';
+import { MAX_BODY_BYTES, MAX_RECORDS_PER_SUBMISSION } from '../src/lib/server/telemetry_service.ts';
 import { REPO_ROOT } from './database_paths.ts';
 
 const APP_DIR = join(REPO_ROOT, 'apps/frontend/client');
@@ -248,8 +246,8 @@ const structuredRecords = (): LogEvent[] => {
   let contents: string;
   try {
     contents = readFileSync(WORKER_LOG, 'utf8');
-  } catch {
-    return [];
+  } catch (error) {
+    throw new Error(`Could not read Worker log ${WORKER_LOG}: ${String(error)}`, { cause: error });
   }
 
   return contents
@@ -1520,8 +1518,10 @@ describe('telemetry', () => {
 // RUN here, because that needs a deployed environment and a provider account.
 
 describe('the built Worker emits one structured record per served request', () => {
-  const isRequestTo = (path: string) => (event: LogEvent): boolean =>
-    event.event === 'http.request' && (event.data as Record<string, unknown>)?.path === path;
+  const isRequestTo =
+    (path: string) =>
+    (event: LogEvent): boolean =>
+      event.event === 'http.request' && (event.data as Record<string, unknown>)?.path === path;
 
   /** The records for one path, after waiting for `expected` of them to exist. */
   const requestRecords = async (path: string, expected: number): Promise<LogEvent[]> =>
@@ -1539,18 +1539,31 @@ describe('the built Worker emits one structured record per served request', () =
     const after = await requestRecords('/api/health', before + 1);
     expect(after.length).toBe(before + 1);
     const record = after[after.length - 1];
+    assert.ok(record, 'Expected a structured Worker log record');
     expect(record?.app).toBe('web');
     expect(record?.environment).toBe('local');
     expect(record?.source).toBe('worker');
     expect(record?.level).toBe('INFO');
     expect((record?.release ?? '').length).toBeGreaterThan(0);
 
-    const data = record?.data as Record<string, unknown>;
+    const data = record.data as Record<string, unknown>;
     expect(data.status).toBe(200);
     expect(data.method).toBe('GET');
     expect(typeof data.durationMs).toBe('number');
     // Correlation is on the record itself, not reconstructed from a message.
     expect(typeof record?.traceId).toBe('string');
+  }, 30_000);
+
+  test('an unrouted API request records the final 404 exactly once', async () => {
+    const path = `/api/missing-${createId('route', 8)}`;
+    const response = await fetch(`${base()}${path}`);
+    expect(response.status).toBe(404);
+
+    const records = await requestRecords(path, 1);
+    expect(records).toHaveLength(1);
+    const [record] = records;
+    assert.ok(record, 'Expected a structured Worker log record');
+    expect((record.data as Record<string, unknown>).status).toBe(response.status);
   }, 30_000);
 
   test('a failing request is recorded as a warning, not as information', async () => {
@@ -1565,8 +1578,10 @@ describe('the built Worker emits one structured record per served request', () =
 
     // The platform's severity filter is how an incident is found; a 401 that arrives
     // as `info` is a stream nobody filters by WARNING.
-    expect(after[after.length - 1]?.level).toBe('WARNING');
-    expect((after[after.length - 1]?.data as Record<string, unknown>).status).toBe(401);
+    const record = after[after.length - 1];
+    assert.ok(record, 'Expected a structured Worker log record');
+    expect(record.level).toBe('WARNING');
+    expect((record.data as Record<string, unknown>).status).toBe(401);
   }, 30_000);
 
   test('an incoming correlation label is echoed as a label, never as the trace id', async () => {
@@ -1581,7 +1596,8 @@ describe('the built Worker emits one structured record per served request', () =
     expect(after.length).toBe(before + 1);
 
     const record = after[after.length - 1];
-    const clientLabel = (record?.data as Record<string, unknown>).clientTraceId;
+    assert.ok(record, 'Expected a structured Worker log record');
+    const clientLabel = (record.data as Record<string, unknown>).clientTraceId;
     expect(typeof clientLabel).toBe('string');
     expect(record?.traceId).not.toBe(clientLabel);
   }, 30_000);
@@ -1596,7 +1612,9 @@ describe('the built Worker emits one structured record per served request', () =
     const after = await requestRecords('/api/notes', before + 1);
     expect(after.length).toBe(before + 1);
 
-    const userId = (after[after.length - 1]?.data as Record<string, unknown>).userId;
+    const record = after[after.length - 1];
+    assert.ok(record, 'Expected a structured Worker log record');
+    const userId = (record.data as Record<string, unknown>).userId;
     expect(typeof userId).toBe('string');
   }, 60_000);
 });
@@ -1632,6 +1650,7 @@ describe('a forwarded browser event is stored once, and stays a browser event', 
     const records = await awaitRecords((event) => event.event === marker, 1);
     expect(records).toHaveLength(1);
     const [record] = records;
+    assert.ok(record, 'Expected a structured Worker log record');
 
     // A browser event forwarded through a Worker is still a browser event, and its
     // artifact release is still its own — that is what answers "which build?".
@@ -1641,7 +1660,7 @@ describe('a forwarded browser event is stored once, and stays a browser event', 
     expect(record?.environment).toBe('local');
     expect(record?.app).toBe('web');
 
-    const data = record?.data as Record<string, unknown>;
+    const data = record.data as Record<string, unknown>;
     // Redaction happened before storage, and the payload itself survived: it used to
     // be redacted and then thrown away.
     expect(data.password).toBe('[redacted]');
@@ -1696,7 +1715,8 @@ describe('a forwarded browser event is stored once, and stays a browser event', 
     // `[A-Za-z0-9._:-]` is accepted, so an address — which is what these two sessions
     // are distinguished by — would be refused and the assertion below would prove
     // nothing. A short per-session token stands in for it.
-    const labelFor = (account: Account): string => `client-label-${account.email.split('-')[0] ?? 'x'}-${createId('l', 6)}`;
+    const labelFor = (account: Account): string =>
+      `client-label-${account.email.split('-')[0] ?? 'x'}-${createId('l', 6)}`;
     const submission = (account: Account) =>
       api(account, '/api/telemetry', {
         method: 'POST',

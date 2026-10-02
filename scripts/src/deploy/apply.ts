@@ -251,7 +251,14 @@ const probe = async (
     if (parsed !== null && typeof parsed === 'object' && !Array.isArray(parsed)) {
       body = parsed as Record<string, unknown>;
     }
-  } catch {
+  } catch (error) {
+    if (error instanceof Error && (error.name === 'AbortError' || error.name === 'TimeoutError')) {
+      return {
+        status: response.status,
+        body: null,
+        problem: `Timed out reading ${path} after ${timeoutMs}ms`,
+      };
+    }
     // A non-JSON body is a failed verification, not a crash: an HTML error page
     // from a misconfigured origin is precisely the failure worth reporting.
     body = null;
@@ -583,7 +590,7 @@ export const apply = async (options: ApplyOptions): Promise<ApplyResult> => {
     ok(
       'verify',
       `${smokeResult.path} -> ${smokeResult.status}, release ${smokeResult.reportedRelease ?? 'unreported'}; ` +
-        `${READINESS_PATH} -> ${smokeResult.readiness?.status ?? 'not run'} (ready)`,
+        `${READINESS_PATH} -> ${smokeResult.readiness?.status} (ready)`,
     ),
   );
 

@@ -186,15 +186,11 @@ export const handle: Handle = async ({ event, resolve }) => {
     recordRequest(context, event, startedAt, 500);
     throw error;
   }
-  recordRequest(context, event, startedAt, response.status);
 
   // `route.id` is null exactly when nothing matched, which is what makes this a
   // 404 rather than a guess about the response status.
   if (event.route.id === null && isApiPath(event.url.pathname)) {
-    return withCachePolicy(
-      jsonError(404, 'not_found', 'No such route.'),
-      cachePolicyFor(event.url.pathname, event.locals.user),
-    );
+    response = jsonError(404, 'not_found', 'No such route.');
   }
 
   // Cache policy, applied here rather than per route, and to *every* response
@@ -214,7 +210,9 @@ export const handle: Handle = async ({ event, resolve }) => {
   //     headers rather than being declared cacheable here. A blanket `public`
   //     would be a correctness claim this code cannot verify, since whether a page
   //     is anonymous depends on the session rather than on the URL.
-  return withCachePolicy(response, cachePolicyFor(event.url.pathname, event.locals.user));
+  response = withCachePolicy(response, cachePolicyFor(event.url.pathname, event.locals.user));
+  recordRequest(context, event, startedAt, response.status);
+  return response;
 };
 
 /**
