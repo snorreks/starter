@@ -22,7 +22,19 @@ import { cleanupFakes, fakeBin } from './fake_bin.ts';
 
 afterAll(cleanupFakes);
 
-const REPO_ROOT = fileURLToPath(new URL('../../', import.meta.url));
+// Trailing separator stripped, and deliberately rather than incidentally.
+//
+// `fileURLToPath(new URL('../../', …))` keeps the separator that `new URL`
+// normalises a directory-URL into, so this used to be `…/starter/`. The journal
+// records `resolve(options.cwd)`, which strips it — so the two disagreed by one
+// character and the assertion below could never pass. It failed on `main` at the
+// merge of the agent-integration work and was not noticed there, because the
+// message reads as a path mismatch rather than as a broken assertion.
+//
+// `scripts/src/shared/paths.ts` strips it for the same reason and says why in a
+// comment: a string comparison against another module's path is only meaningful
+// once both sides are in the same form.
+const REPO_ROOT = fileURLToPath(new URL('../../', import.meta.url)).replace(/\/$/, '');
 
 /**
  * Journal entries this file created.

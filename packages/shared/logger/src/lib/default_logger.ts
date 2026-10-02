@@ -31,7 +31,6 @@ const toLogApp = (raw: string | undefined): LogApp => {
     case 'client':
     case 'api':
     case 'scripts':
-    case 'native':
       return raw;
     default:
       return 'scripts';
@@ -53,7 +52,6 @@ const toSource = (raw: string | undefined): LogSource => {
   switch (raw) {
     case 'browser':
     case 'worker':
-    case 'native':
     case 'cli':
       return raw;
     default:
