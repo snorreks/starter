@@ -265,10 +265,18 @@ describe('secrets command', () => {
     expect(code).toBe(EXIT.usage);
   });
 
-  test('--help marks what is not implemented', async () => {
+  test('--help does not claim an implemented operation is missing', async () => {
+    // This asserted `NOT IMPLEMENTED` against `encrypt` and `decrypt`, which both
+    // run the real sops binary and were verified against a real age identity. The
+    // test therefore enforced a falsehood: the help text had to keep saying the
+    // operations were missing, and a fix to the help text failed the suite.
     const printed = await captureStdout(() => secretsCommand.run(['--help']));
-    expect(printed).toContain('NOT IMPLEMENTED');
-    expect(printed).toContain('encrypt');
+    expect(printed).not.toContain('NOT IMPLEMENTED');
+    for (const operation of ['encrypt', 'decrypt', 'init', 'doctor', 'exec', 'update-recipients']) {
+      expect(printed).toContain(operation);
+    }
+    // `edit` is still refused, and says so.
+    expect(printed).toContain('refused');
   });
 });
 
