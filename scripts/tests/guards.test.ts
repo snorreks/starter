@@ -428,11 +428,16 @@ describe('documented-paths', () => {
     // `!` in .gitignore means the path is tracked again, so it is a source path
     // and its absence is real.
     const root = makeTree({
-      '.gitignore': '.moon/cache/\n!.moon/tracked\n',
+      '.gitignore': '.moon/*\n',
       'docs/testing.md': 'A marker lives at `.moon/tracked/marker.txt`.\n',
     });
 
-    expect(guardDocumentedPaths(root).violations).toHaveLength(1);
+    expect(guardDocumentedPaths(root).violations).toEqual([]);
+
+    writeFileSync(join(root, '.gitignore'), '.moon/*\n!.moon/tracked/\n');
+    const violations = guardDocumentedPaths(root).violations;
+    expect(violations).toHaveLength(1);
+    expect(violations[0].message).toContain('.moon/tracked/marker.txt');
   });
 
   test('the live documentation agrees with the live tree', () => {

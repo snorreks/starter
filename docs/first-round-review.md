@@ -161,8 +161,9 @@ resumable; the retry budget is per invocation with a lifetime invocation cap;
 `maxStageMs` is enforced against the awaited adapter with a real abort signal; a dry
 run ends in `dry_run`; acceptance additionally requires deterministic verification
 evidence bound to the current source revision. `full` mode now actually contains the
-critique and review stages its comments claimed. The recorded bug is reproduced
-beside the fix in `contract/reproduction.test.ts`.
+critique and review stages its comments claimed. The recorded bug was reproduced
+beside the fix in `contract/reproduction.test.ts`; that test was later removed with
+the runner in the final integration.
 
 ### The contract CLI always ran the dry adapter
 

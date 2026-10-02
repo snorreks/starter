@@ -83,7 +83,7 @@ export const scaffold = (title: string, dir = CONTRACTS_DIR): string => {
 
   const body = readFileSync(templatePath, 'utf8')
     .replace(/\{\{ID\}\}/g, id)
-    .replace(/\{\{TITLE\}\}/g, title);
+    .replace(/\{\{TITLE\}\}/g, () => title);
 
   mkdirSync(dir, { recursive: true });
   const path = join(dir, `${id}-${slugify(title)}.md`);

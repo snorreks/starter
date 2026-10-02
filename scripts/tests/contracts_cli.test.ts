@@ -15,7 +15,14 @@
 // would make the working tree the test's evidence.
 
 import { afterEach, describe, expect, test } from 'bun:test';
-import { copyFileSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  copyFileSync,
+  existsSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
@@ -32,9 +39,13 @@ const cleanups: string[] = [];
 
 /** A temporary briefs directory holding the real template. */
 const briefDir = (): string => {
+  const templatePath = join(CONTRACTS_DIR, 'TEMPLATE.md');
+  if (!existsSync(templatePath)) {
+    throw new Error(`Expected contracts template is missing: ${templatePath}`);
+  }
   const dir = mkdtempSync(join(tmpdir(), 'contracts-'));
   cleanups.push(dir);
-  copyFileSync(join(CONTRACTS_DIR, 'TEMPLATE.md'), join(dir, 'TEMPLATE.md'));
+  copyFileSync(templatePath, join(dir, 'TEMPLATE.md'));
   return dir;
 };
 
@@ -65,6 +76,14 @@ describe('scaffolding a brief', () => {
     expect(body).not.toContain('{{');
     expect(body).toContain('# C-001 — Add thing export as NDJSON');
     expect(body).toContain('**Status:** draft');
+  });
+
+  test('dollar-sign replacement sequences in a title are preserved literally', () => {
+    const dir = briefDir();
+    const title = "Keep $$, $&, $`, $' and $1 literal";
+    const path = scaffold(title, dir);
+
+    expect(readFileSync(path, 'utf8')).toContain(`# C-001 — ${title}`);
   });
 
   test('the id follows the highest one already present', () => {
