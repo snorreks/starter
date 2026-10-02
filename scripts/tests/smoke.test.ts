@@ -17,6 +17,7 @@
 //     migration history.
 
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
+import { spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -225,31 +226,52 @@ describe('the rename is reported, never performed', () => {
 });
 
 describe('the copy models a clone, not the developer’s working directory', () => {
-  test('a gitignored local file is not copied', () => {
-    // `.env` is gitignored, so a clone does not contain one — and `setup` creates it
-    // with `writeIfAbsent`. Copying the maintainer's would mean the rehearsal
-    // exercised the *existing* file and never tested that step, and it would carry
-    // real local configuration into a temporary directory.
-    //
-    // This checkout has a populated `.env` from `bun run setup`, so the assertion is
-    // about a file that is really there rather than a hypothetical.
-    expect(existsSync(join(REPO_ROOT, '.env'))).toBe(true);
+  let dir: string;
+
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), 'starter-clone-'));
+  });
+
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  test('a gitignored local file is not copied, and a tracked one is', () => {
+    // Built as a real repository rather than asserted against this checkout.
+    // Asserting `existsSync(REPO_ROOT/.env')` made the test depend on whether
+    // `bun run setup` had been run: true in a working checkout, false in CI, where
+    // the unit lane runs before setup. The suite then failed on the checkout that
+    // was *more* prepared — a fixture does not have that problem.
+    const root = join(dir, 'repo');
+    mkdirSync(join(root, 'src'), { recursive: true });
+    writeFileSync(join(root, 'package.json'), '{ "name": "fixture" }\n');
+    // The pattern is the one that matters in practice: `.env` ignored,
+    // `.env.example` and `.envrc` tracked. A deny-list keyed on the `.env` prefix
+    // would take all three.
+    writeFileSync(join(root, '.gitignore'), '.env\n!.env.example\n');
+    writeFileSync(join(root, '.env'), 'SECRET=not-for-a-clone\n');
+    writeFileSync(join(root, '.env.example'), 'SECRET=\n');
+    writeFileSync(join(root, '.envrc'), 'export FOO=1\n');
+    writeFileSync(join(root, 'src', 'index.ts'), 'export const x = 1;\n');
+    spawnSync('git', ['init', '--quiet'], { cwd: root });
+    spawnSync('git', ['add', '-A'], { cwd: root });
 
     const target = mkdtempSync(join(tmpdir(), 'starter-env-'));
     try {
-      expect(copyTemplateTree(REPO_ROOT, target)).not.toContain('.env');
+      const copied = copyTemplateTree(root, target);
+
+      expect(copied).not.toContain('.env');
       expect(existsSync(join(target, '.env'))).toBe(false);
+
+      // The mirror: `git check-ignore` is used rather than a hand-rolled pattern
+      // language precisely so `.env.example` and `.envrc` survive.
+      expect(copied).toContain('.env.example');
+      expect(copied).toContain('.envrc');
+      expect(committedFiles(root)).not.toContain('.env');
+      expect(committedFiles(root)).toContain('.envrc');
     } finally {
       rmSync(target, { recursive: true, force: true });
     }
-  });
-
-  test('a tracked file that a prefix rule would also match is still copied', () => {
-    // The mirror image, and the reason `git check-ignore` is used rather than a
-    // hand-rolled deny-list: `.envrc` is tracked while `.env` is not, and a rule
-    // keyed on the `.env` prefix would drop both — taking the direnv configuration
-    // with it.
-    expect(committedFiles(REPO_ROOT)).toContain('.envrc');
   });
 
   test('a step limit of zero is refused rather than running nothing and reporting ok', () => {
