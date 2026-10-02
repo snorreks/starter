@@ -5,7 +5,7 @@ graph: it imports `@starter/logger` and `@starter/schemas` and nothing else, and
 no project in the workspace may import it *into* `shared`.
 
 That constraint is the point. Anything here runs in a Worker, a browser, and a
-Tauri webview, so an import of `drizzle-orm` or `node:fs` would be either dead
+native webview, so an import of `drizzle-orm` or `node:fs` would be either dead
 code in two of those places or a runtime failure in the third.
 
 ## What is here
@@ -18,6 +18,17 @@ code in two of those places or a runtime failure in the third.
 | `AppError` | A classified error, so callers branch on data rather than status codes |
 | `createDeferred` | A promise with its `resolve`/`reject` exposed |
 | `slugify` / `previewText` | Total, deterministic text helpers |
+
+## Setup and configuration
+
+Nothing to configure; there is no environment variable and no generated file.
+
+One exception, declared rather than hidden: `@starter/utils/process` is Node-only
+— it is subprocess handling, and the package itself is linked into the browser
+bundle, so a barrel export of it would break every browser build. Importing that
+subpath *is* the assertion that the caller is not a browser, and the guard checks
+both halves: that the module is declared, and that the subpath still publishes it.
+Delete the `exports` entry and the declaration is reported as unreachable.
 
 ## The two that carry the weight
 
@@ -53,6 +64,9 @@ costs server work.
 
 ## Tasks
 
+Run from `packages/shared/utils`, or from the repository root where `bun run
+<name>` fans out to the same script through Moon:
+
 ```bash
 bun run typecheck
 bun run lint
@@ -60,6 +74,16 @@ bun run format
 bun run fix
 bun run test
 ```
+
+## Validation and artifacts
+
+`bun test`, with no `--pass-with-no-tests`: this project has tests, and the two
+that carry the most weight are the ones only a real object model can settle —
+`BaseClass`'s dev tracing against `#private` field access and Svelte 5 `$state`,
+and `StaleGuard`'s behaviour when the superseded request resolves *after* the
+newer one. A green run prints a count, and CI asserts that count is nonzero.
+
+Artifacts: none. The deliverable is the source; there is no build step.
 
 ## See also
 

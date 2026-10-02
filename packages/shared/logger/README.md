@@ -30,6 +30,13 @@ shape, one redaction pass, one destination per runtime.
 - **The configured level is the lowest severity emitted.** If a record you expect is
   missing, check this before blaming the sink.
 
+## Setup and configuration
+
+Nothing to configure. The package has no environment variable and no generated file:
+a caller constructs a logger and hands it a destination. `@starter/logger/file` is the
+one Node-only subpath, and the guard checks that the subpath still publishes the file
+it claims — delete the `exports` entry and the declaration is reported as unreachable.
+
 ## Commands
 
 ```bash
@@ -37,6 +44,16 @@ bun run --cwd packages/shared/logger test        # unit tests, including the lev
 bun run --cwd packages/shared/logger typecheck
 bun run --cwd packages/shared/logger lint
 ```
+
+## Validation and artifacts
+
+`bun run --cwd packages/shared/logger test` prints a nonzero count; the CI unit lane
+asserts it. The levels table and `log_delivery.test.ts` are the parts that matter —
+a sink that swallows a record is a logger that reports success while emitting nothing.
+
+Artifacts: none. The two destinations write where the runtime puts them — workerd's
+platform console, or `.wrangler/logs/app.ndjson` under `bun run dev`. Where those are
+and what they contain is [docs/logs.md](../../docs/logs.md)'s subject.
 
 ## Boundaries
 

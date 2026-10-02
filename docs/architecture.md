@@ -17,6 +17,30 @@ apps/e2e              Playwright                  -> shared
 scripts, .pi          tooling                     -> shared
 ```
 
+### The roots the policy already owns
+
+Four more roots are classified in `PLANE_PLACEMENTS` before they hold a file, because
+this round adds them next:
+
+| Root | Plane | What makes it different |
+|---|---|---|
+| `packages/frontend/features/**` | browser | The View / ViewModel / service layers, in a package two hosts share. The role rules match it and the web app's own feature directory with one pattern, so a file cannot be a View in one and a plain module in the other |
+| `packages/frontend/platform/**` | browser | Contracts and injected transports. No component, no screen state, so no feature role is claimed — and no platform implementation leaks into `packages/shared` |
+| `apps/frontend/native/**` | browser under `src/`, Node elsewhere | A static SvelteKit bundle. Its `src/lib/platform/**` is the `native-bridge` role, the one place `@tauri-apps/*` may be named |
+| `apps/backend/jobs/**` | worker | A scheduled Worker reached through bindings, not through a route adapter |
+
+Two properties are deliberate. There is **no** blanket entry for an application
+directory, so an application nobody has heard of is reported as unclassified rather
+than inheriting a plane from where it sits. And the Tauri API is confined by *role*,
+not added to the browser plane's capabilities — a static bundle and the web app run
+the same JavaScript in different hosts, and only one composition root of one
+application has the API object.
+
+Rust is outside the TypeScript graph by construction: the source extensions are `.ts`,
+`.tsx` and `.svelte`. A crate is a *project* — it owes a README — and its source is
+validated by Cargo in its own lane. Full details and the measured guard cost are in
+[docs/lint.md](lint.md).
+
 The dependency direction is one-way, and two independent mechanisms enforce it:
 Biome checks import statements as written, and `bun run guard` resolves the real module
 graph and checks what those imports actually reach. Neither is sufficient alone — Biome
@@ -26,6 +50,13 @@ cannot see through a re-export, and a guard cannot see a `// TODO` in a comment.
 browser, and in Node tooling. The moment `packages/shared/utils` imports
 `drizzle-orm`, that import is either dead code in two of those three places or a
 runtime failure in one.
+
+**And a workspace boundary is a declaration, not a folder.** A relative path that
+leaves its own package skips the `exports` map and the dependency list at once, so
+`../../scripts/src/shared/paths.ts` is refused: publish the subpath, declare the
+dependency, import by name. The two declared exemptions — the E2E harness and the
+Vitest config, both reaching the tooling they run inside — carry their reasons and are
+checked for staleness.
 
 ### Two runtimes in one package
 

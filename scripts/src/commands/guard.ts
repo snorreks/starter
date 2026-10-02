@@ -4,7 +4,7 @@ import { main as guardsMain } from '../guards/run_guards.ts';
 import { type Command, EXIT, fail, wantsHelp } from '../shared/command.ts';
 
 const USAGE = [
-  'Usage: guard [--only <guard-id>] [--root <dir>] [--json]',
+  'Usage: guard [--only <guard-id>] [--root <dir>] [--json] [--profile]',
   '',
   'Whole-repository invariants with an empty baseline. No waiver file: a guard that',
   'fails is a defect to fix, not debt to record.',
@@ -15,6 +15,8 @@ const USAGE = [
   '                     disposable fixture tree, so the command and the exit',
   '                     status are under test and not just the rule.',
   '  --json              Machine-readable output.',
+  '  --profile           Also print how long each guard took. Changes nothing',
+  '                     about which guards run.',
 ].join('\n');
 
 export const guardCommand: Command = {
@@ -34,7 +36,15 @@ export const guardCommand: Command = {
     // which is the one thing a guard command must never imply when it did not.
     const onlyIndex = argv.indexOf('--only');
     const rootIndex = argv.indexOf('--root');
-    const known = new Set(['--only', '--root', '--json', '--whole-repo', '--help', '-h']);
+    const known = new Set([
+      '--only',
+      '--root',
+      '--json',
+      '--profile',
+      '--whole-repo',
+      '--help',
+      '-h',
+    ]);
 
     // `--only`'s and `--root`'s operands are values, not flags. Checking them would
     // report every valid `--only architecture` as an unknown flag. `-1` when the flag

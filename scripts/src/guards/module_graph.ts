@@ -40,6 +40,7 @@ import ts from 'typescript';
 import {
   CAPABILITY_RULES,
   type Capability,
+  isGeneratedPath,
   type Plane,
   planeOf,
   type Role,
@@ -73,7 +74,14 @@ export const IGNORED_DIRS = new Set([
  */
 export const GRAPH_EXCLUDED_DIRS: readonly string[] = ['scripts/tests/fixtures'];
 
-/** Source extensions the graph and the textual guards both treat as code. */
+/**
+ * Source extensions the graph and the textual guards both treat as code.
+ *
+ * Deliberately no `.rs`. Rust is not a dialect of TypeScript, and a guard that parsed
+ * it would be a second and strictly weaker answer to a question `cargo check` and
+ * `cargo test` answer properly. A native crate is discovered as a *project* — it owes
+ * a README — and its source is validated by its own lane.
+ */
 export const SOURCE_EXTENSIONS = ['.ts', '.tsx', '.svelte'];
 
 /**
@@ -100,6 +108,14 @@ export const listSourceFiles = (root: string): string[] => {
       }
       const relativePath = relativePrefix === '' ? entry : `${relativePrefix}/${entry}`;
       if (GRAPH_EXCLUDED_DIRS.includes(relativePath)) {
+        continue;
+      }
+      // The same generated trees the project discovery walk skips, from the one
+      // policy in `policy.ts`. A directory a generator writes is not a hole in the
+      // policy: reporting its `.ts` files as unclassified would make `bun run guard`
+      // fail after a build, which is the same class of failure as demanding a
+      // committed output directory.
+      if (isGeneratedPath(relativePath)) {
         continue;
       }
       const full = join(directory, entry);
@@ -675,6 +691,7 @@ export const readWorkspacePackages = (root: string): Map<string, WorkspacePackag
       ? readdirSync(baseDir)
           .map((entry) => `${base}/${entry}`)
           .filter((entry) => statSync(join(root, entry)).isDirectory())
+          .filter((entry) => !isGeneratedPath(entry))
       : [base];
 
     for (const relativeDir of relativeDirs) {

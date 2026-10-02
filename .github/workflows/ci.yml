@@ -77,10 +77,62 @@ env:
   # certify a count it could not read. `[1-9]` rather than `[0-9]` so a lane that
   # printed "0 passed" is still a failure.
   #
-  # Three projects — ui, database and auth — declare
-  # `bun test --pass-with-no-tests`, and they print no count at all. So the count
-  # has to be an aggregate over the lane, not a per-project check.
+  # Two projects — ui and auth — have no test file of their own, so they print no
+  # count at all and the lane's count has to be an aggregate. `@starter/database`
+  # used to be the third: it declared `bun test --pass-with-no-tests` while
+  # containing a rate-limiter test, which is a licence for the next test file to be
+  # deleted unnoticed. The flag is gone now that the project has tests, and a
+  # per-project assertion is still not the right shape — it would need a second
+  # exemption list, and nothing verifies that list against the manifests.
   TESTS_PASSED_PATTERN: '(^|[[:space:]])[1-9][0-9]* (pass|passed)'
+
+# ── What is cached, and what is not ──────────────────────────────────────────
+#
+# Two caches, both narrow, both keyed on the things that would invalidate them.
+#
+#   `~/.bun/install/cache`    Bun's global download cache. Content-addressed by the
+#                             registry's integrity hash, so a hit for the same
+#                             lockfile is a hit for the same bytes. Keyed on
+#                             `bun.lock`, the pinned Bun version and the runner OS: a
+#                             Bun upgrade changes the installer, and an OS change
+#                             changes what the optional packages link against.
+#   `~/.cache/ms-playwright`  The Chromium the two browser lanes launch. Keyed on
+#                             the manifest that pins `@playwright/test`, because the
+#                             browser build is decided there and nowhere else.
+#                             Deliberately **no restore-key**: a partial match would
+#                             restore a Chromium from another Playwright version, and
+#                             `browsers:install` would find a directory it does not
+#                             recognise and report success. A miss costs one
+#                             download; a wrong hit costs a confusing "executable
+#                             doesn't exist" two steps later.
+#
+# Nothing else is cached. Not `node_modules` (a workspace install is not one
+# directory), not `.moon/cache` (every project sets `options.cache: false` because
+# Moon 2.5.5 cannot build a key equal to the files these commands read — see
+# .moon/workspace.yml), and not the guard's output.
+#
+# And not the guard at all, for the reason that decided it: `bun run guard` parses
+# the whole repository, so a cached result is only as fresh as a key that would have
+# to include every tsconfig `paths` entry, every `exports` map and every alias. It is
+# uncached, and it is cheap enough not to need caching. Measured on the development
+# machine over the whole tree, all eight guards, three consecutive runs:
+#
+#   architecture        881 / 894 / 1020 ms
+#   the other seven     56 / 65 / 68 ms in total
+#   total               937 / 952 / 1081 ms
+#
+# Reproduce it with `bun run scripts/src/cli.ts guard --profile`, which prints the
+# same table. The static lane that runs it also spends minutes on typecheck and lint.
+#
+# `--affected` is deliberately not used either, and for the same reason. It was not
+# turned on because the roots this round adds bring dependency edges the affected
+# graph has never seen; a skip that is wrong is invisible, because the lane goes
+# green without having looked. Reconsider it once the roots exist and their edges
+# are real.
+#
+# No credential, `.env`, SOPS file or deployment overlay is cached in any job. Those
+# are read at run time by `bun run secrets:exec` and by the deploy plan, and a cache
+# that survives a job is a place a secret outlives its scope.
 
 jobs:
   static:
@@ -105,6 +157,14 @@ jobs:
         with:
           bun-version: ${{ env.BUN_VERSION }}
 
+      - name: Restore Bun's download cache
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: ~/.bun/install/cache
+          key: bun-${{ runner.os }}-${{ env.BUN_VERSION }}-${{ hashFiles('bun.lock') }}
+          restore-keys: |
+            bun-${{ runner.os }}-${{ env.BUN_VERSION }}-
+
       - name: Install
         run: bun install --frozen-lockfile
 
@@ -122,6 +182,9 @@ jobs:
         run: bun run format
 
       - name: Guards
+        # All eight, uncached, over the whole repository. Not `--affected`, and not a
+        # cache hit: see the note at the top of this file for why a wrong skip is
+        # worse than a second of parsing.
         run: bun run guard
 
       - name: Workflow policy
@@ -151,6 +214,14 @@ jobs:
         with:
           bun-version: ${{ env.BUN_VERSION }}
 
+      - name: Restore Bun's download cache
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: ~/.bun/install/cache
+          key: bun-${{ runner.os }}-${{ env.BUN_VERSION }}-${{ hashFiles('bun.lock') }}
+          restore-keys: |
+            bun-${{ runner.os }}-${{ env.BUN_VERSION }}-
+
       - name: Install
         run: bun install --frozen-lockfile
 
@@ -162,6 +233,15 @@ jobs:
         # version the registry serves, which does not match the `@playwright/test`
         # these lanes run against.
         run: bun run --cwd apps/e2e browsers:install
+
+      - name: Restore Playwright's browser cache
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: ~/.cache/ms-playwright
+          # The manifest pinning `@playwright/test` is what decides the browser
+          # build. No restore-key on purpose; see the caching note at the top of this
+          # file.
+          key: playwright-${{ runner.os }}-${{ hashFiles('apps/e2e/package.json') }}
 
       - name: Unit tests
         # `moon run :test` fans out to each project's own `test` script, so a new
@@ -226,6 +306,14 @@ jobs:
         with:
           bun-version: ${{ env.BUN_VERSION }}
 
+      - name: Restore Bun's download cache
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: ~/.bun/install/cache
+          key: bun-${{ runner.os }}-${{ env.BUN_VERSION }}-${{ hashFiles('bun.lock') }}
+          restore-keys: |
+            bun-${{ runner.os }}-${{ env.BUN_VERSION }}-
+
       - name: Install
         run: bun install --frozen-lockfile
 
@@ -258,6 +346,14 @@ jobs:
         with:
           bun-version: ${{ env.BUN_VERSION }}
 
+      - name: Restore Bun's download cache
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: ~/.bun/install/cache
+          key: bun-${{ runner.os }}-${{ env.BUN_VERSION }}-${{ hashFiles('bun.lock') }}
+          restore-keys: |
+            bun-${{ runner.os }}-${{ env.BUN_VERSION }}-
+
       - name: Install
         run: bun install --frozen-lockfile
 
@@ -269,6 +365,12 @@ jobs:
       - name: Install Playwright's Chromium
         # Pinned copy, same reason as in the unit job.
         run: bun run --cwd apps/e2e browsers:install
+
+      - name: Restore Playwright's browser cache
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('apps/e2e/package.json') }}
 
       - name: End-to-end tests
         # `e2e:e2e` is the real Playwright suite. It builds the app, starts the

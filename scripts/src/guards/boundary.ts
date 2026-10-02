@@ -35,6 +35,7 @@ import { checkMirrors } from '../setup/pins.ts';
 // See scripts/src/shared/paths.ts for why this is not recomputed here.
 import { REPO_ROOT } from '../shared/paths.ts';
 import { guardArchitecture } from './guard_architecture.ts';
+import { guardProjectReadmes } from './guard_readmes.ts';
 // Discovery lives with the graph builder, because both need to agree about what counts
 // as source. Re-exported here so the guards below do not each pick their own walk.
 import { IGNORED_DIRS, listSourceFiles, SOURCE_EXTENSIONS } from './module_graph.ts';
@@ -651,4 +652,5 @@ export const ALL_GUARDS = [
   { id: 'registry-valid', run: guardRegistryIsValid },
   { id: 'version-mirrors', run: guardVersionMirrors },
   { id: 'documented-paths', run: guardDocumentedPaths },
+  { id: 'project-readme', run: guardProjectReadmes },
 ] as const;

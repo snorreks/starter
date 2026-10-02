@@ -110,6 +110,103 @@ redundant — Biome cannot resolve a `@starter/utils/process` import to discover
 opens a subprocess, and the guard does not know that a component's markup mentions
 `window`.
 
+## The eight guards
+
+`bun run guard` runs all of them over the whole repository. There is no baseline and
+no waiver file: a guard that fails is a defect, not debt.
+
+| Id | What it refuses |
+|---|---|
+| `architecture` | Anything the resolved module graph cannot account for: an unclassified source file, an unresolved specifier, a plane reaching a plane it may not, a feature layer imported backwards, a package imported without its `exports` or its declaration, a relative path leaving its workspace |
+| `request-state` | Module-level mutable request state |
+| `no-leftovers` | `console.log`, `debugger`, `TODO(remove)` in production source |
+| `source-is-tracked` | A source file `.gitignore` excludes |
+| `registry-valid` | A resource id or worker name committed as a literal |
+| `version-mirrors` | A pin file that disagrees with `config/toolchain.json` |
+| `documented-paths` | A document pointing at a path or link that does not exist |
+| `project-readme` | A first-party project with no README, or one that answers none of the five required questions |
+
+### The roots the policy already classifies
+
+Four roots are classified in `scripts/src/guards/policy.ts` before they contain a
+file, because a rule that arrives with the first file in a directory is a rule nobody
+reviewed:
+
+| Root | Plane | Role that is not the default |
+|---|---|---|
+| `packages/frontend/features/**` | `browser` | The View / ViewModel / service layers, decided by name exactly as in the web app's own `src/lib/features/**` |
+| `packages/frontend/platform/**` | `browser` | None. Contracts and injected transports; no screen state, so no feature role is claimed |
+| `apps/frontend/native/**` | `browser` under `src/`, `node` elsewhere | `src/lib/platform/**` is `native-bridge` — the only place `@tauri-apps/*` may appear |
+| `apps/backend/jobs/**` | `worker` | None yet |
+
+Two consequences worth stating, because both are the reason the table is per-path
+rather than per-directory:
+
+- The backend application root has **no** blanket entry. A second application placed
+  under it is reported as `unclassified-source` until somebody says what runtime it
+  has.
+- The Tauri API is **not** added to the browser plane's capabilities. `CAPABILITY_ROLES`
+  confines `native-runtime` to the `native-bridge` role, so a component beside the
+  bridge that imports `@tauri-apps/api/core` is refused even though both files are
+  `browser`-plane files in the same application.
+
+Rust is not in the graph at all: `SOURCE_EXTENSIONS` is `.ts`, `.tsx`, `.svelte`. A
+crate is discovered as a *project* — it owes a README — and its source is validated by
+`cargo check` and `cargo test` in its own lane.
+
+### Cross-workspace relative imports
+
+`../../scripts/src/shared/paths.ts` is not a package specifier, so it skipped both the
+`exports` check and the declared-dependency check at once. That is now
+`cross-workspace-relative-import`, with the dependency chain and the remedy — publish
+the subpath, declare the dependency, import by name — in the message.
+
+Two exemptions exist, each naming why, and both are checked for staleness: delete the
+last import that uses a row and the guard reports the row.
+
+| Pair | Why |
+|---|---|
+| `apps/e2e` -> `scripts` | The Playwright harness and the tooling it configures are one Bun process |
+| `apps/frontend/client` -> `scripts` | The Vitest config resolves the browser executable before any application module loads, in Node |
+
+Type-only relative imports are exempt, and the reason is written down rather than
+implied: TypeScript erases the declaration, so it cannot put a module into a bundle.
+The compile-time coupling it does create is owned by the server-type-only rule.
+
+### What counts as a project
+
+The README guard discovers its obligations from the repository's own declarations —
+the root manifest's `workspaces` globs, `.moon/workspace.yml`, and every first-party
+`Cargo.toml` — and never from a list. Generated and vendored trees are excluded by
+one policy (`GENERATED_TREES`), so `src-tauri/gen/android`, `.moon/cache` and
+`node_modules` are not projects, while the crate that generates them still is.
+
+A README owes five answers, matched against headings rather than a template: purpose
+and runtime, setup and configuration, commands with their working directory, what
+validates it and what it produces, and its boundaries with links to the canonical
+guides. The wording is free; the answers are not.
+
+### How long it takes, and why it is not cached
+
+```
+bun run scripts/src/cli.ts guard --profile
+```
+
+Measured on the development machine over this repository, three consecutive runs:
+
+| Guard | ms |
+|---|---|
+| `architecture` | 881 / 894 / 1020 |
+| the other seven, summed | 56 / 65 / 68 |
+| total | 937 / 952 / 1081 |
+
+That is the whole cost of the guard lane, in a static job that also runs a full
+typecheck and lint. It is deliberately uncached: a cached result is only as fresh as a
+key that would have to include every tsconfig `paths` entry, every `exports` map and
+every alias, and Moon 2.5.5 already demonstrated in this repository what a key built
+from the files a task can see is worth. `--affected` is not used either, for the same
+reason: a wrong skip is invisible, because the lane goes green without having looked.
+
 ## Migrating from Biome 1.x
 
 This configuration was written for Biome 1.x and did not run: six keys were
