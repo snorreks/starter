@@ -188,15 +188,23 @@ export class AuthViewModel implements ScreenOwner, ScreenGuards {
     }
 
     try {
-      this.outcome = this.isSignUp
+      const outcome = this.isSignUp
         ? await this.#signUp(values as SignUpInput)
         : await this.#signIn(values as SignInInput);
+
+      if (this.mutations.disposed) {
+        return false;
+      }
+      this.outcome = outcome;
 
       if (this.outcome.kind === 'signed-in') {
         await this.#navigate(AUTHENTICATED_PATH);
       }
       return this.outcome.kind === 'signed-in' || this.outcome.kind === 'awaiting-verification';
     } catch (error) {
+      if (this.mutations.disposed) {
+        return false;
+      }
       const appError = toAppError(error, 'Could not complete that request.');
       this.outcome = { kind: 'failed', message: appError.message };
       reportError(appError);
@@ -217,18 +225,24 @@ export class AuthViewModel implements ScreenOwner, ScreenGuards {
    */
   async resendVerification(email?: string): Promise<boolean> {
     const address = email ?? this.form.email;
-    if (address.trim().length === 0 || this.isSubmitting) {
+    if (address.trim().length === 0 || this.isSubmitting || this.mutations.disposed) {
       return false;
     }
 
     this.isSubmitting = true;
     try {
       await sendVerificationEmail(apiClient, { email: address });
+      if (this.mutations.disposed) {
+        return false;
+      }
       // Reported as the same "awaiting verification" outcome, because from the
       // user's point of view it is: nothing about the account changed.
       this.outcome = { kind: 'awaiting-verification', email: address };
       return true;
     } catch (error) {
+      if (this.mutations.disposed) {
+        return false;
+      }
       const appError = toAppError(error, 'Could not send that email.');
       this.outcome = { kind: 'failed', message: appError.message };
       reportError(appError);

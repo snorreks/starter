@@ -43,6 +43,7 @@ export const CAPTURE_INBOX_LIMIT = 100;
 
 export interface CaptureMailService extends MailService {
   readonly mode: 'capture';
+  readonly inboxId: string;
   /** Most recent last. */
   inbox(): readonly CapturedEmail[];
   /** The newest message addressed to `to`, or undefined. */
@@ -78,6 +79,7 @@ export const createCaptureMailService = (options: CaptureOptions): CaptureMailSe
 
   return {
     mode: 'capture',
+    inboxId: options.inboxId,
     from: options.from,
 
     async send(message: OutboundEmail): Promise<MailDelivery> {

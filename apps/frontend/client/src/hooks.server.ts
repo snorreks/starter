@@ -66,19 +66,14 @@ const isApiPath = (pathname: string): boolean =>
 /**
  * The origin this request actually arrived on, for local origin derivation.
  *
- * `event.url` is built from the request's own URL, and inside `wrangler dev` that URL
- * loses the port — the Worker sees `http://127.0.0.1` while the browser is talking to
- * `http://127.0.0.1:4183`. Deriving the base URL from `event.url.origin` therefore
- * produced a link that pointed at port 80, and every verification and recovery mail
- * sent during `bun run e2e` was a dead link. It is not visible on `/` or on any
- * same-origin fetch, which is why it survived until this PR: nothing else in the
- * application puts a derived origin into a link a person clicks.
+ * Prefer Host when the runtime preserves it, falling back to `event.url.origin`.
+ * Wrangler 4.142.0 with the launcher's `--host 127.0.0.1` rewrites both the URL and
+ * Host to omit the browser's port; this helper cannot recover that port. The
+ * launcher supplies `BETTER_AUTH_URL` with the public origin for that reason.
+ * Without `--host`, Wrangler preserves the port in both the URL and Host.
  *
- * The `Host` header is what the browser actually sent, so it carries the port. It is
- * used *only* as a candidate for the loopback derivation — `resolveDeploymentEnvironment`
- * still refuses a non-loopback origin, and a deployed environment must set
- * `BETTER_AUTH_URL` and never reaches this path at all. So a hostile `Host` cannot
- * steer a deployment: it can only produce the same refusal a wrong origin already did.
+ * This is only a candidate for local loopback derivation. Deployed environments
+ * require `BETTER_AUTH_URL`, and a non-loopback candidate is refused locally.
  */
 const requestOriginFor = (event: RequestEvent): string => {
   const host = event.request.headers.get('host');

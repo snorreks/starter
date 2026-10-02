@@ -14,8 +14,9 @@
 // would tell someone to go and check their inbox when their password is simply
 // wrong — and they would wait there for mail that is never coming.
 
-import { describe, expect, mock, test } from 'bun:test';
+import { describe, expect, mock, spyOn, test } from 'bun:test';
 import { AppError, errorTypeForStatus } from '@starter/utils';
+import { apiClient } from '#lib/services/api_client.ts';
 import { AuthViewModel } from './auth_view_model.svelte.ts';
 
 const ADDRESS = 'someone@example.test';
@@ -157,6 +158,56 @@ describe('a successful sign-in', () => {
     await viewModel.handleSubmit();
 
     expect(navigations).toEqual([]);
+  });
+});
+
+describe('disposal during verification resend', () => {
+  for (const rejected of [false, true]) {
+    test(`a ${rejected ? 'failed' : 'successful'} resend cannot publish after teardown`, async () => {
+      let release!: () => void;
+      const gate = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      const post = spyOn(apiClient, 'post').mockImplementation(async <T>() => {
+        await gate;
+        if (rejected) {
+          throw new Error('send failed');
+        }
+        return undefined as T;
+      });
+      try {
+        const { viewModel } = build();
+        const pending = viewModel.resendVerification();
+        await viewModel.dispose();
+        release();
+        expect(await pending).toBe(false);
+        expect(viewModel.outcome).toBeUndefined();
+        expect(viewModel.isSubmitting).toBe(false);
+        expect(await viewModel.resendVerification()).toBe(false);
+        expect(post).toHaveBeenCalledTimes(1);
+      } finally {
+        post.mockRestore();
+      }
+    });
+  }
+});
+
+describe('disposal during sign-in', () => {
+  test('a pending sign-in cannot publish an outcome or navigate after teardown', async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const { viewModel, navigations } = build({ signIn: () => gate });
+
+    const pending = viewModel.handleSubmit();
+    await viewModel.dispose();
+    release();
+
+    expect(await pending).toBe(false);
+    expect(viewModel.outcome).toBeUndefined();
+    expect(navigations).toEqual([]);
+    expect(viewModel.isSubmitting).toBe(false);
   });
 });
 

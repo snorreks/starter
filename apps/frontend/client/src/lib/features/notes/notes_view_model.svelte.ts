@@ -267,10 +267,8 @@ export class NotesViewModel implements ScreenOwner, ScreenGuards {
    */
   async #mutate(write: () => Promise<unknown>, failureMessage: string): Promise<boolean> {
     try {
-      return await runScreenWrite(this, async () => {
-        await write();
-        return true;
-      });
+      const completed = await runScreenWrite(this, write);
+      return completed && !this.mutations.disposed;
     } catch (error) {
       reportError(error, failureMessage);
       return false;

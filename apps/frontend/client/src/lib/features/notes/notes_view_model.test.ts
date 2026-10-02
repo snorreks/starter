@@ -300,6 +300,32 @@ describe('NotesViewModel overlapping optimistic deletions', () => {
 });
 
 describe('NotesViewModel disposal state', () => {
+  for (const operation of ['create', 'update'] as const) {
+    test(`${operation} completing after disposal returns false without reloading`, async () => {
+      const gate = new Deferred();
+      let loads = 0;
+      const model = new NotesViewModel({
+        notes: service({
+          list: async () => {
+            loads += 1;
+            return [note('a')];
+          },
+          [operation]: () => gate.promise,
+        }),
+      });
+      await model.initialize();
+      const pending =
+        operation === 'create'
+          ? model.createNote({ title: 'new', body: '' })
+          : model.updateNote('a', { title: 'updated' });
+      await model.dispose();
+      gate.resolve();
+      expect(await pending).toBe(false);
+      expect(loads).toBe(1);
+      expect(model.isMutating).toBe(false);
+    });
+  }
+
   test('a disposed ViewModel refuses a load', async () => {
     let listCalls = 0;
     const model = new NotesViewModel({
