@@ -5,7 +5,8 @@
 //   bun run e2e:visual
 //
 // It captures the same built Worker the E2E suite validates. It does not start
-// one: run `bun run dev:worker` first, or let `bun run e2e` start it. What it
+// one: start the built Worker on this command's port first, or let `bun run e2e`
+// start it. What it
 // captures is therefore the compiled Worker rather than whatever happens to be
 // listening on the port.
 //
@@ -23,7 +24,7 @@
 
 import { type Browser, chromium, type Page } from '@playwright/test';
 import { playwrightLaunchOptions } from '../../scripts/src/shared/browser_path.ts';
-import { appBaseUrl } from './preflight.ts';
+import { APP_PORT, appBaseUrl } from './preflight.ts';
 import {
   type EvidenceResult,
   ensureEvidenceDir,
@@ -184,8 +185,10 @@ async function main(): Promise<number> {
   if (result.captured.length === 0) {
     process.stderr.write(
       `\nNo screen was captured from ${appBaseUrl}, and the evidence directory is empty.\n` +
-        '  Nothing is running on that origin, or every screen failed to load.\n' +
-        '  Start the app first: bun run dev:worker   (or let `bun run e2e` start it)\n',
+        '  Nothing is listening on that port. The Worker\'s own default port is 5173,\n' +
+        '  which is a different port from this one — so start it here explicitly:\n\n' +
+        `    PORT=${APP_PORT} bun run dev:worker\n\n` +
+        '  (or let `bun run e2e` start a server for you)\n',
     );
     return 1;
   }
