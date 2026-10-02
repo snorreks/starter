@@ -71,3 +71,42 @@ vcs:
   # still has `main` only as a remote ref. Both halves are needed; each was found
   # by reproducing the failure locally rather than by reading the error once.
   defaultBranch: 'origin/main'
+
+# ── What Moon's cache can and cannot see here ──────────────────────────────────
+#
+# Every project sets `options.cache: false`. That is not caution, and it is not
+# that the tasks are impure; it is that Moon 2.5.5 cannot build a key equal to
+# the set of files these commands read. Both halves were measured on this
+# workspace, not inferred from documentation.
+#
+# 1. A task cannot name a file outside its project. `'../../biome.json'` is
+#    rejected at parse time:
+#
+#      tasks.probe.inputs[1]: parent directory traversal (..) is not supported
+#
+#    and `fileGroups` are accepted only at project scope in 2.5.5 — the
+#    workspace schema has no `fileGroups` key, and its `hasher` block offers
+#    only `ignorePatterns`, `ignoreMissingPatterns`, `optimization` and
+#    `walkStrategy`. So `bun.lock`, root `package.json`, `bunfig.toml`,
+#    `biome.json`, `config/toolchain.json` and every `config/tsconfig/*.json` is
+#    unreachable from any task. Those files decide the result of every task in
+#    this workspace: the lockfile fixes the compiler, the linter and the test
+#    runner, and `config/tsconfig/` is the `extends` chain for nine projects.
+#
+# 2. A task's key does not include its dependencies' keys. With
+#    `utils:test` declaring `deps: ['logger:test']`, editing
+#    `packages/shared/logger/src/index.ts` re-ran `logger:test` under a new hash
+#    while `utils:test` reported `cached, 2b8e371c` — the same hash as before.
+#    `dependsOn` orders the graph; it does not propagate content.
+#
+# A cached hit therefore asserts something about files Moon never looked at. The
+# cache is not disabled globally, because that would be a habit rather than a
+# decision: `bun run scripts/src/cli.ts cached -- <targets>` turns Moon's own
+# `--cache` mode on and off from a fingerprint over exactly the files listed in
+# (1) plus every workspace package's sources. When the fingerprint is unchanged
+# the tasks run `--cache read-write` and hit; when anything it cannot see moved,
+# they run `--cache off` and everything re-runs. It fails closed: an unreadable
+# fingerprint means `--cache off`.
+#
+# `scripts/tests/cache_scope.test.ts` proves both halves of that on this
+# workspace, including the negative control.

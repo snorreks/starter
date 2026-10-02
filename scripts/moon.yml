@@ -20,6 +20,11 @@ fileGroups:
   tests:
     - 'src/**/*.test.ts'
     - 'src/**/*.spec.ts'
+    # `scripts/tests/` is nineteen files and roughly 200 KB of assertions, and
+    # `bun test` discovers them. While this group was unreferenced, `scripts:test`
+    # reported `cached, 53ee8135` — byte-identical to the run before it — after
+    # `scripts/tests/paths.test.ts` had been edited. A suite that did not run was
+    # certified as having run.
     - 'tests/**/*'
 
 toolchains:
@@ -37,31 +42,67 @@ tasks:
     args: ['run', 'typecheck']
     inputs:
       - '@group(sources)'
+      - '@group(tests)'
+      - '@group(configs)'
   lint:
     command: 'bun'
     args: ['run', 'lint']
     inputs:
       - '@group(sources)'
+      - '@group(tests)'
+      - '@group(configs)'
   format:
     command: 'bun'
     args: ['run', 'format']
     inputs:
       - '@group(sources)'
+      - '@group(tests)'
+      - '@group(configs)'
   fix:
     command: 'bun'
     args: ['run', 'fix']
     inputs:
       - '@group(sources)'
+      - '@group(tests)'
+      - '@group(configs)'
   test:
     command: 'bun'
     args: ['run', 'test']
     inputs:
       - '@group(sources)'
-  build:
-    command: 'echo'
-    args: ['nothing to build (TypeScript source)']
+      - '@group(tests)'
+      - '@group(configs)'
+
+  # The browser-launch proof, in a lane of its own.
+  #
+  # `tests/browser_launch.test.ts` launches real Chromium processes. It belongs to
+  # the browser half of the suite, not the unit half, and the distinction is not
+  # cosmetic: `moon run :test` runs every project's `test` task concurrently, so a
+  # browser-spawning test inside `scripts:test` competes for CPU with
+  # `pi:test`, whose ownership tests spawn a child and then read `/proc/<pid>/environ`
+  # after a fixed 150 ms. That is a race the suite does not need to have, and it is
+  # this lane's existence that removed it — the alternative, loosening a sleep in
+  # another project's test, is hiding a real coupling rather than removing it.
+  #
+  # `cache: false` because it launches browsers, which are not inputs to a hash.
+  test-browser-launch:
+    command: 'bun'
+    args: ['run', 'test:browser-launch']
+    options:
+      cache: false
     inputs:
       - '@group(sources)'
+      - '@group(tests)'
+      - '@group(configs)'
+
+  # No `build` task, and there must never be one that only prints. `moon run
+  # :build` used to resolve here, run `echo 'nothing to build'`, and exit 0 — a
+  # command that reported success while having done nothing, which is the failure
+  # this repository's first rule is written about. This project compiles with Bun
+  # and emits no artifact, so there is nothing to declare. `bun run build` at the
+  # repository root is the one build command, and it routes to `client:build`, the
+  # only project with a real artifact.
+
   guard:
     command: 'bun'
     args: ['run', 'src/cli.ts', 'guard']
@@ -76,13 +117,13 @@ tasks:
     # cache key had not changed. A guard that cannot fail is worse than no guard,
     # because it is believed.
     #
-    # The same reasoning as the E2E lane's file groups: a cache key that cannot
-    # see what the command reads is not a cache. The guard is a few hundred
-    # milliseconds, and it is the thing people trust when they are about to merge.
+    # It also reads `.github/workflows/`, which is not in this project.
     options:
       cache: false
     inputs:
       - '@group(sources)'
+      - '@group(tests)'
+      - '@group(configs)'
   guard-whole-repo:
     command: 'bun'
     args: ['run', 'src/cli.ts', 'guard', '--whole-repo']
@@ -92,8 +133,43 @@ tasks:
       cache: false
     inputs:
       - '@group(sources)'
+      - '@group(tests)'
+      - '@group(configs)'
+
+  # Reads `.github/workflows/*.yml`. Never cached, for the same reason as the
+  # guards, and for one more: the files it reads are not in this project.
+  workflows:
+    command: 'bun'
+    args: ['run', 'src/cli.ts', 'workflows']
+    options:
+      cache: false
+    inputs:
+      - '@group(sources)'
+      - '@group(tests)'
+      - '@group(configs)'
+
+  # The fresh-template rehearsal. Never cached: it copies into a temporary
+  # directory, installs with a frozen lockfile, migrates, seeds, builds and runs
+  # the documented entrypoints. A restored "pass" would certify a checkout this
+  # run never made.
+  smoke:
+    command: 'bun'
+    args: ['run', 'src/cli.ts', 'smoke']
+    options:
+      cache: false
+    inputs:
+      - '@group(sources)'
+      - '@group(tests)'
+      - '@group(configs)'
+
   validate:
     deps:
       - '~:lint'
       - '~:format'
       - '~:typecheck'
+      # `~:test` is deliberately absent, and so are the guards. `validate` is the
+      # cheap "did I break the tooling" answer; `scripts:test` launches browsers
+      # and the guards read the whole repository. Folding them in would make
+      # `moon run :validate` a slower and less predictable way to run checks that
+      # are each addressable by name: `bun run test`, `bun run guard`,
+      # `bun run workflows`, `bun run smoke`.

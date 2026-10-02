@@ -24,6 +24,7 @@
 // explanation.
 
 import { fileURLToPath } from 'node:url';
+import { vitestProviderOptions } from '../../../scripts/src/shared/browser_path.ts';
 import { svelte } from '@sveltejs/vite-plugin-svelte';
 import { playwright } from '@vitest/browser-playwright';
 import { defineConfig } from 'vitest/config';
@@ -64,15 +65,6 @@ const packageAliases = [
   { find: /^@starter\/utils\//, replacement: `${src('../../../packages/shared/utils/src')}/` },
   { find: /^@starter\/utils$/, replacement: src('../../../packages/shared/utils/src/index.ts') },
 
-  {
-    find: /^@starter\/frontend-services\//,
-    replacement: `${src('../../../packages/frontend/services/src')}/`,
-  },
-  {
-    find: /^@starter\/frontend-services$/,
-    replacement: src('../../../packages/frontend/services/src/index.ts'),
-  },
-
   { find: /^@starter\/ui\//, replacement: `${src('../../../packages/frontend/ui/src')}/` },
   { find: /^@starter\/ui$/, replacement: src('../../../packages/frontend/ui/src/index.ts') },
 ];
@@ -102,19 +94,40 @@ export default defineConfig({
     setupFiles: ['src/browser_tests/setup.ts'],
     browser: {
       enabled: true,
-      provider: playwright(),
+      // `launchOptions` is the documented `@vitest/browser-playwright` option and
+      // the only one the provider reads — `resolveLaunchOptions` in the provider's
+      // own dist spreads `providerOptions.launchOptions` and nothing else.
+      //
+      // It used to be written as an *instance* property, `instances: [{ browser:
+      // 'chromium', launch: { executablePath } }]`. `BrowserInstanceOption` has no
+      // `launch` member, so TypeScript should have rejected it and Vitest silently
+      // dropped it: the option never reached `playwright.launch()`, and the lane
+      // died on Playwright's own resolution instead. That is the whole failure,
+      // reproduced in docs/capability-matrix.md:
+      //
+      //   Executable doesn't exist at …/bin/chromium_headless_shell-1243/
+      //     chrome-headless-shell-linux64/chrome-headless-shell
+      //
+      // When the selection was dropped, `headless: true` made Playwright resolve a
+      // `chromium_headless_shell-<build>/…` path relative to
+      // `PLAYWRIGHT_BROWSERS_PATH`. The dev shell pointed that at the Nix store's
+      // `bin` directory — not a Playwright browser layout — so the computed path
+      // named a file the store does not contain. `flake.nix` now points it at a
+      // cache directory instead, and `scripts/src/setup/setup.ts` decides whether
+      // to download by asking `resolveBrowser()` rather than by testing whether a
+      // variable starts with `/nix/store`.
+      //
+      // Installing a second Chromium or switching `channel` cannot fix a path
+      // computed from a variable that points at a directory, and the previous note
+      // in this file asserted the opposite without having run it.
+      //
+      // Which Chromium to use is decided once, in
+      // `scripts/src/shared/browser_path.ts`, and read by the E2E lane too.
+      provider: playwright(vitestProviderOptions()),
       headless: true,
-      instances: [
-        {
-          browser: 'chromium',
-          // The Nix dev shell sets `CHROMIUM_PATH`, because Playwright's own
-          // download links against a Linux libc NixOS does not provide under
-          // those names. Absent, Playwright uses its downloaded copy.
-          ...(process.env.CHROMIUM_PATH
-            ? { launch: { executablePath: process.env.CHROMIUM_PATH } }
-            : {}),
-        },
-      ],
+      // An explicit instance keeps the browser named in the output. No launch
+      // options here: the provider owns those, per instance or per project.
+      instances: [{ browser: 'chromium' }],
     },
   },
 });

@@ -14,11 +14,133 @@ bun run test:browser       # real Svelte in Chromium
 bun run test:worker       # build, then real workerd + real D1
 bun run e2e                # built client + real Worker + real D1 + real browser
 bun run test:all           # all four, in that order, no duplicates
+bun run workflows          # CI workflow policy: pins, permissions, bounds, secrets
+bun run smoke              # fresh checkout of this template, no credentials
 bun run e2e:visual         # screenshots for review
 ```
 
 `bun run e2e` and `bun run test:e2e` are the same command. Use whichever reads
 better where you are.
+
+Every script that fans out to Moon goes through `scripts/src/cli.ts cached --`,
+which decides Moon's cache mode from a fingerprint over the files Moon cannot put
+in a key. See [toolchain.md](toolchain.md) for why that indirection exists and
+what it measures.
+
+## The browser lane's executable selection, and how it was broken
+
+This lane could not start on NixOS, and the reported cause was wrong.
+
+```
+Error: browserType.launch: Executable doesn't exist at
+  /nix/store/…-chromium-154.0.8037.57/bin/chromium_headless_shell-1243/
+    chrome-headless-shell-linux64/chrome-headless-shell
+```
+
+The previous note blamed a missing `chromium_headless_shell` store path and
+suggested installing another Chromium or switching `channel`. Neither can help,
+and the config said so without having run it.
+
+The real cause: `vitest.config.ts` selected its executable with an **instance**
+property.
+
+```ts
+// What it was. `BrowserInstanceOption` has no `launch` member.
+instances: [{ browser: 'chromium', launch: { executablePath } }]
+
+// What it is. `resolveLaunchOptions` in the provider spreads only this.
+provider: playwright(vitestProviderOptions())
+```
+
+`BrowserInstanceOption` in Vitest 5 is
+`Omit<ProjectConfig, UnsupportedProperties>` plus `browser`, `name`, `provider`
+and six picked option names. `launch` is not among them, so the selected
+executable never reached `playwright.launch()`, nothing reported it as dropped,
+and Playwright fell back to its own resolution — which builds a headless-shell
+path from `PLAYWRIGHT_BROWSERS_PATH`, a *directory*. The Nix dev shell pointed
+that at the store's `bin`, so the path it computed named a file the store does not
+contain.
+
+### Proving it, rather than asserting it
+
+`scripts/tests/browser_launch.test.ts` puts an **instrumented executable** where
+the resolver's answer goes, launches a real Vitest browser project through the
+real provider, and asserts the marker file names the executable that ran:
+
+| Test | Asserts |
+|---|---|
+| the selected executable is the process Playwright started | the harness passes *and* the marker names the selected path |
+| a selected executable that refuses fails the launch | the marker names the refusing path *and* the run fails |
+| `PLAYWRIGHT_BROWSERS_PATH` alone does not choose the executable | the marker is empty |
+
+The second test is the negative control for the first: if the selection were
+dropped, Playwright would resolve a browser of its own and that run would pass.
+
+It runs in its own lane, not in `bun run test`:
+
+```bash
+bun run test:browser-launch    # scripts:test-browser-launch, uncached
+```
+
+Because it launches real Chromium processes, and `moon run :test` runs every
+project's `test` task **concurrently**. Leaving it in the unit lane made it compete
+for CPU with `pi:test`, whose ownership tests spawn a child and then read
+`/proc/<pid>/environ` after a fixed 150 ms. That surfaced as an intermittent CI
+failure in `.pi/tests/jobs.test.ts` on this branch — a race this work introduced,
+and the reason the proof moved rather than a sleep elsewhere being loosened.
+
+### Two variables, not one
+
+`flake.nix` exports both, and they are not interchangeable:
+
+| Variable | Meaning |
+|---|---|
+| `CHROMIUM_PATH` | the executable to launch. Read by `scripts/src/shared/browser_path.ts` and published to **both** browser lanes |
+| `PLAYWRIGHT_BROWSERS_PATH` | a directory Playwright treats as its download root. It is set so `bun run setup` skips a download that cannot work on NixOS. It does **not** select a browser |
+
+`setup`'s decision to skip the download used to be
+`PLAYWRIGHT_BROWSERS_PATH.startsWith('/nix/store')` — a check on the *name* of a
+directory rather than on whether a browser exists. It is now `resolveBrowser()`:
+the same capability decision the lanes make.
+
+### Both lanes read one resolver
+
+`apps/frontend/client/vitest.config.ts` and `apps/e2e/playwright.config.ts` both
+import `scripts/src/shared/browser_path.ts`. The E2E config used to read
+`process.env.CHROMIUM_PATH` inline, which is not equivalent: the shared resolver
+also finds a browser in a Playwright cache when nothing is set — the normal case
+on a non-Nix host — and names the missing prerequisite when there is none. Two
+answers to one question is how the browser lane failed while E2E passed.
+
+Verified inside the Nix shell, which is the host the failure was reported on:
+
+```bash
+nix develop -c bun run test:browser     # 15 passed
+nix develop -c bun run e2e             # 20 passed
+```
+
+## Ports are per worktree, and a busy one is a refusal
+
+`worktreePort()` derives the port from the **checkout path**, so two checkouts —
+a Herdr worktree, a second clone, a CI matrix leg — never fight over 4183, and
+the same checkout always gets the same port, which is what makes a stale listener
+recognisable instead of a random collision.
+
+`allocatePort()` binds and releases to find a candidate and **throws
+`PortUnavailable`** rather than returning a busy one. Every caller here wants a
+port nobody else has: a collision means a stale process, and proceeding would make
+the run assert against the wrong thing.
+
+One value, one home: `playwright.config.ts` computes `APP_PORT` and `preflight.ts`
+re-exports it. It used to compute `4183` independently, and when the config moved
+to a per-worktree port the two drifted — the Worker came up on 4267, the preflight
+kept polling 4183, and the run failed with
+
+```
+The app did not become ready within 60s. Last error: fetch failed
+```
+
+while the server under test was answering `GET / 200` the whole time.
 
 ## Why the lanes are separate tasks
 
@@ -273,6 +395,201 @@ asserts what it would have done, right next to an assertion about what the curre
 code does. The regression is demonstrated, not remembered.
 
 If a change should break a test and does not, the test is not testing that thing.
+
+## The task graph, and what a cached hit is allowed to mean
+
+`scripts/tests/task_graph.test.ts` reads the **resolved** graph out of Moon —
+`moon query tasks`, which reports the inputs and options Moon actually computed —
+and asserts four properties. Reading the resolved graph rather than the YAML is
+the difference between "the config says so" and "Moon agrees".
+
+| Property | The defect it prevents |
+|---|---|
+| every `fileGroup` is referenced by some task | 14 groups were declared and referenced by nothing; a group nothing references is a promise nothing checks |
+| no task runs `echo` | `moon run :build` resolved to an `echo` and reported success while having done nothing |
+| a resolved input glob is never empty | `apps/e2e`'s `sources` was `src/**/*` in a project with no `src/`, so `e2e:test` hashed to nothing, reported `cached`, and ran an `echo` |
+| tasks that run tests hash the files their runner discovers | `scripts/tests/**`, `apps/frontend/client/tests/**` and `apps/frontend/client/scripts/**` were executed by every run and hashed by none |
+
+That last row had a demonstrated consequence. With `scripts:test` warm at
+`cached, 53ee8135`, editing `scripts/tests/paths.test.ts` produced the **same hash
+again** — a suite that did not run, certified as having run. After the fix, the
+same edit is a miss.
+
+### The cache is bounded by what Moon can see
+
+Moon 2.5.5 cannot build a key equal to the files these commands read — `..` is
+rejected in a task input, `fileGroups` are project-scope only, and a dependency
+task's hash does not propagate to its dependents. Both were measured; the numbers
+are in [toolchain.md](toolchain.md).
+
+So the cache is neither trusted nor disabled. `scripts/src/ci/cache_scope.ts`
+fingerprints exactly those files and picks Moon's own `--cache` mode:
+
+| Fingerprint | Mode | Observed |
+|---|---|---|
+| no previous value | `off` | records one, caches nothing |
+| changed | `off` | `moon --cache off: 82 files outside every Moon project changed` |
+| unchanged | `read-write` | `moon --cache read-write: … unchanged` |
+| unreadable, or zero files | `off` | fails closed |
+
+`off` costs time; a wrong `read-write` costs correctness.
+
+### Cold, warm, and the misses between them
+
+Measured on this branch, from a cold `.moon/cache`:
+
+| | Result |
+|---|---|
+| cold | `bun run test:browser` → `client:test-browser (7s 137ms, 94db999a)` |
+| warm, nothing changed | `client:test-browser (cached, 94db999a)`, 52 ms |
+| test changed outside `src/` | `moon --cache off` → miss |
+| project `moon.yml` changed | miss |
+| transitive source changed in a dependency | `moon --cache off: 82 files … changed` → miss |
+| `bun.lock` changed | `moon --cache off` → miss |
+| `README.md` changed | `read-write` → hit, because it decides no task's result |
+
+### What is deliberately never cached
+
+Guards, the workflow policy, the template smoke, `db-generate`, `check-bundle`,
+`test-worker` and `e2e:e2e`. Each asserts against a running process or writes to
+the tree, and a restored "pass" would certify a server, a database or a browser
+this run never started. That is worse than a failure, because it is believed.
+
+## CI, and what a green run has to have proved
+
+`.github/workflows/ci.yml` has four lanes and one gate. The gate is the only thing
+a branch protection rule needs to name.
+
+```yaml
+gate:
+  needs: [static, unit, worker, e2e]
+  if: always() && !cancelled()
+  permissions: {}
+```
+
+`always()` so a skipped or cancelled lane is a failure rather than a success: with
+`if: success()` on the dependents, a lane that never started leaves nothing to
+wait for and the gate passes. `!cancelled()` keeps a cancelled run cancelled, which
+is neither a pass nor a fail.
+
+Each lane then asserts a **nonzero test count** from the runner's own output. Four
+projects declare `bun test --pass-with-no-tests`, so a green run can legitimately
+contain no tests; the lane as a whole may not.
+
+Also load-bearing, and each one is a way CI has previously been green for free:
+
+- **Browser prerequisites are installed before the lane.** Installing afterwards
+  fails with "Executable doesn't exist" and reads as a broken test rather than a
+  broken ordering.
+- **Actions are pinned to 40-character commit SHAs.** All three were resolved from
+  the GitHub API and verified, not typed from memory — an invented SHA is a
+  workflow that cannot run. `bun run workflows` fails on a tag reference and on a
+  *truncated* pin, which is the case a "does it contain a hash" check would pass.
+- **`permissions: read` at the top, `{}` on the gate.** The default is
+  repository-wide, and every job in this file runs repository code.
+- **No `secrets.*` anywhere.** `bun run workflows` enforces it for any workflow that
+  also triggers on `pull_request`, which is what keeps a fork's run honest.
+- **`pull_request_target` is refused.** It runs with the base repository's
+  privileges against code the pull request controls.
+- **Read-only checks and deployment are different workflows.** "The checks passed"
+  and "this was published" are different decisions with different authority.
+
+### Negative controls
+
+Every one of these used the **public** command, on this branch, and the injected
+fault was restored afterwards.
+
+| Control | Command | Observed |
+|---|---|---|
+| an intentionally failing browser assertion | `bun run test:browser` | `1 failed`, **exit 1**, naming the test |
+| a broken Worker API assertion | `bun run test:worker` | `18 pass, 1 fail`, **exit 1**, `Expected "negative-control-not-web" / Received "web"` |
+| a changed external test invalidates the cache | `cached -- scripts:test` | miss, new hash |
+| absent test discovery fails | `bun test` in an empty project | **exit 1**; `vitest run` likewise **exit 1** |
+| absent discovery *with* `--pass-with-no-tests` | same project | **exit 0** — which is why CI asserts an aggregate count |
+| cleanup leaves no owned process after a failure | `ps`, `ss` after the failed worker run | no `workerd`, no `wrangler`, no listener in the port range |
+
+The `--pass-with-no-tests` row is the reason the CI job greps for a passing count
+rather than trusting an exit code. Three projects — `ui`, `database` and `auth` —
+declare it, so a green run can legitimately contain no tests; the lane as a whole
+may not.
+
+### Cache evidence, measured
+
+From a cold `.moon/cache`:
+
+| | Mode | Result |
+|---|---|---|
+| cold | `read-write` | miss, `ee515f19` |
+| warm, nothing changed | `read-write` | **`cached, ee515f19`** |
+| test changed outside `src/` | `read-write` | **miss**, `5a863852` — Moon sees it now |
+| this project's `moon.yml` changed | `read-write` | **miss**, `55282a6d` |
+| transitive dependency source changed | **`off`** | miss — Moon cannot see it, so the gate disables the cache |
+| `bun.lock` changed | **`off`** | miss |
+| unchanged again | `read-write` | **`cached, ee515f19`** |
+
+The third row is the one that was broken before this change: with
+`scripts/tests/paths.test.ts` edited, `scripts:test` reported `cached, 53ee8135` —
+the same hash as the run before. The sixth row shows the gate failing closed on a
+change it cannot attribute: `bun.lock` moved and was then restored, so the next run
+saw a different fingerprint and cached nothing until the tree settled.
+
+## The fresh-template rehearsal
+
+Every other lane runs against this checkout, with `bun` on `PATH`, a warm
+`.moon/cache` and a `.wrangler/` holding the last run's state. `bun run smoke`
+answers the narrower question: **starting from the committed tree alone, do the
+documented commands work?**
+
+```bash
+bun run smoke            # temporary checkout, removed afterwards
+bun run smoke --keep     # leave it on disk and print the path
+bun run smoke --steps 1  # only the first step
+```
+
+It copies the tree into a temporary directory with **no `.git`, no `node_modules`,
+no build output and no local state**; gives it a synthetic project identity; sets
+`HOME` to a directory inside that checkout; and then installs with
+`--frozen-lockfile`, runs `setup`, migrates and seeds local D1, builds, checks the
+bundle, and runs `doctor`. A credential is not supplied, because none is needed and
+supplying one would prove nothing.
+
+Two things it found by running rather than by reading:
+
+- **`.moon/cache` is gitignored; `.moon/workspace.yml` and `.moon/toolchains.yml`
+  are committed.** Excluding the `.moon` directory by name produced a checkout
+  where `bun run build` failed with `Unable to locate .moon/workspace.{yml,yaml,…}`.
+  Only the `cache` subdirectory is excluded now.
+- **`setup`'s download skip was a string check, not a capability check.** See the
+  browser section above.
+
+The rename is **reported, never performed**. `findIdentityReferences()` lists every
+committed `path:line` that names the template's package name or its upstream
+repository, with the files that legitimately do — the manifest, the lockfile, the
+licence, `docs/rename-checklist.md`, the provenance note and the checker itself —
+exempted by name and by reason. A blind global replacement would rewrite the
+licence and the migration history; the actual rename is a deliberate, documented
+operation.
+
+### Two defects the rehearsal found, and one it will find again
+
+It is worth stating what this command earned its keep on:
+
+1. **A fresh clone could not install.** `bun.lock` still carried
+   `apps/backend/api` and `@starter/api`, left behind when PR B removed the
+   separate API Worker. `bun install --frozen-lockfile` in a clean checkout failed
+   with `lockfile had changes, but lockfile is frozen` — which a warm checkout
+   never hits, because the lockfile is already consistent with `node_modules`.
+   Every other lane in this repository runs in a warm checkout. Only the rehearsal
+   was cold, and it failed.
+2. **`.moon/cache` is gitignored; `.moon/workspace.yml` is not.** Excluding the
+   `.moon` directory by name produced a checkout where `bun run build` failed with
+   `Unable to locate .moon/workspace.{yml,yaml,…}`.
+3. **`setup`'s download skip was a string check**, not a capability check — see the
+   browser section above.
+
+It will also report this file, because the paragraph above used to spell the
+package name literally. That is the intended behaviour: the rehearsal flags
+references in prose too, and the fix is to not write the name out.
 
 ## Coverage
 

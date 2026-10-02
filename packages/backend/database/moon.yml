@@ -15,6 +15,14 @@ fileGroups:
     - 'package.json'
     - 'tsconfig*.json'
     - 'moon.yml'
+  tests:
+    # Declared and referenced so the pattern holds everywhere: a group a task
+    # cannot name is a group nothing checks. `bun test --pass-with-no-tests`
+    # currently discovers nothing here, and when a test lands it must already be
+    # inside the key that decides whether the suite runs.
+    - 'src/**/*.test.ts'
+    - 'src/**/*.spec.ts'
+    - 'tests/**/*'
   migrations:
     - 'drizzle-d1/**/*.sql'
     - 'drizzle-d1/meta/*.json'
@@ -57,11 +65,16 @@ tasks:
     inputs:
       - '@group(sources)'
       - '@group(configs)'
+      - '@group(tests)'
 
-  # This project ships source, not a build artifact, so there is nothing to emit.
-  build:
-    command: 'echo'
-    args: ['nothing to build (TypeScript source; the deployable output is the D1 migration set)']
+  # There is deliberately no `build` task here, and there never should be one that
+  # only prints. `moon run :build` used to resolve to an `echo` that reported
+  # success, which is the exact failure this repository's first rule names. The
+  # deployable output of this project is `drizzle-d1/`, and it is produced by
+  # `db-generate` below — a task that writes files and says so.
+  #
+  # If a target needs "build everything", `bun run build` is the one command and
+  # it routes to `client:build`, the only project with a real artifact.
 
   # Reads the schema, writes `drizzle-d1/`. Never cached: the output is a new set
   # of SQL files, and a restored "result" would be migrations on disk that this run
@@ -72,6 +85,7 @@ tasks:
     inputs:
       - '@group(sources)'
       - '@group(configs)'
+      - '@group(tests)'
     outputs:
       - '@group(migrations)'
     options:

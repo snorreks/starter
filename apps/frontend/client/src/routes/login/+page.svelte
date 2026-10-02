@@ -61,21 +61,27 @@ $effect(() => {
 // does not run during SSR, so an effect-only assignment renders a sign-up that the
 // action accepted as a blank form. The browser that gets here without running a script
 // has nothing else to read it from — the response it already has *is* the result.
-if (form?.errors !== undefined) {
-  viewModel.errors = form.errors;
+//
+// `untrack` because the initial value is exactly what is wanted, the same reason
+// `mode` and `email` above are read untracked. Without it the compiler warns that a
+// prop is captured once, which is true and is the design; with it the warning goes
+// and the intent is stated instead of inferred.
+const seeded = untrack(() => form);
+if (seeded?.errors !== undefined) {
+  viewModel.errors = seeded.errors;
 }
-if (form?.outcome !== undefined) {
-  viewModel.outcome = form.outcome;
+if (seeded?.outcome !== undefined) {
+  viewModel.outcome = seeded.outcome;
 }
 
 // The action echoes what was submitted so a refused no-JS submit does not come back as
 // an empty form. `load` cannot do this: a POST result re-renders at the same URL, with
 // no query to read a typed address back out of.
-if (form?.values?.email !== undefined) {
-  viewModel.form.email = form.values.email;
+if (seeded?.values?.email !== undefined) {
+  viewModel.form.email = seeded.values.email;
 }
-if (form?.values?.displayName !== undefined) {
-  viewModel.form.displayName = form.values.displayName;
+if (seeded?.values?.displayName !== undefined) {
+  viewModel.form.displayName = seeded.values.displayName;
 }
 
 $effect(() => {

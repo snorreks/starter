@@ -31,14 +31,11 @@ import { type ChildProcess, spawn } from 'node:child_process';
 import { existsSync, openSync, rmSync } from 'node:fs';
 import { createServer } from 'node:net';
 import { join } from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { createId } from '@starter/utils';
 import { killTree } from '@starter/utils/process';
 import { MAX_BODY_BYTES } from '../src/lib/server/telemetry_service.ts';
+import { REPO_ROOT } from './database_paths.ts';
 
-// `import.meta.url` is this file's URL: four levels up from
-// apps/frontend/client/tests/ reaches the repository root.
-const REPO_ROOT = fileURLToPath(new URL('../../../../', import.meta.url)).replace(/\/$/, '');
 const APP_DIR = join(REPO_ROOT, 'apps/frontend/client');
 const APP_CONFIG = join(APP_DIR, 'wrangler.jsonc');
 const WORKER_ENTRY = join(APP_DIR, '.svelte-kit/cloudflare/_worker.js');

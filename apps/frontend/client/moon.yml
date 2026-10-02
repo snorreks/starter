@@ -29,7 +29,12 @@ fileGroups:
     - 'src/**/*.test.ts'
     - 'src/**/*.spec.ts'
     - 'src/browser_tests/**/*'
+    # `tests/` holds `worker_integration.test.ts` and `scripts/` holds
+    # `check_bundle.ts` plus its own tests. `bun run test:unit:run` executes all
+    # of them — `bun test … src/lib tests scripts` — so while this group was
+    # unreferenced, four test files and two helpers ran outside every cache key.
     - 'tests/**/*'
+    - 'scripts/**/*'
 
 toolchains:
   bun:
@@ -72,24 +77,28 @@ tasks:
     inputs:
       - '@group(sources)'
       - '@group(configs)'
+      - '@group(tests)'
   lint:
     command: 'bun'
     args: ['run', 'lint']
     inputs:
       - '@group(sources)'
       - '@group(configs)'
+      - '@group(tests)'
   format:
     command: 'bun'
     args: ['run', 'format']
     inputs:
       - '@group(sources)'
       - '@group(configs)'
+      - '@group(tests)'
   fix:
     command: 'bun'
     args: ['run', 'fix']
     inputs:
       - '@group(sources)'
       - '@group(configs)'
+      - '@group(tests)'
 
   # Unit only. The browser lane is `test-browser` and the Worker lane is
   # `test-worker`; neither is folded in, for the same reason.
@@ -99,17 +108,25 @@ tasks:
     inputs:
       - '@group(sources)'
       - '@group(configs)'
+      - '@group(tests)'
 
   test-browser:
     command: 'bun'
     args: ['run', 'test:browser']
-    # Needs a real Chromium and the Svelte compiler; a cached hit would be a
-    # legitimate optimisation, but the input set must be real first — which
-    # `sources` now is. `output` stays unset because vitest writes reports into
-    # the tree, so there is no clean artifact to restore.
+    # `output` stays unset because vitest writes reports into the tree, so there is
+    # no clean artifact to restore.
+    #
+    # Caching is allowed, and was previously described here as unsafe until the
+    # input set was real. It is real now: `@group(tests)` covers the browser specs
+    # under `src/browser_tests/` and `tests/`, and `@group(configs)` covers
+    # `vitest.config.ts`. What Moon still cannot see — `bun.lock`, and the shared
+    # browser resolver outside this project — is exactly what
+    # `scripts/src/ci/cache_scope.ts` watches: `bun run test:browser` switches Moon
+    # to `--cache off` when either moves, so a hit here always describes this tree.
     inputs:
       - '@group(sources)'
       - '@group(configs)'
+      - '@group(tests)'
 
   # The built Worker, in real workerd, against real local D1. Never cached: it
   # asserts against a database and a running runtime, so a restored "pass" would
@@ -122,6 +139,7 @@ tasks:
     inputs:
       - '@group(sources)'
       - '@group(configs)'
+      - '@group(tests)'
     options:
       cache: false
 
@@ -131,6 +149,21 @@ tasks:
     inputs:
       - '@group(sources)'
       - '@group(configs)'
+      - '@group(tests)'
+    # The one task in the workspace with a restorable output.
+    #
+    # `.svelte-kit/cloudflare` is a complete artifact: a restored copy is the
+    # Worker plus its assets that this input set produced. `check:bundle` and the
+    # Worker lane both consume it, so a hit saves a real build.
+    #
+    # It is not, on its own, sufficient: the build reads `bun.lock`, the
+    # `@starter/*` package sources (aliased straight to their `src/`, outside this
+    # project), `svelte-kit sync` output and the public build environment. A
+    # task input may not contain `..`, and `fileGroups` reject it too, so the
+    # first two cannot be declared here at all. `scripts/src/ci/cache_scope.ts`
+    # fingerprints them and switches Moon to `--cache off` when they move;
+    # `wrangler.jsonc` covers the environment, and the generated types are
+    # produced by this task itself.
     outputs:
       - '.svelte-kit/cloudflare'
 

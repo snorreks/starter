@@ -55,6 +55,8 @@ bun run lint
 bun run format
 bun run guard               # whole-repository invariants
 bun run guard:whole-repo
+bun run workflows           # CI workflow policy: pins, permissions, bounds, secrets
+bun run smoke               # fresh checkout of this template, no credentials
 
 # Database
 bun run db:generate         # drizzle-kit generate
@@ -88,9 +90,14 @@ own:
 |---|---|---|
 | `node` on PATH | `dev:worker`, `test:worker`, `e2e` | `env: 'node': No such file or directory`, then a 4-minute timeout |
 | Chromium's shared libraries | `test:browser`, `e2e` | `error while loading shared libraries` |
-| the `chromium_headless_shell` store path | `test:browser` **only** | `Executable doesn't exist at …/chromium_headless_shell-1243/…` — see [docs/capability-matrix.md](docs/capability-matrix.md) |
+| `CHROMIUM_PATH`, or a populated Playwright cache | `test:browser`, `e2e` | `Failed to launch chromium because executable doesn't exist` |
+| a free port in this checkout's range | `test:worker`, `e2e` | `PortUnavailable`, naming the port and its listener |
 
 See [docs/capability-matrix.md](docs/capability-matrix.md).
+
+`nix develop` supplies all of them. On a non-Nix host, `bun run setup` installs the
+browser matching the locked Playwright version and `bun run setup:doctor` proves it
+launches.
 
 ## Layout, and the boundaries that matter
 

@@ -1,51 +1,78 @@
 # Capability matrix
 
+> **This file records one round.** Recreated by re-running the commands; do not
+> hand-edit a status without running the thing. Counts below are from the round
+> that fixed the browser lane, the task graph and CI; earlier rounds' numbers are
+> not carried forward.
+
 What this repository has actually been observed to do, and what it has not.
 
 Written because a single green badge over an unexecuted lane is worse than no badge.
 Each row states the strongest evidence behind it, and a row that cannot be
 reproduced locally says so.
 
-Recreated by re-running the commands; do not hand-edit the status without running
-the thing.
-
 ## Verified on a clean checkout
 
 Every row below was executed in this worktree against this branch. Counts are what
 the lane printed.
 
-> The counts in this table are from the run that produced this document. A branch
-> that changes test counts re-runs the lanes and reports its own numbers in its pull
-> request; it does not silently restate this table.
-
 | Capability | How it was verified | Command | Result |
 |---|---|---|---|
 | Install | `bun install --frozen-lockfile`, no network-fetched tools | `bun install --frozen-lockfile` | ok |
-| Unit tests | Every project's own runner, nonzero discovery | `bun run test` | 831 pass, **1 pre-existing fail** (see below) |
-| Worker lane | Real `wrangler dev` on the **built** `_worker.js`, real local D1, run-id identity check | `bun run test:worker` | 19 pass, 0 fail |
-| End to end | Real Playwright against the built client **and** the built Worker, one origin | `bun run e2e` | **20 pass**, 0 fail |
-| Client build | `vite build` through the adapter, then a bundle check on `.svelte-kit/cloudflare/` | `bun run build && bun run check:bundle` | 44 files, ok |
-| Typecheck | Every project, `svelte-check --threshold error` | `bun run typecheck` | 0 errors, 0 warnings |
+| Unit tests | Every project's own runner, nonzero discovery | `bun run test` | **883 pass, 0 fail** across 6 projects |
+| **Browser lane** | Real Svelte compiler + real Chromium, through the documented provider option | `bun run test:browser` | **15 passed** |
+| Worker lane | Real `wrangler dev` on the **built** `_worker.js`, real local D1, run-id identity check | `bun run test:worker` | **19 pass, 0 fail** |
+| End to end | Real Playwright against the built client **and** the built Worker, one origin, per-worktree port | `bun run e2e` | **20 passed**, 0 fail |
+| Client build | `vite build` through the adapter, then a bundle check on `.svelte-kit/cloudflare/` | `bun run build && bun run check:bundle` | ok |
+| Typecheck | Every project; `tsc --noEmit` for 8, `svelte-check --threshold error` for 3 | `bun run typecheck` | 0 errors, 0 warnings |
 | Lint and format | Biome, verified not applied | `bun run lint && bun run format` | clean |
-| Guards | Seven whole-repo invariants, no baselines | `bun run guard` and `bun run guard:whole-repo` | 7/7 |
-| Pi extension loading | The pinned Pi resource loader, isolated `agentDir` | `bun run --cwd .pi loader:smoke` | ok |
-| Task graph is reachable | The real Moon graph, four lanes addressable by name | `bun run --cwd .pi test` | 7 pass |
+| Guards | Seven whole-repo invariants, no baselines | `bun run guard` and `bun run guard:whole-repo` | 7/7 each |
+| Workflow policy | Real parse of `.github/workflows/*.yml` | `bun run workflows` | ok across 1 workflow |
+| **Fresh-template rehearsal** | Temporary checkout: no `.git`, no `node_modules`, no output, fresh `HOME`, **no credential** | `bun run smoke` | **7 steps ok** |
 
-### The one failing unit test is not this branch's
+### The rehearsal found a fresh clone could not install
+
+`bun install --frozen-lockfile` failed in a clean checkout:
 
 ```
-(fail) the journal > the recorded command and cwd are the ones actually used
-  Expected: "/home/sonny/.herdr/worktrees/starter/pr-b-sveltekit-worker/"
-  Received: "/home/sonny/.herdr/worktrees/starter/pr-b-sveltekit-worker"
+note: skipped 1 workspace listed in bun.lock but not on disk: "@starter/api"
+error: lockfile had changes, but lockfile is frozen
 ```
 
-`.pi/tests/dev_process_tool.test.ts:25` builds `REPO_ROOT` with
-`fileURLToPath(new URL('../../', …))`, which keeps the trailing separator, and
-asserts the recorded `cwd` equals it. The recorder calls `resolve()`, which strips
-it. **Confirmed pre-existing**: the identical failure reproduces on `origin/main`
-with this branch stashed. Nothing in PR B touches that code path. It is one string
-normalisation in a `.pi` helper, and `.pi` is owned by PR F, so it is recorded here
-rather than fixed here.
+`bun.lock` still carried the removed separate-API workspace and its `@starter/api`
+package, left behind when the API Worker was deleted. Every other lane runs in a
+warm checkout, where the lockfile is already consistent with `node_modules`, so
+nothing noticed. The lockfile is regenerated and `--frozen-lockfile` now succeeds
+from cold.
+
+Two more, both found the same way:
+
+- **`.moon/workspace.yml` is committed; only `.moon/cache` is not.** Excluding the
+  `.moon` directory by name produced a checkout where `bun run build` failed with
+  `Unable to locate .moon/workspace.{yml,yaml,…}`.
+- **`setup`'s browser-download skip was a string check** —
+  `PLAYWRIGHT_BROWSERS_PATH.startsWith('/nix/store')` — rather than a capability
+  check. It is now `resolveBrowser()`, the same decision the lanes make.
+| Nix dev shell, browser lane | `nix develop -c`, the host the failure was reported on | `nix develop -c bun run test:browser` | **15 passed** |
+| Pi extension loading | The pinned Pi resource loader, isolated `agentDir` | `bun run --cwd .pi loader:smoke` | 4 tests, ok |
+| Moon cache, cold | `.moon/cache` deleted, then a lane | `bun run test:browser` | miss, `94db999a`, 7.2 s |
+| Moon cache, warm | same tree, immediately again | `bun run test:browser` | `cached, 94db999a`, **52 ms** |
+| Moon cache, misses | test outside `src/`, `moon.yml`, transitive source, `bun.lock` | see [testing.md](testing.md) | each a miss |
+
+### The browser lane runs here now
+
+It did not, and the recorded reason was wrong. The full account is in
+[testing.md](testing.md); the short version is that `vitest.config.ts` selected its
+executable with `instances[].launch`, which is not a member of Vitest 5's
+`BrowserInstanceOption`, so the selection was silently dropped and Playwright
+resolved a browser of its own — building a headless-shell path from
+`PLAYWRIGHT_BROWSERS_PATH`, a directory. The documented provider option,
+`playwright({ launchOptions: { executablePath } })`, fixes it, and
+`scripts/tests/browser_launch.test.ts` proves the selection reaches the launched
+process by running an instrumented executable and reading its marker.
+
+The previous `channel` suggestion in this file was never verified and could not
+have worked. It is removed rather than kept as advice.
 
 ## Fixture- and boundary-verified, not run live
 
@@ -90,48 +117,16 @@ Stated plainly rather than left to discover.
 
 | Not run | Why |
 |---|---|
-| **The browser lane** | `bun run test:browser` cannot start on this host — see below. **NOT RUN**, and the suite behind it has not been observed passing. |
 | **Live Cloudflare** | No deployment, provisioning, remote migration or log query was executed against a real account. |
 | **The visual capture** | `bun run e2e:visual` reports `SKIPPED` with the reason, by design. |
+| **`bun run e2e:visual` under this branch** | unchanged, and deliberately still reports `SKIPPED` rather than going green because image inspection is unavailable. |
 
-### `test:browser` cannot start on this host, and that is not a branch change
+### The browser lane no longer needs a `chromium_headless_shell` store path
 
-```
-Error: browserType.launch: Executable doesn't exist at
-  /nix/store/…-chromium-154.0.8037.57/bin/chromium_headless_shell-1243/
-    chrome-headless-shell-linux64/chrome-headless-shell
-```
-
-An earlier version of this section blamed a missing `chromium_headless_shell` store
-path and told you to make it reachable. **That diagnosis was wrong**, and it was
-wrong in a way that sent the reader after a prerequisite this lane does not need.
-The measured cause is the option the launch path reads:
-
-- `vitest.config.ts` puts `executablePath` on `instances[].launch`.
-- `@vitest/browser-playwright`'s provider option is `launchOptions`, passed to the
-  provider factory — `playwright({ launchOptions })`. `instances[].launch` is not it.
-- So the full-browser path Playwright is given is the *wrapper*, and Playwright then
-  composes a `chromium_headless_shell-<rev>/…` path underneath the executable's own
-  directory. That composed path is the one in the error, and it is a composition
-  rather than a lookup.
-
-Moving the option, and changing nothing else:
-
-```ts
-provider: playwright(
-  process.env.CHROMIUM_PATH
-    ? { launchOptions: { executablePath: process.env.CHROMIUM_PATH } }
-    : {},
-),
-```
-
-was measured on this host: **15 tests pass**, with the same `CHROMIUM_PATH` the
-`e2e` lane uses and no headless shell anywhere. `vitest.config.ts` is the test
-runner's, and the runner repair is not this branch's to ship, so the file is left
-alone and the requirement is recorded here instead.
-
-**Confirmed pre-existing**: the identical error reproduces on `origin/main` with
-this branch stashed.
+The prerequisite table below used to list it as required by `test:browser` only. It
+is not a prerequisite of anything now. What `test:browser` actually needs is that
+`CHROMIUM_PATH` — or a Playwright cache — resolves to a runnable browser, and
+`doctor` proves it by launching the binary rather than reading a version string.
 
 ## Known gaps in this phase
 
@@ -159,14 +154,26 @@ has been reported for API-token queries the dashboard answers, so the CLI report
 The registry lists Logpush for staging and production. No Logpush job is created,
 no filter is registered, and nothing reads the bucket. Treat it as absent.
 
-### The `client-server` layer rule is a path list, not a resolved-dependency check
+### The build does not catch every server import in the browser
 
-`isClientServerModule` in `scripts/src/guards/boundary.ts` recognises five concrete
-path shapes as server-only. It is deliberately narrow — a broad rule would be
-indistinguishable from the sweeping exemption it replaced — but a path list cannot
-see through a re-export. PR C replaces it with a resolved-dependency check. Until
-then the acceptance it buys is proven on the built artifact by
-`bun run check:bundle`.
+**Verified, and it is why the graph guard exists.** Injecting
+`import { env } from 'cloudflare:workers'` into `src/routes/+page.svelte`, using it in
+the template, and running the real `vite build` **succeeds** — and the specifier lands in
+the client chunk's sourcemap. Injecting `import { getContainer } from
+'#lib/server/container.ts'` instead fails the build with SvelteKit's
+`server_only_import`.
+
+So the framework's gate is real and worth having, and it is not complete.
+`scripts/tests/build_enforces_the_boundary.test.ts` asserts both directions: the build
+rejects a server-module import, and the guard rejects it with no build at all.
+
+### `guardRequestState` matches declarations, not behaviour
+
+It flags a module-level `let env`, `let currentUser`, or a
+`setEnvForRequest`-shaped helper by shape. That is a check on a pattern, not a proof
+that no request state is shared across requests, and it should not be read as one.
+`apps/frontend/client/tests/worker_integration.test.ts` and the E2E lane's two-session
+assertions own that claim.
 
 ### The `@starter/*` package scope is unrenamed
 
@@ -228,9 +235,30 @@ Not part of the repository, but a missing one presents as a confusing failure.
 |---|---|---|
 | `node` on PATH | `test:worker`, `dev:worker`, `e2e` | `env: 'node': No such file or directory`, then a 4-minute readiness timeout |
 | Chromium's shared libraries (`libglib-2.0.so.0`, `libnss3`, `libgbm`, X11, …) | `test:browser`, `e2e` | `error while loading shared libraries`, reported as `Target page, context or browser has been closed` |
-| `CHROMIUM_PATH` pointing at a runnable browser | `test:browser`, `e2e` | Playwright falls back to its own download, which is absent on NixOS |
-| the `chromium_headless_shell` store path | `test:browser` **only** | `Executable doesn't exist at …/bin/chromium_headless_shell-1243/…` |
+| `CHROMIUM_PATH`, or a populated Playwright cache | `test:browser`, `e2e` | `browserType.launch: Failed to launch chromium because executable doesn't exist` — or, with neither, Playwright's own download path |
+| a **free** port in this checkout's range | `test:worker`, `e2e` | `PortUnavailable`, naming the port and how to find the listener |
 
 On NixOS these come from a dev shell, which arrives with the direnv phase. Until
 then, provide them yourself; the commands above name each missing one rather than
 failing silently.
+
+### Browser and Node versions on the host this was measured on
+
+| | |
+|---|---|
+| OS | NixOS, `nixpkgs-unstable` via `flake.nix` |
+| Bun | 1.4.2 (`.bun-version`, `config/toolchain.json`) |
+| Node | 22.23.3 (`nodejs_22`) — required by `wrangler dev` and Vite |
+| Chromium | 154.0.8037.57, `pkgs.chromium` from the Nix store |
+| Playwright | 1.63.0, `@playwright/test` 1.63.0 |
+| Moon | 2.5.5 |
+| Biome | 2.5.13 |
+| TypeScript | 6.0.3 |
+| `@cloudflare/vitest-pool-workers` | **not adopted** — latest 0.22.0 peers `vitest ^4.1.0`, this workspace runs 5.0.2 |
+
+The Chromium version is *not* the pinned Playwright browser: `playwright install`
+is deliberately skipped on NixOS, because the downloaded build links against
+`libgbm.so.1` and friends the store only provides under versioned names. The store
+Chromium is used instead and is selected by path, which is why the provider option
+above matters — a selected executable is launched, and a `channel` change would
+only alter Playwright's own resolution.

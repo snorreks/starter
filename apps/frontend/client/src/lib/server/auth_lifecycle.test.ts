@@ -29,7 +29,7 @@ import { AccountErrorCode, authErrorCode } from '@starter/schemas/auth';
 import { betterAuth } from 'better-auth';
 import { drizzleAdapter } from 'better-auth/adapters/drizzle';
 import { drizzle } from 'drizzle-orm/bun-sqlite';
-import { databaseMigrationsDir } from './database_paths.ts';
+import { databaseMigrationsDir } from '../../../tests/database_paths.ts';
 
 const SECRET = 'a-test-secret-that-is-definitely-long-enough-32';
 const ORIGIN = 'http://localhost:3000';

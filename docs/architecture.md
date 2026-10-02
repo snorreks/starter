@@ -18,9 +18,9 @@ scripts, .pi          tooling                     -> shared
 ```
 
 The dependency direction is one-way, and two independent mechanisms enforce it:
-Biome checks import statements, and `bun run guard` checks layer membership.
-Neither is sufficient alone — Biome cannot see a `// TODO` in a comment, and a guard
-cannot parse a dynamic specifier.
+Biome checks import statements as written, and `bun run guard` resolves the real module
+graph and checks what those imports actually reach. Neither is sufficient alone — Biome
+cannot see through a re-export, and a guard cannot see a `// TODO` in a comment.
 
 **The rule behind it: shared code must be portable.** It runs in a Worker, in a
 browser, and in Node tooling. The moment `packages/shared/utils` imports
@@ -36,20 +36,69 @@ runtime failure in one.
 | Components, ViewModels, client services | the browser | `src/lib/**`, `+page.svelte`, `+layout.svelte` |
 | Routes, services, auth, D1 | workerd | `src/lib/server/**`, `+server.ts`, `+*.server.ts`, `hooks.server.ts` |
 
-The boundary between them is a path, not a convention. `isClientServerModule` in
-`scripts/src/guards/boundary.ts` recognises exactly five shapes —
-everything under `src/lib/server/`, `src/hooks.server.ts`, and `+server.ts` /
-`+page.server.ts` / `+layout.server.ts` anywhere under `src/routes/`. Those may
-import `@starter/database` and `@starter/auth`. Everything else in the same
-directory may not, and a `+page.svelte` is deliberately not on the list so the
-components beside it keep the browser-only permission set.
+The boundary between them is a path, and `PLANE_PLACEMENTS` in
+`scripts/src/guards/policy.ts` is the single place that says which path is which. The
+Worker half is `src/lib/server/**`, `src/hooks.server.ts`, and the three route adapter
+shapes SvelteKit compiles into the Worker. Everything else in `src/**` is browser code,
+and a `+page.svelte` is deliberately not on the list, so the components beside a
+`+page.server.ts` keep the browser-only permission set.
 
-That rule is narrow on purpose, and it is temporary. A list of five paths is
-distinguishable from the sweeping exemption it replaced — a new directory named
-`server` does not silently become server-only — but it is still a list, and a list
-cannot see through a re-export. PR C replaces it with a resolved-dependency check.
-Until then, the acceptance it buys is proven on the built artifact by
-`bun run check:bundle`, which fails if any of these imports reaches a client chunk.
+### How the guard enforces it
+
+Three files, one responsibility each:
+
+| File | Owns |
+|---|---|
+| `scripts/src/guards/policy.ts` | The architecture as data: four planes, the 4×4 reachability matrix, runtime capabilities, roles, and the two declared Node-only subpaths. Every row carries the reason it exists. |
+| `scripts/src/guards/module_graph.ts` | The real graph. TypeScript parses `.ts`, Svelte locates the script blocks in `.svelte` and TypeScript reads those, and every specifier is resolved through the owning project's own `tsconfig.json` and through each workspace package's `exports` map. |
+| `scripts/src/guards/guard_architecture.ts` | Sixteen rules over that graph, each producing a diagnostic that names the source, the target, the dependency chain, the rule, and the ownership the code should move to. |
+
+What this replaced, and why it mattered: the previous guard read import statements out
+of source text with a regular expression and matched the resulting specifiers against a
+list of package names. It could not see a re-export, a relative path that climbed out
+of its own layer, a subpath that bypassed a package's `exports`, or a resolved alias —
+so a boundary documented as uncrossable was crossable four ways, and the list had no
+way to report that.
+
+The properties worth knowing:
+
+- **Transitive, not just direct.** A browser module that imports a portable barrel which
+  re-exports a server module is reaching the server module. The diagnostic prints the
+  chain, and it is the shortest one available.
+- **Capabilities travel with the dependency.** `@starter/utils/process` lives in a
+  portable package, so a plane check alone sees a legal edge. The Node requirement
+  travels through it to `node:child_process`, and the browser half does not have Node.
+- **Type-only edges are erased, and one exception is deliberate.** An `import type` is
+  not reachability — except `@starter/database` and `@starter/auth`, which a browser
+  module may not import even as a type. The Drizzle schema is a private server entity;
+  a DTO belongs in `@starter/schemas`. `src/app.d.ts` is exempt because declaring
+  `App.Locals` is the framework's own type channel and emits no code.
+- **Failure to read is a violation.** A file that will not parse, a specifier that will
+  not resolve, a project whose tsconfig cannot be read, a source file no placement row
+  covers, and a graph that discovered no modules at all are each reported. A guard that
+  skips unreadable input and prints `ok` is not a weaker guard; it is a guard that lies.
+- **Non-literal dynamic imports are bounded, not waved through.** `import(variable)`
+  cannot be resolved statically, so the guard does not claim it was checked. Application
+  code may not contain one; test modules may, because a test ships nothing. The
+  repository's one such import is `apps/frontend/client/scripts/dev_ports.test.ts`.
+
+### What it does not claim
+
+- **Not a proof about cross-request state.** `guardRequestState` matches module-level
+  declarations by name. That is a lint on shape, not a proof that no request state
+  leaks; behaviour tests own that claim.
+- **Not a substitute for the build.** `scripts/tests/build_enforces_the_boundary.test.ts`
+  injects a component importing `#lib/server/container.ts` and asserts that the real
+  `vite build` fails with SvelteKit's `server_only_import`. Both gates are needed,
+  because they do not overlap completely: a manual observation found that importing
+  `cloudflare:workers` into a component **passes** the production build and lands in the
+  client chunk. That behavior is not covered by this test. The graph guard catches that
+  import; the bundler does not.
+- **Not a rule about relative paths between tooling packages.** `apps/e2e` reaches
+  `scripts/src/shared/paths.ts` by relative path. That is a real smell and the
+  undeclared-dependency rule does not cover it; the failure mode that rule exists for — a
+  dependency that resolves only because a hoister provided it — does not arise between two
+  private packages that are built together. Stated rather than exempted.
 
 ## Versions, and why each is pinned
 
@@ -161,7 +210,9 @@ origins on one binding set get two containers.
 `bun run guard` fails the build on a module-level `let env`, `let currentUser`, or a
 `setEnvForRequest`-shaped helper anywhere under `apps/frontend/client/src` — the
 whole `src` tree, not only `src/lib/server`, because a `let currentUser` written
-into a component or a client service is the same defect.
+into a component or a client service is the same defect. That is a check on shape,
+not a proof that nothing leaks: `apps/frontend/client/tests/worker_integration.test.ts`
+and the E2E lane's two-session assertions own that claim.
 
 ### Environment policy
 
@@ -277,13 +328,26 @@ index. `check_bundle.test.ts` locks that in with a negative control.
 | `bun run test:worker` | The Worker answers over HTTP: health, auth, notes, ownership, 404 shapes. | Browser behaviour. |
 | `bun run e2e` | Built client + real Worker + real browser, one origin, two sessions isolated. | Anything about a build this checkout did not make. |
 | `bun run test:browser` | Real Svelte in Chromium. | The Worker. |
-| `bun run guard` | The invariants in this document still hold. | — |
+| `bun run guard` | The invariants in this document still hold, over the resolved module graph. | Anything about a build this checkout did not make. |
 
 The dev modes exist because one mode would have to be wrong about something: `vite
 dev` runs the server code in Node, where `cloudflare:workers` is a stub and an
 import that resolves can still fail in the real runtime. `dev:worker` serves the
 compiled artifact through `wrangler dev`, which *is* workerd. Everything that checks
 the shipped code uses the second.
+
+## Package resolution is the `exports` map, not a `paths` alias
+
+Every workspace package's `package.json` declares `exports`, and every subpath import
+in this repository goes through one of those entries. No `tsconfig.json` maps
+`@starter/x/*` into a package's `src/` any more, and that is deliberate.
+
+A wildcard `paths` entry resolves perfectly well, works in every tool, and still routes
+around the map — which is how `@starter/utils/lib/process/index.ts` became reachable
+next to the deliberate `@starter/utils/process`, and how the assertion "importing this
+subpath means you are not a browser" could be bypassed without anyone changing a line
+that looked like a boundary. `bun run guard` now reports such an import as
+`package-exports`, names the map, and lists what it does publish.
 
 ## See also
 

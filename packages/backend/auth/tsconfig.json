@@ -1,12 +1,7 @@
 {
   "extends": "../../../config/tsconfig/tsconfig.backend.json",
   "compilerOptions": {
-    "types": ["bun"],
-    "paths": {
-      "@starter/schemas": ["../../shared/schemas/src/index.ts"],
-      "@starter/schemas/*": ["../../shared/schemas/src/*"],
-      "@starter/database": ["../database/src/index.ts"]
-    }
+    "types": ["bun"]
   },
   "include": ["src/**/*", "tests/**/*"]
 }

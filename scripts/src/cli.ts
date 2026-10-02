@@ -19,6 +19,7 @@ import { type Command, EXIT, fail } from './shared/command.ts';
 type CommandLoader = () => Promise<Command>;
 
 const COMMANDS: Record<string, CommandLoader> = {
+  cached: async () => (await import('./commands/cached.ts')).cachedCommand,
   ci: async () => (await import('./commands/ci.ts')).ciCommand,
   configure: async () => (await import('./commands/configure.ts')).configureCommand,
   contract: async () => (await import('./commands/contracts.ts')).contractCommand,
@@ -30,6 +31,8 @@ const COMMANDS: Record<string, CommandLoader> = {
   logs: async () => (await import('./commands/logs.ts')).logsCommand,
   secrets: async () => (await import('./commands/secrets.ts')).secretsCommand,
   setup: async () => (await import('./commands/setup.ts')).setupCommand,
+  smoke: async () => (await import('./commands/smoke.ts')).smokeCommand,
+  workflows: async () => (await import('./commands/workflows.ts')).workflowsCommand,
 };
 
 const names = (): string[] => Object.keys(COMMANDS).sort();
