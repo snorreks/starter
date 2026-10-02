@@ -24,7 +24,8 @@
 // belief rather than a gate.
 
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
-import { readFileSync, writeFileSync } from 'node:fs';
+import { closeSync, openSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { guardArchitecture } from '../src/guards/guard_architecture.ts';
 import { CLIENT_DIR_RELATIVE, REPO_ROOT } from '../src/shared/paths.ts';
@@ -69,22 +70,50 @@ const inject = (source: string): string => {
 };
 
 interface BuildResult {
-  readonly code: number;
+  /** `null` when the process was killed by a signal, which is not a pass. */
+  readonly code: number | null;
   readonly output: string;
 }
 
-/** The real production build, uncached. */
+/**
+ * The real production build, uncached, with its output on disk.
+ *
+ * Written to files rather than captured through pipes. A production build of this
+ * application prints several kilobytes to stdout and as much to stderr, and the first
+ * version of this test piped both — which passed locally and died in CI with a null
+ * exit code and no adapter output: the build had completed both Vite environments and
+ * then been killed while its output was still sitting in a pipe.
+ * Files take the pipe out of the picture, and AGENTS.md asks for bounded subprocess
+ * output anyway.
+ *
+ * Paths are unique per call, so a concurrent run cannot read another run's log.
+ */
 const build = (): BuildResult => {
-  const result = Bun.spawnSync({
-    cmd: ['bun', 'run', 'build'],
-    cwd: join(REPO_ROOT, CLIENT_DIR_RELATIVE),
-    // Bounded: a build that hangs must fail this test rather than hang the lane.
-    timeout: 10 * 60 * 1000,
-  });
-  return {
-    code: result.exitCode,
-    output: `${result.stdout.toString()}\n${result.stderr.toString()}`,
-  };
+  const stamp = `${process.pid}-${Date.now()}`;
+  const outPath = join(tmpdir(), `starter-build-${stamp}.out`);
+  const errPath = join(tmpdir(), `starter-build-${stamp}.err`);
+  const outFile = openSync(outPath, 'w');
+  const errFile = openSync(errPath, 'w');
+
+  try {
+    const result = Bun.spawnSync({
+      cmd: ['bun', 'run', 'build'],
+      cwd: join(REPO_ROOT, CLIENT_DIR_RELATIVE),
+      stdout: outFile,
+      stderr: errFile,
+      // Bounded: a build that hangs must fail this test rather than hang the lane.
+      timeout: 10 * 60 * 1000,
+    });
+    return {
+      code: result.exitCode,
+      output: `${readFileSync(outPath, 'utf8')}\n${readFileSync(errPath, 'utf8')}`,
+    };
+  } finally {
+    closeSync(outFile);
+    closeSync(errFile);
+    rmSync(outPath, { force: true });
+    rmSync(errPath, { force: true });
+  }
 };
 
 beforeAll(() => {
