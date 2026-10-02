@@ -10,7 +10,7 @@
     "lint": "biome lint src tests",
     "format": "biome format src tests",
     "fix": "biome check --write src tests --error-on-warnings",
-    "typecheck": "tsgo --noEmit",
+    "typecheck": "tsc --noEmit",
     "test": "bun test",
     "guard": "bun run src/cli.ts guard",
     "guard:whole-repo": "bun run src/cli.ts guard --whole-repo"
@@ -18,7 +18,8 @@
   "dependencies": {
     "@starter/logger": "workspace:*",
     "@starter/schemas": "workspace:*",
-    "@starter/utils": "workspace:*"
+    "@starter/utils": "workspace:*",
+    "yaml": "2.9.0"
   },
   "devDependencies": {
     "wrangler": "4.142.0"

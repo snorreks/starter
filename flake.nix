@@ -97,10 +97,49 @@
                 packages = extraPackages;
 
                 shellHook = ''
-                  # Point the browser lanes at this store's Chromium rather than
-                  # at a downloaded copy. `doctor` checks this resolves.
-                  export PLAYWRIGHT_BROWSERS_PATH="${browser}/bin"
+                  # Two variables, and they are not interchangeable. Conflating them
+                  # is what kept the browser lane failing on this host.
+                  #
+                  #   CHROMIUM_PATH              the executable to launch. Read by
+                  #                              scripts/src/shared/browser_path.ts
+                  #                              and published to both browser lanes as
+                  #                              Playwright's `executablePath`. This is
+                  #                              the one that selects the browser.
+                  #
+                  #   PLAYWRIGHT_BROWSERS_PATH   a *directory* Playwright treats as its
+                  #                              download root. It exists here for one
+                  #                              reason: `bun run setup` skips
+                  #                              `playwright install` when this path
+                  #                              starts with /nix/store, because that
+                  #                              download cannot work on NixOS.
+                  #
+                  # It is NOT a way to select a browser, and it must not point at
+                  # `${browser}/bin`. With `headless: true` and no `executablePath`,
+                  # Playwright resolves `chromium_headless_shell-<build>/…` relative
+                  # to this directory — a file the store does not contain — and
+                  # reports:
+                  #
+                  #   Executable doesn't exist at …/bin/chromium_headless_shell-1243/
+                  #     chrome-headless-shell-linux64/chrome-headless-shell
+                  #
+                  # That error names a headless shell, so the obvious reading is
+                  # "install a headless shell" or "switch channel". Both were tried
+                  # and neither can help, because the path is computed from a
+                  # directory that is not a Playwright browser layout. The fix is
+                  # the variable above it, and it is the documented provider option:
+                  # `playwright({ launchOptions: { executablePath } })`.
+                  #
+                  # The directory is therefore a scratch location that merely looks
+                  # like a store path, so the `setup` skip still applies and no
+                  # download is attempted.
+                  export PLAYWRIGHT_BROWSERS_PATH="''${XDG_CACHE_HOME:-\$HOME/.cache}/ms-playwright-nix"
                   export CHROMIUM_PATH="${browser}/bin/chromium"
+
+                  # `bun run test:browser` and `bun run e2e` are the two lanes that
+                  # need the browser above. Run them here to verify a shell upgrade:
+                  #
+                  #   nix develop -c bun run test:browser
+                  #   nix develop -c bun run e2e
                 '';
               };
 

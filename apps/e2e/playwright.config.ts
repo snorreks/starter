@@ -34,31 +34,44 @@
 
 import { fileURLToPath } from 'node:url';
 import { defineConfig, devices } from '@playwright/test';
+import { playwrightLaunchOptions } from '../../scripts/src/shared/browser_path.ts';
+import { worktreePort } from '../../scripts/src/shared/run_scope.ts';
 
 /**
  * Which Chromium this run uses.
  *
- * `CHROMIUM_PATH` is set by the Nix dev shell, because Playwright's own download
- * links against a Linux libc and a fixed set of `.so` names that NixOS only
- * provides under versioned suffixes. Left unset, Playwright uses its downloaded
- * copy — correct everywhere else.
+ * Resolved by `scripts/src/shared/browser_path.ts` — the same module the Vitest
+ * browser lane reads — so the two lanes cannot disagree about the executable.
+ *
+ * It used to be read here as a bare `process.env.CHROMIUM_PATH ? … : {}`. That
+ * is not equivalent: the shared resolver also finds a browser in a Playwright
+ * cache when no variable is set, which is the normal case on a non-Nix host,
+ * and it names the missing prerequisite when there is none. Two answers to one
+ * question is how the browser lane ended up failing while E2E passed.
  *
  * `new URL(...).pathname` is never used on a path in this file: it
  * percent-encodes, so a checkout under a directory containing a space resolves
  * to a nonexistent location and the failure reads as a missing file.
  */
-const chromiumPath = process.env.CHROMIUM_PATH;
-const launchOptions = chromiumPath ? { executablePath: chromiumPath } : {};
+const launchOptions = playwrightLaunchOptions();
 
 /**
  * Port.
  *
- * One, because there is one server. Fixed rather than ephemeral, and overridable
- * by environment variable. A leftover process on a fixed port is a real hazard
- * (the integration suite hit it), which is why `preflight.ts` refuses to continue
- * if something is already listening rather than silently testing against it.
+ * One, because there is one server. Derived from *this checkout's path* by
+ * `runScope.worktreePort`, so two worktrees — a Herdr worktree, a second clone, a
+ * CI matrix leg — do not fight over one port, and the same checkout always gets
+ * the same one. A fixed 4183 was shared by every checkout on the machine, and the
+ * failure that produced is silent: the second run starts nothing, connects to the
+ * first one's server, and every spec passes against a stale D1.
+ *
+ * `E2E_APP_PORT` still wins, for a deliberate port choice.
+ *
+ * The port is still only *chosen* here; `preflight.ts` proves the server answering
+ * on it is this run's, by run id. Allocation and identity are separate checks on
+ * purpose: the port says where to look, the run id says who answered.
  */
-const APP_PORT = Number(process.env.E2E_APP_PORT ?? 4183);
+export const APP_PORT = Number(process.env.E2E_APP_PORT ?? worktreePort(4183, import.meta.dirname));
 
 const appBaseUrl = `http://127.0.0.1:${APP_PORT}`;
 

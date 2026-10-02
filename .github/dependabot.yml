@@ -1,0 +1,62 @@
+# Dependency updates.
+#
+# One tool. Dependabot is built into GitHub, needs no token, runs on a schedule
+# with read-only access, and opens pull requests rather than merging — which is the
+# only acceptable behaviour for a repository where a version bump can change what
+# `bun run setup:doctor` and `check:bundle` report.
+#
+# It is here instead of Renovate, Codecov's dependabot variants, or a
+# `npx npm-check-updates` step, because each of those is a second thing to keep
+# current, a second credential, and a second opinion about the same manifest. See
+# docs/toolchain.md for why the pins are exact and what that means here.
+#
+# Groups exist so that a routine bump is one reviewable change rather than nine.
+# `bun.lock` is validated with `--frozen-lockfile` on every CI run, so a group PR
+# that resolved to something the lockfile cannot express fails before review.
+version: 2
+
+permissions:
+  contents: read
+
+updates:
+  # The lockfile is the thing that is actually installed. Updating `package.json`
+  # without it produces a PR that cannot pass CI.
+  - package-ecosystem: bun
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: '06:00'
+      timezone: Etc/UTC
+    open-pull-requests-limit: 5
+    labels: [dependencies]
+    groups:
+      # A framework minor across SvelteKit, the adapter, the Vite plugin and
+      # Vite itself is one compatibility question, not four.
+      svelte-stack:
+        patterns: ['@sveltejs/*', 'svelte', 'vite', '@tailwindcss/vite']
+      # The test and build toolchain. `vitest`, `@vitest/browser*` and
+      # `@vitest/browser-playwright` are required to move together: the provider
+      # peers on an exact `vitest` version, which is why `@cloudflare/vitest-pool-workers`
+      # is not adopted here — its latest release peers on `vitest ^4` while this
+      # workspace runs 5.
+      test-toolchain:
+        patterns: ['vitest', '@vitest/*', 'playwright', '@playwright/test', 'bun-types', '@types/bun']
+      # Biome is pinned exactly because a patch release has previously changed
+      # Svelte formatting output. Grouping it with the rest of the dev tooling
+      # would hide that inside an unrelated bump.
+      formatter:
+        patterns: ['@biomejs/biome']
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: '06:00'
+      timezone: Etc/UTC
+    open-pull-requests-limit: 3
+    labels: [dependencies, ci]
+    groups:
+      actions:
+        patterns: ['*']

@@ -17,14 +17,16 @@ layer: 'automation'
 fileGroups:
   sources:
     - '*.ts'
-  specs:
-    - 'tests/**/*'
   configs:
     - 'package.json'
     - 'tsconfig*.json'
     - 'moon.yml'
     - 'playwright.config.ts'
   tests:
+    # One name for one thing. `specs` and `tests` were both `tests/**/*`, and
+    # every task referenced `specs` while `tests` was left declared and
+    # unreferenced — fourteen such groups existed across the workspace, each one
+    # a promise nothing checked.
     - 'tests/**/*'
 
 toolchains:
@@ -42,30 +44,37 @@ tasks:
     args: ['run', 'typecheck']
     inputs:
       - '@group(sources)'
-      - '@group(specs)'
+      - '@group(tests)'
       - '@group(configs)'
   lint:
     command: 'bun'
     args: ['run', 'lint']
     inputs:
       - '@group(sources)'
-      - '@group(specs)'
+      - '@group(tests)'
+      - '@group(configs)'
   format:
     command: 'bun'
     args: ['run', 'format']
     inputs:
       - '@group(sources)'
-      - '@group(specs)'
+      - '@group(tests)'
+      - '@group(configs)'
   fix:
     command: 'bun'
     args: ['run', 'fix']
     inputs:
       - '@group(sources)'
-      - '@group(specs)'
+      - '@group(tests)'
+      - '@group(configs)'
 
   # The real Playwright suite. Not cached: it builds the Worker, starts it in
   # workerd, starts a browser, migrates a database, and asserts against them. A
   # cached "pass" would certify a server and a database that were never started.
+  #
+  # It also has no `inputs`, deliberately. The whole tree is in scope, and this
+  # project's results depend on the built client, the D1 state under
+  # `.wrangler/`, and the port the harness binds — none of which Moon can key.
   e2e:
     command: 'bun'
     args: ['run', 'test:e2e']

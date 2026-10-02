@@ -9,8 +9,23 @@
       "range": "2.5.13"
     },
     {
-      "label": "TypeScript is pinned: the native preview compiler and vtsls track this major.",
-      "packages": ["typescript", "@typescript/native-preview"],
+      "//": [
+        "TypeScript is pinned, and only `typescript`.",
+        "",
+        "`@typescript/native-preview` was in this group and was the second",
+        "reason this group existed — `tsgo --noEmit` ran eight of the eleven",
+        "typecheck tasks. It is a `7.0.0-dev` prerelease (latest as of",
+        "2026-10-02, and the pin was already two months old), and a group that",
+        "pins `6.0.3` cannot hold a `7.0.0-dev` range: the two could never",
+        "both be satisfied, so the group documented an impossibility rather",
+        "than a constraint.",
+        "",
+        "The typecheck tasks run `tsc --noEmit` now. `svelte-check` stays for",
+        "the two Svelte projects, because it is the only one that type-checks a",
+        "component; `tsc` cannot. See docs/toolchain.md."
+      ],
+      "label": "TypeScript is pinned: vtsls and every typecheck task track this major.",
+      "packages": ["typescript"],
       "range": "6.0.3"
     }
   ]
