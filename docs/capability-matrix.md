@@ -27,7 +27,7 @@ the lane printed.
 | Typecheck | Every project; `tsc --noEmit` for 8, `svelte-check --threshold error` for 3 | `bun run typecheck` | 0 errors, 0 warnings |
 | Lint and format | Biome, verified not applied | `bun run lint && bun run format` | clean |
 | Guards | Seven whole-repo invariants, no baselines | `bun run guard` and `bun run guard:whole-repo` | 7/7 each |
-| Workflow policy | Real parse of `.github/workflows/*.yml` | `bun run workflows` | ok across 1 workflow |
+| Workflow policy | Real parse of `.github/workflows/*.yml` | `bun run workflows` | ok across 2 workflows |
 | **Fresh-template rehearsal** | Temporary checkout: no `.git`, no `node_modules`, no output, fresh `HOME`, **no credential** | `bun run smoke` | **7 steps ok** |
 
 ### The rehearsal found a fresh clone could not install
@@ -81,11 +81,19 @@ provider itself is unverified.
 
 | Capability | Boundary used | Command |
 |---|---|---|
-| Cloudflare deploy planning and refusal | injected `ProcessRunner`, no network; argv observed at the process boundary | `bun run --cwd scripts test` |
+| Deployment target resolution and every refusal | pure; no network, no credential, no repository | `bun run --cwd scripts test` |
+| `preflight` account / database / Worker mismatch | injected `run` at the process boundary; argv asserted to be read-only | same |
+| Deploy pipeline ordering, and every failure path | injected process runner; **spawned argv recorded and asserted** | same |
+| Release verification over HTTP | injected `fetch`; requested URL recorded, response body never retained | same |
+| Cloudflare deploy planning and refusal | injected `ProcessRunner`, no network; argv observed at the process boundary | same |
 | Cloudflare credential detection | `CLOUDFLARE_API_TOKEN` presence only | same |
 | D1 migration planning | plan-only, local D1 applied for real | `bun run db:migrate -- --dry-run` |
 | Contract lifecycle | scripted adapter, no model provider | `bun run --cwd scripts test` |
 | Historical log query | recorded response fixture | `bun run --cwd scripts test` |
+
+`/health` and `/health/ready` are real routes driven through real workerd by
+`apps/frontend/client/tests/worker_integration.test.ts`, which asserts the release
+identity and the `no-store` header alongside the database-backed readiness check.
 
 ## Optional, configured by the operator
 
@@ -93,8 +101,8 @@ Not meaningful until someone supplies the prerequisite.
 
 | Capability | Needs | Command |
 |---|---|---|
-| Real deploy | a Cloudflare account, a token, a Worker name, a D1 id | `bun run deploy:configure` then `bun run deploy --yes` |
-| Remote migrations | the above, plus explicit confirmation | `bun run db:migrate:remote -- --env staging --yes` |
+| Real deploy | a Cloudflare account, a token, per-environment Worker names, D1 ids and public origins | `bun run deploy:configure` then `bun run deploy apply --env staging --yes` |
+| Remote migrations | the above, plus explicit confirmation | `bun run db:migrate:remote -- staging --yes` |
 | Cloudflare historical logs | the above, plus an account id | `bun run logs web --mode staging` |
 | SOPS encrypt/decrypt | `sops` and `age` on PATH, plus your own recipient | `bun run secrets:encrypt -- <gitignored-path>` |
 | Visual inspection | a vision-capable provider and an adapter | `bun run e2e:visual` |
@@ -149,10 +157,15 @@ A future gap worth naming: a `rows_read: 0` response with a populated `data` arr
 has been reported for API-token queries the dashboard answers, so the CLI reports
 `rows_read` rather than treating it as authoritative.
 
-### Logpush is a claimed capability with no implementation
+### Logpush: removed, not deferred
 
-The registry lists Logpush for staging and production. No Logpush job is created,
-no filter is registered, and nothing reads the bucket. Treat it as absent.
+The registry used to list Logpush for staging and production while nothing
+implemented it — no job created, no filter registered, nothing reading a bucket. The
+claim has been deleted from the registry and from this file rather than carried
+forward as advice, because a capability named in documentation and absent from code
+is the failure mode this matrix exists to catch. Remote history and tail are served
+by Cloudflare Workers Observability and `wrangler tail`; there is no second log
+platform.
 
 ### The build does not catch every server import in the browser
 

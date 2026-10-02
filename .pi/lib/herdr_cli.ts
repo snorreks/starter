@@ -194,7 +194,13 @@ export type WorktreeAction = 'list' | 'create' | 'open' | 'remove';
 export interface WorktreeParams {
   /** Herdr workspace id. Required for `remove`; optional to disambiguate elsewhere. */
   workspace?: string;
-  /** Repository the worktree belongs to. */
+  /**
+   * Repository the worktree belongs to — the absolute path of a checkout root.
+   *
+   * Required for `list`, `create` and `open`. It is not a convenience: Herdr
+   * resolves a repository itself when `--cwd` is absent, and the one it picks can
+   * be an unrelated project. See `validateWorktreeParams`.
+   */
   cwd?: string;
   branch?: string;
   /** Base ref for `create`, e.g. `main`. */
@@ -276,6 +282,31 @@ export const validateWorktreeParams = (
     return undefined;
   }
 
+  // `remove` is exempt and the others are not, for a concrete reason: `remove`
+  // acts on an opaque workspace id that already names its checkout, so it cannot
+  // address the wrong one. The rest take a *repository*, and with no `--cwd`
+  // Herdr supplies one.
+  //
+  // That is not a hypothetical. Creating a worktree from this extension with no
+  // `cwd` produced a checkout of a completely unrelated repository — a dotfiles
+  // project, not this one — and reported success, with a real path and a real
+  // workspace id. Every later command then ran against that project.
+  //
+  // So this refuses for exactly the reason the branch-and-path check below does:
+  // Herdr will not invent it, and neither will this. `list` is included even though
+  // it only reads, because an inventory of the wrong repository's worktrees is a
+  // wrong answer that looks like a right one.
+  if (!params.cwd) {
+    return (
+      `worktree ${action} needs \`cwd\`: the absolute path of the repository this ` +
+      'worktree belongs to.\n' +
+      '  Herdr picks a repository itself when `--cwd` is absent, and the one it picked may be a\n' +
+      '  different project entirely. This was observed creating a worktree of an unrelated\n' +
+      '  repository and reporting success.\n' +
+      '  Nothing has been changed. Pass the directory that contains `.git`.'
+    );
+  }
+
   if (action === 'create' && !params.branch && !params.path) {
     return 'worktree create needs a branch or an explicit path; Herdr will not invent either.';
   }
@@ -285,6 +316,36 @@ export const validateWorktreeParams = (
   }
 
   return undefined;
+};
+
+/**
+ * Why `cwd` cannot be used as a repository root, or `undefined` when it can.
+ *
+ * `isGitRepository` is a parameter rather than a filesystem call so this stays pure
+ * and the whole refusal path is reachable without a checkout on disk. The caller
+ * supplies the fact; this decides what it means.
+ *
+ * Separate from `validateWorktreeParams` because presence and validity are
+ * different questions: a typo'd path is present, and every downstream check would
+ * otherwise pass it through to a command that would act on whatever repository
+ * really lives there.
+ */
+export const validateWorktreeRepository = (
+  cwd: string | undefined,
+  isGitRepository: boolean,
+): string | undefined => {
+  if (!cwd) {
+    return undefined;
+  }
+  if (isGitRepository) {
+    return undefined;
+  }
+
+  return (
+    `"${cwd}" is not a git repository — there is no .git entry there.\n` +
+    '  Herdr resolves the target from this path, so a wrong one acts on a different\n' +
+    '  checkout entirely. Nothing has been changed. Pass the directory that contains `.git`.'
+  );
 };
 
 /**

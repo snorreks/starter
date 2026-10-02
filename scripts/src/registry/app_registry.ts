@@ -111,8 +111,28 @@ export const AppLogConfigSchema = Type.Object(
 
 export type AppLogConfig = Static<typeof AppLogConfigSchema>;
 
+/**
+ * What an environment needs, and where each half of it now lives.
+ *
+ * There was an `EnvironmentTopologySchema` here, holding a `null` origin per
+ * environment, and `DEPLOYMENT_CONFIG.environments` used it. Nothing ever read
+ * either: origins come from the gitignored overlay through `topologyFor`, and
+ * secret names from `REQUIRED_REMOTE_SECRET_NAMES` below. A committed second
+ * copy of a value nothing consults is a registry that can disagree with the one
+ * that matters, which is the failure this file exists to prevent — so both are
+ * gone rather than left as a shape that looks authoritative.
+ */
+
 export const DEPLOYMENT_CONFIG_SCHEMA = Type.Object(
   {
+    /**
+     * Project identity, and the stem every derived name uses.
+     *
+     * Not a secret and not a resource id: it is the name this template keeps when
+     * it is renamed, and it is what ties a release record to a project rather than
+     * to whichever Worker happened to answer.
+     */
+    projectName: Type.String({ minLength: 1 }),
     /**
      * The Cloudflare Worker name. `null` means "not provisioned yet" — the deploy
      * dry-run reports that as an actionable error instead of inventing a target.
@@ -122,6 +142,11 @@ export const DEPLOYMENT_CONFIG_SCHEMA = Type.Object(
      * an `api` entry would be two names for one resource, and the registry's own
      * stated rule is that a value in more than one place is a value nobody can
      * tell is in effect.
+     *
+     * This is the *single-set* fallback, used only by a project that has never
+     * declared per-environment targets. `resolveTarget` refuses rather than falling
+     * back to it for a deployed environment, because a staging request answered with
+     * production names is the outcome this whole layer exists to prevent.
      */
     workerName: Type.Union([Type.String({ minLength: 1 }), Type.Null()]),
     /**
@@ -170,12 +195,38 @@ export type DeploymentConfig = Static<typeof DEPLOYMENT_CONFIG_SCHEMA>;
  * must say so rather than reaching for a previous project's resources.
  */
 export const DEPLOYMENT_CONFIG: DeploymentConfig = {
+  projectName: 'starter',
+  // Origins and resource ids are absent on purpose. A template cannot know the
+  // account's `workers.dev` subdomain, and every deployment id starts `null`, so a
+  // fresh clone targets nobody. `deploy:configure` writes the real values into the
+  // gitignored overlay, which is the only layer any tool reads them from.
   workerName: null,
   d1DatabaseId: null,
   r2BucketNames: { uploads: null },
   customDomain: null,
   accountId: null,
 };
+
+/**
+ * The secrets every remote environment needs, in the order they must be applied.
+ *
+ * Exported rather than left inline so the plan, the preflight and the documentation
+ * all name the same list. A required-secret list that exists in three places is a
+ * list where one of the three is wrong.
+ *
+ * `MAIL_FROM` and `DEPLOYMENT_ENV` are *vars*, not secrets: they are nonsecret
+ * configuration and are supplied through `wrangler.jsonc`'s environment vars, so
+ * they never pass through the secret channel or a process's argv.
+ */
+export const REQUIRED_REMOTE_SECRET_NAMES = ['BETTER_AUTH_SECRET', 'RESEND_API_KEY'] as const;
+
+/** Nonsecret vars every remote environment needs. Names only, never values. */
+export const REQUIRED_REMOTE_VAR_NAMES = [
+  'DEPLOYMENT_ENV',
+  'BETTER_AUTH_URL',
+  'MAIL_FROM',
+  'RELEASE',
+] as const;
 
 /**
  * The apps this project deploys.
@@ -278,6 +329,14 @@ export const APP_LOG_CONFIG: Record<AppId, AppLogConfig> = {
 export interface EnvironmentTargets {
   workerName: string | null;
   d1DatabaseId: string | null;
+  /**
+   * Public origin for this environment, or `null`.
+   *
+   * Part of the target rather than a display value because it is the destination
+   * verification is made against: a deploy that cannot be addressed cannot be
+   * verified, and "the deploy command exited 0" is not a release record.
+   */
+  origin: string | null;
 }
 
 // `Partial`: presence is the signal. A project with only staging must be able to say so

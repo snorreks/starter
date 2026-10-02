@@ -17,6 +17,7 @@
 // exists so that claim is checkable at runtime rather than trusted from a
 // comment. An upgrade that renames a flag surfaces as text.
 
+import { existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import type { AgentToolResult, ExtensionAPI } from '@earendil-works/pi-coding-agent';
 import { Type } from 'typebox';
@@ -29,6 +30,7 @@ import {
   parseEnvelope,
   probe,
   validateWorktreeParams,
+  validateWorktreeRepository,
   type WorktreeAction,
   type WorktreeParams,
 } from '../lib/herdr_cli.ts';
@@ -37,6 +39,24 @@ import { runBounded } from '../lib/process.ts';
 import { defineAction, registerNamespace } from '../lib/tool_namespace.ts';
 
 const REPO_ROOT = fileURLToPath(new URL('../../', import.meta.url));
+
+/**
+ * Why `cwd` cannot be used as a repository root, or `undefined`.
+ *
+ * The I/O half of the check that `validateWorktreeParams` starts. Kept out of that
+ * function so it stays pure, and kept here so the decision still lives in one
+ * place rather than at each of the three call sites that resolve a repository.
+ *
+ * `.git` is a **file** in a linked worktree and a **directory** in an ordinary
+ * checkout, so `existsSync` rather than `statSync(...).isDirectory()` — the
+ * stricter check refuses every worktree, which is the one place this runs from.
+ *
+ * This is the check for the observed failure: `worktree_create` with no `cwd`
+ * returned a checkout of an unrelated repository, and reported success. Presence of
+ * `cwd` is enforced separately; this asks whether the path given is real.
+ */
+const repositoryRefusal = (cwd: string | undefined): string | undefined =>
+  validateWorktreeRepository(cwd, cwd !== undefined && existsSync(`${cwd}/.git`));
 
 const fail = (text: string, details: unknown): AgentToolResult<unknown> =>
   ({ content: [{ type: 'text', text }], isError: true, details }) as AgentToolResult<unknown>;
@@ -104,7 +124,16 @@ const WORKTREE_PARAMS = Type.Object({
         'handles the server allocates. Required for `remove`.',
     }),
   ),
-  cwd: Type.Optional(Type.String({ description: 'Repository the worktree belongs to.' })),
+  cwd: Type.Optional(
+    Type.String({
+      description:
+        'Absolute path of the repository root (the directory containing `.git`). REQUIRED for ' +
+        'list`, `create` and `open`; not used by `remove`, which acts on a workspace id. ' +
+        'Herdr resolves a repository itself when this is omitted, and the one it picks may be a ' +
+        'different project — creating a worktree without it was observed acting on an unrelated ' +
+        'repository and reporting success.',
+    }),
+  ),
   branch: Type.Optional(Type.String({ description: 'Branch to create or open.' })),
   base: Type.Optional(
     Type.String({
@@ -217,18 +246,34 @@ export default function herdrExtension(pi: ExtensionAPI): void {
         action: 'worktree_list',
         summary: 'List worktree workspaces, with their real workspace ids and paths.',
         parameters: Type.Object({
-          cwd: Type.Optional(Type.String({ description: 'Repository to list worktrees of.' })),
+          // Optional in the schema, required in practice. Declaring it required
+          // makes the framework reject the call with `must have required properties
+          // cwd`, which tells the caller nothing about what a cwd is or why the
+          // repository cannot be inferred. The refusal below names both, and the
+          // description above says it is required.
+          cwd: Type.Optional(
+            Type.String({
+              description:
+                'REQUIRED. Absolute path of the repository root (the directory containing `.git`). ' +
+                'Herdr resolves a repository itself when this is omitted, and the one it picks may be ' +
+                'a different project.',
+            }),
+          ),
         }),
 
         async execute(_toolCallId, params) {
+          // Same two checks every other worktree action gets, in the same order.
+          const refusal = validateWorktreeParams('list', params) ?? repositoryRefusal(params.cwd);
+          if (refusal !== undefined) {
+            return fail(refusal, { error: 'refused', action: 'worktree_list' });
+          }
+
           const capability = await probe(REPO_ROOT, runBounded);
           if (!capability.available) {
             return unavailable(capability.reason);
           }
 
-          const args = buildWorktreeArgs('list', {
-            ...(params.cwd === undefined ? {} : { cwd: params.cwd }),
-          });
+          const args = buildWorktreeArgs('list', { cwd: params.cwd });
           const result = await invoke(args);
           if (!result.ok) {
             return result.kind === 'unavailable'
@@ -314,6 +359,15 @@ export default function herdrExtension(pi: ExtensionAPI): void {
     if (refusal !== undefined) {
       // A refusal before anything was spawned. Nothing was changed.
       return fail(refusal, { error: 'refused', action });
+    }
+
+    // The path is present by now; the question is whether it is a repository at
+    // all. `remove` is exempt — it acts on a workspace id, never on a path.
+    if (action !== 'remove') {
+      const repositoryProblem = repositoryRefusal(params.cwd);
+      if (repositoryProblem !== undefined) {
+        return fail(repositoryProblem, { error: 'refused', action });
+      }
     }
 
     const capability = await probe(REPO_ROOT, runBounded);

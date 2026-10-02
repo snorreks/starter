@@ -93,7 +93,10 @@ export const handle: Handle = async ({ event, resolve }) => {
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     startupLogger.error('config.invalid', { message });
-    return notConfigured(message, isApiPath(event.url.pathname));
+    return withCachePolicy(
+      notConfigured(message, isApiPath(event.url.pathname)),
+      cachePolicyFor(event.url.pathname, null),
+    );
   }
 
   event.locals.container = container;
@@ -105,8 +108,73 @@ export const handle: Handle = async ({ event, resolve }) => {
   // `route.id` is null exactly when nothing matched, which is what makes this a
   // 404 rather than a guess about the response status.
   if (event.route.id === null && isApiPath(event.url.pathname)) {
-    return jsonError(404, 'not_found', 'No such route.');
+    return withCachePolicy(
+      jsonError(404, 'not_found', 'No such route.'),
+      cachePolicyFor(event.url.pathname, event.locals.user),
+    );
   }
 
-  return response;
+  // Cache policy, applied here rather than per route, and to *every* response
+  // including the two above — a 503 and a 404 are both answers a shared cache
+  // would happily keep, and an API response without the directive is one CDN
+  // configuration change away from being replayed.
+  //
+  // Two classes of response, and they must not be confused:
+  //
+  //   * **Session-dependent** — anything behind a sign-in, and every `/api/*`
+  //     response, authenticated or not. `private, no-store` says both halves: not
+  //     for a shared cache, and not for the browser either. A `Cache-Control:
+  //     public` on a page rendered with a session user is one CDN configuration
+  //     change away from serving one user's notes to another.
+  //   * **Anonymous HTML** — the landing page and the auth screens. These *could*
+  //     be cached, and are deliberately left to the deployment's own asset
+  //     headers rather than being declared cacheable here. A blanket `public`
+  //     would be a correctness claim this code cannot verify, since whether a page
+  //     is anonymous depends on the session rather than on the URL.
+  return withCachePolicy(response, cachePolicyFor(event.url.pathname, event.locals.user));
 };
+
+/**
+ * Apply a cache policy, or return the response untouched.
+ *
+ * Headers are copied rather than mutated: a `Response` from SvelteKit is often
+ * immutable, and assigning to `.headers` throws in workerd when it is.
+ */
+const withCachePolicy = (response: Response, policy: string | null): Response => {
+  if (policy === null) {
+    return response;
+  }
+  const headers = new Headers(response.headers);
+  headers.set('cache-control', policy);
+  return new Response(response.body, { status: response.status, headers });
+};
+
+/**
+ * The `Cache-Control` for one request, or `null` to leave the response alone.
+ *
+ * Exported so the rule is assertable directly rather than only through a hook that
+ * needs a whole request to reach it.
+ */
+export const cachePolicyFor = (pathname: string, user: unknown): string | null => {
+  if (isApiPath(pathname)) {
+    return PRIVATE;
+  }
+  if (user !== null && user !== undefined) {
+    return PRIVATE;
+  }
+  if (isHealthPath(pathname)) {
+    // `/health` sets its own `no-store`; restating it here keeps the policy in one
+    // place for anyone auditing it, and costs nothing.
+    return NO_STORE;
+  }
+  return null;
+};
+
+/** Not for a shared cache, and not for the browser. */
+const PRIVATE = 'private, no-store, max-age=0';
+
+/** Not cached at all, by anyone. */
+const NO_STORE = 'no-store';
+
+const isHealthPath = (pathname: string): boolean =>
+  pathname === '/health' || pathname === '/health/ready';

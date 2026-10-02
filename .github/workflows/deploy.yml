@@ -1,0 +1,222 @@
+# Deploy.
+#
+# Manual only, on purpose. An unconfigured template must not publish itself when
+# a commit lands, and "the checks passed" and "this was published" are different
+# decisions with different authority — so CI never deploys, and this file is the
+# only path that does.
+#
+# Everything about the shape here comes from one property:
+#
+#   **`concurrency` is keyed on the destination environment, and
+#   `cancel-in-progress` is false.**
+#
+# Two applies to the same environment must never overlap. Overlapping them means
+# two builds racing to migrate one D1 database and then two deploys racing to
+# publish, and the loser wins silently. GitHub's *workflow-level* concurrency in
+# `ci.yml` is keyed on the ref and cancels in progress, which is right for tests
+# and wrong here: cancelling a run that is halfway through `d1 migrations apply`
+# leaves a schema that is ahead of the code running on it, with no record that
+# anything was in flight. So this is a **job-level** concurrency on the apply job
+# only — the plan and preflight jobs still cancel freely, because neither mutates.
+#
+# There is no lock file. A lock in this checkout serialises one developer's
+# machines and nothing else; two CI runs, or a CI run and an operator laptop, would
+# both take it and both proceed. The environment concurrency group is the only
+# serialisation here that is actually global.
+#
+# Credentials: one API token per environment, stored as a GitHub *environment*
+# secret, so a fork's pull request can never reach it (this workflow does not
+# trigger on `pull_request` at all) and staging's token is not readable while
+# selecting production. Cloudflare's scoped API tokens are the least-privilege
+# mechanism available here; an OAuth login would not exist on a runner.
+#
+# The operator escape hatch — running `wrangler deploy` by hand — is documented in
+# docs/deployment.md as being *outside* this guarantee. It is a deliberate way to
+# publish without the queue, not a second supported path.
+
+name: Deploy
+
+on:
+  # `workflow_dispatch` only. A push to main does not deploy: this is an
+  # unconfigured template, and the first deploy is an act with a resource bill.
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Which environment to deploy. Production is protected by an environment approval.'
+        required: true
+        type: choice
+        options:
+          - staging
+          - production
+      migrate:
+        description: 'Apply reviewed migrations before deploying.'
+        required: true
+        default: true
+        type: boolean
+      first_deploy:
+        description: 'Allow a first deploy, where the Worker does not exist yet.'
+        required: false
+        default: false
+        type: boolean
+
+# The floor. The token arrives as an environment secret rather than from this
+# block, and nothing here needs to write to the repository.
+permissions:
+  contents: read
+
+env:
+  BUN_VERSION: '1.4.2'
+  # Nonsecret configuration, injected rather than persisted — there is no
+  # `.starter/deployment.local.json` in CI, because it is gitignored.
+  #
+  # These are GitHub *variables* (`vars`), not secrets: an account id, a Worker
+  # name, a database id and a public hostname are all configuration. Only the API
+  # token is a secret.
+  #
+  # `vars` can only be read into `env:`, not interpolated into a `run:` block — and
+  # nothing below interpolates `${{ }}` into a script anyway, for the reason in the
+  # commit message on the policy check.
+  CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+  CLOUDFLARE_WORKER_NAME: ${{ vars.CLOUDFLARE_WORKER_NAME }}
+  CLOUDFLARE_D1_DATABASE_ID: ${{ vars.CLOUDFLARE_D1_DATABASE_ID }}
+  CLOUDFLARE_PUBLIC_ORIGIN: ${{ vars.CLOUDFLARE_PUBLIC_ORIGIN }}
+
+jobs:
+  # ── plan: offline ──────────────────────────────────────────────────────────
+  #
+  # No `environment:` and therefore no secrets. This is the job a reviewer can
+  # read: it proves what *would* happen without needing authority to do it.
+  plan:
+    name: Plan
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          # This job reads the repository and never pushes. Leaving the token in the
+          # local git config would put a credential in `.git/config` for every
+          # later step, including the build — which is exactly the "secret in a place
+          # another process can read it" rule the deploy path enforces on argv.
+          persist-credentials: false
+
+      - uses: oven-sh/setup-bun@7b8f5b94c955a854e6f8b8dc76b2b8c6bca29f45 # v2.2.2
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+
+      - name: Install
+        run: bun install --frozen-lockfile
+
+      # `deploy:check` is the same planner the CLI uses and needs no credential.
+      # If it fails here, the operator learns before the apply job is queued
+      # rather than after it has claimed the concurrency group.
+      #
+      # The environment reaches the command through `env:`, not through `${{ }}` in
+      # the script: an interpolated value is substituted into the command *before*
+      # the shell runs, so a value containing a shell metacharacter would execute.
+      - name: Plan
+        env:
+          DEPLOY_ENVIRONMENT: ${{ inputs.environment }}
+        run: bun run deploy:check --env "$DEPLOY_ENVIRONMENT"
+
+      - name: Guards
+        run: bun run guard
+
+      - name: Build the artifact
+        run: bun run build && bun run check:bundle
+
+  # ── apply: the only mutating job ───────────────────────────────────────────
+  #
+  # `environment:` gives this job the environment's secrets *and* the environment's
+  # protection rules, which is how "production needs an approval" is expressed
+  # without any logic in this file. It is also what makes `concurrency.group`
+  # globally serialising: the group name is resolved from the same input.
+  apply:
+    name: Apply (${{ inputs.environment }})
+    needs: plan
+    runs-on: ubuntu-latest
+    # Long enough for a real migration and a real deploy, short enough that a hang
+    # does not hold the queue for a day. This bound is the *only* thing stopping a
+    # stuck run from blocking every later apply to this environment.
+    timeout-minutes: 30
+    environment: ${{ inputs.environment }}
+    permissions:
+      contents: read
+
+    # Keyed on the destination, not the ref. Two dispatches to staging queue behind
+    # each other; a staging apply and a production apply do not block each other,
+    # because they touch different Workers and different databases.
+    #
+    # `cancel-in-progress: false` is the load-bearing line. True would kill a run
+    # mid-migration.
+    concurrency:
+      group: deploy-${{ inputs.environment }}
+      cancel-in-progress: false
+
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+
+      - uses: oven-sh/setup-bun@7b8f5b94c955a854e6f8b8dc76b2b8c6bca29f45 # v2.2.2
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+
+      - name: Install
+        run: bun install --frozen-lockfile
+
+      # In the environment, never in a step's `run:` line. A token echoed in a
+      # command lands in the run log; this assignment never prints.
+      - name: Credential
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          DEPLOY_ENVIRONMENT: ${{ inputs.environment }}
+          FIRST_DEPLOY: ${{ inputs.first_deploy && 'yes' || 'no' }}
+        run: |
+          if [ -z "$CLOUDFLARE_API_TOKEN" ]; then
+            echo "::error::CLOUDFLARE_API_TOKEN is not set on this environment."
+            exit 3
+          fi
+          # Confirm the token resolves to the account this project is configured
+          # for, before the migration job has a chance to touch it.
+          bun run deploy:preflight --env "$DEPLOY_ENVIRONMENT" \
+            $([ "$FIRST_DEPLOY" = yes ] && echo --allow-new-worker)
+
+      # The source SHA is recorded rather than re-derived later, so the release
+      # record names the commit this run actually built rather than whatever HEAD
+      # was when the record was written.
+      - name: Record the source revision
+        run: echo "SOURCE_REVISION=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
+
+      # One command for build, migrate, deploy, verify and record, in that order,
+      # with `--yes` supplied here and nowhere else. The same pipeline the local
+      # CLI runs: there is no CI-only deployment path to keep in step. `apply`
+      # builds too, so this step is a preflight of the bundle rather than the build.
+      - name: Apply
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          DEPLOY_ENVIRONMENT: ${{ inputs.environment }}
+          APPLY_MIGRATIONS: ${{ inputs.migrate && 'yes' || 'no' }}
+        run: |
+          bun run deploy:apply --env "$DEPLOY_ENVIRONMENT" --yes \
+            $([ "$APPLY_MIGRATIONS" = yes ] || echo --skip-migrations)
+
+      # The release record is the artifact of this workflow. Uploading it keeps the
+      # provenance readable from the run page — by anyone reviewing a deploy months
+      # later — without needing a Cloudflare login or the operator's machine.
+      - name: Upload the release record
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: release-record-${{ inputs.environment }}
+          path: .starter/releases/${{ inputs.environment }}.json
+          if-no-files-found: error
+
+      # And the same record in the run summary, which is where someone lands first.
+      - name: Summarise the release
+        if: always()
+        env:
+          DEPLOY_ENVIRONMENT: ${{ inputs.environment }}
+        run: |
+          bun run deploy:status >> "$GITHUB_STEP_SUMMARY"

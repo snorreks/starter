@@ -158,7 +158,8 @@ Start at [AGENTS.md](AGENTS.md) for commands and navigation.
 | [docs/logs.md](docs/logs.md) | `bun run logs`, and what each refusal means |
 | [docs/lint.md](docs/lint.md) | Biome, and the rules that are off and why |
 | [docs/toolchain.md](docs/toolchain.md) | Version pinning, and what Moon is for |
-| [docs/cloudflare.md](docs/cloudflare.md) | Provisioning, deploying, what is separate from what |
+| [docs/cloudflare.md](docs/cloudflare.md) | Workers, D1, credentials, the deployment-mode binding |
+| [docs/deployment.md](docs/deployment.md) | The one deployment path: configuration authority, the pipeline, migrations, concurrency, health, and how to recover from a bad release |
 | [docs/secrets.md](docs/secrets.md) | SOPS, what is not implemented, and what never goes in the repository |
 | [docs/agent.md](docs/agent.md) | The Pi setup, skills, and the log tool |
 | [docs/rename-checklist.md](docs/rename-checklist.md) | Everything to change to make this yours |
@@ -168,11 +169,17 @@ Start at [AGENTS.md](AGENTS.md) for commands and navigation.
 Run through [docs/rename-checklist.md](docs/rename-checklist.md). The short version:
 
 ```bash
-bun run deploy:configure -- --provision   # create your D1, set your ids
+bun run deploy:configure -- --account <32-hex>
+bun run deploy:configure -- --env staging --worker <name>
+bun run deploy:configure -- --env staging --origin https://<host>
+bun run deploy:configure -- --env staging --provision
+
+bun run deploy:check --env staging   # the plan, offline. Reads nothing secret.
 ```
 
-The template provisions nothing on purpose. A fresh clone should reach a working
-local state and refuse, clearly, to deploy anywhere.
+The template provisions nothing on purpose. A fresh clone reaches a working local
+state and refuses, clearly, to deploy anywhere. Deployment is manual and
+per-environment: see [docs/deployment.md](docs/deployment.md).
 
 ## License
 

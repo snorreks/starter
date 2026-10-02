@@ -73,12 +73,46 @@ export interface DeploymentValues {
    * requested environment is absent from it.
    */
   environments?: Partial<Record<DeploymentEnvironment, EnvironmentTargets>>;
+
+  /**
+   * Values injected by the environment layer, kept separate rather than merged.
+   *
+   * Separate because of precedence: a per-environment entry must beat the
+   * single-set, and only an *injected* value beats the entry. Merging the CI values
+   * into the top-level fields instead made the single-set override every
+   * environment, which is how a project's own staging Worker name was replaced by a
+   * leftover top-level value.
+   */
+  injected?: Partial<EnvironmentTargets>;
 }
 
-export type LocalDeploymentValues = {
-  [K in keyof DeploymentValues]?: DeploymentValues[K] extends object
-    ? Partial<DeploymentValues[K]>
-    : DeploymentValues[K];
+/**
+ * What the gitignored overlay may contain.
+ *
+ * Two levels of partiality, and the second one is not optional convenience:
+ *
+ *   * Every top-level key may be absent — a read-modify-write must preserve keys
+ *     it does not touch, and `--provision` for the database must not erase a
+ *     Worker name someone already set.
+ *   * Each *environment entry* is partial too. `deploy:configure --env staging
+ *     --worker x` writes one field for one environment; requiring a complete
+ *     `EnvironmentTargets` would force the command to invent values for
+ *     production as well, and an invented name is indistinguishable from a real
+ *     one unless it is `null` — which is exactly the ambiguity the per-environment
+ *     layer exists to remove.
+ *
+ * The overlay is therefore a `Partial` at both levels, and `readLocalFile` is the
+ * only thing that turns it back into a complete `DeploymentValues`.
+ */
+export type LocalDeploymentValues = Omit<
+  {
+    [K in keyof DeploymentValues]?: DeploymentValues[K] extends object
+      ? Partial<DeploymentValues[K]>
+      : DeploymentValues[K];
+  },
+  'environments'
+> & {
+  environments?: Partial<Record<DeploymentEnvironment, Partial<EnvironmentTargets>>>;
 };
 
 const NULL_VALUES: DeploymentValues = {
@@ -165,6 +199,7 @@ const readLocalFile = (root: string): Partial<DeploymentValues> => {
       parsed[name] = {
         workerName: usable(entry.workerName),
         d1DatabaseId: usable(entry.d1DatabaseId),
+        origin: usable(entry.origin),
       };
     }
     if (Object.keys(parsed).length > 0) {
@@ -216,6 +251,21 @@ export const resolveDeploymentValues = (
   }
 
   // Layer 3: the environment, which is what CI injects instead of persisting.
+  //
+  // These populate the *single set* as well as `injected`, and deliberately are not
+  // copied into every environment entry. Copying them was a live
+  // production-safety defect: a `CLOUDFLARE_D1_DATABASE_ID` present in both
+  // `staging` and `production` means the two environments are the same database,
+  // and a staging migration is then a production migration. The values describe
+  // *one* environment — the one being deployed — and a set that described all of
+  // them at once would be saying they are the same.
+  const injected: Partial<EnvironmentTargets> = {};
+  const take = (name: keyof EnvironmentTargets, value: string | null): void => {
+    if (value !== null) {
+      injected[name] = value;
+    }
+  };
+
   const fromEnv = usable(env.CLOUDFLARE_ACCOUNT_ID);
   if (fromEnv !== null) {
     merged.accountId = fromEnv;
@@ -223,13 +273,21 @@ export const resolveDeploymentValues = (
   const workerFromEnv = usable(env.CLOUDFLARE_WORKER_NAME);
   if (workerFromEnv !== null) {
     merged.workerName = workerFromEnv;
+    take('workerName', workerFromEnv);
   }
   const d1FromEnv = usable(env.CLOUDFLARE_D1_DATABASE_ID);
   if (d1FromEnv !== null) {
     merged.d1DatabaseId = d1FromEnv;
-    for (const target of Object.values(merged.environments ?? {})) {
-      target.d1DatabaseId = d1FromEnv;
-    }
+    take('d1DatabaseId', d1FromEnv);
+  }
+  const originFromEnv = usable(env.CLOUDFLARE_PUBLIC_ORIGIN);
+  if (originFromEnv !== null) {
+    merged.customDomain = originFromEnv;
+    take('origin', originFromEnv);
+  }
+
+  if (Object.keys(injected).length > 0) {
+    merged.injected = injected;
   }
 
   return merged;
@@ -267,7 +325,7 @@ export type ResolutionLayer = 'environment' | 'local-file' | 'default';
 // only to satisfy the index type. `usable('')` is `null`, so the unreachable branch
 // reads as "not set" — the same answer the default path gives.
 export const describeResolution = (
-  field: 'accountId' | 'd1DatabaseId' | 'workerName',
+  field: 'accountId' | 'd1DatabaseId' | 'workerName' | 'origin',
   env: NodeJS.ProcessEnv = process.env,
   root: string = REPO_ROOT,
 ): ResolutionLayer => {
@@ -275,6 +333,7 @@ export const describeResolution = (
     accountId: 'CLOUDFLARE_ACCOUNT_ID',
     d1DatabaseId: 'CLOUDFLARE_D1_DATABASE_ID',
     workerName: 'CLOUDFLARE_WORKER_NAME',
+    origin: 'CLOUDFLARE_PUBLIC_ORIGIN',
   };
 
   if (usable(env[FROM_ENV[field] ?? '']) !== null) {
@@ -282,9 +341,27 @@ export const describeResolution = (
   }
 
   const local = readLocalFile(root);
-  const fromLocal = local[field];
-  if (typeof fromLocal === 'string' && fromLocal !== '') {
+
+  // `origin` has no top-level key on the resolved values — it lives per
+  // environment — so it is handled separately below rather than indexed here,
+  // which would need a cast to compile and would then answer about the wrong key.
+  if (field !== 'origin') {
+    const fromLocal = local[field];
+    if (typeof fromLocal === 'string' && fromLocal !== '') {
+      return 'local-file';
+    }
+    return 'default';
+  }
+
+  const fromTopLevel = local.customDomain;
+  if (usable(fromTopLevel) !== null) {
     return 'local-file';
+  }
+
+  for (const entry of Object.values(local.environments ?? {})) {
+    if (usable(entry.origin) !== null) {
+      return 'local-file';
+    }
   }
 
   return 'default';
@@ -333,12 +410,48 @@ export const effectiveDeploymentValues = (): DeploymentValues =>
  * and is refused rather than defaulted. Absent `environments` means the project has
  * only ever had one, so the single set still applies.
  */
-export const targetsFor = (environment: DeploymentEnvironment): EnvironmentTargets | null => {
-  const values = effectiveDeploymentValues();
+/**
+ * The configured topology for one environment, or `null`.
+ *
+ * The layer-1 fallback is consulted only when the project has never declared
+ * per-environment targets. A project that has *some* environments gets a refusal
+ * for the ones it does not, which is what stops `--env production` from being
+ * served staging's Worker.
+ */
+export const topologyFor = (
+  environment: DeploymentEnvironment,
+  values: DeploymentValues = effectiveDeploymentValues(),
+): EnvironmentTargets | null => {
+  const fallback: EnvironmentTargets = {
+    workerName: values.workerName,
+    d1DatabaseId: values.d1DatabaseId,
+    origin: values.customDomain,
+  };
 
-  if (values.environments === undefined) {
-    return { workerName: values.workerName, d1DatabaseId: values.d1DatabaseId };
+  // An environment the project does not describe has no topology. Refused rather
+  // than defaulted, because serving a production request with staging names is the
+  // outcome this whole layer exists to prevent.
+  const base = values.environments === undefined ? fallback : values.environments[environment];
+  if (base === undefined) {
+    return null;
   }
 
-  return values.environments[environment] ?? null;
+  // Injected last: the environment layer is the most specific and least persistent,
+  // so a CI run's values describe the environment being deployed and nothing else.
+  // A stale local file naming production's database cannot be overridden into
+  // staging by a CI variable, and a CI variable for staging cannot silently become
+  // production's configuration.
+  const injected = values.injected;
+  if (injected === undefined) {
+    return base;
+  }
+
+  return {
+    workerName: injected.workerName ?? base.workerName,
+    d1DatabaseId: injected.d1DatabaseId ?? base.d1DatabaseId,
+    origin: injected.origin ?? base.origin,
+  };
 };
+
+/** Alias kept for existing callers; `topologyFor` is the name that says what it is. */
+export const targetsFor = topologyFor;

@@ -84,14 +84,105 @@ reviews:
               reintroduces a default here — that is the exact regression this
               boundary exists to prevent.
 
+        - path: "scripts/src/deploy/**"
+          instructions: |
+              One configuration authority, four deployment phases. Read
+              docs/deployment.md before changing anything here.
+
+              `target.ts` is the authority: every command that can reach a remote
+              resource resolves its destination through `resolveTarget` and nothing
+              else resolves one independently. Two lookups that are each correct
+              about different things is how a deploy migrates staging while
+              publishing production. Flag any new code path that reads
+              `DEPLOYMENT_CONFIG` or `.starter/deployment.local.json` directly to
+              decide a destination.
+
+              `resolveTarget` refuses rather than defaults, for four reasons that are
+              all load-bearing: an unknown environment, a null value, two
+              environments sharing a Worker or a D1 database, and an origin that is
+              not an absolute https URL. Never soften one into a fallback.
+
+              Phase authority is the design: `plan` must work with no credential and
+              no network (it runs on fork pull requests), `preflight` is read-only,
+              and only `apply` mutates, and only with `--yes`. Flag a change that
+              lets any of them reach an authenticated or mutating path they should
+              not.
+
+              A secret never goes in argv. `credentials.ts` refuses `--api-token`,
+              `--var NAME:value` with a secret-bearing name, and the bare
+              `--var NAME value` spelling. Do not add another way to pass one; use
+              the secret channel.
+
+              Account ids, Worker names, database ids and public origins are
+              configuration, not secrets, and belong in the gitignored overlay. A
+              token, a private key or a mail API key does not.
+
+              `release.ts` records what happened. It never decides whether to deploy:
+              no fingerprint cache, no skip-if-unchanged. `digestArtifact` hashes file
+              paths and contents; it must not include a timestamp, a hostname or a
+              secret, or two builds of the same tree stop agreeing.
+
+              Tests for this directory belong in `scripts/tests/deployment_*.test.ts`
+              and must assert the argv or the HTTP request that was produced, not
+              only a returned object. A test asserting a helper's return value
+              passes while the helper spawns nothing — which is how `e2e:test` once
+              resolved to an `echo` and the suite stayed green.
+
+        - path: ".github/workflows/deploy.yml"
+          instructions: |
+              The only path that deploys. Three properties that must not regress:
+
+              `cancel-in-progress: false` on the apply job's concurrency group.
+              Cancelling a run halfway through `d1 migrations apply` leaves a schema
+              ahead of the code running on it, with no record that anything was in
+              flight. The group is keyed on the destination environment, so two
+              applies to staging queue and staging does not block production.
+
+              `on: workflow_dispatch` only. An unconfigured template must not publish
+              itself when a commit lands. Do not add `push` or `pull_request`.
+
+              No credential on any job that does not need one, and `environment:` on
+              the job that does, so environment protection and environment-scoped
+              secrets apply without any logic in the file. This repository does not
+              change remote repository settings; create the environments once, as an
+              operator.
+
+              Do not introduce a lock file. A lock in a checkout serialises one
+              developer's machines and nothing else; the environment concurrency
+              group is the only global serialisation actually claimed here.
+
+        - path: "apps/frontend/client/src/routes/health/**"
+          instructions: |
+              Public, unauthenticated, `no-store`. Everything in the response is
+              published, so it must contain no secret, no binding value, no account
+              id, no database id and no stack trace. `release` is a git SHA, which
+              is public by construction.
+
+              `/health` reads configuration only and must not touch the database: a
+              load balancer polling a database-backed liveness probe couples routing
+              health to database latency and pulls every Worker out of rotation while
+              the application still serves. `/health/ready` is the endpoint that
+              exercises the bindings, with a bounded `SELECT 1` — it measures the
+              binding, not the data. Do not merge them.
+
         - path: "apps/frontend/client/src/hooks.server.ts"
           instructions: |
-              The composition root. Three jobs in this order: bindings to
-              container, request to identity, unrouted `/api/*` to a JSON 404.
-              `locals.user` is resolved per request and must never be cached on the
-              module — a Worker isolate serves concurrent requests and the last
+              The composition root. Four jobs in this order: bindings to container,
+              request to identity, unrouted `/api/*` to a JSON 404, and the cache
+              policy. `locals.user` is resolved per request and must never be cached
+              on the module — a Worker isolate serves concurrent requests and the last
               writer would win for all of them. A configuration failure is caught
               here and answered with a 503 naming the binding, never an opaque 500.
+
+              `cachePolicyFor` marks every `/api/*` response and every signed-in page
+              `private, no-store`. Anonymous HTML is deliberately left alone:
+              whether a page is anonymous depends on the session, not the URL, so a
+              blanket `public` would be a correctness claim this code cannot verify.
+
+              Never `fetch()` this app's own origin, and never let an unrouted
+              `/api/*` path fall through to SvelteKit's HTML error page: a client
+              that received HTML has to guess between a wrong URL and a broken
+              deploy.
 
         - path: "apps/frontend/client/src/routes/**/+server.ts"
           instructions: |
@@ -211,6 +302,10 @@ reviews:
               guard is what keeps it in agreement with `config/toolchain.json`.
               Flag any edit that changes one without the other.
 
+              CI must never deploy, and must never need a credential: `pull_request`
+              from a fork gets no secret even if one existed. Deployment lives in
+              `deploy.yml` on a separate event for exactly that reason.
+
         - path: "scripts/**"
           instructions: |
               Bun CLI tooling, one dispatcher at `src/cli.ts` with domain modules
@@ -307,6 +402,7 @@ knowledge_base:
             - "AGENTS.md"
             - ".pi/skills/**/SKILL.md"
             - "docs/architecture.md"
+            - "docs/deployment.md"
     learnings:
         scope: local
     web_search:

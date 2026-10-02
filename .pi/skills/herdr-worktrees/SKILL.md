@@ -63,6 +63,12 @@ herdr { action: "worktree_list", params: { cwd: "<repo root>" } }
 Read the real paths and workspace ids from the response. A worktree that is
 already open is not a worktree to recreate.
 
+`cwd` is **required** for `list`, `create` and `open`. Herdr picks a repository
+itself when it is absent, and the one it picks is not this project: with no
+`cwd`, `worktree_create` produced a checkout of an unrelated repository and
+reported success, with a real path and a real workspace id. Pass the directory
+that contains `.git`.
+
 ## 4. Create one
 
 ```

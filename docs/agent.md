@@ -208,10 +208,21 @@ The `handoff` skill is the workflow; this is the mechanism.
 
 ```ts
 herdr { action: "status" }
-herdr { action: "worktree_list" }
-herdr { action: "worktree_create", params: { branch: "pr-f-…", base: "main" } }
+herdr { action: "worktree_list", params: { cwd: "<repo root>" } }
+herdr { action: "worktree_create", params: { cwd: "<repo root>", branch: "pr-f-…", base: "main" } }
 herdr { action: "help", params: { group: "worktree create" } }
 ```
+
+**`cwd` is required for `list`, `create` and `open`.** Herdr picks a repository
+itself when `--cwd` is absent, and the one it picks is not this project: creating a
+worktree from this extension with no `cwd` produced a checkout of an unrelated
+dotfiles repository and reported success, with a real path and a real workspace id.
+Every later call then ran against the wrong project, and nothing looked wrong until
+something was pushed somewhere it should not have been. `worktree_remove` is exempt —
+it acts on a workspace id, which already names its checkout.
+
+Pass the directory that contains `.git`. A path without one is refused too:
+presence is not validity, and Herdr resolves the target from whatever it is given.
 
 See [Optional capabilities](#optional-capabilities) below.
 

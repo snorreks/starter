@@ -21,6 +21,7 @@ import {
   probe,
   sessionContext,
   validateWorktreeParams,
+  validateWorktreeRepository,
 } from '../lib/herdr_cli.ts';
 import { cleanupFakes, fakeBin, runnerFor, scratchDir } from './fake_bin.ts';
 
@@ -180,17 +181,26 @@ describe('validateWorktreeParams — refusals before anything is spawned', () =>
   test('empty identifiers cannot turn create or open into a default action', () => {
     for (const branch of [undefined, '']) {
       for (const path of [undefined, '']) {
-        expect(validateWorktreeParams('create', { branch, path })).toContain('needs a branch');
+        expect(validateWorktreeParams('create', { cwd: '/repo', branch, path })).toContain(
+          'needs a branch',
+        );
         for (const workspace of [undefined, '']) {
-          expect(validateWorktreeParams('open', { branch, path, workspace })).toContain(
-            'needs a workspace id',
-          );
+          expect(
+            validateWorktreeParams('open', { cwd: '/repo', branch, path, workspace }),
+          ).toContain('needs a workspace id');
         }
       }
     }
-    expect(validateWorktreeParams('create', { branch: '', path: '/checkout' })).toBeUndefined();
     expect(
-      validateWorktreeParams('open', { branch: '', path: '', workspace: 'wPK' }),
+      validateWorktreeParams('create', { cwd: '/repo', branch: '', path: '/checkout' }),
+    ).toBeUndefined();
+    expect(
+      validateWorktreeParams('open', {
+        cwd: '/repo',
+        branch: '',
+        path: '',
+        workspace: 'wPK',
+      }),
     ).toBeUndefined();
   });
 
@@ -209,13 +219,56 @@ describe('validateWorktreeParams — refusals before anything is spawned', () =>
   });
 
   test('open without any identifier is refused', () => {
-    expect(validateWorktreeParams('open', {})).toContain('needs a workspace id');
+    expect(validateWorktreeParams('open', { cwd: '/repo' })).toContain('needs a workspace id');
+  });
+
+  test('a missing repository is refused for every action that resolves one', () => {
+    // The regression. With no `cwd`, Herdr picks a repository itself: creating a
+    // worktree from this extension that way produced a checkout of an unrelated
+    // dotfiles project and reported success, with a real path and a real workspace
+    // id. Every later command then ran against the wrong project.
+    for (const action of ['list', 'create', 'open'] as const) {
+      for (const cwd of [undefined, '']) {
+        const reason = validateWorktreeParams(action, { cwd, branch: 'x', path: '/p' });
+        expect(reason).toContain('needs `cwd`');
+        // The remedy names the directory to pass, because "add cwd" alone leaves
+        // the model guessing what value counts.
+        expect(reason).toContain('contains `.git`');
+        expect(reason).toContain('Nothing has been changed');
+      }
+    }
+  });
+
+  test('remove does not need a repository: a workspace id already names its checkout', () => {
+    expect(validateWorktreeParams('remove', { workspace: 'wPK' })).toBeUndefined();
   });
 
   test('valid calls pass validation', () => {
-    expect(validateWorktreeParams('create', { branch: 'x' })).toBeUndefined();
-    expect(validateWorktreeParams('list', {})).toBeUndefined();
+    expect(validateWorktreeParams('create', { cwd: '/repo', branch: 'x' })).toBeUndefined();
+    expect(validateWorktreeParams('list', { cwd: '/repo' })).toBeUndefined();
     expect(validateWorktreeParams('remove', { workspace: 'wPK' })).toBeUndefined();
+  });
+});
+
+describe('validateWorktreeRepository — a present path that is not a repository', () => {
+  test('a real repository passes', () => {
+    expect(validateWorktreeRepository('/repo', true)).toBeUndefined();
+  });
+
+  test('a path with no .git is refused, naming the path and the consequence', () => {
+    // Presence is not validity. Every other check passes a typo'd path through, and
+    // Herdr resolves the target from it — so a wrong one acts on a different
+    // checkout.
+    const reason = validateWorktreeRepository('/tmp/does-not-exist', false);
+    expect(reason).toContain('/tmp/does-not-exist');
+    expect(reason).toContain('not a git repository');
+    expect(reason).toContain('Nothing has been changed');
+  });
+
+  test('an absent cwd is left to validateWorktreeParams, not reported twice', () => {
+    // Two refusals for one problem reads as two problems.
+    expect(validateWorktreeRepository(undefined, false)).toBeUndefined();
+    expect(validateWorktreeRepository('', false)).toBeUndefined();
   });
 });
 
