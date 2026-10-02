@@ -1,11 +1,15 @@
 // scripts/tests/guards.test.ts
 //
-// The guards, tested against fixtures rather than against the repository.
+// The guards that are not about the module graph, tested against fixtures rather
+// than against the repository.
 //
-// Two reasons. A guard that has only ever run clean is untested: it may report
-// `ok` because it reads nothing. And a guard run against the live tree cannot be
-// shown to *fail*, because making it fail would require breaking the repository
-// to prove it. Each test here writes a throwaway tree under a temp directory.
+// Two reasons. A guard that has only ever run clean is untested: it may report `ok`
+// because it reads nothing. And a guard run against the live tree cannot be shown to
+// *fail*, because making it fail would require breaking the repository to prove it.
+// Each test here writes a throwaway tree under a temp directory.
+//
+// The architecture guard needs resolved module graphs rather than a file tree, so it
+// has its own suite: `architecture_guards.test.ts`.
 //
 // The `source-is-tracked` cases are not hypothetical. An unanchored `logs/`
 // pattern in `.gitignore` silently excluded all eight files of
@@ -22,7 +26,6 @@ import {
   guardRequestState,
   guardSourceIsTracked,
   guardVersionMirrors,
-  guardWorkspaceBoundary,
 } from '../src/guards/boundary.ts';
 import { REPO_ROOT } from '../src/shared/paths.ts';
 
@@ -46,91 +49,6 @@ afterAll(() => {
   for (const root of created) {
     rmSync(root, { recursive: true, force: true });
   }
-});
-
-/**
- * Import lines, assembled from parts.
- *
- * The boundary guard scans text, so a fixture that spelled `@starter/database`
- * out in full would be read as this file importing it — and this file would then
- * fail the very rule it is testing. Assembling keeps the fixture honest and the
- * guard clean without an exemption that would weaken it everywhere else.
- */
-const pkg = (name: string): string => `@starter/${name}`;
-const importLine = (specifier: string): string => `import { thing } from '${specifier}';`;
-const importComment = (specifier: string): string => `// import { thing } from '${specifier}';`;
-
-describe('workspace-boundary', () => {
-  test('allows a layer to import a layer it depends on', () => {
-    const root = makeTree({
-      'apps/frontend/client/src/lib/server/db.ts': `${importLine(pkg('database'))}\n`,
-    });
-
-    const result = guardWorkspaceBoundary(root);
-    expect(result.violations).toEqual([]);
-  });
-
-  test('rejects the API importing Svelte component code', () => {
-    // The split between `client` and `api` exists for this: `@starter/ui` is
-    // Svelte, and a Worker has no DOM to compile it against.
-    const root = makeTree({
-      'apps/frontend/client/src/lib/server/render.ts': `${importLine(pkg('ui'))}\n`,
-    });
-
-    const result = guardWorkspaceBoundary(root);
-    expect(result.violations).toHaveLength(1);
-    expect(result.violations[0]?.message).toContain(pkg('ui'));
-  });
-
-  test('rejects the client importing a server library', () => {
-    // And symmetrically: `drizzle-orm` in a browser bundle fails on the first
-    // query, in development, with a confusing error.
-    const root = makeTree({
-      'apps/frontend/client/src/lib/db.ts': `${importLine(pkg('database'))}\n`,
-    });
-
-    const result = guardWorkspaceBoundary(root);
-    expect(result.violations).toHaveLength(1);
-    expect(result.violations[0]?.message).toContain(pkg('database'));
-  });
-
-  test('counts a subpath import as the package it belongs to', () => {
-    // `@starter/schemas/notes` is the schemas package, not a separate one.
-    const root = makeTree({
-      'packages/backend/auth/src/session.ts': `${importLine(pkg('schemas/auth'))}\n`,
-    });
-
-    expect(guardWorkspaceBoundary(root).violations).toEqual([]);
-  });
-
-  test('rejects shared code reaching sideways into a plane', () => {
-    // The rule that keeps drizzle-orm and svelte out of shared bundles.
-    const root = makeTree({
-      'packages/shared/utils/src/db.ts': `${importLine(pkg('database'))}\n`,
-    });
-
-    const result = guardWorkspaceBoundary(root);
-    expect(result.violations).toHaveLength(1);
-    expect(result.violations[0]?.file).toContain('packages/shared/utils');
-  });
-
-  test('ignores a specifier mentioned only in a comment', () => {
-    const root = makeTree({
-      'apps/frontend/client/src/lib/server/render.ts': `${importComment(pkg('ui'))}\nexport const a = 1;\n`,
-    });
-
-    expect(guardWorkspaceBoundary(root).violations).toEqual([]);
-  });
-
-  test('every result declares a zero baseline', () => {
-    // Guards are invariants. A baseline count is how a failure learns to hide.
-    const root = makeTree({ 'apps/frontend/client/src/lib/server/a.ts': 'export const a = 1;\n' });
-
-    expect(guardWorkspaceBoundary(root).baselineCount).toBe(0);
-    expect(guardRequestState(root).baselineCount).toBe(0);
-    expect(guardNoLeftovers(root).baselineCount).toBe(0);
-    expect(guardSourceIsTracked(root).baselineCount).toBe(0);
-  });
 });
 
 describe('request-state', () => {
@@ -501,136 +419,6 @@ describe('documented-paths', () => {
       expect(existsSync(join(REPO_ROOT, doc)), `Expected document is missing: ${doc}`).toBe(true);
     }
     expect(guardDocumentedPaths(REPO_ROOT).violations).toEqual([]);
-  });
-});
-
-describe('workspace-boundary: import scanning', () => {
-  // Both of these were found by probing the scanner rather than reading it, and both
-  // failed the same way: text that was not an import was treated as one, or an
-  // import was invisible. Either way the guard's report stopped matching the code.
-
-  test('ignores an import inside a block comment', () => {
-    // Block comments were not stripped at all, so a commented-out import read as a
-    // live one. `importComment` only covered `//`, which is why this survived: the
-    // suite had a comment case and it passed.
-    const root = makeTree({
-      'apps/frontend/client/src/lib/server/db.ts': `/* import { thing } from '${pkg('ui')}'; */\nexport const x = 1;\n`,
-    });
-
-    expect(guardWorkspaceBoundary(root).violations).toEqual([]);
-  });
-
-  test('sees an import inside a block comment that also contains real code', () => {
-    const root = makeTree({
-      'apps/frontend/client/src/lib/server/db.ts': `/*\n * notes:\n */\nimport { thing } from '${pkg('ui')}';\n`,
-    });
-
-    const violations = guardWorkspaceBoundary(root).violations;
-    expect(violations).toHaveLength(1);
-    expect(violations[0].line).toBe(4);
-  });
-
-  test('does not treat import text inside a string as an import', () => {
-    // The scanner never looked inside strings, so this is the inverse failure: a real
-    // violation quoted in a string would be invisible, and the guard would report a
-    // clean tree.
-    const root = makeTree({
-      'apps/frontend/client/src/lib/server/db.ts':
-        `export const docs =\n  "run: import { thing } from '${pkg('ui')}'";\n` +
-        `import { thing } from '${pkg('ui')}';\n`,
-    });
-
-    const violations = guardWorkspaceBoundary(root).violations;
-    // Exactly one: the real import on line 3, not the quoted one on line 2.
-    expect(violations).toHaveLength(1);
-    expect(violations[0].line).toBe(3);
-  });
-
-  test.each(['"/*"', "'// comment'", '`/* template`'])(
-    'sees a forbidden import after a literal containing a comment marker: %s',
-    (literal) => {
-      const root = makeTree({
-        'apps/frontend/client/src/lib/server/db.ts': `const value = ${literal};\nimport { thing } from '${pkg('ui')}';\n`,
-      });
-      const violations = guardWorkspaceBoundary(root).violations;
-      expect(violations).toHaveLength(1);
-      expect(violations[0].line).toBe(2);
-    },
-  );
-
-  test('sees a static specifier embedded in a template literal', () => {
-    // The interpolation is code, so blanking the whole template would hide a real
-    // import. The static prefix is what makes this resolvable.
-    const root = makeTree({
-      'apps/frontend/client/src/lib/server/db.ts': `export const load = () => import(\`${pkg('ui')}/thing\`);\n`,
-    });
-
-    expect(guardWorkspaceBoundary(root).violations).toHaveLength(1);
-  });
-
-  test('a fully interpolated specifier is not reported, and that is stated not assumed', () => {
-    // `import(\`../${name}\`)` cannot be resolved statically — the specifier depends on
-    // a runtime value. A static scanner cannot know whether it crosses a boundary, so
-    // it does not claim to. Asserted so the limitation is a recorded fact rather than
-    // a gap someone rediscovers: the honest options are a static import or a lint rule
-    // that resolves the constant, not a scanner that guesses.
-    //
-    // The `${…}` belongs to the *generated* code under test, not to this file, so it is
-    // assembled from parts: written literally in a plain string, Biome correctly reads
-    // it as a stray template placeholder. No suppression is used, because this
-    // repository has none and the fix is to build the string rather than silence the
-    // rule.
-    const INTERPOLATION = '$' + '{name}';
-    const fixture = `export const load = (name: string) => import(\`../../${INTERPOLATION}/thing\`);\n`;
-
-    const root = makeTree({ 'apps/frontend/client/src/lib/server/db.ts': fixture });
-
-    expect(guardWorkspaceBoundary(root).violations).toEqual([]);
-  });
-
-  test('catches a CommonJS require across the boundary', () => {
-    // `require()` is not matched by the import pattern, so it walked straight through.
-    // Nothing in this repository uses it, but a boundary that can be crossed
-    // quietly is not a boundary.
-    const root = makeTree({
-      'apps/frontend/client/src/lib/server/db.ts': `const ui = require('${pkg('ui')}');\n`,
-    });
-
-    const violations = guardWorkspaceBoundary(root).violations;
-    expect(violations).toHaveLength(1);
-    expect(violations[0].message).toContain(pkg('ui'));
-  });
-
-  test('still catches every static import form', () => {
-    // The hardening must not have narrowed what the pattern matched. Each of these
-    // was verified against the previous implementation.
-    const forms = [
-      `import { a } from '${pkg('ui')}';`,
-      `import a from '${pkg('ui')}';`,
-      `import * as a from '${pkg('ui')}';`,
-      `import type { a } from '${pkg('ui')}';`,
-      `import { type a } from '${pkg('ui')}';`,
-      `import '${pkg('ui')}';`,
-      `export { a } from '${pkg('ui')}';`,
-      `export * from '${pkg('ui')}';`,
-      `const a = await import('${pkg('ui')}');`,
-      `await import(\n  '${pkg('ui')}'\n);`,
-    ];
-
-    for (const form of forms) {
-      const root = makeTree({ 'apps/frontend/client/src/lib/server/db.ts': `${form}\n` });
-      expect(guardWorkspaceBoundary(root).violations, form).toHaveLength(1);
-    }
-  });
-
-  test('reports the line a violation is on, not the line the comment started', () => {
-    // Offsets are preserved by blanking rather than deleting, so a multi-line comment
-    // above an import cannot shift the reported line.
-    const root = makeTree({
-      'apps/frontend/client/src/lib/server/db.ts': `/*\n * a\n * b\n * c\n */\nimport { thing } from '${pkg('ui')}';\n`,
-    });
-
-    expect(guardWorkspaceBoundary(root).violations[0]?.line).toBe(6);
   });
 });
 

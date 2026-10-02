@@ -1,11 +1,7 @@
 {
   "extends": "../../../config/tsconfig/tsconfig.base.json",
   "compilerOptions": {
-    "types": ["bun"],
-    "paths": {
-      "@starter/schemas": ["../schemas/src/index.ts"],
-      "@starter/schemas/*": ["../schemas/src/*"]
-    }
+    "types": ["bun"]
   },
   "include": ["src/**/*", "tests/**/*"]
 }

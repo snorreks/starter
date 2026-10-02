@@ -189,7 +189,7 @@ describe('guard command', () => {
   });
 
   test('a real --only operand runs that one guard', async () => {
-    const code = await quiet(() => guardCommand.run(['--only', 'workspace-boundary']));
+    const code = await quiet(() => guardCommand.run(['--only', 'architecture']));
     expect(code).toBe(EXIT.ok);
   });
 
