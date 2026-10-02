@@ -15,6 +15,7 @@ import {
   SUPPORTED_CREDENTIAL_MODES,
   secretInArgvProblem,
 } from '../src/deploy/credentials.ts';
+import { preflight } from '../src/deploy/preflight.ts';
 import {
   DEPLOYABLE_ENVIRONMENTS,
   environmentIsolationProblem,
@@ -249,7 +250,7 @@ describe('staging and production may not share a resource', () => {
       }),
     );
 
-    expect(problem).toContain('both name the Worker');
+    expect(problem).toContain('both resolve to the Worker');
     expect(problem).toContain('starter-staging');
   });
 
@@ -270,7 +271,7 @@ describe('staging and production may not share a resource', () => {
       }),
     );
 
-    expect(problem).toContain('both use the D1 database');
+    expect(problem).toContain('both resolve to the D1 database');
     expect(problem).toContain('db-staging');
   });
 
@@ -334,43 +335,56 @@ describe('the documented credential modes are the implemented ones', () => {
 
 describe('a secret is never placed in argv', () => {
   test.each([
-    [['--api-token', 'abc'], "would place a secret in this process's argv"],
-    [['--var', 'BETTER_AUTH_SECRET:hunter2'], "would place a secret in this process's argv"],
-    [['--var', 'BETTER_AUTH_SECRET:hunter2'], "would place a secret in this process's argv"],
+    // Bare and `=value` spellings of the same flag. The `=` form is one token, so a
+    // check for the bare token walks straight past it — and that is the spelling a
+    // shell completion produces.
+    [['--api-token', 'abc'], 'would place a secret in this process'],
+    [['--api-token=abc'], 'would place a secret in this process'],
+    [['--token=abc'], 'would place a secret in this process'],
+    // Both `--var` spellings.
+    [['--var', 'BETTER_AUTH_SECRET:hunter2'], 'BETTER_AUTH_SECRET'],
+    [['--var=BETTER_AUTH_SECRET:hunter2'], 'BETTER_AUTH_SECRET'],
+    [['--var', 'BETTER_AUTH_SECRET', 'hunter2'], 'BETTER_AUTH_SECRET'],
+    // The one a `SECRET` substring misses entirely, and the reason the registry's
+    // own list is consulted first.
+    [['--var', 'RESEND_API_KEY:re_x'], 'RESEND_API_KEY'],
   ])('refuses %j', (args, expected) => {
     const problem = secretInArgvProblem(args);
     expect(problem).not.toBeNull();
     expect(problem).toContain(expected);
   });
 
-  test('a bare --var with a secret name in the next token is caught too', () => {
-    // The `--var NAME:value` form is easy to miss; this is the other spelling.
-    const problem = secretInArgvProblem(['--var', 'BETTER_AUTH_SECRET', 'hunter2']);
-    expect(problem).not.toBeNull();
-  });
-
   test('an ordinary non-secret var is allowed through', () => {
     expect(secretInArgvProblem(['--var', 'RELEASE:abc123'])).toBeNull();
+    expect(secretInArgvProblem(['--var=RELEASE:abc123'])).toBeNull();
     expect(secretInArgvProblem(['deploy', '--env', 'staging', '--yes'])).toBeNull();
   });
 });
 
-describe('account ids are configuration, and are named in refusals', () => {
-  test('a wrong-account refusal names both accounts', () => {
-    // Covered here because it is a property of the resolved target: the whole point
-    // of carrying the account id is being able to name it when it is wrong.
-    const base = configured();
-    const target = resolveTarget('staging', {
-      values: configured({
-        accountId: OTHER_ACCOUNT,
-        environments: base.environments as never,
-      }),
+describe('a wrong account is refused, naming both accounts', () => {
+  test('preflight reports the configured account and the one the credential reaches', () => {
+    // The whole point of carrying the account id is being able to name it when it
+    // is wrong. The earlier version of this test asserted that the resolved target
+    // held a different account — which is a statement about the fixture, not about
+    // any refusal.
+    const resolved = resolveTarget('staging', {
+      values: configured({ accountId: OTHER_ACCOUNT }),
     });
-    expect(target.ok).toBe(true);
-    if (!target.ok) {
-      return;
+    expect(resolved.ok).toBe(true);
+    if (!resolved.ok) {
+      throw new Error('fixture did not resolve');
     }
-    expect(target.target.accountId).toBe(OTHER_ACCOUNT);
-    expect(target.target.accountId).not.toBe(ACCOUNT);
+
+    const report = preflight(resolved.target, {
+      env: { CLOUDFLARE_API_TOKEN: 't' },
+      run: (args) =>
+        args[0] === 'whoami'
+          ? { ok: true, stdout: `Account: ${ACCOUNT}\n`, stderr: '' }
+          : { ok: true, stdout: `{"account_id":"${ACCOUNT}"}`, stderr: '' },
+    });
+
+    expect(report.ok).toBe(false);
+    expect(report.findings[0]?.detail).toContain(ACCOUNT);
+    expect(report.findings[0]?.detail).toContain(OTHER_ACCOUNT);
   });
 });

@@ -32,7 +32,8 @@
 import { join } from 'node:path';
 import { captureWrangler, runWrangler } from '../cloudflare/wrangler.ts';
 import { planMigrate } from '../db/migrate.ts';
-import { CLIENT_DIR } from '../shared/paths.ts';
+import { CLIENT_DIR, REPO_ROOT } from '../shared/paths.ts';
+import { wranglerDatabaseId } from './configure.ts';
 import {
   type ArtifactCheck,
   inspectArtifact,
@@ -92,24 +93,28 @@ const ok = (phase: Phase, detail: string): StepOutcome => ({ phase, ok: true, de
 const bad = (phase: Phase, detail: string): StepOutcome => ({ phase, ok: false, detail });
 
 /**
- * Migrate the target's database.
+ * The migration argv for one environment, or a refusal.
  *
- * The plan comes from `planMigrate`, the same planner `bun run db:migrate` uses,
- * so the two cannot disagree about which database a given `--env` means. If that
- * planner refuses, this refuses: a deploy that skips migrations because the
- * planner could not build them is a deploy that ships code against a schema
- * nobody applied.
+ * The single source for what a migration looks like. `planDeploy` and `apply` both call
+ * it, because they had already drifted: the plan's hand-written copy omitted
+ * `--remote`, so the thing an operator approved was not the thing that ran. A dry run
+ * that renders different argv from the real run is a dry run that can lie.
+ *
+ * `databaseId` comes from the already-validated target rather than being resolved here,
+ * so the migration destination and the deploy destination cannot disagree.
+ * `wranglerDatabaseId` is then the *provider's* view of that environment, and the two
+ * are compared — which is the check the argv alone cannot make, because both
+ * commands name the binding `DB` rather than a database.
  *
  * "Reviewed" is enforced structurally rather than by policy: only files already
  * committed under the migrations directory are applied, and this never generates
  * one. A migration that has not been reviewed is one that has not been committed,
  * and the fix is to commit it, not to apply it.
  */
-const migrate = (target: ResolvedTarget, argv: string[][]): { ok: boolean; detail: string } => {
-  // The database id comes from the *validated target*, not from a second lookup.
-  // Resolving it again here is how a pipeline ends up migrating staging while
-  // deploying production: both calls are correct, and they are correct about
-  // different things.
+export const migrationStep = (
+  target: ResolvedTarget,
+  root: string = REPO_ROOT,
+): { ok: true; args: string[]; description: string } | { ok: false; detail: string } => {
   const plan = planMigrate(target.environment, { databaseId: target.d1DatabaseId });
 
   if (!plan.ok) {
@@ -119,21 +124,78 @@ const migrate = (target: ResolvedTarget, argv: string[][]): { ok: boolean; detai
     };
   }
 
-  // `planMigrate` names the binding and the `--env`; the destination database is
-  // asserted here rather than trusted, because the difference between "staging"
-  // and "production" in this argv is the difference between a rehearsal and an
-  // incident.
-  if (!plan.args.includes(target.environment)) {
+  const configured = wranglerDatabaseId(target.environment, root);
+  if (configured !== target.d1DatabaseId) {
+    // Migrating one database and deploying code that reads another is invisible in
+    // the argv: both commands name the binding `DB`, so only the configured id
+    // reveals it. Refused before anything runs.
     return {
       ok: false,
       detail:
-        `The migration plan targets "${target.environment}"'s database but the resolved ` +
-        `target is ${target.workerName} (${target.d1DatabaseId}). Refusing to migrate a ` +
-        'database the plan does not name.',
+        `The ${target.environment} D1 database in wrangler.jsonc is ` +
+        `${configured === null ? 'not configured' : `"${configured}"`}, but this project ` +
+        `is configured with ${target.d1DatabaseId}.\n` +
+        '  Wrangler resolves the database from its own config, so migrating now would move\n' +
+        '  a different database than the deployment expects. Nothing has been changed.\n' +
+        `  bun run deploy:configure -- --env ${target.environment} --provision`,
     };
   }
 
-  argv.push(plan.args);
+  return {
+    ok: true,
+    args: plan.args,
+    description: `Apply reviewed migrations to ${target.d1DatabaseId} (${target.environment})`,
+  };
+};
+
+/** The deploy argv for one environment, carrying the release identity. */
+export const deployStep = (
+  target: ResolvedTarget,
+  sourceSha: string,
+  digest: string | null,
+): { description: string; args: string[] } => ({
+  description: `Deploy ${target.workerName} and its assets to ${target.origin}`,
+  args: [
+    'deploy',
+    '--env',
+    target.environment,
+    // The Worker name is passed explicitly rather than read from the config, so
+    // the name the plan printed is the name that gets deployed.
+    '--name',
+    target.workerName,
+    '--config',
+    join(CLIENT_DIR, 'wrangler.jsonc'),
+    // RELEASE is a git SHA: public information by construction, which is why it is
+    // safe as a var and why /health can report it. It is what lets verification
+    // prove *which* release is answering rather than merely that something is.
+    '--var',
+    `RELEASE:${sourceSha}`,
+    // The digest travels with the release as metadata. Wrangler records it, and it
+    // is what makes the recorded artifact independently checkable against the
+    // provider.
+    '--meta',
+    `source_sha=${sourceSha},artifact=${digest ?? 'unknown'}`,
+  ],
+});
+
+/**
+ * Record the migration argv, so `apply` executes the list `planDeploy` printed.
+ *
+ * A wrapper rather than a second implementation: the two callers want different
+ * things from the same step, and a second copy of the argv is how they drifted.
+ */
+const migrate = (
+  target: ResolvedTarget,
+  argv: string[][],
+  root: string = REPO_ROOT,
+): { ok: boolean; detail: string } => {
+  const step = migrationStep(target, root);
+
+  if (!step.ok) {
+    return { ok: false, detail: step.detail };
+  }
+
+  argv.push(step.args);
   return { ok: true, detail: `migrated ${target.d1DatabaseId}` };
 };
 
@@ -148,12 +210,21 @@ const migrate = (target: ResolvedTarget, argv: string[][]): { ok: boolean; detai
 export const smoke = async (
   target: ResolvedTarget,
   doFetch: typeof globalThis.fetch = globalThis.fetch,
+  options: { expectedRelease?: string; timeoutMs?: number } = {},
 ): Promise<SmokeResult> => {
   const url = `${target.origin}${HEALTH_PATH}`;
+  const expected = options.expectedRelease;
+  const timeoutMs = options.timeoutMs ?? VERIFY_TIMEOUT_MS;
 
   let response: Response;
   try {
-    response = await doFetch(url, { headers: { accept: 'application/json' } });
+    // Bounded. An origin that accepts the connection and never answers would
+    // otherwise hold the apply job open until the runner's own timeout, with the
+    // release deployed and no verdict on it.
+    response = await doFetch(url, {
+      headers: { accept: 'application/json' },
+      signal: AbortSignal.timeout(timeoutMs),
+    });
   } catch (error) {
     return {
       ok: false,
@@ -211,8 +282,33 @@ export const smoke = async (
     };
   }
 
+  // Identity, not just liveness. Any release answering with a 200 would otherwise
+  // pass, including the *previous* one still serving while the new deploy
+  // propagates — which is precisely the state in which a deploy is reported done
+  // and the site is still wrong.
+  if (expected !== undefined && reportedRelease !== expected) {
+    return {
+      ok: false,
+      path: HEALTH_PATH,
+      status: response.status,
+      reportedRelease,
+      problem:
+        `/health reports release "${reportedRelease ?? 'none'}" but this deploy published ` +
+        `"${expected}".`,
+    };
+  }
+
   return { ok: true, path: HEALTH_PATH, status: response.status, reportedRelease, problem: null };
 };
+
+/**
+ * How long verification waits before giving up.
+ *
+ * A bound, not a preference: without one a slow origin blocks the deploy job for
+ * its full timeout budget after the release is already live. Ten seconds is far
+ * longer than a `GET /health` should take and far shorter than a CI job.
+ */
+export const VERIFY_TIMEOUT_MS = 10_000;
 
 /**
  * The provider's identity for the release that is now active, or `null`s.
@@ -314,7 +410,7 @@ export const apply = async (options: ApplyOptions): Promise<ApplyResult> => {
       ok('migrate', 'skipped by request; the schema is whatever the last apply left behind'),
     );
   } else {
-    const migrated = migrate(target, argv);
+    const migrated = migrate(target, argv, options.root ?? REPO_ROOT);
     if (!migrated.ok) {
       outcomes.push(bad('migrate', migrated.detail));
       return stop('migrate', migrated.detail);
@@ -366,7 +462,9 @@ export const apply = async (options: ApplyOptions): Promise<ApplyResult> => {
   outcomes.push(ok('deploy', `${target.workerName} deployed to ${target.origin}`));
 
   // ── verify ─────────────────────────────────────────────────────────────────
-  const smokeResult = await smoke(target, doFetch);
+  // The expected release is this run's own SHA: verification asks "is the thing I
+  // just published answering?", not "is anything answering?".
+  const smokeResult = await smoke(target, doFetch, { expectedRelease: revision.sha });
   if (!smokeResult.ok) {
     const detail =
       `Deployed, but the release did not verify: ${smokeResult.problem ?? 'unknown'}. ` +
@@ -422,6 +520,7 @@ const buildRecord = (
     versionId: identity.versionId,
     recordedAt,
     smoke: smokeResult,
+    skipMigrations: options.skipMigrations === true,
   };
 };
 

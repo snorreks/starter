@@ -24,6 +24,8 @@
 //     argument somewhere else would be a different command than the one they
 //     asked for.
 
+import { REQUIRED_REMOTE_SECRET_NAMES } from '../registry/app_registry.ts';
+
 /** The credential modes this tooling documents. One, deliberately. */
 export const SUPPORTED_CREDENTIAL_MODES = ['env-api-token'] as const;
 
@@ -79,32 +81,58 @@ export const hasApiToken = (env: NodeJS.ProcessEnv = process.env): boolean =>
  * Checked before a plan is rendered rather than before it is executed, so a
  * command that *would* have leaked cannot reach the point of leaking.
  */
+
+/** Flags that carry a credential, with or without a trailing `=value`. */
+const CREDENTIAL_FLAGS = new Set(['--api-token', '--api-key', '--token']);
+
+/**
+ * Does this `--var` name hold a secret?
+ *
+ * The registry's own list first, so a required secret added there cannot be
+ * forgotten here: `RESEND_API_KEY` contains neither `SECRET` nor `TOKEN`, and a
+ * substring rule alone waved it straight through while treating `LOG_LEVEL` as a
+ * credential. The pattern is the fallback for a name the registry does not
+ * describe, and it is deliberately broad — a false positive costs one `--var`
+ * being written through the secret channel instead.
+ */
+const isSecretName = (name: string): boolean =>
+  (REQUIRED_REMOTE_SECRET_NAMES as readonly string[]).includes(name) ||
+  /(SECRET|TOKEN|PASSWORD|API_?KEY|PRIVATE_KEY|CREDENTIAL)/i.test(name);
+
+const varRefusal = (named: string): string =>
+  `${named} would be passed as a secret in this process's argv.\n` +
+  '  Secrets go through `wrangler secret put`, which prompts and never writes them\n' +
+  '  to argv. The names this environment requires are listed by `bun run deploy:check`.';
+
 export const secretInArgvProblem = (args: readonly string[]): string | null => {
   for (const [index, token] of args.entries()) {
-    if (token === '--api-token' || token === '--api-key' || token === '--token') {
+    // `--flag=value` is one token, so a check for the bare `--flag` walks straight
+    // past it — and that is the spelling most people and most shell completions
+    // produce.
+    const equals = token.indexOf('=');
+    const flag = equals === -1 ? token : token.slice(0, equals);
+    const inline = equals === -1 ? undefined : token.slice(equals + 1);
+
+    if (CREDENTIAL_FLAGS.has(flag)) {
       return (
-        `"${token}" would place a secret in this process's argv, where every other ` +
+        `"${flag}" would place a secret in this process's argv, where every other ` +
         'process on the machine can read it and CI records it verbatim.\n' +
         `  Set ${CREDENTIAL_ENV_VAR} in the environment instead.`
       );
     }
 
-    // `--var NAME:value` is the other route, and it is easy to miss because the
-    // value is not obviously a credential on its own line.
-    if (token.startsWith('--var') && token.includes('SECRET')) {
-      return (
-        `"${token}" would place a secret in this process's argv.\n` +
-        `  Secrets go through \`wrangler secret put\` (prompting, never argv), and the ` +
-        'names this environment requires are listed by `bun run deploy:check`.'
-      );
-    }
+    if (flag === '--var') {
+      // Both spellings, because both exist: `--var NAME:value` carries the value
+      // inline, and `--var NAME value` carries it as the next token.
+      const inlineName = inline?.split(':', 1)[0];
+      const nextName = args[index + 1]?.split(':', 1)[0];
 
-    // A bare `--var NAME value` pair: the value is the *next* token.
-    if (token === '--var' && args[index + 1]?.includes('SECRET') === true) {
-      return (
-        "`--var` with a secret-bearing name would place a secret in this process's argv.\n" +
-        '  Secrets go through `wrangler secret put` (prompting, never argv).'
-      );
+      if (inlineName !== undefined && isSecretName(inlineName)) {
+        return varRefusal(`"${inlineName}"`);
+      }
+      if (inline === undefined && nextName !== undefined && isSecretName(nextName)) {
+        return varRefusal(`"${nextName}"`);
+      }
     }
   }
 

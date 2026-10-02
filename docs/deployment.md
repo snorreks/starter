@@ -131,19 +131,28 @@ A preflight report gets pasted into tickets and CI summaries.
 which one.
 
 1. **Build.** The artifact is produced from this checkout, not assumed to exist.
+   `bun run deploy apply` runs `bun run build` and `bun run check:bundle` itself;
+   deploying whatever `.svelte-kit/` happened to hold would publish a previous run's
+   bytes whenever they are newer than the source, and the recorded SHA would then be a
+   SHA nothing was built from.
 2. **Validate.** `_worker.js` present, files present, digest taken. `wrangler deploy`
    against a directory without `_worker.js` publishes a static site whose every route
    404s — and reports success.
 3. **Migrate.** To the named database for this environment, before the deploy, so the
-   new code never meets the old schema. The plan comes from the same
-   `planMigrate` that `bun run db:migrate` uses, given the *already-validated*
-   database id — so the migration destination and the deploy destination are the same
-   value by construction rather than by two lookups agreeing.
+   new code never meets the old schema. The plan comes from the same `migrationStep`
+   `plan` renders, and the database id Wrangler would actually reach is compared
+   against the validated one first — both commands name the binding `DB`, so the argv
+   alone cannot tell two databases apart.
 4. **Deploy.** The target resolved by `resolveTarget`, named explicitly with `--name`,
    carrying `--var RELEASE:<sha>` and `--meta source_sha=…,artifact=…`.
-5. **Verify.** `GET <origin>/health`, and the release id it reports.
-
-Then the release record is written to `.starter/releases/<environment>.json`.
+5. **Verify.** `GET <origin>/health`, and the `release` it reports compared against
+   **this run's own SHA**. A `200` is not enough: the previous release still serving
+   while a new one propagates is exactly the state in which a deploy reports done and
+   the site is still wrong. The request is bounded, so an origin that accepts the
+   connection and never answers cannot hold the job open.
+6. **Record.** Source SHA, artifact digest, destination, provider identity, smoke
+   result and whether migrations were skipped, in
+   `.starter/releases/<environment>.json`.
 
 ### Migrations are reviewed or they are not applied
 
@@ -258,12 +267,52 @@ declares what it needs; creating it is an operator step.
 
 ### CI injects rather than persists
 
-In CI the per-environment values arrive as `CLOUDFLARE_*` environment variables
-(layer 3), which override the gitignored overlay. A developer's stale local file
-therefore cannot redirect a deployment — it is outranked, not ignored.
+In CI the per-environment values arrive as environment variables (layer 3), which
+override the gitignored overlay. A developer's stale local file therefore cannot
+redirect a deployment — it is outranked, not ignored.
 
-The apply job in `deploy.yml` passes `--env staging` (or `production`), and
-`resolveTarget` refuses a shared Worker or database before anything runs.
+They are read from **GitHub environment variables** (`vars`), not secrets, because
+they are all configuration. Only `CLOUDFLARE_API_TOKEN` is a secret.
+
+| Variable | GitHub | Scope |
+|---|---|---|
+| `CLOUDFLARE_ACCOUNT_ID` | `vars` | account |
+| `CLOUDFLARE_WORKER_NAME` | `vars` | the environment being deployed |
+| `CLOUDFLARE_D1_DATABASE_ID` | `vars` | the environment being deployed |
+| `CLOUDFLARE_PUBLIC_ORIGIN` | `vars` | the environment being deployed |
+| `CLOUDFLARE_API_TOKEN` | `secrets` | the environment being deployed |
+
+The four nonsecret ones are declared once at workflow level, so they reach every
+step of both jobs: `plan`, `Credential` (preflight), `Apply` and `Summarise the
+release`. `plan` uses only the nonsecret four; `Apply` additionally receives the
+token.
+
+**They describe one environment, not all of them.** Copying them into every
+environment entry was a live production-safety defect: a
+`CLOUDFLARE_D1_DATABASE_ID` present in both `staging` and `production` means the two
+environments are the same database, and a staging migration is then a production
+migration. Injected values are now held separately and overlaid onto the environment
+being deployed only.
+
+`environmentIsolationProblem` then compares the *resolved* topology of both
+environments and refuses when they name one Worker or one database — which also
+catches a project with no `environments` map, where both environments would resolve
+to the single set.
+
+### Where Wrangler reads the database from
+
+Wrangler resolves a D1 database by binding name and `--env`. With no
+`env.staging` / `env.production` block in `wrangler.jsonc`, an `--env staging` run
+inherits the **top-level** `d1_databases` entry — so one provisioned database serves
+both environments, and nothing in the argv reveals it, because both commands name
+the binding `DB`.
+
+`wranglerDatabaseId` reads exactly what Wrangler would read, and `migrationStep`
+refuses when that id differs from the one the project resolved. To deploy both
+environments to separate databases, give each an `env.<name>.d1_databases` block in
+`wrangler.jsonc`; `deploy:configure --provision` writes the id into the matching
+block when one exists, and into the top-level entry otherwise — which is what
+Wrangler itself resolves for `--env <name>`.
 
 ## Health and readiness
 
@@ -413,5 +462,7 @@ the first real deployment.
 | `DEPLOYMENT_ENV`, `BETTER_AUTH_URL`, `MAIL_FROM`, `RELEASE` per environment | `wrangler.jsonc` environment vars |
 | GitHub environments `staging` / `production` | repository settings — **not** changed by this PR |
 | Production required reviewers | repository settings — **not** changed by this PR |
-| Scoped `CLOUDFLARE_API_TOKEN` per environment | GitHub environment secrets |
+| Scoped Cloudflare API token per environment | GitHub **environment secrets** (`CLOUDFLARE_API_TOKEN`) |
+| Nonsecret per-environment configuration in CI | GitHub **environment variables**: `CLOUDFLARE_ACCOUNT_ID`, `CLOUDFLARE_WORKER_NAME`, `CLOUDFLARE_D1_DATABASE_ID`, `CLOUDFLARE_PUBLIC_ORIGIN` |
 | A verified Resend sender domain | Resend dashboard; `MAIL_FROM` must match it |
+| Per-environment `d1_databases` blocks in `wrangler.jsonc` | only when deploying both environments to separate databases — see "Where Wrangler reads the database from" |

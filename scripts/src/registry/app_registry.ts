@@ -112,35 +112,16 @@ export const AppLogConfigSchema = Type.Object(
 export type AppLogConfig = Static<typeof AppLogConfigSchema>;
 
 /**
- * One deployable environment's topology, as *configuration*.
+ * What an environment needs, and where each half of it now lives.
  *
- * `origin` and `requiredSecretNames` are nonsecret by construction and belong here
- * rather than in a secret store: an origin is a public hostname, and the *names* of
- * the secrets an environment needs are the only thing a plan can print without
- * disclosing anything. What those secrets are stays a secret; that an environment
- * needs `BETTER_AUTH_SECRET` does not.
+ * There was an `EnvironmentTopologySchema` here, holding a `null` origin per
+ * environment, and `DEPLOYMENT_CONFIG.environments` used it. Nothing ever read
+ * either: origins come from the gitignored overlay through `topologyFor`, and
+ * secret names from `REQUIRED_REMOTE_SECRET_NAMES` below. A committed second
+ * copy of a value nothing consults is a registry that can disagree with the one
+ * that matters, which is the failure this file exists to prevent — so both are
+ * gone rather than left as a shape that looks authoritative.
  */
-const EnvironmentTopologySchema = Type.Object(
-  {
-    /**
-     * The public origin this environment answers on, or `null` when unprovisioned.
-     *
-     * Required by `resolveTarget` before any deploy, because it is the only address
-     * a post-deploy verification can be made against. Deriving it from the Worker
-     * name is not possible: the `workers.dev` subdomain belongs to the account, not
-     * to the Worker, and an operator may be serving a custom domain instead.
-     */
-    origin: Type.Union([Type.String({ minLength: 1 }), Type.Null()]),
-    /**
-     * Secret *names* this environment requires, in the documented apply order.
-     *
-     * Names only. A value here would be a plaintext secret in a tracked file, which
-     * is the one thing the SOPS workflow in `docs/secrets.md` exists to prevent.
-     */
-    requiredSecretNames: Type.Array(Type.String({ minLength: 1 })),
-  },
-  { additionalProperties: false },
-);
 
 export const DEPLOYMENT_CONFIG_SCHEMA = Type.Object(
   {
@@ -152,18 +133,6 @@ export const DEPLOYMENT_CONFIG_SCHEMA = Type.Object(
      * to whichever Worker happened to answer.
      */
     projectName: Type.String({ minLength: 1 }),
-    /**
-     * Per-environment topology that is configuration rather than a provisioned
-     * resource id. Resource ids stay out of the committed registry entirely and
-     * live in the gitignored overlay — see `deployment_values.ts`.
-     */
-    environments: Type.Object(
-      {
-        staging: EnvironmentTopologySchema,
-        production: EnvironmentTopologySchema,
-      },
-      { additionalProperties: false },
-    ),
     /**
      * The Cloudflare Worker name. `null` means "not provisioned yet" — the deploy
      * dry-run reports that as an actionable error instead of inventing a target.
@@ -227,14 +196,10 @@ export type DeploymentConfig = Static<typeof DEPLOYMENT_CONFIG_SCHEMA>;
  */
 export const DEPLOYMENT_CONFIG: DeploymentConfig = {
   projectName: 'starter',
-  // Origins start empty on purpose. A template cannot know the account's
-  // `workers.dev` subdomain, and inventing one would produce a verification step
-  // that silently targets somebody else's hostname. `deploy:configure --origin`
-  // writes the real value into the gitignored overlay.
-  environments: {
-    staging: { origin: null, requiredSecretNames: ['BETTER_AUTH_SECRET', 'RESEND_API_KEY'] },
-    production: { origin: null, requiredSecretNames: ['BETTER_AUTH_SECRET', 'RESEND_API_KEY'] },
-  },
+  // Origins and resource ids are absent on purpose. A template cannot know the
+  // account's `workers.dev` subdomain, and every deployment id starts `null`, so a
+  // fresh clone targets nobody. `deploy:configure` writes the real values into the
+  // gitignored overlay, which is the only layer any tool reads them from.
   workerName: null,
   d1DatabaseId: null,
   r2BucketNames: { uploads: null },

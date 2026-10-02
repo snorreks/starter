@@ -42,8 +42,103 @@ import {
  */
 const WRANGLER_CONFIG = `${CLIENT_DIR_RELATIVE}/wrangler.jsonc`;
 
+/**
+ * The text of `"env": { "<environment>": { … } }`, or `null` when the config has no
+ * such block.
+ *
+ * Brace-matched by hand rather than by parsing, because `wrangler.jsonc` is JSONC:
+ * stripping the comments to parse it and writing the parsed form back would delete
+ * every comment in the file — and those comments are where this repository records
+ * *why* the file is shaped as it is. Only the `database_id` inside the matched
+ * span is ever rewritten, so the rest is preserved byte for byte.
+ */
+const extractEnvBlock = (text: string, environment: DeploymentEnvironment): string | null => {
+  const marker = new RegExp(`"${environment}"\\s*:\\s*\\{`);
+  const match = marker.exec(text);
+  if (match === null) {
+    return null;
+  }
+
+  let depth = 0;
+  for (let index = match.index + match[0].length - 1; index < text.length; index += 1) {
+    if (text[index] === '{') {
+      depth += 1;
+    }
+    if (text[index] === '}') {
+      depth -= 1;
+    }
+    if (depth === 0) {
+      return text.slice(match.index, index + 1);
+    }
+  }
+
+  return null;
+};
+
 /** The same file, resolved against a caller-supplied root. */
 const wranglerConfigAt = (root: string): string => join(root, WRANGLER_CONFIG);
+
+/**
+ * The gitignored overlay, read for one environment.
+ *
+ * `null` when the config carries no `env.<environment>` block *and* no top-level
+ * `d1_databases`, and the resolved string when it does. A `wrangler.jsonc` with a
+ * single top-level entry answers for every `--env`, which is exactly the shape
+ * this repository warns about: two environments, one database, and no error.
+ *
+ * Exported so `migrationStep` can compare what the tooling resolved against what
+ * Wrangler would reach. Both commands name the binding `DB`, so the argv alone
+ * cannot tell the two databases apart.
+ */
+export const wranglerDatabaseId = (
+  environment: DeploymentEnvironment,
+  root: string = REPO_ROOT,
+): string | null => {
+  const path = wranglerConfigAt(root);
+  if (!existsSync(path)) {
+    return null;
+  }
+
+  let doc: Record<string, unknown>;
+  try {
+    doc = JSON.parse(stripJsonComments(readFileSync(path, 'utf8'))) as Record<string, unknown>;
+  } catch {
+    // A config that does not parse is refused elsewhere, by `inspectConfig`. Here
+    // it reads as "not configured", which is the safe direction: the caller
+    // compares against the id it resolved and refuses on a mismatch.
+    return null;
+  }
+
+  const sections: unknown[] = [doc];
+  const envBlock = doc.env;
+  if (typeof envBlock === 'object' && envBlock !== null) {
+    const scoped = (envBlock as Record<string, unknown>)[environment];
+    if (typeof scoped === 'object' && scoped !== null) {
+      sections.unshift(scoped);
+    }
+  }
+
+  for (const section of sections) {
+    const bindings = (section as Record<string, unknown>).d1_databases;
+    if (!Array.isArray(bindings)) {
+      continue;
+    }
+    for (const binding of bindings) {
+      if (binding === null || typeof binding !== 'object') {
+        continue;
+      }
+      if ((binding as Record<string, unknown>).binding !== 'DB') {
+        continue;
+      }
+      const id = (binding as Record<string, unknown>).database_id;
+      if (typeof id === 'string' && id.trim() !== '') {
+        return id.trim();
+      }
+    }
+  }
+
+  return null;
+};
 
 export interface ConfigCheck {
   ok: boolean;
@@ -235,17 +330,23 @@ export const provisionDatabase = (
   // can actually query logs.
   const account = /\b[0-9a-f]{32}\b/i.exec(created.stdout)?.[0] ?? null;
 
-  // Under `root`, not `CLIENT_DIR`. `root` is a parameter precisely so this can be
-  // driven against a throwaway tree; resolving the repository's own wrangler.jsonc
-  // here ignored that, and the test suite wrote its fixture UUID into the
-  // committed file — a resource id in a file the `registry-valid` guard exists to
-  // keep free of one, and a test that mutates the repository it runs in.
+  // The wrangler path is written under the environment's own `env.<name>` block
+  // when the config has one, and at the top level otherwise — which is what
+  // Wrangler itself resolves for `--env <name>` in that case. Writing it at the
+  // top level for staging therefore makes it staging's *and* production's
+  // database until an `env.production` block exists; `wranglerDatabaseId` and
+  // `resolveTarget` both refuse that state rather than deploying into it.
   const wranglerPath = wranglerConfigAt(root);
   if (existsSync(wranglerPath)) {
     const text = readFileSync(wranglerPath, 'utf8');
-    const updated = text.includes('"database_id"')
-      ? text.replace(/("database_id"\s*:\s*)"[^"]*"/, `$1"${id}"`)
-      : text.replace(/("database_name"\s*:\s*"[^"]*",)/, `$1\n      "database_id": "${id}",`);
+    const scoped = extractEnvBlock(text, environment);
+
+    const withId = (source: string): string =>
+      source.includes('"database_id"')
+        ? source.replace(/("database_id"\s*:\s*)"[^"]*"/, `$1"${id}"`)
+        : source.replace(/("database_name"\s*:\s*"[^"]*",)/, `$1\n      "database_id": "${id}",`);
+
+    const updated = scoped === null ? withId(text) : withId(scoped);
 
     if (updated !== text) {
       writeFileSync(wranglerPath, updated);
@@ -468,7 +569,14 @@ export const main = (args: readonly string[]): number => {
   }
 
   if (args.includes('--provision')) {
-    const rawEnvironment = args[args.indexOf('--env') + 1];
+    // `indexOf` returns -1 when `--env` is absent, and `args[-1 + 1]` is `args[0]` —
+    // which is the string `--provision`, so the documented
+    // `bun run deploy:configure -- --provision` was rejected as an invalid
+    // environment. An absent flag is not an error here; `provisionDatabase` applies
+    // its own `staging` default, which is what an operator who named no
+    // environment means.
+    const envIndex = args.indexOf('--env');
+    const rawEnvironment = envIndex === -1 ? undefined : args[envIndex + 1];
     if (
       rawEnvironment !== undefined &&
       !DEPLOYABLE_ENVIRONMENTS.includes(rawEnvironment as never)

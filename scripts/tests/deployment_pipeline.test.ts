@@ -15,12 +15,33 @@
 // two are the ones a "did it work?" test cannot construct, which is why resume is
 // asserted explicitly.
 
-import { describe, expect, test } from 'bun:test';
+import { afterAll, describe, expect, test } from 'bun:test';
+import { mkdirSync, writeFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
 import { runWrangler, setProcessRunner } from '../src/cloudflare/wrangler.ts';
 import { type ApplyResult, apply, HEALTH_PATH, renderApply, smoke } from '../src/deploy/apply.ts';
 import { type PreflightFinding, preflight } from '../src/deploy/preflight.ts';
 import type { ArtifactCheck } from '../src/deploy/release.ts';
 import type { ResolvedTarget } from '../src/deploy/target.ts';
+
+/**
+ * The SHA the pipeline will build and publish.
+ *
+ * Pinned through the environment because verification now compares the release
+ * the origin reports against the one this run published: a temp directory has no
+ * `.git`, and a test that let the revision come out as `unknown` would not be
+ * able to tell a matching release from a mismatched one.
+ */
+const SOURCE_SHA = 'a'.repeat(40);
+const ORIGINAL_SOURCE_REVISION = process.env.SOURCE_REVISION;
+process.env.SOURCE_REVISION = SOURCE_SHA;
+afterAll(() => {
+  if (ORIGINAL_SOURCE_REVISION === undefined) {
+    delete process.env.SOURCE_REVISION;
+  } else {
+    process.env.SOURCE_REVISION = ORIGINAL_SOURCE_REVISION;
+  }
+});
 
 const ACCOUNT = 'abcdef0123456789abcdef0123456789';
 const OTHER_ACCOUNT = '99999999999999999999999999999999';
@@ -93,7 +114,7 @@ const httpRecorder = (
 /** `/health` answering correctly, which is the success case for verification. */
 const healthy = (url: string) =>
   url.endsWith(HEALTH_PATH)
-    ? { body: { status: 'ok', release: 'abc123', environment: 'staging', deployed: true } }
+    ? { body: { status: 'ok', release: SOURCE_SHA, environment: 'staging', deployed: true } }
     : { status: 404, body: { error: 'not_found', message: 'No such route.' } };
 
 describe('the apply pipeline spawns exactly the commands it prints', () => {
@@ -109,7 +130,7 @@ describe('the apply pipeline spawns exactly the commands it prints', () => {
       fetch: http.fetch,
       capture: () => ({ ok: true, stdout: '{"id":"dep-1","version_id":"v1"}', stderr: '' }),
       now: () => '2026-01-01T00:00:00.000Z',
-      root: mkTempRoot(),
+      root: fixtureRoot('db-staging'),
     });
 
     expect(result.ok).toBe(true);
@@ -142,7 +163,7 @@ describe('the apply pipeline spawns exactly the commands it prints', () => {
       run: spawns.run,
       fetch: http.fetch,
       capture: () => ({ ok: false, stdout: '', stderr: '' }),
-      root: mkTempRoot(),
+      root: fixtureRoot('db-staging'),
     });
 
     const deploy = spawns.calls[1];
@@ -162,7 +183,7 @@ describe('the apply pipeline spawns exactly the commands it prints', () => {
       run: spawns.run,
       fetch: http.fetch,
       capture: () => ({ ok: false, stdout: '', stderr: '' }),
-      root: mkTempRoot(),
+      root: fixtureRoot('db-staging'),
     });
 
     expect(http.requests).toEqual(['https://starter-production.example/health']);
@@ -180,7 +201,7 @@ describe('the apply pipeline spawns exactly the commands it prints', () => {
       run: stage.run,
       fetch: httpRecorder(healthy).fetch,
       capture: () => ({ ok: false, stdout: '', stderr: '' }),
-      root: mkTempRoot(),
+      root: fixtureRoot('db-staging'),
     });
     await apply({
       target: target({
@@ -194,7 +215,9 @@ describe('the apply pipeline spawns exactly the commands it prints', () => {
       run: prod.run,
       fetch: httpRecorder(healthy).fetch,
       capture: () => ({ ok: false, stdout: '', stderr: '' }),
-      root: mkTempRoot(),
+      // The production fixture names the production database, or the agreement
+      // check refuses before the deploy step this test is asserting on.
+      root: fixtureRoot('db-production'),
     });
 
     expect(stage.calls[1]?.args).toContain('starter-staging');
@@ -214,7 +237,7 @@ describe('the apply pipeline spawns exactly the commands it prints', () => {
       run: spawns.run,
       fetch: httpRecorder(healthy).fetch,
       capture: () => ({ ok: false, stdout: '', stderr: '' }),
-      root: mkTempRoot(),
+      root: fixtureRoot('db-staging'),
     });
 
     for (const call of spawns.calls) {
@@ -256,7 +279,7 @@ describe('apply refuses and stops at the first failing step', () => {
       inspect: () => artifact(),
       run: spawns.run,
       fetch: httpRecorder(healthy).fetch,
-      root: mkTempRoot(),
+      root: fixtureRoot('db-staging'),
     });
 
     expect(result.ok).toBe(false);
@@ -279,7 +302,7 @@ describe('apply refuses and stops at the first failing step', () => {
       }),
       run: spawns.run,
       fetch: httpRecorder(healthy).fetch,
-      root: mkTempRoot(),
+      root: fixtureRoot('db-staging'),
     });
 
     expect(result.ok).toBe(false);
@@ -296,7 +319,7 @@ describe('apply refuses and stops at the first failing step', () => {
       inspect: () => artifact(),
       run: spawns.run,
       fetch: httpRecorder(healthy).fetch,
-      root: mkTempRoot(),
+      root: fixtureRoot('db-staging'),
     });
 
     expect(result.ok).toBe(false);
@@ -315,7 +338,7 @@ describe('apply refuses and stops at the first failing step', () => {
       inspect: () => artifact(),
       run: spawns.run,
       fetch: httpRecorder(healthy).fetch,
-      root: mkTempRoot(),
+      root: fixtureRoot('db-staging'),
     });
 
     const migrate = result.outcomes.find((outcome) => outcome.phase === 'migrate');
@@ -333,7 +356,7 @@ describe('apply refuses and stops at the first failing step', () => {
       inspect: () => artifact(),
       run: spawns.run,
       fetch: httpRecorder(healthy).fetch,
-      root: mkTempRoot(),
+      root: fixtureRoot('db-staging'),
     });
 
     expect(result.ok).toBe(false);
@@ -359,7 +382,7 @@ describe('apply refuses and stops at the first failing step', () => {
       run: spawns.run,
       fetch: http.fetch,
       capture: () => ({ ok: true, stdout: '{"id":"dep-9","version_id":"v9"}', stderr: '' }),
-      root: mkTempRoot(),
+      root: fixtureRoot('db-staging'),
     });
 
     expect(result.ok).toBe(false);
@@ -385,7 +408,7 @@ describe('apply refuses and stops at the first failing step', () => {
       run: spawns.run,
       fetch: http.fetch,
       capture: () => ({ ok: false, stdout: '', stderr: '' }),
-      root: mkTempRoot(),
+      root: fixtureRoot('db-staging'),
     });
 
     expect(JSON.stringify(result.record)).not.toContain('hunter2');
@@ -437,7 +460,7 @@ describe('apply refuses and stops at the first failing step', () => {
       inspect: () => artifact(),
       run: recorder().run,
       fetch: httpRecorder(healthy).fetch,
-      root: mkTempRoot(),
+      root: fixtureRoot('db-staging'),
     });
 
     expect(result.outcomes).toHaveLength(1);
@@ -589,6 +612,25 @@ describe('preflight is read-only and refuses a mismatched destination', () => {
     expect(report.findings[0]?.detail).toContain('CLOUDFLARE_API_TOKEN');
   });
 });
+
+/**
+ * A throwaway root containing a `wrangler.jsonc` whose D1 id matches the target.
+ *
+ * The pipeline refuses when the id it resolved and the id Wrangler would reach
+ * differ. Without this fixture every pipeline test would stop at the migration
+ * step — correct behaviour, but it would test nothing else.
+ */
+const fixtureRoot = (databaseId: string): string => {
+  const root = mkTempRoot();
+  const path = join(root, 'apps/frontend/client/wrangler.jsonc');
+  mkdirSync(dirname(path), { recursive: true });
+  writeFileSync(
+    path,
+    `{\n  "name": "starter",\n  "d1_databases": [\n    {\n      "binding": "DB",\n      "database_name": "starter",\n      "database_id": "${databaseId}"\n    }\n  ]\n}\n`,
+    'utf8',
+  );
+  return root;
+};
 
 /** A throwaway root, so a test never writes a release record into the repository. */
 function mkTempRoot(): string {

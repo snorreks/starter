@@ -73,6 +73,17 @@ export interface DeploymentValues {
    * requested environment is absent from it.
    */
   environments?: Partial<Record<DeploymentEnvironment, EnvironmentTargets>>;
+
+  /**
+   * Values injected by the environment layer, kept separate rather than merged.
+   *
+   * Separate because of precedence: a per-environment entry must beat the
+   * single-set, and only an *injected* value beats the entry. Merging the CI values
+   * into the top-level fields instead made the single-set override every
+   * environment, which is how a project's own staging Worker name was replaced by a
+   * leftover top-level value.
+   */
+  injected?: Partial<EnvironmentTargets>;
 }
 
 /**
@@ -240,6 +251,21 @@ export const resolveDeploymentValues = (
   }
 
   // Layer 3: the environment, which is what CI injects instead of persisting.
+  //
+  // These populate the *single set* as well as `injected`, and deliberately are not
+  // copied into every environment entry. Copying them was a live
+  // production-safety defect: a `CLOUDFLARE_D1_DATABASE_ID` present in both
+  // `staging` and `production` means the two environments are the same database,
+  // and a staging migration is then a production migration. The values describe
+  // *one* environment — the one being deployed — and a set that described all of
+  // them at once would be saying they are the same.
+  const injected: Partial<EnvironmentTargets> = {};
+  const take = (name: keyof EnvironmentTargets, value: string | null): void => {
+    if (value !== null) {
+      injected[name] = value;
+    }
+  };
+
   const fromEnv = usable(env.CLOUDFLARE_ACCOUNT_ID);
   if (fromEnv !== null) {
     merged.accountId = fromEnv;
@@ -247,23 +273,21 @@ export const resolveDeploymentValues = (
   const workerFromEnv = usable(env.CLOUDFLARE_WORKER_NAME);
   if (workerFromEnv !== null) {
     merged.workerName = workerFromEnv;
-    for (const target of Object.values(merged.environments ?? {})) {
-      target.workerName = workerFromEnv;
-    }
+    take('workerName', workerFromEnv);
   }
   const d1FromEnv = usable(env.CLOUDFLARE_D1_DATABASE_ID);
   if (d1FromEnv !== null) {
     merged.d1DatabaseId = d1FromEnv;
-    for (const target of Object.values(merged.environments ?? {})) {
-      target.d1DatabaseId = d1FromEnv;
-    }
+    take('d1DatabaseId', d1FromEnv);
   }
   const originFromEnv = usable(env.CLOUDFLARE_PUBLIC_ORIGIN);
   if (originFromEnv !== null) {
     merged.customDomain = originFromEnv;
-    for (const target of Object.values(merged.environments ?? {})) {
-      target.origin = originFromEnv;
-    }
+    take('origin', originFromEnv);
+  }
+
+  if (Object.keys(injected).length > 0) {
+    merged.injected = injected;
   }
 
   return merged;
@@ -398,15 +422,35 @@ export const topologyFor = (
   environment: DeploymentEnvironment,
   values: DeploymentValues = effectiveDeploymentValues(),
 ): EnvironmentTargets | null => {
-  if (values.environments === undefined) {
-    return {
-      workerName: values.workerName,
-      d1DatabaseId: values.d1DatabaseId,
-      origin: values.customDomain,
-    };
+  const fallback: EnvironmentTargets = {
+    workerName: values.workerName,
+    d1DatabaseId: values.d1DatabaseId,
+    origin: values.customDomain,
+  };
+
+  // An environment the project does not describe has no topology. Refused rather
+  // than defaulted, because serving a production request with staging names is the
+  // outcome this whole layer exists to prevent.
+  const base = values.environments === undefined ? fallback : values.environments[environment];
+  if (base === undefined) {
+    return null;
   }
 
-  return values.environments[environment] ?? null;
+  // Injected last: the environment layer is the most specific and least persistent,
+  // so a CI run's values describe the environment being deployed and nothing else.
+  // A stale local file naming production's database cannot be overridden into
+  // staging by a CI variable, and a CI variable for staging cannot silently become
+  // production's configuration.
+  const injected = values.injected;
+  if (injected === undefined) {
+    return base;
+  }
+
+  return {
+    workerName: injected.workerName ?? base.workerName,
+    d1DatabaseId: injected.d1DatabaseId ?? base.d1DatabaseId,
+    origin: injected.origin ?? base.origin,
+  };
 };
 
 /** Alias kept for existing callers; `topologyFor` is the name that says what it is. */

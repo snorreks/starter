@@ -203,6 +203,16 @@ export interface ReleaseRecord {
   versionId: string | null;
   recordedAt: string;
   smoke: SmokeResult | null;
+  /**
+   * Whether migrations were skipped for this release.
+   *
+   * On the record rather than in the log because the two answers differ in
+   * meaning, not just in wording: a release whose schema is whatever the last
+   * apply left behind is a different kind of artifact from one whose schema is
+   * known, and an operator reading the record later cannot tell them apart without
+   * it.
+   */
+  skipMigrations: boolean;
 }
 
 export const releaseRecordPath = (environment: string, root: string = REPO_ROOT): string =>

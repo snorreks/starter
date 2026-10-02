@@ -12,6 +12,9 @@
 // silently defaulted to "everything" is the behaviour these tests exist to prevent.
 
 import { describe, expect, test } from 'bun:test';
+import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { dirname, join } from 'node:path';
 import { DEPLOY_PHASES, parseDeployArgs, planDeploy, renderPlan } from '../src/deploy/deploy.ts';
 import type { DeploymentValues } from '../src/registry/deployment_values.ts';
 
@@ -199,12 +202,41 @@ describe('every token in argv must be accounted for', () => {
   });
 });
 
+/**
+ * A throwaway tree whose `wrangler.jsonc` names the same database the plan resolves.
+ *
+ * The plan refuses when the id it resolved and the id Wrangler would reach differ,
+ * which is the check that catches a migration and a deploy aimed at two different
+ * databases. Testing against the repository's own config would make that assertion
+ * depend on whatever anyone last provisioned; a fixture keeps it a statement about
+ * the plan.
+ */
+const fixtureRoot = (databaseId: string): string => {
+  const root = mkdtempSync(join(tmpdir(), 'starter-plan-'));
+  const path = join(root, 'apps/frontend/client/wrangler.jsonc');
+  mkdirSync(dirname(path), { recursive: true });
+  writeFileSync(
+    path,
+    `{\n  "name": "starter",\n  "d1_databases": [\n    {\n      "binding": "DB",\n      "database_name": "starter",\n      "database_id": "${databaseId}"\n    }\n  ]\n}\n`,
+    'utf8',
+  );
+  return root;
+};
+
 describe('the offline plan names one destination and the commands for it', () => {
   test('staging and production produce different plans', () => {
     // The property that makes `--env` mean something. With one set of names both
     // plans were identical and the flag changed a notice and nothing else.
-    const staging = planDeploy('staging', { values: configured(), hasCredential: false });
-    const production = planDeploy('production', { values: configured(), hasCredential: false });
+    const staging = planDeploy('staging', {
+      values: configured(),
+      hasCredential: false,
+      root: fixtureRoot('db-staging'),
+    });
+    const production = planDeploy('production', {
+      values: configured(),
+      hasCredential: false,
+      root: fixtureRoot('db-production'),
+    });
 
     expect(staging.ok && production.ok).toBe(true);
     if (!staging.ok || !production.ok) {
@@ -217,7 +249,11 @@ describe('the offline plan names one destination and the commands for it', () =>
   });
 
   test('the rendered argv is the argv that would be spawned', () => {
-    const plan = planDeploy('staging', { values: configured(), hasCredential: false });
+    const plan = planDeploy('staging', {
+      values: configured(),
+      hasCredential: false,
+      root: fixtureRoot('db-staging'),
+    });
     expect(plan.ok).toBe(true);
     if (!plan.ok) {
       return;
@@ -236,7 +272,11 @@ describe('the offline plan names one destination and the commands for it', () =>
 
   test('the plan is answerable with no credential', () => {
     // This is what lets `plan` run on a fork's pull request, where no secret exists.
-    const plan = planDeploy('staging', { values: configured(), hasCredential: false });
+    const plan = planDeploy('staging', {
+      values: configured(),
+      hasCredential: false,
+      root: fixtureRoot('db-staging'),
+    });
     expect(plan.ok).toBe(true);
     if (!plan.ok) {
       return;
@@ -264,7 +304,7 @@ describe('the offline plan names one destination and the commands for it', () =>
 
   test('the migration step comes before the deploy step', () => {
     // The order is the design: the new code must never meet the old schema.
-    const plan = planDeploy('staging', { values: configured() });
+    const plan = planDeploy('staging', { values: configured(), root: fixtureRoot('db-staging') });
     expect(plan.ok).toBe(true);
     if (!plan.ok) {
       return;
@@ -276,7 +316,7 @@ describe('the offline plan names one destination and the commands for it', () =>
   });
 
   test('the plan warns that a code rollback is not a schema rollback', () => {
-    const plan = planDeploy('staging', { values: configured() });
+    const plan = planDeploy('staging', { values: configured(), root: fixtureRoot('db-staging') });
     expect(plan.ok).toBe(true);
     if (!plan.ok) {
       return;

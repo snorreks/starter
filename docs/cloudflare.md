@@ -125,8 +125,16 @@ replaced cost something real: a partial deploy in which the Worker succeeded and
 assets did not leaves a live deployment whose pages 404, and nothing in the plan
 could express that as a state to avoid.
 
-`plan` and `deploy --dry-run` read the **same** plan object that a real run
-executes. A dry run that re-derives its commands is a dry run that can lie.
+`plan` and `deploy -- --dry-run` read the **same** plan object, and it is built from
+the same functions `apply` executes — `migrationStep` and `deployStep` in
+`scripts/src/deploy/apply.ts`. The hand-written copies they replaced had already
+drifted: the plan's migration omitted `--remote` and its deploy omitted
+`--var RELEASE` and `--meta`. A dry run that renders different argv from the real
+run is a dry run that can lie.
+
+`--dry-run` is honoured rather than accepted and ignored, and combining it with an
+explicit `apply` is a usage error: `deploy apply --env production --dry-run --yes`
+took the apply path and deployed.
 
 The plan also refuses to run at all if `.svelte-kit/cloudflare/_worker.js` is
 absent. `wrangler deploy` against a missing build does not fail loudly: it publishes
@@ -151,29 +159,6 @@ prod` fails rather than resolving `prod` to production, and `bun run deploy webb
 fails rather than filtering argv down to the words that happened to be valid and
 defaulting to *everything* when nothing survived.
 
-The plan also refuses to run at all if `.svelte-kit/cloudflare/_worker.js` is
-absent. `wrangler deploy` against a missing build does not fail loudly: it publishes
-an empty deployment whose every page 404s, which reads as a successful deploy of a
-blank site.
-
-Three rules, each of which was previously a way to change something nobody asked for:
-
-**Every remote step requires `--yes`, always.** Not in CI only, not in an
-interactive shell. An interactive terminal is not consent; the old gate refused only
-a *non-interactive* session without `--yes`, so a developer at a prompt got a silent
-remote deploy.
-
-**`--env local` is refused.** `--env` takes `staging` or `production`. This command
-deploys to a remote environment and has no local deployment target. Running the CLI
-on your laptop is a *local invocation* and is unrelated; the local **runtime** is
-`bun run dev`. Those are different concepts and the old code built a `wrangler
-deploy` command for a "non-remote" local step anyway.
-
-**An unrecognised phase or environment is an error.** `bun run deploy plan --env
-prod` is refused; so is `bun run deploy webb`. It used to filter argv down to the
-words that happened to be valid targets and default to *everything* when nothing
-survived, so a typo widened a single-target production deploy into a deploy of both
-apps.
 
 ### The wrangler that runs
 

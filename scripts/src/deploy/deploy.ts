@@ -35,6 +35,7 @@
 //   * An unknown flag is an error, and a boolean flag written as `--flag=value`
 //     is an error naming the mistake.
 
+import { spawnSync } from 'node:child_process';
 import { isDeploymentEnvironment } from '@starter/schemas';
 import { runWrangler, setProcessRunner, wranglerAvailable } from '../cloudflare/wrangler.ts';
 import {
@@ -43,11 +44,23 @@ import {
   LOCAL_DEPLOYMENT_FILE,
 } from '../registry/deployment_values.ts';
 import { EXIT, fail, wantsHelp } from '../shared/command.ts';
-import { CLIENT_DIR } from '../shared/paths.ts';
-import { type ApplyResult, apply, renderApply } from './apply.ts';
+import { CLIENT_DIR, REPO_ROOT } from '../shared/paths.ts';
+import {
+  type ApplyResult,
+  apply,
+  deployStep,
+  HEALTH_PATH,
+  migrationStep,
+  renderApply,
+} from './apply.ts';
 import { hasApiToken, secretInArgvProblem } from './credentials.ts';
 import { preflight, renderPreflight } from './preflight.ts';
-import { type ReleaseRecord, readReleaseRecord, renderReleaseRecord } from './release.ts';
+import {
+  type ReleaseRecord,
+  readReleaseRecord,
+  renderReleaseRecord,
+  sourceRevision,
+} from './release.ts';
 import {
   DEPLOYABLE_ENVIRONMENTS,
   environmentIsolationProblem,
@@ -309,6 +322,7 @@ export const planDeploy = (
     buildDir?: string;
     hasCredential?: boolean;
     requireArtifact?: boolean;
+    root?: string;
   } = {},
 ): Plan => {
   const resolved = resolveTarget(environment, {
@@ -320,51 +334,43 @@ export const planDeploy = (
   }
 
   const target = resolved.target;
-  const steps: Step[] = [];
+  const revision = sourceRevision(options.root);
+
+  // Built from the same functions `apply` executes. The hand-written copies these
+  // replaced had already drifted: the plan's migration omitted `--remote` and its
+  // deploy omitted `--var RELEASE` and `--meta`. A dry run that renders different
+  // argv from the real run is a dry run that can lie, which is the whole claim
+  // being tested.
+  const migration = migrationStep(target, options.root ?? REPO_ROOT);
+  if (!migration.ok) {
+    return { ok: false, reason: migration.detail, remedy: 'Fix the migration plan, then re-run.' };
+  }
+
   const notices: string[] = [];
 
-  steps.push({
-    description: `Apply reviewed migrations to ${target.d1DatabaseId} (${target.environment})`,
-    command: 'wrangler',
-    args: [
-      'd1',
-      'migrations',
-      'apply',
-      'DB',
-      '--env',
-      target.environment,
-      '--config',
-      `${CLIENT_DIR}/wrangler.jsonc`,
-    ],
-    cwd: CLIENT_DIR,
-    remote: true,
-  });
-
-  steps.push({
-    description: `Deploy ${target.workerName} and its assets to ${target.origin}`,
-    command: 'wrangler',
-    args: [
-      'deploy',
-      '--env',
-      target.environment,
-      // The Worker name is passed explicitly rather than read from the config, so
-      // the name the plan printed is the name that gets deployed.
-      '--name',
-      target.workerName,
-      '--config',
-      `${CLIENT_DIR}/wrangler.jsonc`,
-    ],
-    cwd: CLIENT_DIR,
-    remote: true,
-  });
-
-  steps.push({
-    description: `Verify the release at ${target.origin}/health`,
-    command: 'fetch',
-    args: [`${target.origin}/health`],
-    cwd: CLIENT_DIR,
-    remote: true,
-  });
+  const steps: Step[] = [
+    {
+      description: migration.description,
+      command: 'wrangler',
+      args: migration.args,
+      cwd: CLIENT_DIR,
+      remote: true,
+    },
+    {
+      description: deployStep(target, revision.sha, null).description,
+      command: 'wrangler',
+      args: deployStep(target, revision.sha, null).args,
+      cwd: CLIENT_DIR,
+      remote: true,
+    },
+    {
+      description: `Verify the release at ${target.origin}${HEALTH_PATH}`,
+      command: 'fetch',
+      args: [`${target.origin}${HEALTH_PATH}`],
+      cwd: CLIENT_DIR,
+      remote: true,
+    },
+  ];
 
   notices.push(
     `Secrets required (names only, from the config): ${target.requiredSecretNames.join(', ')}.`,
@@ -430,6 +436,19 @@ export const renderPlan = (plan: Extract<Plan, { ok: true }>): string => {
 };
 
 const readValues = (): DeploymentValues => effectiveDeploymentValues();
+
+/**
+ * Run a `bun` subcommand through the bounded runner, returning its exit code.
+ *
+ * The same mechanism every other subprocess here uses. A build that ran
+ * *outside* it would be a build with no bound on its output and no exit status
+ * to check, which is the "command that succeeds while doing nothing" this
+ * repository treats as the worst outcome.
+ */
+const runBun = (args: readonly string[], cwd: string): number =>
+  // `bun` by name: it is the interpreter already running this process, so it is
+  // on PATH by definition and there is nothing to resolve.
+  spawnSync('bun', [...args], { stdio: 'inherit', cwd }).status ?? 1;
 
 /**
  * `status`: what is configured, and what was last released.
@@ -530,8 +549,29 @@ export const main = async (argv: readonly string[]): Promise<number> => {
 
   const environment = parsed.environment ?? 'staging';
 
+  // `--dry-run` means the plan, and it is honoured rather than parsed and ignored.
+  // Ignoring it was a live defect: `deploy apply --env production --dry-run --yes`
+  // took the apply path and deployed.
+  if (parsed.dryRun && parsed.phase === 'apply') {
+    // Refused rather than silently re-routed: someone who wrote both flags meant
+    // one of them, and picking for them is how the wrong one gets deployed.
+    return fail(
+      '--dry-run means "print the plan and change nothing", so it cannot be combined\n' +
+        '  with the apply phase. Run:\n' +
+        '    bun run deploy plan --env ' +
+        environment +
+        '\n' +
+        '    bun run deploy apply --env ' +
+        environment +
+        ' --yes    # to actually deploy',
+      EXIT.usage,
+    );
+  }
+
+  const phase: DeployPhase = parsed.dryRun ? 'plan' : parsed.phase;
+
   // ── plan ───────────────────────────────────────────────────────────────────
-  if (parsed.phase === 'plan') {
+  if (phase === 'plan') {
     const plan = planDeploy(environment);
     if (!plan.ok) {
       return fail(`${plan.reason}\n${plan.remedy}`, EXIT.failed);
@@ -552,7 +592,7 @@ export const main = async (argv: readonly string[]): Promise<number> => {
   }
 
   // ── preflight ──────────────────────────────────────────────────────────────
-  if (parsed.phase === 'preflight') {
+  if (phase === 'preflight') {
     const resolved = resolveTarget(environment, { values: readValues() });
     if (!resolved.ok) {
       return fail(`${resolved.reason}\n${resolved.remedy}`, EXIT.failed);
@@ -574,7 +614,7 @@ export const main = async (argv: readonly string[]): Promise<number> => {
   }
 
   // ── verify ─────────────────────────────────────────────────────────────────
-  if (parsed.phase === 'verify') {
+  if (phase === 'verify') {
     const resolved = resolveTarget(environment, { values: readValues() });
     if (!resolved.ok) {
       return fail(`${resolved.reason}\n${resolved.remedy}`, EXIT.failed);
@@ -626,6 +666,20 @@ export const main = async (argv: readonly string[]): Promise<number> => {
     target: resolved.target,
     consented: true,
     skipMigrations: parsed.skipMigrations,
+    // The artifact is built here, from this checkout, rather than taken from
+    // whatever `.svelte-kit/` happens to hold. Without this the deploy publishes
+    // a previous run's bytes whenever they are newer than the source, and the
+    // recorded SHA is then a SHA nothing was built from.
+    build: () => {
+      const built = runBun(['run', 'build'], REPO_ROOT);
+      if (built !== 0) {
+        return { ok: false, detail: `bun run build exited ${built}` };
+      }
+      const checked = runBun(['run', 'check:bundle'], REPO_ROOT);
+      return checked === 0
+        ? { ok: true, detail: 'built and validated from this checkout' }
+        : { ok: false, detail: `bun run check:bundle exited ${checked}` };
+    },
   });
 
   process.stdout.write(`${renderApply(result)}\n`);

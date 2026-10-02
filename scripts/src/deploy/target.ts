@@ -123,40 +123,56 @@ const parseOrigin = (
 };
 
 /**
- * Refuse two environments that name the same Worker or the same database.
+ * Refuse two environments that would resolve to the same Worker or database.
  *
- * The check is over *every* configured environment, not just the requested one,
- * because the defect is symmetric: if production already points at the database
- * staging is about to migrate, then the staging deploy is the dangerous one and a
- * check that only looked at production would call it fine.
+ * The check is over the *resolved* topology rather than the raw map, which is what
+ * makes it catch the case that matters. A project with no `environments` map has one
+ * set of names, so `--env staging` and `--env production` resolve to the same Worker
+ * and the same database — and a production release would then be a staging release.
+ * Comparing map entries alone cannot see that: there are no entries to compare.
  *
- * Returns `null` when the topology is isolated.
+ * Refused here, before any mutation, and reported against the *resolved* values, so
+ * the message names the resource that is actually shared rather than a key in a
+ * file.
+ *
+ * Returns `null` when every deployable environment resolves to its own resources.
  */
 export const environmentIsolationProblem = (
   values: DeploymentValues = effectiveDeploymentValues(),
 ): string | null => {
-  if (values.environments === undefined) {
-    return null;
+  const resolved = new Map<string, { worker: string | null; database: string | null }>();
+
+  for (const environment of DEPLOYABLE_ENVIRONMENTS) {
+    const topology = topologyFor(environment, values);
+    resolved.set(environment, {
+      worker: topology?.workerName ?? null,
+      database: topology?.d1DatabaseId ?? null,
+    });
   }
 
-  const workerOwners = new Map<string, string>();
-  const databaseOwners = new Map<string, string>();
+  const entries = [...resolved.entries()].filter(
+    ([, value]) => value.worker !== null || value.database !== null,
+  );
 
-  for (const [environment, targets] of Object.entries(values.environments)) {
-    if (targets.workerName !== null) {
-      const previous = workerOwners.get(targets.workerName);
-      if (previous !== undefined) {
-        return `staging and production both name the Worker "${targets.workerName}". A Worker is one resource per account, so the two environments are the same deployment.`;
+  for (const [environment, value] of entries) {
+    for (const [other, otherValue] of entries) {
+      if (environment >= other) {
+        continue;
       }
-      workerOwners.set(targets.workerName, environment);
-    }
 
-    if (targets.d1DatabaseId !== null) {
-      const previous = databaseOwners.get(targets.d1DatabaseId);
-      if (previous !== undefined) {
-        return `${previous} and ${environment} both use the D1 database ${targets.d1DatabaseId}. A shared database means a staging migration is a production migration.`;
+      if (value.worker !== null && value.worker === otherValue.worker) {
+        return (
+          `${environment} and ${other} both resolve to the Worker "${value.worker}". A Worker is ` +
+          'one resource per account, so the two environments are the same deployment.'
+        );
       }
-      databaseOwners.set(targets.d1DatabaseId, environment);
+
+      if (value.database !== null && value.database === otherValue.database) {
+        return (
+          `${environment} and ${other} both resolve to the D1 database ${value.database}. A shared ` +
+          'database means a staging migration is a production migration.'
+        );
+      }
     }
   }
 
@@ -197,7 +213,9 @@ export const resolveTarget = (
       isolated,
       'Give each environment its own Worker name and D1 database id. This is refused ' +
         'before anything is changed, because the alternative is a staging release ' +
-        'reaching live traffic.',
+        'reaching live traffic.\n' +
+        '  bun run deploy:configure -- --env staging --worker <name>\n' +
+        '  bun run deploy:configure -- --env production --worker <name>',
     );
   }
 

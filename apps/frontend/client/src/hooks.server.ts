@@ -93,7 +93,10 @@ export const handle: Handle = async ({ event, resolve }) => {
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     startupLogger.error('config.invalid', { message });
-    return notConfigured(message, isApiPath(event.url.pathname));
+    return withCachePolicy(
+      notConfigured(message, isApiPath(event.url.pathname)),
+      cachePolicyFor(event.url.pathname, null),
+    );
   }
 
   event.locals.container = container;
@@ -105,10 +108,16 @@ export const handle: Handle = async ({ event, resolve }) => {
   // `route.id` is null exactly when nothing matched, which is what makes this a
   // 404 rather than a guess about the response status.
   if (event.route.id === null && isApiPath(event.url.pathname)) {
-    return jsonError(404, 'not_found', 'No such route.');
+    return withCachePolicy(
+      jsonError(404, 'not_found', 'No such route.'),
+      cachePolicyFor(event.url.pathname, event.locals.user),
+    );
   }
 
-  // Cache policy, applied here rather than per route.
+  // Cache policy, applied here rather than per route, and to *every* response
+  // including the two above — a 503 and a 404 are both answers a shared cache
+  // would happily keep, and an API response without the directive is one CDN
+  // configuration change away from being replayed.
   //
   // Two classes of response, and they must not be confused:
   //
@@ -122,17 +131,22 @@ export const handle: Handle = async ({ event, resolve }) => {
   //     headers rather than being declared cacheable here. A blanket `public`
   //     would be a correctness claim this code cannot verify, since whether a page
   //     is anonymous depends on the session rather than on the URL.
-  //
-  // Headers are copied rather than mutated: a `Response` from SvelteKit is often
-  // immutable, and assigning to `.headers` throws in workerd when it is.
-  const policy = cachePolicyFor(event.url.pathname, event.locals.user);
-  if (policy !== null) {
-    const headers = new Headers(response.headers);
-    headers.set('cache-control', policy);
-    return new Response(response.body, { status: response.status, headers });
-  }
+  return withCachePolicy(response, cachePolicyFor(event.url.pathname, event.locals.user));
+};
 
-  return response;
+/**
+ * Apply a cache policy, or return the response untouched.
+ *
+ * Headers are copied rather than mutated: a `Response` from SvelteKit is often
+ * immutable, and assigning to `.headers` throws in workerd when it is.
+ */
+const withCachePolicy = (response: Response, policy: string | null): Response => {
+  if (policy === null) {
+    return response;
+  }
+  const headers = new Headers(response.headers);
+  headers.set('cache-control', policy);
+  return new Response(response.body, { status: response.status, headers });
 };
 
 /**

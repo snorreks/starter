@@ -66,6 +66,20 @@ permissions:
 
 env:
   BUN_VERSION: '1.4.2'
+  # Nonsecret configuration, injected rather than persisted — there is no
+  # `.starter/deployment.local.json` in CI, because it is gitignored.
+  #
+  # These are GitHub *variables* (`vars`), not secrets: an account id, a Worker
+  # name, a database id and a public hostname are all configuration. Only the API
+  # token is a secret.
+  #
+  # `vars` can only be read into `env:`, not interpolated into a `run:` block — and
+  # nothing below interpolates `${{ }}` into a script anyway, for the reason in the
+  # commit message on the policy check.
+  CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+  CLOUDFLARE_WORKER_NAME: ${{ vars.CLOUDFLARE_WORKER_NAME }}
+  CLOUDFLARE_D1_DATABASE_ID: ${{ vars.CLOUDFLARE_D1_DATABASE_ID }}
+  CLOUDFLARE_PUBLIC_ORIGIN: ${{ vars.CLOUDFLARE_PUBLIC_ORIGIN }}
 
 jobs:
   # ── plan: offline ──────────────────────────────────────────────────────────
@@ -80,6 +94,12 @@ jobs:
       contents: read
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          # This job reads the repository and never pushes. Leaving the token in the
+          # local git config would put a credential in `.git/config` for every
+          # later step, including the build — which is exactly the "secret in a place
+          # another process can read it" rule the deploy path enforces on argv.
+          persist-credentials: false
 
       - uses: oven-sh/setup-bun@7b8f5b94c955a854e6f8b8dc76b2b8c6bca29f45 # v2.2.2
         with:
@@ -91,8 +111,14 @@ jobs:
       # `deploy:check` is the same planner the CLI uses and needs no credential.
       # If it fails here, the operator learns before the apply job is queued
       # rather than after it has claimed the concurrency group.
+      #
+      # The environment reaches the command through `env:`, not through `${{ }}` in
+      # the script: an interpolated value is substituted into the command *before*
+      # the shell runs, so a value containing a shell metacharacter would execute.
       - name: Plan
-        run: bun run deploy:check --env ${{ inputs.environment }}
+        env:
+          DEPLOY_ENVIRONMENT: ${{ inputs.environment }}
+        run: bun run deploy:check --env "$DEPLOY_ENVIRONMENT"
 
       - name: Guards
         run: bun run guard
@@ -130,6 +156,8 @@ jobs:
 
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
 
       - uses: oven-sh/setup-bun@7b8f5b94c955a854e6f8b8dc76b2b8c6bca29f45 # v2.2.2
         with:
@@ -138,21 +166,22 @@ jobs:
       - name: Install
         run: bun install --frozen-lockfile
 
-      # In the environment, never in a step. A token in `${{ secrets.* }}` that is
-      # also echoed would land in the run log; this assignment never prints.
+      # In the environment, never in a step's `run:` line. A token echoed in a
+      # command lands in the run log; this assignment never prints.
       - name: Credential
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          DEPLOY_ENVIRONMENT: ${{ inputs.environment }}
+          FIRST_DEPLOY: ${{ inputs.first_deploy && 'yes' || 'no' }}
         run: |
           if [ -z "$CLOUDFLARE_API_TOKEN" ]; then
-            echo "::error::CLOUDFLARE_API_TOKEN is not set on the ${{ inputs.environment }} environment."
+            echo "::error::CLOUDFLARE_API_TOKEN is not set on this environment."
             exit 3
           fi
           # Confirm the token resolves to the account this project is configured
           # for, before the migration job has a chance to touch it.
-          bun run deploy:preflight --env ${{ inputs.environment }} \
-            ${{ inputs.first_deploy && '--allow-new-worker' || '' }}
+          bun run deploy:preflight --env "$DEPLOY_ENVIRONMENT" \
+            $([ "$FIRST_DEPLOY" = yes ] && echo --allow-new-worker)
 
       # The source SHA is recorded rather than re-derived later, so the release
       # record names the commit this run actually built rather than whatever HEAD
@@ -160,23 +189,34 @@ jobs:
       - name: Record the source revision
         run: echo "SOURCE_REVISION=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
 
-      - name: Build
-        run: bun run build && bun run check:bundle
-
       # One command for build, migrate, deploy, verify and record, in that order,
       # with `--yes` supplied here and nowhere else. The same pipeline the local
-      # CLI runs: there is no CI-only deployment path to keep in step.
+      # CLI runs: there is no CI-only deployment path to keep in step. `apply`
+      # builds too, so this step is a preflight of the bundle rather than the build.
       - name: Apply
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          DEPLOY_ENVIRONMENT: ${{ inputs.environment }}
+          APPLY_MIGRATIONS: ${{ inputs.migrate && 'yes' || 'no' }}
         run: |
-          bun run deploy:apply --env ${{ inputs.environment }} --yes \
-            ${{ !inputs.migrate && '--skip-migrations' || '' }}
+          bun run deploy:apply --env "$DEPLOY_ENVIRONMENT" --yes \
+            $([ "$APPLY_MIGRATIONS" = yes ] || echo --skip-migrations)
 
-      # The release record is the artifact of this workflow. Uploading it as a job
-      # summary makes the provenance readable from the run page without anyone
-      # having a Cloudflare login open.
+      # The release record is the artifact of this workflow. Uploading it keeps the
+      # provenance readable from the run page — by anyone reviewing a deploy months
+      # later — without needing a Cloudflare login or the operator's machine.
+      - name: Upload the release record
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: release-record-${{ inputs.environment }}
+          path: .starter/releases/${{ inputs.environment }}.json
+          if-no-files-found: error
+
+      # And the same record in the run summary, which is where someone lands first.
       - name: Summarise the release
         if: always()
-        run: bun run deploy:status --env ${{ inputs.environment }}
+        env:
+          DEPLOY_ENVIRONMENT: ${{ inputs.environment }}
+        run: |
+          bun run deploy:status >> "$GITHUB_STEP_SUMMARY"
