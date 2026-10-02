@@ -1,7 +1,7 @@
 {
   "//": [
     "Playwright loads this project with its own transpiler; this config exists so",
-    "`tsgo --noEmit` covers the specs and helpers like every other project. The",
+    "Typechecking covers the specs and helpers like every other project. The",
     "`types` entry is Playwright's test types plus bun, because capture_evidence.ts",
     "is a plain Bun script."
   ],

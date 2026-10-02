@@ -18,6 +18,7 @@
 
 import { join } from 'node:path';
 import { REPO_ROOT } from '../../scripts/src/shared/paths.ts';
+import { appBaseUrl, APP_PORT as CONFIG_APP_PORT } from './playwright.config.ts';
 
 export interface RunIdentity {
   /** Unique per Playwright invocation. */
@@ -26,9 +27,27 @@ export interface RunIdentity {
   appPort: number;
 }
 
-export const APP_PORT = Number(process.env.E2E_APP_PORT ?? 4183);
+/**
+ * The port and origin come from `playwright.config.ts` and are re-exported here.
+ *
+ * They used to be computed independently, with the literal `4183` on both sides.
+ * That was one answer to one question written twice, and when the config moved to
+ * a per-worktree port the two drifted: the Worker came up on 4267, the preflight
+ * kept polling 4183, and the run failed with
+ *
+ *   The app did not become ready within 60s. Last error: fetch failed
+ *
+ * while the server under test was answering `GET / 200` the whole time. The
+ * identity check is only meaningful if it looks where the server actually is, so
+ * the value has exactly one home.
+ *
+ * Importing the config rather than inverting the dependency is deliberate:
+ * `playwright.config.ts` must not import this module, or the two would be
+ * circular. It does not — it only names this module in comments.
+ */
+export const APP_PORT = CONFIG_APP_PORT;
 
-export const appBaseUrl = `http://127.0.0.1:${APP_PORT}`;
+export { appBaseUrl };
 
 let currentRun: RunIdentity | undefined;
 

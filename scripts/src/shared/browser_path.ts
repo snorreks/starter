@@ -173,15 +173,39 @@ export const resolveBrowser = (env: NodeJS.ProcessEnv = process.env): ResolvedBr
 };
 
 /**
- * The Playwright/Vitest `launchOptions` for the resolved browser.
+ * Playwright's own launch options for the resolved browser.
  *
  * `executablePath` is left absent when nothing was resolved, so Playwright uses
  * its own default and produces its own error. Passing a nonexistent path instead
  * yields a less obvious failure.
+ *
+ * This is the shape `playwright.config.ts` passes as `use.launchOptions`. It is
+ * **not** the shape the Vitest browser provider wants — see
+ * `vitestProviderOptions` for that. Handing this object to `playwright()` was
+ * itself a bug worth naming: it type-checks, because `PlaywrightProviderOptions`
+ * has other optional members, and it silently discards the executable.
  */
-export const launchOptions = (
+export const playwrightLaunchOptions = (
   env: NodeJS.ProcessEnv = process.env,
 ): { executablePath?: string } => {
   const { executable } = resolveBrowser(env);
   return executable === null ? {} : { executablePath: executable };
 };
+
+/**
+ * `@vitest/browser-playwright` provider options for the resolved browser.
+ *
+ * The provider nests Playwright's launch options under `launchOptions`; that is
+ * the only member its `resolveLaunchOptions` reads. Vitest 5's
+ * `BrowserInstanceOption` has no `launch` member, so an executable placed on an
+ * instance is dropped without a warning and the lane falls back to Playwright's
+ * own resolution — which is how this lane used to fail on NixOS.
+ *
+ * Two functions rather than one, because the two callers need different shapes
+ * and a single "launchOptions" name invited exactly that mistake.
+ */
+export const vitestProviderOptions = (
+  env: NodeJS.ProcessEnv = process.env,
+): { launchOptions: { executablePath?: string } } => ({
+  launchOptions: playwrightLaunchOptions(env),
+});

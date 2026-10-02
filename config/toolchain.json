@@ -26,6 +26,22 @@
     "would report `ok` on real drift."
   ],
   "bun": "1.4.2",
+  "//toolchain": [
+    "What else is pinned, and why, is written in docs/toolchain.md rather than",
+    "repeated here: this file is the authority for *versions*, not for the",
+    "reasoning, and a second copy of the reasoning is a second thing to keep",
+    "current.",
+    "",
+    "One decision belongs here because it is a version question with a date:",
+    "the TypeScript compiler is `typescript` only. `@typescript/native-preview`",
+    "was pinned at 7.0.0-dev.20260707.2 and removed on 2026-10-02 — a prerelease",
+    "line whose newest tag was still that two-month-old nightly, and which",
+    "`.syncpackrc` could not hold in the same range as `typescript`.",
+    "",
+    "Node is still required and still not pinned here: `flake.nix` supplies",
+    "nodejs_22 and `setup:doctor` checks it, because `wrangler dev` and Vite",
+    "shell out to it."
+  ],
   "playwright": {
     "//": [
       "The version the browsers must match. Read from the workspace copy of",

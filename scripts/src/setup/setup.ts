@@ -18,6 +18,7 @@ import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { resolveBrowser } from '../shared/browser_path.ts';
 import { CLIENT_DIR, REPO_ROOT } from '../shared/paths.ts';
 import { playwrightBin } from '../shared/tools.ts';
 import { inspect, type Report } from './doctor.ts';
@@ -203,12 +204,35 @@ export const performSetup = (options: { force?: boolean; quiet?: boolean } = {})
 
   // 3. Browsers matching the locked Playwright version.
   //
-  //    Skipped when a Nix store Chromium is provided, because Playwright's own
-  //    download does not run there and would leave a broken browser in the cache.
-  const nixBrowser = process.env.PLAYWRIGHT_BROWSERS_PATH?.startsWith('/nix/store') ?? false;
+  //    Skipped when a browser already resolves. That used to be decided by
+  //    `PLAYWRIGHT_BROWSERS_PATH.startsWith('/nix/store')` — a check on the *name*
+  //    of a directory rather than on whether a browser exists. It was wrong in both
+  //    directions: renaming the variable's value made `setup` download a Chromium
+  //    the environment had already decided not to use, and a Nix store path with no
+  //    Chromium in it made `setup` skip a download that was needed.
+  //
+  //    The capability is `resolveBrowser()`, which is the same decision the lanes
+  //    make. If it finds an executable, installing another one is pure cost; if it
+  //    does not, Playwright's download is the only way to get one.
+  const resolved = resolveBrowser();
   const playwright = playwrightBin();
 
-  if (playwright !== null && !nixBrowser && !options.quiet) {
+  if (resolved.executable !== null) {
+    log(`  using ${resolved.executable} (${resolved.source})`);
+    log(`    ${resolved.reason}`);
+  } else if (playwright === null) {
+    process.stderr.write(
+      'playwright is not in this workspace, so no browser can be installed.\n' +
+        '  Run `bun install`, then `bun run setup`.\n' +
+        `  ${resolved.reason}\n`,
+    );
+    performed.push('playwright (not installed)');
+  } else {
+    // `quiet` suppresses *output*, never the work. It used to gate this branch as
+    // well, so `setup --quiet` with no browser reached no branch at all: no install,
+    // no message, and then the readiness stamp was written as if the browser were
+    // there. `.envrc` runs `bun run setup` on every directory entry, so the quiet
+    // path is not hypothetical.
     const pins = readPins();
     const browsers = 'error' in pins ? ['chromium'] : [...pins.playwright.browsers];
 
@@ -216,20 +240,37 @@ export const performSetup = (options: { force?: boolean; quiet?: boolean } = {})
       log(`  installing playwright ${declaredPlaywrightVersion() ?? '?'} browser: ${browser}`);
       const installed = spawnSync(playwright, ['install', browser], {
         cwd: REPO_ROOT,
-        stdio: 'inherit',
+        // The download is the point of the command; `--quiet` means do not narrate
+        // it, not skip it. Its output is only suppressed so it cannot interleave
+        // with whatever the caller is printing.
+        stdio: options.quiet ? 'ignore' : 'inherit',
+        // A network operation with no bound. A hang here blocks shell activation,
+        // because `.envrc` runs `setup` on every directory entry.
+        timeout: 600_000,
       });
       if (installed.status !== 0) {
         process.stderr.write(
           `Could not install the ${browser} browser.\n` +
-            'The browser lane and E2E will not run. Everything else works.\n',
+            'The browser lane and E2E will not run. Everything else works.\n' +
+            `  ${resolved.reason}\n`,
         );
         performed.push(`playwright install ${browser} (failed)`);
         break;
       }
       performed.push(`playwright install ${browser}`);
     }
-  } else if (nixBrowser) {
-    log(`  using the Nix-provided Chromium at ${process.env.PLAYWRIGHT_BROWSERS_PATH}`);
+
+    // Re-read the resolver rather than trusting the install's exit status: a
+    // successful `playwright install` on an unsupported OS produces a browser that
+    // cannot launch, and the stamp below must not record that as ready.
+    if (resolveBrowser().executable === null) {
+      process.stderr.write(
+        'A browser was requested but none resolves, so `setup` is not recording the\n' +
+          'checkout as ready. The browser lane and E2E will not run.\n' +
+          `  ${resolved.reason}\n`,
+      );
+      performed.push('browser (still unresolved)');
+    }
   }
 
   mkdirSync(STATE_DIR, { recursive: true });

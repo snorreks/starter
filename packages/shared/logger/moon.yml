@@ -35,26 +35,36 @@ tasks:
     args: ['run', 'typecheck']
     inputs:
       - '@group(sources)'
+      - '@group(tests)'
+      - '@group(configs)'
   lint:
     command: 'bun'
     args: ['run', 'lint']
     inputs:
       - '@group(sources)'
+      - '@group(tests)'
+      - '@group(configs)'
   format:
     command: 'bun'
     args: ['run', 'format']
     inputs:
       - '@group(sources)'
+      - '@group(tests)'
+      - '@group(configs)'
   fix:
     command: 'bun'
     args: ['run', 'fix']
     inputs:
       - '@group(sources)'
+      - '@group(tests)'
+      - '@group(configs)'
   test:
     command: 'bun'
     args: ['run', 'test']
     inputs:
       - '@group(sources)'
+      - '@group(tests)'
+      - '@group(configs)'
   validate:
     deps:
       - '~:lint'
