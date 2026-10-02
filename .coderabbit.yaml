@@ -62,16 +62,18 @@ reviews:
         # `bun run guard`), so a review that contradicts them should be corrected
         # rather than obeyed. See AGENTS.md.
 
-        - path: "apps/backend/api/src/**"
+        - path: "apps/frontend/client/src/lib/server/**"
           instructions: |
-              Cloudflare Worker (module format). `nodejs_compat` is on, so the
-              supported `node:*` subset is allowed, but flag anything the Workers
-              runtime cannot do at request time: filesystem access, `child_process`,
-              native addons, long-lived module-scope mutable state shared across
-              requests, or blocking sync I/O.
-              Data access is D1 through bindings — never a direct network DB
-              driver. Auth is Better Auth. R2 is optional and only for uploads
-              (`UPLOADS`).
+              The Worker half of the one application, in workerd (module format).
+              `nodejs_compat` is on, so the supported `node:*` subset is allowed, but
+              flag anything the Workers runtime cannot do at request time:
+              filesystem access, `child_process`, native addons, long-lived
+              module-scope mutable state shared across requests, or blocking sync
+              I/O.
+
+              Data access is D1 through the `DB` binding — never a direct network DB
+              driver. Auth is Better Auth, built once per (binding set, origin) in
+              `container.ts`.
 
               Deployment mode is explicit and fails closed: `DEPLOYMENT_ENV` decides
               whether development defaults are permitted, it is never inferred from
@@ -82,22 +84,51 @@ reviews:
               reintroduces a default here — that is the exact regression this
               boundary exists to prevent.
 
+        - path: "apps/frontend/client/src/hooks.server.ts"
+          instructions: |
+              The composition root. Three jobs in this order: bindings to
+              container, request to identity, unrouted `/api/*` to a JSON 404.
+              `locals.user` is resolved per request and must never be cached on the
+              module — a Worker isolate serves concurrent requests and the last
+              writer would win for all of them. A configuration failure is caught
+              here and answered with a 503 naming the binding, never an opaque 500.
+
+        - path: "apps/frontend/client/src/routes/**/+server.ts"
+          instructions: |
+              A thin adapter over `#lib/server/*_service.ts`: resolve identity,
+              validate the body against the shared schema, map a result to a
+              status. No SQL, no ownership rule and no domain logic belong here —
+              the service is also reached from a `+page.server.ts`, and a rule that
+              lives in only one of the two is a rule that will drift.
+
+              Every refusal uses the same `{ error, message }` shape from
+              `#lib/server/http.ts`. Return the wire DTO, never a database row:
+              this response is serialized.
+
+              Never `fetch()` this app's own origin. There is one production router,
+              and a round trip to `/api/notes` from inside the process that serves
+              `/api/notes` is a second, differently authenticated path to the same
+              data.
+
         - path: "apps/frontend/client/src/**"
           instructions: |
-              SvelteKit static SPA, also the Tauri v2 shell. There is no server:
-              `+server.ts`, `+page.server.ts` and `+layout.server.ts` are forbidden.
-              No `node:*` imports in this path — it ships to a browser/webview, and
-              `@starter/utils` is linked into this bundle, which is why
-              `killTree` lives on the `@starter/utils/process` subpath and is
-              deliberately absent from the package barrel.
+              The BROWSER half, except for the five server-plane shapes named above.
+              One SvelteKit package holds two runtimes; this instruction describes
+              the one that runs in a page.
 
-              Persistence goes through the repository layer. Never a D1 call, never
-              a raw driver call from a component.
+              No `node:*` imports in this path — it ships to a browser, and
+              `@starter/utils` is linked into this bundle, which is why `killTree`
+              lives on the `@starter/utils/process` subpath and is deliberately
+              absent from the package barrel.
 
-              The dev port is 5173, declared once in `dev_ports.ts` and asserted
-              against `tauri.conf.json` by a test, because Tauri v2 does not
-              interpolate environment variables into its config. A second literal
-              is a bug, not a convenience.
+              Never import `@starter/database`, `@starter/auth`, `drizzle-orm` or
+              `better-auth`. Persistence goes through the client service layer over
+              HTTP. `bun run check:bundle` scans the built client chunk for the
+              markers minification leaves behind, so a leak fails the build rather
+              than shipping.
+
+              The API base URL is `''` — this origin. `PUBLIC_API_BASE_URL` exists
+              only to point a browser at a different deployment while debugging.
 
         - path: "apps/e2e/**"
           instructions: |
@@ -117,10 +148,10 @@ reviews:
 
         - path: "packages/frontend/**"
           instructions: |
-              Browser/Tauri only. No `node:*` imports, no database or backend
-              service imports. Svelte 5 runes; View/ViewModel separation. Note that
-              feature components (e.g. NoteCard) live in the feature folder, not in
-              a shared UI package, once they are specific to one feature.
+              Browser only. No `node:*` imports, no database or backend service
+              imports. Svelte 5 runes; View/ViewModel separation. Note that feature
+              components (e.g. NoteCard) live in the feature folder, not in a shared
+              UI package, once they are specific to one feature.
 
         - path: "packages/backend/**"
           instructions: |
@@ -128,11 +159,19 @@ reviews:
               (`@starter/utils`), service/repository layering, DB access via
               repositories.
 
-        - path: "apps/frontend/client/src-tauri/**"
+        - path: "apps/frontend/client/src/routes/**/+page.server.ts"
           instructions: |
-              Rust shell. `moon check` runs clippy here. Prefer a native call over a
-              JS shim. Desktop and mobile builds are distinct: a flag that stubs
-              one while claiming to build the other is the failure to flag.
+              An SSR load. It calls the service DIRECTLY by importing
+              `#lib/server/*_service.ts` — it must not `fetch()` its own origin, and
+              a load that does is the second path this architecture exists to avoid.
+
+              Anonymous means redirected, not rendered. Build the ViewModel's initial
+              state from the load rather than fetching on mount, so there is no
+              window in which the page shows an empty list before its data arrives.
+
+              What goes into `data` is serialized into the HTML. Return the DTO from
+              `@starter/schemas`; never spread a session user, a binding, or a
+              service instance.
 
         # ── Patterns Biome and tsc cannot check ─────────────────────────────
         - path: "**/*.svelte"
@@ -227,8 +266,8 @@ reviews:
             enabled: false
         oxc:
             enabled: false
-        # Rust lives only in apps/frontend/client/src-tauri; `moon check` runs
-        # clippy there already. Flip to true to also get it in PR review.
+        # No Rust in this repository. The native shell was removed in PR A; if one
+        # comes back it needs its own `moon` task before clippy is worth enabling.
         clippy:
             enabled: false
         # There are no Dockerfiles in this repository.

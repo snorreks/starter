@@ -34,19 +34,19 @@ bun install
 bun run setup
 bun run setup:doctor
 
-# Develop
-bun run dev                 # client dev server
-bun run dev:api             # Worker on :8787, logs to /tmp/starter-logs/api.ndjson
+# Develop — one application, two ways to run it
+bun run dev                 # vite dev, Node, emulated bindings. Fast.
+bun run dev:worker          # the BUILT Worker in real workerd. Requires a build.
 
 # Build
-bun run build               # vite build -> apps/frontend/client/build
+bun run build               # vite build -> apps/frontend/client/.svelte-kit/cloudflare/
 bun run check:bundle        # verify the artifact and that it matches its build mode
 
 # Test — four lanes, run them by name
 bun run test                # unit, every project
 bun run test:browser        # real Svelte in Chromium
-bun run test:integration    # real wrangler dev + real local D1
-bun run e2e                 # built client + real Worker + real browser
+bun run test:worker         # build, then the built Worker in workerd + real local D1
+bun run e2e                 # built client + built Worker + real browser, one origin
 bun run test:all            # all four, no duplicates
 
 # Checks
@@ -67,11 +67,11 @@ bun run db:seed
 bun run deploy:configure
 bun run deploy:check
 bun run deploy -- --dry-run
-bun run deploy -- api --env staging --yes
+bun run deploy -- web --env staging --yes
 
-# Logs
-bun run logs client --mode local --follow
-bun run logs api --mode local --follow
+# Logs — one app; --source tells the two halves apart
+bun run logs web --mode local --follow
+bun run logs web --mode local --source browser
 
 # Contracts
 bun run contract new "title" [--mode standard|full]
@@ -86,7 +86,7 @@ own:
 
 | Needs | Required by | Symptom when absent |
 |---|---|---|
-| `node` on PATH | `test:integration`, `e2e` | `env: 'node': No such file or directory`, then a 4-minute timeout |
+| `node` on PATH | `dev:worker`, `test:worker`, `e2e` | `env: 'node': No such file or directory`, then a 4-minute timeout |
 | Chromium's shared libraries | `test:browser`, `e2e` | `error while loading shared libraries` |
 | the `chromium_headless_shell` store path | `test:browser` **only** | `Executable doesn't exist at …/chromium_headless_shell-1243/…` — see [docs/capability-matrix.md](docs/capability-matrix.md) |
 
@@ -95,25 +95,28 @@ See [docs/capability-matrix.md](docs/capability-matrix.md).
 ## Layout, and the boundaries that matter
 
 ```
-apps/frontend/client     SvelteKit SPA
-apps/backend/api         Worker: routes, auth, D1
-apps/e2e                 Playwright specs + the harness that starts the servers
+apps/frontend/client     ONE SvelteKit app: browser half + Worker half
+apps/e2e                 Playwright specs + the harness that starts the server
 packages/shared/*        portable; no project dependencies
-packages/frontend/*      browser code
+packages/backend/*       database, auth — server only
+packages/frontend/*      ui, services — browser only
 scripts                  one tooling workspace
 .pi                      agent extensions, helpers, tests
 ```
 
-Three boundaries, each enforced twice (Biome's import rules and `bun run guard`):
+`apps/backend/api` is gone. There is one application, one Worker, one origin, and
+one production router. `apps/frontend/client/src` holds two runtimes and the
+boundary between them is a path, not a convention — see below.
+
+Boundaries, each enforced twice (Biome's import rules and `bun run guard`):
 
 - **`@starter/*` packages import nothing from `apps/` or `scripts/`.** They are the
   portable core.
-- **`apps/` never imports across to another `app/`.** The client and the API talk
-  over HTTP.
+- **`apps/frontend/client/src/lib/server/**`, `hooks.server.ts` and `src/routes/**/+server.ts` / `+page.server.ts` / `+layout.server.ts` are the server plane.** They may import `@starter/database` and `@starter/auth`. Everything else in the same package may not, and a `+page.svelte` is deliberately excluded so the components beside it keep the browser-only permission set.
 - **`scripts/` and `.pi` run outside both planes** and may import shared packages
   only.
 
-Two directory rules that are *not* stylistic:
+Three directory rules that are *not* stylistic:
 
 - **`.pi/extensions` contains entrypoints only.** Pi loads every module it finds
   there as an extension, so a helper or a test placed there fails on every start.
@@ -122,6 +125,10 @@ Two directory rules that are *not* stylistic:
 - **`@starter/utils/process` is Node-only.** It is reachable only by that subpath,
   never through the package barrel, because `@starter/utils` is linked into the
   browser bundle.
+- **A server load calls the service directly.** `+page.server.ts` imports
+  `#lib/server/…`, never `fetch()`ing its own origin. A round trip to `/api/notes`
+  from inside the process that serves `/api/notes` is a second, differently
+  authenticated path to the same data.
 
 ## Tool resolution
 
@@ -147,8 +154,13 @@ bun run --cwd packages/backend/database db:generate
   against the repository — proving a guard fails would otherwise mean breaking the
   repository.
 - **Prefer real processes and real entrypoints** over mocks at the edges that
-  matter. `process_boundary.test.ts` observes the argv that would be spawned;
-  `worker_config.test.ts` calls the real `worker.fetch`.
+  matter. `scripts/tests/deploy_process_boundary.test.ts` observes the argv that
+  would be spawned; `apps/frontend/client/tests/worker_integration.test.ts` drives
+  the built Worker in real workerd.
+- **Drive a browser, not `curl`, when the question is about a browser.**
+  `not_found_handling: "404-page"` answered a navigation request with 404 while the
+  same URL answered 200 from `curl` — one header's difference, found by 10 failing
+  E2E specs and zero failing API specs.
 - **Inject, do not sleep, for anything time-bounded.** The contract runner's
   per-stage deadline is proven by injecting a 50 ms budget.
 - **Zero discovered tests is a failure.** Assert the count where it matters.
@@ -157,11 +169,16 @@ bun run --cwd packages/backend/database db:generate
 
 - **Config lives in one place.** Repository paths in `scripts/src/shared/paths.ts`
   (with a test, because the wrong `../` depth is silent and reads as a missing
-  file). Dev ports in `apps/frontend/client/dev_ports.ts`. App-to-Worker mapping in
-  the app registry.
+  file). Dev ports in `apps/frontend/client/dev_ports.ts`. Bindings in
+  `apps/frontend/client/wrangler.jsonc`, which the adapter reads for both the build
+  and the dev runtime, so local and deployed cannot disagree. Resource ids in the
+  gitignored `.starter/deployment.local.json`.
 - **Deployment mode on the Worker is explicit.** `DEPLOYMENT_ENV` decides whether
   development defaults are permitted. It is never inferred from a URL, and missing
   is an error rather than a default.
+- **Identity is per request, never module scope.** A Worker isolate serves many
+  concurrent requests. `getContainer` memoizes bindings on `(env, origin)`;
+  `locals.user` is rebuilt from the request every time.
 - **Bound everything that runs a subprocess.** Bytes, time, cancellation, exit
   status. A `limit` argument bounds lines, not bytes.
 - **Comments state the invariant and its reason.** Not the history of how the bug
