@@ -26,25 +26,31 @@ production. See [architecture.md](architecture.md).
 ## Provisioning
 
 ```bash
-bun run deploy:configure -- --provision   # create the D1 database, write its id
-bun run deploy:configure -- --check       # what is still missing
-bun run deploy:check                      # validate a deploy; changes nothing
+bun run deploy:configure -- --account <32-hex>
+bun run deploy:configure -- --env staging --worker starter-web-staging
+bun run deploy:configure -- --env staging --origin https://<host>
+bun run deploy:configure -- --env staging --provision   # create the D1 database
+bun run deploy:configure -- --check                     # report; never provisions
+bun run deploy:check --env staging                      # the offline plan
 ```
 
-`--provision` creates the database and records its id in the gitignored
-`.starter/deployment.local.json`, which the deployment and migration tooling reads.
-It also updates `apps/frontend/client/wrangler.jsonc` when a database entry is
-present, because `wrangler` reads that one at deploy time. Record the account and
-Worker name with `deploy:configure -- --account <account-id> --worker <worker-name>`.
-Keep the committed defaults in `scripts/src/registry/app_registry.ts` unprovisioned.
-Provisioning creates no Worker and deploys nothing. The local file can also hold
-per-environment targets.
+`--provision` creates the database **for one environment** and records its id in the
+gitignored `.starter/deployment.local.json` under `environments.<env>`, which is
+what the deployment and migration tooling reads. It also updates
+`apps/frontend/client/wrangler.jsonc` when a database entry is present, because
+`wrangler` reads that one at deploy time. Keep the committed defaults in
+`scripts/src/registry/app_registry.ts` unprovisioned. Provisioning creates no Worker
+and deploys nothing.
 
-`--worker` takes **one** argument: the name. It used to take two — a target and a
-name — and a caller who wrote `--worker api` had `api` recorded as the Worker's name,
-which then deployed to a Worker called `api` or failed on an account that has no
-such Worker. There is one Worker, so there is nothing for a second argument to
-select.
+`--worker` and `--origin` both require `--env`, and both take **one** argument.
+`--worker` used to take two — a target and a name — and a caller who wrote
+`--worker api` had `api` recorded as the Worker's name, which then deployed to a
+Worker called `api` or failed on an account that has no such Worker. Requiring
+`--env` as well is what stops the value landing in the single-set fallback that both
+environments used to read.
+
+The full sequence, the reasons behind each value, and what is configuration versus
+secret are in **[deployment.md](deployment.md)**.
 
 ## Credentials
 
@@ -54,8 +60,13 @@ export CLOUDFLARE_API_TOKEN=…      # the only credential this tooling reads
 
 `wrangler login` writes OAuth state into a per-user directory that this repository
 deliberately does not read: behaviour that depends on machine state nobody can see
-in review is not reviewable. If you have logged in with `wrangler login`, export the
-token as well.
+in review is not reviewable, and it does not exist on a CI runner at all. If you have
+logged in with `wrangler login`, export the token as well.
+
+**A token is never placed in argv.** `--api-token`, `--var NAME:value` with a
+secret-bearing name, and the bare `--var NAME value` spelling are all refused before
+a plan is rendered. See `secretInArgvProblem` in `scripts/src/deploy/credentials.ts`
+and the tests in `scripts/tests/deployment_target.test.ts`.
 
 ## Four separate things
 
@@ -65,38 +76,56 @@ different undo.
 | | What it does | Undo |
 |---|---|---|
 | **Build** | Produces a bundle | `rm` the output |
-| **Provision** | Creates a D1 database, an R2 bucket | Manual; `d1 delete` |
-| **Deploy** | Uploads code to a Worker | Redeploy the previous version |
+| **Provision** | Creates a D1 database | `d1 delete` |
+| **Migrate** | Applies reviewed SQL to a database | A compensating migration. **Not** a rollback — see below. |
+| **Deploy** | Uploads code to a Worker | Redeploy the previous artifact |
 | **Publish source** | Pushes a repository or cuts a release | Nothing useful |
 
-`bun run deploy` does the third. It never does the others:
+`bun run deploy plan` prints the second, third, fourth and fifth without doing any of
+them. `bun run deploy apply --yes` runs build, migrate, deploy and verify **in that
+order, and only those** — it never runs `git push`, `gh release` or `npm publish`,
+and it never provisions. `bun run deploy:configure --provision` is the only command
+that creates a remote resource, and it is a separate invocation precisely so a
+read-only path cannot grow a side effect.
 
-- no `git push`, no `gh release`, no `npm publish`
-- no `d1 create`, no `r2 bucket create`
-- no `d1 execute`, no migrations
-- no credentials in any command
+Ordering matters and is the design: the new code must never meet the old schema, so
+migrations run first and the deploy refuses if the migration cannot be planned.
 
-There are tests asserting exactly that (`scripts/tests/deploy.test.ts`).
+`scripts/tests/deployment_pipeline.test.ts` asserts that argv at the process
+boundary: that a plan's migration precedes its deploy, that two environments spawn
+two different deployments, and that nothing is spawned at all on any refusal.
+
 Publishing a repository does not deploy it. Creating a database does not deploy
 code. A deploy does not publish anything.
 
 ## Deploying
 
 ```bash
-bun run deploy:check                    # validate; the recommended first command
-bun run deploy -- --dry-run             # print every command that would run
-bun run deploy -- web --env staging --yes
-bun run deploy -- web --env production --yes
-bun run deploy -- web --env staging --json    # machine-readable plan
+bun run deploy:status                     # what is configured, and what was released
+bun run deploy:check --env staging         # the offline plan (same command)
+bun run deploy plan --env staging --json   # machine-readable
+bun run deploy preflight --env staging     # authenticated, read-only
+bun run deploy apply --env staging --yes   # build, migrate, deploy, verify, record
+bun run deploy verify --env staging        # fetch the release and ask what it is
 ```
 
-There is exactly one target. The application deploys as one Worker plus its static
-assets, so there is one `wrangler deploy` to plan and one Worker name to provision.
-The two-target form this replaced cost something real: a partial deploy in which the
-Worker succeeded and the assets did not leaves a live deployment whose pages 404,
-and nothing in the plan could express that as a state to avoid.
+Four phases rather than flags, because they have different authority. `plan` must be
+answerable on a fork's pull request where no secret exists, so it cannot reach an
+authenticated code path. `preflight` may read the account and must never change it.
+Only `apply` mutates, and only with `--yes`.
 
-`--dry-run` and `deploy:check` read the **same** plan object that a real run
+**The full path — configuration authority, credentials, the pipeline, migrations and
+their expand-compatible form, code-rollback-is-not-schema-rollback, concurrency,
+health and readiness, and the release record — is in
+[deployment.md](deployment.md).** What follows is what is specific to Wrangler.
+
+There is exactly one target. The application deploys as one Worker plus its static
+assets, so there is one `wrangler deploy` per environment. The two-target form this
+replaced cost something real: a partial deploy in which the Worker succeeded and the
+assets did not leaves a live deployment whose pages 404, and nothing in the plan
+could express that as a state to avoid.
+
+`plan` and `deploy --dry-run` read the **same** plan object that a real run
 executes. A dry run that re-derives its commands is a dry run that can lie.
 
 The plan also refuses to run at all if `.svelte-kit/cloudflare/_worker.js` is
@@ -117,10 +146,34 @@ on your laptop is a *local invocation* and is unrelated; the local **runtime** i
 `bun run dev`. Those are different concepts and the old code built a `wrangler
 deploy` command for a "non-remote" local step anyway.
 
-**An unrecognised target word is an error.** `bun run deploy -- webb` fails with
-`Unknown target "webb"`. It used to filter argv down to the words that happened to
-be valid targets and default to *everything* when nothing survived, so a typo
-widened a single-target production deploy into a deploy of both apps.
+**An unrecognised phase or environment is an error.** `bun run deploy plan --env
+prod` fails rather than resolving `prod` to production, and `bun run deploy webb`
+fails rather than filtering argv down to the words that happened to be valid and
+defaulting to *everything* when nothing survived.
+
+The plan also refuses to run at all if `.svelte-kit/cloudflare/_worker.js` is
+absent. `wrangler deploy` against a missing build does not fail loudly: it publishes
+an empty deployment whose every page 404s, which reads as a successful deploy of a
+blank site.
+
+Three rules, each of which was previously a way to change something nobody asked for:
+
+**Every remote step requires `--yes`, always.** Not in CI only, not in an
+interactive shell. An interactive terminal is not consent; the old gate refused only
+a *non-interactive* session without `--yes`, so a developer at a prompt got a silent
+remote deploy.
+
+**`--env local` is refused.** `--env` takes `staging` or `production`. This command
+deploys to a remote environment and has no local deployment target. Running the CLI
+on your laptop is a *local invocation* and is unrelated; the local **runtime** is
+`bun run dev`. Those are different concepts and the old code built a `wrangler
+deploy` command for a "non-remote" local step anyway.
+
+**An unrecognised phase or environment is an error.** `bun run deploy plan --env
+prod` is refused; so is `bun run deploy webb`. It used to filter argv down to the
+words that happened to be valid targets and default to *everything* when nothing
+survived, so a typo widened a single-target production deploy into a deploy of both
+apps.
 
 ### The wrangler that runs
 
@@ -139,17 +192,22 @@ exploration, not for a command that mutates something. There is deliberately no
 
 ### Before any remote-capable process starts
 
-`scripts/tests/deploy_process_boundary.test.ts` substitutes the process runner and
+`scripts/tests/deployment_pipeline.test.ts` substitutes the process runner and
 asserts the argv that would actually be spawned, and that **nothing** is spawned on
-refusal. Four cases, each of which previously either spawned or guessed:
+refusal. `scripts/tests/deployment_cli.test.ts` covers the argument surface. Cases
+worth naming:
 
 - `wrangler` appears in the command line exactly once. `planDeploy` used to put
   `wrangler` in the step's args *and* `runWrangler` prepended it, so the process
   that ran was `wrangler wrangler deploy`.
-- one target is one spawn — there is no second app whose step could half-succeed
-- a typo'd target spawns nothing
-- `--env local` spawns nothing
-- a missing credential or a missing `--yes` spawns nothing
+- the runner resolves the pinned workspace binary, never `bunx`
+- staging and production spawn two different deployments
+- an absent artifact stops before the migration touches anything
+- a failed migration does not deploy
+- a failed deploy reports that the schema is now ahead of the code
+- a failed verification still records the release, because that is when the
+  deployment id matters most
+- without `--yes`, nothing is spawned at all
 
 ## Deployment mode on the Worker
 
@@ -269,10 +327,14 @@ The account id is required and has no default — the endpoint is account-scoped
 
 ### Logpush is not implemented
 
-The registry lists Logpush for staging and production. No job is created, no filter
-is registered, and nothing reads the bucket. Treat it as absent — the Observability
-query above is the default source, and Logpush is a separate optional export that
-this repository does not provide.
+There is no Logpush job in this repository: none is created, no filter is
+registered, and nothing reads a bucket. Treat it as absent.
+
+The registry used to *list* Logpush for staging and production while nothing
+implemented it, which is the exact class of claim this repository keeps removing: a
+capability the docs name but the code does not provide. The entry is deleted, and
+`bun run logs` names only what it can do — Workers Observability for history,
+`wrangler tail` for live. See [deployment.md](deployment.md).
 
 ### The live tail cannot filter by user id
 
@@ -302,13 +364,18 @@ is a value nobody can tell is in effect.
 
 | Layer | Where | Holds |
 |---|---|---|
-| 1. Committed defaults | `scripts/src/registry/app_registry.ts` | always `null` for resource ids, enforced by the `registry-valid` guard |
-| 2. Local overlay | `.starter/deployment.local.json` (gitignored) | the real ids, written by `deploy:configure` |
-| 3. Environment | `CLOUDFLARE_ACCOUNT_ID`, `CLOUDFLARE_D1_DATABASE_ID` | what CI injects instead of persisting |
+| 1. Committed defaults | `scripts/src/registry/app_registry.ts` | project name, required secret *names*, required var names; always `null` for resource ids, enforced by the `registry-valid` guard |
+| 2. Local overlay | `.starter/deployment.local.json` (gitignored) | the account id and each environment's Worker name, D1 id and public origin, written by `deploy:configure` |
+| 3. Environment | `CLOUDFLARE_ACCOUNT_ID`, `CLOUDFLARE_WORKER_NAME`, `CLOUDFLARE_D1_DATABASE_ID`, `CLOUDFLARE_PUBLIC_ORIGIN` | what CI injects instead of persisting |
 
-Read order is 3, then 2, then 1. `bun run deploy:check` names the layer that
+Read order is 3, then 2, then 1. `bun run deploy:status` names the layer that
 answered, so the next question — *is this id mine, and where did it come from?* —
 has an answer.
+
+**Account ids, Worker names, database ids and public origins are configuration, not
+secrets.** They are nonsecret by construction, and encrypting them would make "is
+this configured?" a question that requires a decryption key. Tokens and private keys
+stay in the secret channel and never appear in this file.
 
 **This layer did not exist before, and that is why provisioning never worked.**
 `deploy:configure --provision` wrote a D1 id into `wrangler.jsonc`, which is one of
@@ -318,9 +385,10 @@ the `registry-valid` guard *fails the build* on when it holds a literal. The one
 instruction offered could not be followed.
 
 ```bash
-bun run deploy:configure -- --account <32-hex>   # the account id, no provisioning
-bun run deploy:configure -- --provision          # create D1, record the id and account
-bun run deploy:configure -- --worker <name>      # the one Worker's name
+bun run deploy:configure -- --account <32-hex>          # the account id, no provisioning
+bun run deploy:configure -- --env staging --worker <name>
+bun run deploy:configure -- --env staging --origin https://<host>
+bun run deploy:configure -- --env staging --provision   # create D1, record the id and account
 ```
 
 ### Staging and production are different deployments
@@ -336,13 +404,13 @@ The overlay takes an optional `environments` map:
 {
   "accountId": "…",
   "environments": {
-    "staging":    { "workerName": "starter-web-staging", "d1DatabaseId": "…" },
-    "production": { "workerName": "starter-web-prod",    "d1DatabaseId": "…" }
+    "staging":    { "workerName": "starter-web-staging", "d1DatabaseId": "…", "origin": "https://…" },
+    "production": { "workerName": "starter-web-prod",    "d1DatabaseId": "…", "origin": "https://…" }
   }
 }
 ```
 
-| Overlay state | `deploy --env <that environment>` |
+| Overlay state | `deploy apply --env <that environment>` |
 |---|---|
 | no `environments` key | uses the single set — a one-environment project keeps working |
 | entry present | uses that environment's names |
@@ -352,6 +420,17 @@ That last row is the point. Falling back for an unconfigured environment is the 
 behaviour that must not happen: a production request served by staging names would
 publish staging's Worker while the plan claimed production.
 
+**And the two may not share a resource.** `resolveTarget` refuses, before any
+mutation, when both environments name the same Worker or the same D1 database — a
+shared database is what makes a staging migration a production migration. The check
+covers every configured environment, not just the requested one, because the defect
+is symmetric: if production already points at the database staging is about to
+migrate, then the *staging* deploy is the dangerous one.
+
+An `origin` is required because it is the only address a post-deploy verification
+can be made against, and it cannot be derived: the `workers.dev` subdomain belongs
+to the account, not to the Worker.
+
 `workerName` is `string | null` rather than `''`, and that is not pedantry. An
 empty string satisfies `string` while violating `minLength: 1` — the registry
 shipped failing its own schema until this was fixed, and nothing noticed. `null`
@@ -359,12 +438,21 @@ fails the type, so the compiler catches it.
 
 ## Costs
 
-Workers and D1 on the free tier cover a starter's development. Logpush bills for
-volume, and D1 bills for reads and writes beyond the included daily quota.
+Workers and D1 on the free tier cover a starter's development. D1 bills for reads
+and writes beyond the included daily quota, and Workers bill on the paid plan for
+requests beyond the free allowance.
 
 There is no paid observability, no error-tracking service and no feature-flag
-provider wired in. `bun run logs` reads files locally and Logpush remotely, which
-is enough to answer "what happened to this request" without an account to manage.
+provider wired in. `bun run logs` reads files locally and queries Cloudflare Workers
+Observability remotely — history and tail, both of which the provider supports on
+this account type. That is enough to answer "what happened to this request" without
+an account to manage.
+
+**Logpush is not implemented and is not billed for.** An earlier version of this
+document described Logpush as a remote log source; no Logpush job is created
+anywhere in this repository. The entry has been removed rather than carried forward
+as advice, because a cost claim for a capability that does not exist is worse than
+no claim at all.
 
 ## Troubleshooting
 
@@ -373,26 +461,51 @@ read the OAuth state `wrangler login` writes to a per-user directory, so a login
 its own will not satisfy it.
 
 **`Refusing to modify … without --yes`** — expected. Add `--yes`, or use
-`--dry-run` to see what would run. It is refused in an interactive shell too.
+`bun run deploy plan` to see exactly what would run. It is refused in an interactive
+shell too.
 
 **`--env local is not a deployment target`** — expected. Use `bun run dev` for
 local workerd.
 
-**`Unknown target "webb"`** — expected, and deliberately not "deploy everything".
-The only valid target is `web`.
+**`"prod" is not a deployable environment`** — expected, and deliberately not
+resolved to production. The valid values are `staging` and `production`.
+
+**`This project has no topology for the "production" environment`** — the overlay
+has an `environments` map without that entry. Refused rather than defaulted, because
+serving a production request with staging names would publish the wrong Worker while
+the plan claimed production. Add the entry, or remove `environments` entirely if the
+project genuinely has one environment.
+
+**`staging and production both use the D1 database …`** — the two environments
+share a resource. Give each its own Worker name and D1 id:
+`bun run deploy:configure -- --env <env> --provision`.
+
+**`this credential can act on account(s) X, but this project is configured for Y`**
+— the token and the configuration disagree. Nothing has been changed. Set the right
+account id, or use a token for the configured one. `bun run deploy preflight` is the
+command that says this.
+
+**`The D1 database … is not readable in this account`** — it does not exist, belongs
+to another account, or the token cannot read it. `bun run deploy:configure -- --env
+<env> --provision`.
+
+**`No public origin is configured for <env>`** — a deploy could not be verified
+without it, so it is refused. `bun run deploy:configure -- --env <env> --origin
+https://<host>`.
 
 **`The API is not configured correctly and refused to start`** — a 503 whose body
 names the binding. See "Deployment mode on the Worker" above.
 
 **A route 404s in production but works locally** — check the Worker name. A
-`''` used to pass the type check and fail the deploy; it is `null` now, and the
-deploy plan refuses before it can reach Cloudflare.
+`''` used to pass the type check and fail the deploy; it is `null` now, and
+`bun run deploy plan` refuses before it can reach Cloudflare.
 
 **Auth returns `Invalid origin`** — the requesting origin is not in
 `TRUSTED_ORIGINS`. Set it in the environment before `bun run dev`, or as a Worker
 var.
 
-**D1 says no such table** — migrations were not applied. `bun run db:migrate:remote`.
+**D1 says no such table** — migrations were not applied. `bun run
+db:migrate:remote -- <env>`, or let `bun run deploy apply` do it in the correct order.
 
 **`env: 'node': No such file or directory`** — `wrangler dev` is a Node program.
 Provide `node` on PATH. On Nix: `nix-shell -p nodejs`.

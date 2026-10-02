@@ -405,6 +405,101 @@ describe('health', () => {
     // session cookies are issued for an origin the user never visited.
     expect(health.baseUrl).toBe(base());
   });
+
+  test('/health proves release identity without disclosing configuration', async () => {
+    // This is the endpoint the deploy pipeline verifies against, so it has to
+    // identify the release — and it is public, so everything in it is published.
+    const response = await fetch(`${base()}/health`);
+    expect(response.status).toBe(200);
+
+    const body = (await response.json()) as Record<string, unknown>;
+    expect(body.status).toBe('ok');
+    expect(body.environment).toBe('local');
+    expect(body.deployed).toBe(false);
+    // A Worker deployed through this pipeline has `RELEASE` injected as the git
+    // SHA; this run did not go through one, and says so rather than inventing a
+    // plausible value.
+    expect(body.release).toBe('unknown');
+
+    // The decisive assertion: nothing that names a binding, an account or a
+    // database appears in a public response.
+    const serialised = JSON.stringify(body);
+    expect(serialised).not.toContain('DB');
+    expect(serialised).not.toContain('BETTER_AUTH_SECRET');
+    expect(serialised).not.toContain('RESEND');
+    expect(Object.keys(body).sort()).toEqual(['deployed', 'environment', 'release', 'status']);
+  });
+
+  test('/health is never cached', async () => {
+    // A cached answer to "what is serving right now" is the previous answer, which
+    // is worse than no answer because it looks fresh.
+    for (const path of ['/health', '/health/ready']) {
+      const response = await fetch(`${base()}${path}`);
+      expect(response.headers.get('cache-control')).toBe('no-store');
+    }
+  });
+
+  test('/health/ready exercises the database binding', async () => {
+    const response = await fetch(`${base()}/health/ready`);
+    expect(response.status).toBe(200);
+
+    const body = (await response.json()) as {
+      ok: boolean;
+      checks: { binding: string; ok: boolean; detail: string }[];
+    };
+    expect(body.ok).toBe(true);
+    expect(body.checks).toHaveLength(1);
+    expect(body.checks[0]?.binding).toBe('DB');
+    expect(body.checks[0]?.ok).toBe(true);
+  });
+
+  test('an API response is not publicly cacheable', async () => {
+    const response = await fetch(`${base()}/api/health`);
+    expect(response.headers.get('cache-control')).toBe('private, no-store, max-age=0');
+  });
+
+  test('a signed-in page is not publicly cacheable, and keeps its session cookie', async () => {
+    // The branch that matters most, and the one a unit test of `cachePolicyFor`
+    // alone would leave unproven: the header has to survive the response being
+    // rebuilt in `hooks.server.ts` — status, body and every cookie intact.
+    const account = await signUp('cache-probe');
+
+    const response = await fetch(`${base()}/notes`, {
+      headers: { cookie: account.cookie },
+      redirect: 'manual',
+    });
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get('cache-control')).toBe('private, no-store, max-age=0');
+    // Rebuilt, so the body must still be the real page rather than an empty one.
+    expect(await response.text()).toContain('notes');
+
+    // And the same header on an authenticated API read.
+    const api = await fetch(`${base()}/api/notes`, { headers: { cookie: account.cookie } });
+    expect(api.status).toBe(200);
+    expect(api.headers.get('cache-control')).toBe('private, no-store, max-age=0');
+  });
+
+  test('anonymous HTML is left to the deployment, not declared cacheable here', async () => {
+    // Whether a page is anonymous depends on the session, not the URL. A blanket
+    // `public` would be a correctness claim this code cannot verify, so the landing
+    // page gets no cache directive from the application at all.
+    const response = await fetch(`${base()}/`);
+    expect(response.status).toBe(200);
+    expect(response.headers.get('cache-control')).toBeNull();
+  });
+
+  test('an unrouted API path stays JSON, never the HTML shell', async () => {
+    // A client that received HTML has to guess between a wrong URL and a broken
+    // deploy, and both guesses are expensive.
+    const response = await fetch(`${base()}/api/no-such-route`);
+    expect(response.status).toBe(404);
+    expect(response.headers.get('content-type')).toContain('application/json');
+    expect((await response.json()) as unknown).toEqual({
+      error: 'not_found',
+      message: 'No such route.',
+    });
+  });
 });
 
 describe('same-origin routing, with no proxy anywhere', () => {

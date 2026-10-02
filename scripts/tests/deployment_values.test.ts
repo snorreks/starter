@@ -20,7 +20,7 @@ import { planMigrate } from '../src/db/migrate.ts';
 import {
   inspectConfig,
   provisionDatabase,
-  setAccount,
+  setConfig,
   writeLocalValues,
 } from '../src/deploy/configure.ts';
 import { DEPLOYMENT_CONFIG } from '../src/registry/app_registry.ts';
@@ -60,7 +60,7 @@ const local = (values: unknown): string => JSON.stringify(values);
 /**
  * Silence a command's own progress output for one call.
  *
- * `provisionDatabase` and `setAccount` both write to stdout as part of their contract,
+ * `provisionDatabase` and `setConfig` both write to stdout as part of their contract,
  * so a test that asserts on the files they wrote would otherwise interleave that with
  * the runner's output. Returns the restore function, and every call site runs it in
  * `finally` — a swallowed restore leaves the rest of the suite writing into the void.
@@ -107,6 +107,8 @@ describe('resolveDeploymentValues', () => {
 
     const values = resolveDeploymentValues({}, root);
     expect(values.accountId).toBe('a'.repeat(32));
+    // Top-level (the single-set fallback) is untouched: writing an environment must
+    // not also populate the value both environments used to share.
     expect(values.workerName).toBe('starter-web');
     expect(values.d1DatabaseId).toBe('db-123');
   });
@@ -276,8 +278,11 @@ describe('provisionDatabase', () => {
       // wrangler.jsonc too, so a test asserting only that would pass while the bug
       // was still present.
       const values = resolveDeploymentValues({}, root);
-      expect(values.d1DatabaseId).toBe(UUID);
+      expect(values.environments?.staging?.d1DatabaseId).toBe(UUID);
       expect(values.accountId).toBe(ACCOUNT);
+      // And NOT at the top level: a single shared id is what let staging and
+      // production deploy to one database.
+      expect(values.d1DatabaseId).toBeNull();
 
       // And the file the tooling reads is on disk, not merely in memory.
       expect(localConfigProblem(root)).toBeNull();
@@ -304,7 +309,7 @@ describe('provisionDatabase', () => {
       // read. A value in one and not the other is a deploy that succeeds and a
       // `deploy:check` that reports the project unprovisioned.
       expect(wrangler).toContain(`"database_id": "${UUID}"`);
-      expect(resolveDeploymentValues({}, root).d1DatabaseId).toBe(UUID);
+      expect(resolveDeploymentValues({}, root).environments?.staging?.d1DatabaseId).toBe(UUID);
     } finally {
       restore();
     }
@@ -409,7 +414,7 @@ describe('provisionDatabase', () => {
 
       const values = resolveDeploymentValues({}, root);
       expect(values.workerName).toBe('starter-web');
-      expect(values.d1DatabaseId).toBe(UUID);
+      expect(values.environments?.staging?.d1DatabaseId).toBe(UUID);
       expect(output.join('')).not.toContain('written to wrangler.jsonc');
       expect(output.join('')).toContain(`written to ${LOCAL_DEPLOYMENT_FILE}`);
       // The app's own wrangler config, which is now the only one: the
@@ -456,10 +461,12 @@ describe('targetsFor', () => {
         staging: {
           workerName: 'web-staging',
           d1DatabaseId: 'db-staging',
+          origin: 'https://web-staging.example',
         },
         production: {
           workerName: 'web-prod',
           d1DatabaseId: 'db-prod',
+          origin: 'https://web-prod.example',
         },
       },
     });
@@ -482,6 +489,7 @@ describe('targetsFor', () => {
         staging: {
           workerName: 'web-staging',
           d1DatabaseId: 'db-staging',
+          origin: 'https://web-staging.example',
         },
       },
     });
@@ -500,10 +508,12 @@ describe('targetsFor', () => {
         staging: {
           workerName: 'web-staging',
           d1DatabaseId: null,
+          origin: null,
         },
         production: {
           workerName: 'web-prod',
           d1DatabaseId: 'db-prod',
+          origin: 'https://web-prod.example',
         },
       },
     });
@@ -575,7 +585,7 @@ describe('targetsFor', () => {
   });
 });
 
-describe('setAccount', () => {
+describe('setConfig', () => {
   // The one operation that *writes* the local overlay, and it had no test — because it
   // hardcoded `REPO_ROOT`, so there was nowhere to point it. The bug that missing test
   // concealed is worth stating, because the fix is in the remedy text this repository
@@ -599,7 +609,7 @@ describe('setAccount', () => {
     const restore = quiet();
 
     try {
-      expect(setAccount(['--account', ACCOUNT], root)).toBe(0);
+      expect(setConfig(['--account', ACCOUNT], root)).toBe(0);
 
       const values = resolveDeploymentValues({}, root);
       expect(values.accountId).toBe(ACCOUNT);
@@ -620,10 +630,12 @@ describe('setAccount', () => {
     const restore = quiet();
 
     try {
-      expect(setAccount(['--account', ACCOUNT, '--worker', 'starter-web'], root)).toBe(0);
+      expect(
+        setConfig(['--account', ACCOUNT, '--env', 'staging', '--worker', 'starter-web'], root),
+      ).toBe(0);
 
       const values = resolveDeploymentValues({}, root);
-      expect(values.workerName).toBe('starter-web');
+      expect(values.environments?.staging?.workerName).toBe('starter-web');
       // The decisive assertion: the name is not a target word that used to be an
       // app id, and it is not the account id.
       expect(values.workerName).not.toBe('api');
@@ -641,7 +653,9 @@ describe('setAccount', () => {
     const restore = quiet();
 
     try {
-      expect(setAccount(['--account', ACCOUNT, '--worker', '--yes'], root)).toBe(2);
+      expect(setConfig(['--account', ACCOUNT, '--env', 'staging', '--worker', '--yes'], root)).toBe(
+        2,
+      );
 
       // Nothing written at all, not even the account id: the invocation was wrong.
       expect(existsSync(join(root, LOCAL_DEPLOYMENT_FILE))).toBe(false);
@@ -657,12 +671,12 @@ describe('setAccount', () => {
     const restore = quiet();
 
     try {
-      setAccount(['--account', ACCOUNT, '--worker', 'typo-web'], root);
-      setAccount(['--account', ACCOUNT, '--worker', 'starter-web'], root);
+      setConfig(['--account', ACCOUNT, '--env', 'staging', '--worker', 'typo-web'], root);
+      setConfig(['--account', ACCOUNT, '--env', 'staging', '--worker', 'starter-web'], root);
 
       const values = resolveDeploymentValues({}, root);
       expect(values.accountId).toBe(ACCOUNT);
-      expect(values.workerName).toBe('starter-web');
+      expect(values.environments?.staging?.workerName).toBe('starter-web');
     } finally {
       restore();
     }
@@ -674,7 +688,7 @@ describe('setAccount', () => {
       const restore = quiet();
 
       try {
-        expect(setAccount(['--account', bad], root)).toBe(2);
+        expect(setConfig(['--account', bad], root)).toBe(2);
         expect(existsSync(join(root, LOCAL_DEPLOYMENT_FILE))).toBe(false);
       } finally {
         restore();
@@ -687,11 +701,11 @@ describe('setAccount', () => {
     const restore = quiet();
 
     try {
-      setAccount(['--account', ACCOUNT, '--worker', 'starter-web'], root);
+      setConfig(['--account', ACCOUNT, '--env', 'staging', '--worker', 'starter-web'], root);
 
       const values = resolveDeploymentValues({}, root);
       expect(values.accountId).toBe(ACCOUNT);
-      expect(values.workerName).toBe('starter-web');
+      expect(values.environments?.staging?.workerName).toBe('starter-web');
     } finally {
       restore();
     }
@@ -751,31 +765,42 @@ describe('environment configuration consumers', () => {
             staging: {
               workerName: 'staging-web',
               d1DatabaseId: 'staging-db',
+              origin: 'https://staging.example',
+            },
+            production: {
+              workerName: 'production-web',
+              d1DatabaseId: 'production-db',
+              origin: 'https://app.example',
             },
           },
         }),
       }),
     );
 
-  test('checks environment targets instead of unconfigured top-level names', () => {
+  test('reports the environment that is missing, not a global pass or fail', () => {
     const saved = process.env.CLOUDFLARE_API_TOKEN;
     try {
       process.env.CLOUDFLARE_API_TOKEN = 'fixture-token';
       const configured = values();
       expect(inspectConfig(configured).ok).toBe(true);
+
+      // Blank one field in one environment. `resolveTarget` refuses at the first
+      // missing value rather than reporting a whole inventory at once, so the
+      // assertion is that the problem names *this* environment and *this* field —
+      // an operator who blanks two fields fixes them one run at a time.
       const staging = configured.environments?.staging;
       if (staging === undefined) {
         throw new Error('Missing staging fixture');
       }
-      staging.workerName = null;
       staging.d1DatabaseId = null;
-      // The messages name the environment and not an app, because there is no
-      // longer more than one app to disambiguate between. A message that said
-      // `for "api"` would point an operator at a name that no longer exists.
-      expect(inspectConfig(configured).problems).toEqual([
-        'No Worker name configured in staging.',
-        'No D1 database id configured in staging.',
-      ]);
+
+      const problems = inspectConfig(configured).problems;
+      expect(problems).toHaveLength(1);
+      expect(problems[0]).toContain('No D1 database id is configured for staging');
+      // The message must not mention the environment that is fine, or an operator
+      // cannot tell which of two to go and fix.
+      expect(problems[0]).not.toContain('production');
+      expect(inspectConfig(configured).ok).toBe(false);
     } finally {
       if (saved === undefined) {
         delete process.env.CLOUDFLARE_API_TOKEN;
@@ -789,8 +814,22 @@ describe('environment configuration consumers', () => {
     const configured = values();
     setDeploymentValues(configured);
     expect(planMigrate('staging').ok).toBe(true);
+    expect(planMigrate('production').ok).toBe(true);
+
+    // Setting the *top-level* id is no longer enough to satisfy an environment, and
+    // blanking one environment's id no longer affects the other. One shared id is
+    // what let a production request migrate whatever database staging was using.
     configured.d1DatabaseId = 'single-db';
+    expect(planMigrate('production').ok).toBe(true);
+
+    const production = configured.environments?.production;
+    if (production === undefined) {
+      throw new Error('Missing production fixture');
+    }
+    production.d1DatabaseId = null;
     expect(planMigrate('production').ok).toBe(false);
+    expect(planMigrate('staging').ok).toBe(true);
+
     const staging = configured.environments?.staging;
     if (staging === undefined) {
       throw new Error('Missing staging fixture');

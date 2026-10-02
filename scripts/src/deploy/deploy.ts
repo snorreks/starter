@@ -1,55 +1,65 @@
-// scripts/src/deploy/index.ts
+// scripts/src/deploy/deploy.ts
 //
-// Deploy application code to Cloudflare Workers.
+// The deployment CLI, as five separate phases.
 //
-//   bun run deploy:check              # validate + print the plan. Mutates nothing.
-//   bun run deploy -- --dry-run       # the same plan, printed
-//   bun run deploy -- --env staging --yes
-//   bun run deploy -- --env production --yes
+//   bun run deploy plan      --env staging          # offline. No credential, no network.
+//   bun run deploy preflight --env staging          # authenticated, read-only.
+//   bun run deploy apply     --env staging --yes    # build, migrate, deploy, verify, record.
+//   bun run deploy verify   --env staging           # ask the release what it is.
+//   bun run deploy status                           # what is recorded, and what is configured.
 //
-// The separation this command preserves: **build, source publication, resource
-// provisioning and application deployment are four different things**, and this
-// one only ever does the last. Publishing a repository does not deploy it.
-// Creating a database does not deploy code. A deploy does not publish anything.
+// They are five commands rather than five flags because they have different
+// authority. `plan` must be runnable on a fork's pull request with no secret and
+// no network, which is only true if it cannot reach an authenticated code path.
+// `preflight` may read the account but must never change it. Only `apply` mutates,
+// and only with `--yes`.
+//
+// The separation this command preserves: **building, migrating and deploying are
+// three different things.** A build does not deploy. A migration does not deploy.
+// A deploy does not migrate — `apply` does both, in that order, because the new
+// code must never meet the old schema, and it refuses rather than deploying when
+// the migration cannot be planned.
 //
 // There is exactly one target. The application deploys as one Worker plus its
-// static assets, so there is one `wrangler deploy` to plan and one Worker name to
-// provision. The two-target form this replaced cost something real: a partial
-// deploy in which the Worker succeeded and the assets did not leaves a live
-// deployment whose pages 404, and nothing in the plan could express that as a
-// state to avoid.
+// static assets, so there is one `wrangler deploy` per environment. The old
+// two-target form (`web`/`api`) cost something real: a partial deploy in which the
+// Worker succeeded and the assets did not leaves a live deployment whose pages
+// 404, and nothing in the plan could express that as a state to avoid.
 //
 // Three things this file is strict about, because each was previously a way to
 // change something nobody asked for:
 //
 //   * `wrangler` appears in argv exactly once. `Step.args` holds the subcommand
-//     and its flags only; `runWrangler` supplies the binary.
-//   * `--env local` is rejected. Running this CLI on a laptop is "a local
-//     invocation" and has nothing to do with `--env local`, which would mean
-//     "deploy to a local target" — a thing this command does not do. The local
-//     *runtime* is `bun run dev`.
-//   * An unrecognised target word is an error, not a no-op. Filtering unknown
-//     words out and defaulting to "everything" turns `--app clien` into a
-//     production deploy that nobody asked for.
+//     and its flags only; the runner supplies the binary.
+//   * An unrecognised phase or environment is an error, not a no-op.
+//   * An unknown flag is an error, and a boolean flag written as `--flag=value`
+//     is an error naming the mistake.
 
-import { existsSync } from 'node:fs';
-import { join } from 'node:path';
-import type { DeploymentEnvironment } from '@starter/schemas';
+import { isDeploymentEnvironment } from '@starter/schemas';
+import { runWrangler, setProcessRunner, wranglerAvailable } from '../cloudflare/wrangler.ts';
 import {
-  CLIENT_DIR,
-  type ProcessRunner,
-  requireRemoteConsent,
-  runWrangler,
-  setProcessRunner,
-  wranglerAvailable,
-} from '../cloudflare/wrangler.ts';
-import { LOCAL_DEPLOYMENT_FILE, targetsFor } from '../registry/deployment_values.ts';
-import { type ConfigCheck, inspectConfig } from './configure.ts';
+  type DeploymentValues,
+  effectiveDeploymentValues,
+  LOCAL_DEPLOYMENT_FILE,
+} from '../registry/deployment_values.ts';
+import { EXIT, fail, wantsHelp } from '../shared/command.ts';
+import { CLIENT_DIR } from '../shared/paths.ts';
+import { type ApplyResult, apply, renderApply } from './apply.ts';
+import { hasApiToken, secretInArgvProblem } from './credentials.ts';
+import { preflight, renderPreflight } from './preflight.ts';
+import { type ReleaseRecord, readReleaseRecord, renderReleaseRecord } from './release.ts';
+import {
+  DEPLOYABLE_ENVIRONMENTS,
+  environmentIsolationProblem,
+  type ResolvedTarget,
+  resolveTarget,
+  suggestOrigin,
+} from './target.ts';
 
-export type DeployTarget = 'web';
+export const DEPLOY_PHASES = ['plan', 'preflight', 'apply', 'verify', 'status'] as const;
+export type DeployPhase = (typeof DEPLOY_PHASES)[number];
 
 export interface Step {
-  target: DeployTarget;
   description: string;
   command: string;
   /** Wrangler subcommand and flags. Deliberately excludes the `wrangler` token. */
@@ -60,65 +70,62 @@ export interface Step {
 }
 
 export type Plan =
-  | { ok: true; steps: Step[]; notices: string[] }
+  | { ok: true; steps: Step[]; target: ResolvedTarget; notices: string[] }
   | { ok: false; reason: string; remedy: string };
 
-export const VALID_TARGETS: readonly DeployTarget[] = ['web'];
-const VALID_ENVIRONMENTS: readonly DeploymentEnvironment[] = ['staging', 'production'];
-
-/**
- * Exit codes, so a caller can distinguish "you typed it wrong" from "this project
- * is not configured" from "prerequisite unavailable" from "it deployed".
- *
- * The shared table rather than a local one: `unavailable` means "the tool is not
- * installed", and this module's own `notConfigured` was 1 — the same code the
- * commands use for "the work failed". A deploy that could not find wrangler
- * therefore reported failure indistinguishably from a step that failed, and the
- * two need different responses from a job.
- */
 export { EXIT } from '../shared/command.ts';
 
-/** Re-exported so this module's own returns have a name to resolve against. */
-import { EXIT } from '../shared/command.ts';
-
-/** Flags that take a value. Anything else must be a boolean flag or an error. */
 const VALUE_FLAGS = new Set(['--env']);
-const BOOLEAN_FLAGS = new Set(['--dry-run', '--yes', '--json', '--help', '-h']);
+const BOOLEAN_FLAGS = new Set([
+  '--yes',
+  '--dry-run',
+  '--json',
+  '--allow-new-worker',
+  '--skip-migrations',
+  '--help',
+  '-h',
+]);
 
 export type ArgvResult =
   | {
       ok: true;
-      environment: DeploymentEnvironment;
-      targets: DeployTarget[];
-      dryRun: boolean;
+      phase: DeployPhase;
+      environment: 'staging' | 'production' | null;
+      yes: boolean;
       json: boolean;
+      dryRun: boolean;
+      allowNewWorker: boolean;
+      skipMigrations: boolean;
       help: boolean;
     }
   | { ok: false; errors: string[] };
 
 /**
- * Parse deploy argv strictly.
+ * Parse argv strictly.
  *
  * Every token must be accounted for. The previous implementation filtered argv
  * down to tokens that happened to be valid targets and defaulted to "both" when
  * nothing survived, so a typo silently widened the blast radius.
  *
- * Defaults, both of which are *absences of input* rather than mistakes:
- *   * no `--env` at all -> `staging`, the safe direction for a live-mutating command
- *   * no target words at all -> the one target, which is what running `bun run deploy`
- *     with no arguments plainly asks for
- *
- * `--env local` is a mistake, not an absence: it is an explicit request for a
- * target this command does not have.
+ * Defaults, all of which are *absences of input* rather than mistakes:
+ *   * no phase        -> `apply`, which is what `bun run deploy -- --yes` asks for
+ *   * no `--env`      -> `staging`, the safe direction for a live-mutating command
+ *   * no phase and no
+ *     `--yes`         -> still `apply`; `apply` then refuses, loudly, with no
+ *                        further argument needed
  */
 export const parseDeployArgs = (argv: readonly string[]): ArgvResult => {
   const errors: string[] = [];
-  const targets: DeployTarget[] = [];
-  let environment: DeploymentEnvironment | null = null;
+  let phase: DeployPhase | null = null;
+  const phasesSeen: string[] = [];
+  let environment: string | null = null;
   /** Every `--env` value seen, to catch two different ones. */
   const explicitEnvironments: string[] = [];
-  let dryRun = false;
+  let yes = false;
   let json = false;
+  let dryRun = false;
+  let allowNewWorker = false;
+  let skipMigrations = false;
   let help = false;
 
   for (let index = 0; index < argv.length; index += 1) {
@@ -129,13 +136,16 @@ export const parseDeployArgs = (argv: readonly string[]): ArgvResult => {
     }
 
     if (!token.startsWith('-')) {
-      if (!VALID_TARGETS.includes(token as DeployTarget)) {
-        errors.push(`Unknown target "${token}". Valid targets: ${VALID_TARGETS.join(', ')}.`);
+      if (!(DEPLOY_PHASES as readonly string[]).includes(token)) {
+        errors.push(
+          `Unknown phase "${token}". Phases: ${DEPLOY_PHASES.join(', ')}.\n` +
+            '  The old `web` target word is gone: this project deploys as one Worker, so ' +
+            'there is one thing to name and `bun run deploy apply` is what replaces it.',
+        );
         continue;
       }
-      if (!targets.includes(token as DeployTarget)) {
-        targets.push(token as DeployTarget);
-      }
+      phasesSeen.push(token);
+      phase = token as DeployPhase;
       continue;
     }
 
@@ -143,14 +153,12 @@ export const parseDeployArgs = (argv: readonly string[]): ArgvResult => {
       const value = argv[index + 1];
       index += 1;
 
-      if (value !== undefined) {
-        explicitEnvironments.push(value);
-      }
-
       if (value === undefined) {
         errors.push('--env needs a value: staging or production.');
         continue;
       }
+
+      explicitEnvironments.push(value);
 
       if (value === 'local') {
         errors.push(
@@ -161,27 +169,37 @@ export const parseDeployArgs = (argv: readonly string[]): ArgvResult => {
         continue;
       }
 
-      if (!VALID_ENVIRONMENTS.includes(value as DeploymentEnvironment)) {
+      if (!isDeploymentEnvironment(value)) {
         errors.push(
-          `--env must be ${VALID_ENVIRONMENTS.join(' or ')} (got "${value}"). ` +
-            'This command cannot deploy to a local target.',
+          `--env must be ${DEPLOYABLE_ENVIRONMENTS.join(' or ')} (got "${value}"). ` +
+            'Refusing rather than defaulting: "--env prod" resolving to production is the ' +
+            'kind of silent widening this parser exists to prevent.',
         );
         continue;
       }
 
-      environment = value as DeploymentEnvironment;
+      environment = value;
       continue;
     }
 
     // Matched against the whole token, not the part before `=`. Splitting first
     // meant `--dry-run=false` set `dryRun = true` — the opposite of what was
-    // written — while `--yes=false` failed to grant the consent it appears to name.
+    // written — while `--yes=false` granted the consent it appears to name.
     if (BOOLEAN_FLAGS.has(token)) {
-      if (token === '--dry-run') {
-        dryRun = true;
+      if (token === '--yes') {
+        yes = true;
       }
       if (token === '--json') {
         json = true;
+      }
+      if (token === '--dry-run') {
+        dryRun = true;
+      }
+      if (token === '--allow-new-worker') {
+        allowNewWorker = true;
+      }
+      if (token === '--skip-migrations') {
+        skipMigrations = true;
       }
       if (token === '--help' || token === '-h') {
         help = true;
@@ -216,8 +234,16 @@ export const parseDeployArgs = (argv: readonly string[]): ArgvResult => {
     return { ok: false, errors };
   }
 
-  // A duplicated `--env` with two different values is ambiguous. `--env staging
-  // --env staging` is not, and is harmless.
+  if (new Set(phasesSeen).size > 1) {
+    return {
+      ok: false,
+      errors: [`Conflicting phases: ${[...new Set(phasesSeen)].join(', ')}. Pick one.`],
+    };
+  }
+
+  // `--env staging --env staging` is not ambiguous and is harmless;
+  // `--env staging --env production` is a question with two answers, and the
+  // second one silently winning would deploy to whichever the parser kept.
   if (new Set(explicitEnvironments).size > 1) {
     return {
       ok: false,
@@ -227,302 +253,390 @@ export const parseDeployArgs = (argv: readonly string[]): ArgvResult => {
 
   return {
     ok: true,
-    environment: environment ?? 'staging',
-    targets: targets.length === 0 ? [...VALID_TARGETS] : targets,
-    dryRun,
+    // Defaulting to `apply` preserves `bun run deploy -- --env staging --yes`, which
+    // is the documented invocation in docs/cloudflare.md and the one an operator
+    // types expecting a deploy.
+    phase: phase ?? 'apply',
+    environment: environment === null ? null : (environment as 'staging' | 'production'),
+    yes,
     json,
+    dryRun,
+    allowNewWorker,
+    skipMigrations,
     help,
   };
 };
 
 export const usageText = (): string =>
   [
-    'Usage: bun run deploy [flags]',
+    'Usage: bun run deploy <phase> [flags]',
     '',
-    'Targets:',
-    '  web       the application Worker and its static assets (the only target)',
+    'Phases:',
+    '  plan        Print what would happen. Offline: no credential, no network, no change.',
+    '  preflight   Authenticated and READ-ONLY: account, database and Worker exist and match.',
+    '  apply       build -> migrate -> deploy -> verify -> record. Requires --yes.',
+    '  verify      Fetch the release and report the identity it claims.',
+    '  status      What is configured and what release is recorded. Read-only.',
     '',
     'Flags:',
-    '  --env staging|production   Where to deploy. Default: staging.',
-    '  --dry-run                  Print the plan and change nothing.',
-    '  --json                     Emit the plan as JSON.',
-    '  --yes                      Required to perform a remote mutation.',
+    '  --env staging|production   Which environment. Default: staging.',
+    '  --yes                      Required by `apply`. Nothing is mutated without it.',
+    '  --json                     Machine-readable output.',
+    '  --dry-run                  Same as `plan`.',
+    '  --allow-new-worker         preflight: a first deploy has no Worker yet; accept that.',
+    '  --skip-migrations          apply: deploy without migrating. Recorded in the release.',
     '  --help                     This text.',
     '',
     'Notes:',
-    '  --env local is rejected. Local workerd is `bun run dev`.',
-    '  A Cloudflare credential must be present as CLOUDFLARE_API_TOKEN.',
+    '  No phase defaults to `apply`. `--env local` is refused; local workerd is `bun run dev`.',
+    '  The credential is CLOUDFLARE_API_TOKEN in the environment. Never on a command line.',
   ].join('\n');
 
 /**
- * Build the deploy plan without executing anything.
+ * Build the offline plan without executing anything.
  *
- * Exported so `--dry-run` and the test suite assert on the *same* plan. A dry run
- * that re-derives the commands is a dry run that can lie.
+ * Offline by construction: it resolves configuration and refuses, and touches
+ * neither a credential nor a network. That is what lets `plan` run on a fork's
+ * pull request, where there is no secret to give it.
  *
- * `config` is injectable so the template's "nothing is provisioned" state does not
- * hide the contents of a plan from every assertion.
+ * `values` and `buildDir` are parameters so the whole thing is assertable without
+ * a provisioned repository.
  */
 export const planDeploy = (
-  targets: readonly DeployTarget[],
-  environment: DeploymentEnvironment,
-  config: ConfigCheck = inspectConfig(),
-  /**
-   * Where the built artifact is expected.
-   *
-   * A parameter rather than a constant, because this check reads the working tree.
-   * Pointing it at the real `.svelte-kit` directory made the test suite depend on
-   * whether someone had run `bun run build`: locally green, and failing in CI,
-   * where the unit-test step runs before the build. A test that asserts against the
-   * repository is asserting against whoever cloned it last.
-   *
-   * The path is the SvelteKit build directory, not the app directory, because that
-   * is what `vite build` writes and what the artifact check inspects.
-   */
-  buildDir: string = CLIENT_DIR,
+  environment: string,
+  options: {
+    values?: DeploymentValues;
+    buildDir?: string;
+    hasCredential?: boolean;
+    requireArtifact?: boolean;
+  } = {},
 ): Plan => {
-  for (const target of targets) {
-    if (!VALID_TARGETS.includes(target)) {
-      return {
-        ok: false,
-        reason: `"${target}" is not a deploy target.`,
-        remedy: `Valid targets: ${VALID_TARGETS.join(', ')}.`,
-      };
-    }
+  const resolved = resolveTarget(environment, {
+    values: options.values ?? effectiveDeploymentValues(),
+  });
+
+  if (!resolved.ok) {
+    return { ok: false, reason: resolved.reason, remedy: resolved.remedy };
   }
 
-  if (!VALID_ENVIRONMENTS.includes(environment)) {
-    return {
-      ok: false,
-      reason: `"${environment}" is not a deployable environment.`,
-      remedy: `Environments: ${VALID_ENVIRONMENTS.join(', ')}. Use \`bun run dev\` for local workerd.`,
-    };
-  }
+  const target = resolved.target;
+  const steps: Step[] = [];
+  const notices: string[] = [];
 
-  if (!config.ok) {
-    return {
-      ok: false,
-      reason: [
-        'Cloudflare is not configured for this project yet.',
-        ...(config.problems.length === 0
-          ? []
-          : ['', ...config.problems.map((problem) => `  - ${problem}`)]),
-      ].join('\n'),
-      remedy:
-        '  bun run deploy:configure -- --provision   # create what is missing\n' +
-        '  bun run deploy:configure -- --check\n' +
-        '  bun run deploy:check                     # then re-run this',
-    };
-  }
+  steps.push({
+    description: `Apply reviewed migrations to ${target.d1DatabaseId} (${target.environment})`,
+    command: 'wrangler',
+    args: [
+      'd1',
+      'migrations',
+      'apply',
+      'DB',
+      '--env',
+      target.environment,
+      '--config',
+      `${CLIENT_DIR}/wrangler.jsonc`,
+    ],
+    cwd: CLIENT_DIR,
+    remote: true,
+  });
 
-  const notices = [...config.notices];
-
-  // The environment selects which Worker and database this plan touches. With one set
-  // of names for every environment, `--env staging` and `--env production` produced
-  // identical plans — the flag changed a notice and nothing else, which is the worst
-  // kind of no-op because the plan looked environment-specific.
-  const scoped = targetsFor(environment);
-  if (scoped === null) {
-    return {
-      ok: false,
-      reason: `This project has no "${environment}" targets configured.`,
-      remedy:
-        `Add an "environments" object with a "${environment}" entry to ${LOCAL_DEPLOYMENT_FILE},\n` +
-        `  or remove it to fall back to the single set of names. Refusing rather than\n` +
-        '  defaulting: a staging request served by production names is the worst outcome here.',
-    };
-  }
-
-  // One Worker, so one name: this is not a per-target check that happens to be
-  // short. There is no target that could be deployed with a different Worker, which
-  // is the property the single-target plan buys.
-  if (scoped.workerName === null) {
-    return {
-      ok: false,
-      reason: `No Worker name is configured for the ${environment} environment.`,
-      // Named the file the tooling reads, not the committed registry: the
-      // `registry-valid` guard fails the build on a literal id there, so telling
-      // an operator to edit that module sent them into a dead end.
-      remedy:
-        `bun run deploy:configure -- --worker web <name>\n` +
-        `  (recorded in ${LOCAL_DEPLOYMENT_FILE}, which is gitignored)`,
-    };
-  }
-
-  // A deploy needs something to deploy. `wrangler deploy` against a missing
-  // `.svelte-kit/cloudflare` does not fail loudly: wrangler publishes an empty
-  // deployment whose every page 404s, which reads as a successful deploy of a blank
-  // site. So the artifact is checked before the plan is built, and the same rule as
-  // `check:bundle` applies — that check is what confirms the directory is a Worker
-  // with assets rather than a directory of files.
-  if (!existsSync(join(buildDir, 'cloudflare', '_worker.js'))) {
-    return {
-      ok: false,
-      reason: 'The build output is missing, so there is nothing to deploy.',
-      remedy:
-        'Run `bun run build` first, then `bun run check:bundle` to confirm the artifact.\n' +
-        '  A deploy with no _worker.js would publish assets alone and report success, ' +
-        'leaving a site where every route 404s.',
-    };
-  }
-
-  const steps: Step[] = targets.map((target) => ({
-    target,
-    description: `Deploy the ${target} Worker and its assets to Cloudflare (${environment})`,
+  steps.push({
+    description: `Deploy ${target.workerName} and its assets to ${target.origin}`,
     command: 'wrangler',
     args: [
       'deploy',
       '--env',
-      environment,
+      target.environment,
       // The Worker name is passed explicitly rather than read from the config, so
-      // the name `deploy:check` printed is the name that gets deployed. A config
-      // that carried its own name would make the plan a description of one thing and
-      // the execution another.
+      // the name the plan printed is the name that gets deployed.
       '--name',
-      scoped.workerName as string,
+      target.workerName,
       '--config',
-      join(CLIENT_DIR, 'wrangler.jsonc'),
+      `${CLIENT_DIR}/wrangler.jsonc`,
     ],
     cwd: CLIENT_DIR,
     remote: true,
-  }));
+  });
 
-  if (environment === 'production') {
+  steps.push({
+    description: `Verify the release at ${target.origin}/health`,
+    command: 'fetch',
+    args: [`${target.origin}/health`],
+    cwd: CLIENT_DIR,
+    remote: true,
+  });
+
+  notices.push(
+    `Secrets required (names only, from the config): ${target.requiredSecretNames.join(', ')}.`,
+  );
+  notices.push(
+    `Nonsecret vars required: ${target.requiredVarNames.join(', ')}. Set them through ` +
+      "wrangler.jsonc's environment vars, never through the secret channel.",
+  );
+  notices.push(
+    'A code rollback does not roll back the schema. See the recovery procedure in ' +
+      'docs/deployment.md before rolling back an environment whose migrations ran.',
+  );
+  if (target.environment === 'production') {
+    notices.push('A production apply changes live traffic.');
+  }
+
+  const credentialed = options.hasCredential ?? hasApiToken();
+  if (!credentialed) {
     notices.push(
-      'A production deploy changes live traffic. Re-check the plan with --dry-run first.',
+      'No credential is present, so this plan cannot be executed here. That is expected: ' +
+        'plan needs none, and `preflight` is where a credential is first required.',
     );
   }
-  notices.push(
-    'This deploys application code only. It does not publish source, create ' +
-      'resources, migrate databases, or release native binaries.',
-  );
 
-  return { ok: true, steps, notices };
+  return { ok: true, steps, target, notices };
 };
 
 /**
- * Render a built plan for a person. The same text the process boundary compares against.
+ * Render a built plan for a person, with the resolved destination spelled out.
  *
- * Exported so the dry-run path can be asserted at the boundary it actually has —
- * the text an operator reads — rather than on the flag that selects it. A dry run
- * that renders nothing, or renders something other than what it would spawn, is a
- * dry run that can lie, and that is the whole claim being tested.
+ * The destination block is above the commands because the question "what would this
+ * change?" is answered by the Worker name, the account and the origin — not by a
+ * list of subcommands that look the same for every environment.
  */
-export const renderPlan = (plan: Extract<Plan, { ok: true }>, environment: string): string => {
-  const lines = [`Deploy plan (${environment})`, ''];
+export const renderPlan = (plan: Extract<Plan, { ok: true }>): string => {
+  const target = plan.target;
+  const lines = [
+    `Deploy plan (${target.environment})`,
+    '',
+    `  project     ${target.project}`,
+    `  account     ${target.accountId}`,
+    `  worker      ${target.workerName}`,
+    `  database    ${target.d1DatabaseId}`,
+    `  origin      ${target.origin}`,
+    `  config      ${target.wranglerConfig}`,
+    '',
+    'Commands:',
+  ];
+
   for (const [index, step] of plan.steps.entries()) {
     lines.push(`  ${index + 1}. ${step.description}`);
-    // Rendered as the process will actually be spawned, which is the only form
-    // that can be compared against a real process boundary.
     lines.push(`     ${step.command} ${step.args.join(' ')}`);
   }
+
   if (plan.notices.length > 0) {
     lines.push('', 'Notes:');
     for (const notice of plan.notices) {
       lines.push(`  - ${notice}`);
     }
   }
+
   return lines.join('\n');
 };
 
-/**
- * Execute an already-built plan.
- *
- * Takes the plan rather than argv so `--dry-run` and a real run provably operate
- * on the same steps. `runner` is the same seam `runWrangler` uses, so a test can
- * observe the exact argv without spawning anything.
- */
-export const executePlan = (
-  plan: Extract<Plan, { ok: true }>,
-  environment: DeploymentEnvironment,
-  argv: readonly string[],
-): { code: number } => {
-  for (const step of plan.steps) {
-    const consent = requireRemoteConsent(step.target, argv);
-    if (!consent.allowed) {
-      process.stderr.write(`${consent.reason}\n`);
-      return { code: 1 };
-    }
-  }
-
-  for (const step of plan.steps) {
-    process.stdout.write(`\n>>> ${step.description}\n`);
-    process.stdout.write(`    ${step.command} ${step.args.join(' ')}\n`);
-    const code = runWrangler(step.args, { cwd: step.cwd });
-    if (code !== 0) {
-      process.stderr.write(`\n${step.target} deploy failed with exit code ${code}.\n`);
-      return { code };
-    }
-  }
-
-  process.stdout.write(`\nDeployed. Verify with:\n  bun run logs web --mode ${environment}\n`);
-  return { code: 0 };
-};
+const readValues = (): DeploymentValues => effectiveDeploymentValues();
 
 /**
- * CLI entry point.
+ * `status`: what is configured, and what was last released.
  *
- * Parses argv, builds the plan once, and either prints it or executes it. Dry run
- * and execution consume the same `Plan` object — the property the deploy tests
- * assert at the process boundary.
+ * Read-only and offline. It reports the layer that answered for each value, so a
+ * stale gitignored overlay is visible rather than something to discover later.
  */
-export const main = (argv: readonly string[]): number => {
-  const parsed = parseDeployArgs(argv);
+const runStatus = (json: boolean): number => {
+  const isolation = environmentIsolationProblem(readValues());
+  const configured = DEPLOYABLE_ENVIRONMENTS.map((environment) => ({
+    environment,
+    resolved: resolveTarget(environment, { values: readValues() }),
+  }));
 
-  if (!parsed.ok) {
-    process.stderr.write(`${parsed.errors.join('\n')}\n\n${usageText()}\n`);
-    return EXIT.usage;
-  }
-
-  if (parsed.help) {
-    process.stdout.write(`${usageText()}\n`);
-    return EXIT.ok;
-  }
-
-  const plan = planDeploy(parsed.targets, parsed.environment);
-
-  if (!plan.ok) {
-    process.stderr.write(`${plan.reason}\n${plan.remedy}\n`);
-    return EXIT.failed;
-  }
-
-  if (parsed.json) {
+  if (json) {
     process.stdout.write(
       `${JSON.stringify(
         {
-          environment: parsed.environment,
-          targets: parsed.targets,
-          dryRun: parsed.dryRun,
-          steps: plan.steps,
-          notices: plan.notices,
+          isolation,
+          environments: configured.map(({ environment, resolved }) => ({
+            environment,
+            configured: resolved.ok,
+            problem: resolved.ok ? null : resolved.reason,
+            target: resolved.ok ? resolved.target : null,
+            release: readReleaseRecord(environment),
+          })),
         },
         null,
         2,
       )}\n`,
     );
+    return isolation === null ? EXIT.ok : EXIT.failed;
+  }
+
+  process.stdout.write('Deployment status\n\n');
+
+  if (isolation !== null) {
+    process.stdout.write(`  REFUSED  ${isolation}\n`);
+  }
+
+  for (const { environment, resolved } of configured) {
+    if (resolved.ok) {
+      const target = resolved.target;
+      process.stdout.write(`  ok       ${environment}: ${target.workerName} -> ${target.origin}\n`);
+      process.stdout.write(
+        `           account ${target.accountId}, database ${target.d1DatabaseId}\n`,
+      );
+    } else {
+      process.stdout.write(`  missing  ${environment}: ${resolved.reason}\n`);
+    }
+
+    const record = readReleaseRecord(environment);
+    process.stdout.write(
+      record === null
+        ? `           no release recorded. Origin would be ${suggestOrigin('<worker>')}\n`
+        : `           last release ${record.sourceSha.slice(0, 12)} / ${record.artifactDigest.slice(0, 19)}\n`,
+    );
+  }
+
+  process.stdout.write(
+    `\nConfiguration lives in ${LOCAL_DEPLOYMENT_FILE} (gitignored). Account ids, ` +
+      'Worker names, database ids and origins are configuration, not secrets.\n',
+  );
+
+  return isolation === null ? EXIT.ok : EXIT.failed;
+};
+
+/**
+ * The CLI adapter.
+ *
+ * Parsing, phase routing and exit codes only. The work is in `target.ts`,
+ * `preflight.ts` and `apply.ts`, which is what lets the whole surface be asserted
+ * without spawning anything.
+ */
+export const main = async (argv: readonly string[]): Promise<number> => {
+  const parsed = parseDeployArgs(argv);
+
+  if (!parsed.ok) {
+    return fail(`${parsed.errors.join('\n')}\n\n${usageText()}`, EXIT.usage);
+  }
+
+  if (parsed.help || wantsHelp(argv)) {
+    process.stdout.write(`${usageText()}\n`);
     return EXIT.ok;
   }
 
-  if (parsed.dryRun) {
-    process.stdout.write(`${renderPlan(plan, parsed.environment)}\n`);
-    process.stdout.write('\nDry run: nothing was changed.\n');
+  // Refused before anything is built, so an argv that would leak a credential
+  // cannot reach the point of leaking it — not even in a dry run that renders it.
+  const leak = secretInArgvProblem(argv);
+  if (leak !== null) {
+    return fail(leak, EXIT.refused);
+  }
+
+  // `status` is the one phase with no environment: it reports both.
+  if (parsed.phase === 'status') {
+    return runStatus(parsed.json);
+  }
+
+  const environment = parsed.environment ?? 'staging';
+
+  // ── plan ───────────────────────────────────────────────────────────────────
+  if (parsed.phase === 'plan') {
+    const plan = planDeploy(environment);
+    if (!plan.ok) {
+      return fail(`${plan.reason}\n${plan.remedy}`, EXIT.failed);
+    }
+    if (parsed.json) {
+      process.stdout.write(
+        `${JSON.stringify(
+          { phase: 'plan', target: plan.target, steps: plan.steps, notices: plan.notices },
+          null,
+          2,
+        )}\n`,
+      );
+      return EXIT.ok;
+    }
+    process.stdout.write(`${renderPlan(plan)}\n`);
+    process.stdout.write('\nPlan only: nothing was changed.\n');
     return EXIT.ok;
+  }
+
+  // ── preflight ──────────────────────────────────────────────────────────────
+  if (parsed.phase === 'preflight') {
+    const resolved = resolveTarget(environment, { values: readValues() });
+    if (!resolved.ok) {
+      return fail(`${resolved.reason}\n${resolved.remedy}`, EXIT.failed);
+    }
+
+    if (!wranglerAvailable()) {
+      return fail('wrangler is not available. Run `bun install` first.', EXIT.unavailable);
+    }
+
+    const report = preflight(resolved.target, { allowMissingWorker: parsed.allowNewWorker });
+
+    if (parsed.json) {
+      process.stdout.write(`${JSON.stringify(report, null, 2)}\n`);
+      return report.ok ? EXIT.ok : EXIT.failed;
+    }
+
+    process.stdout.write(`${renderPreflight(resolved.target, report)}\n`);
+    return report.ok ? EXIT.ok : EXIT.failed;
+  }
+
+  // ── verify ─────────────────────────────────────────────────────────────────
+  if (parsed.phase === 'verify') {
+    const resolved = resolveTarget(environment, { values: readValues() });
+    if (!resolved.ok) {
+      return fail(`${resolved.reason}\n${resolved.remedy}`, EXIT.failed);
+    }
+
+    const { smoke } = await import('./apply.ts');
+    const result = await smoke(resolved.target);
+
+    if (parsed.json) {
+      process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+      return result.ok ? EXIT.ok : EXIT.failed;
+    }
+
+    if (!result.ok) {
+      return fail(
+        `Verification failed: ${result.problem ?? 'unknown'}\n  Deployed target: ${resolved.target.workerName} (${resolved.target.origin})`,
+        EXIT.failed,
+      );
+    }
+
+    process.stdout.write(
+      `ok  ${result.path} -> ${result.status}, release ${result.reportedRelease ?? 'unreported'}\n` +
+        `    ${resolved.target.workerName} at ${resolved.target.origin}\n`,
+    );
+    return EXIT.ok;
+  }
+
+  // ── apply ──────────────────────────────────────────────────────────────────
+  const resolved = resolveTarget(environment, { values: readValues() });
+  if (!resolved.ok) {
+    return fail(`${resolved.reason}\n${resolved.remedy}`, EXIT.failed);
+  }
+
+  if (!parsed.yes) {
+    return fail(
+      `Refusing to apply to ${resolved.target.environment} without --yes.\n` +
+        '  Nothing has been changed. Run `bun run deploy plan --env ' +
+        environment +
+        '` to see exactly what would happen.',
+      EXIT.refused,
+    );
   }
 
   if (!wranglerAvailable()) {
-    process.stderr.write('wrangler is not available. Run `bun install` first.\n');
-    // `unavailable`, not `failed`: the tool is missing, which is a different thing
-    // from a deploy step that ran and failed.
-    return EXIT.unavailable;
+    return fail('wrangler is not available. Run `bun install` first.', EXIT.unavailable);
   }
 
-  return executePlan(plan, parsed.environment, argv).code;
+  const result: ApplyResult = await apply({
+    target: resolved.target,
+    consented: true,
+    skipMigrations: parsed.skipMigrations,
+  });
+
+  process.stdout.write(`${renderApply(result)}\n`);
+
+  if (result.record !== null) {
+    process.stdout.write(`\n${renderReleaseRecord(result.record)}\n`);
+  }
+
+  return result.ok ? EXIT.ok : EXIT.failed;
 };
 
-if (import.meta.main) {
-  process.exitCode = main(process.argv.slice(2));
-}
-
-export { wranglerAvailable } from '../cloudflare/wrangler.ts';
-export type { DeploymentEnvironment, ProcessRunner };
-export { setProcessRunner };
+export { digestArtifact, inspectArtifact } from './release.ts';
+export type { ReleaseRecord };
+export { runWrangler, setProcessRunner };

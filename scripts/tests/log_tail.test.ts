@@ -295,7 +295,11 @@ describe('environment-specific log targets', () => {
         r2BucketNames: { uploads: null },
         customDomain: null,
         environments: {
-          staging: { workerName: 'staging-web', d1DatabaseId: 'staging-db' },
+          staging: {
+            workerName: 'staging-web',
+            d1DatabaseId: 'staging-db',
+            origin: 'https://staging.example',
+          },
         },
       });
       const requests: unknown[] = [];

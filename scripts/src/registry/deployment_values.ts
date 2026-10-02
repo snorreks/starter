@@ -75,10 +75,33 @@ export interface DeploymentValues {
   environments?: Partial<Record<DeploymentEnvironment, EnvironmentTargets>>;
 }
 
-export type LocalDeploymentValues = {
-  [K in keyof DeploymentValues]?: DeploymentValues[K] extends object
-    ? Partial<DeploymentValues[K]>
-    : DeploymentValues[K];
+/**
+ * What the gitignored overlay may contain.
+ *
+ * Two levels of partiality, and the second one is not optional convenience:
+ *
+ *   * Every top-level key may be absent — a read-modify-write must preserve keys
+ *     it does not touch, and `--provision` for the database must not erase a
+ *     Worker name someone already set.
+ *   * Each *environment entry* is partial too. `deploy:configure --env staging
+ *     --worker x` writes one field for one environment; requiring a complete
+ *     `EnvironmentTargets` would force the command to invent values for
+ *     production as well, and an invented name is indistinguishable from a real
+ *     one unless it is `null` — which is exactly the ambiguity the per-environment
+ *     layer exists to remove.
+ *
+ * The overlay is therefore a `Partial` at both levels, and `readLocalFile` is the
+ * only thing that turns it back into a complete `DeploymentValues`.
+ */
+export type LocalDeploymentValues = Omit<
+  {
+    [K in keyof DeploymentValues]?: DeploymentValues[K] extends object
+      ? Partial<DeploymentValues[K]>
+      : DeploymentValues[K];
+  },
+  'environments'
+> & {
+  environments?: Partial<Record<DeploymentEnvironment, Partial<EnvironmentTargets>>>;
 };
 
 const NULL_VALUES: DeploymentValues = {
@@ -165,6 +188,7 @@ const readLocalFile = (root: string): Partial<DeploymentValues> => {
       parsed[name] = {
         workerName: usable(entry.workerName),
         d1DatabaseId: usable(entry.d1DatabaseId),
+        origin: usable(entry.origin),
       };
     }
     if (Object.keys(parsed).length > 0) {
@@ -223,12 +247,22 @@ export const resolveDeploymentValues = (
   const workerFromEnv = usable(env.CLOUDFLARE_WORKER_NAME);
   if (workerFromEnv !== null) {
     merged.workerName = workerFromEnv;
+    for (const target of Object.values(merged.environments ?? {})) {
+      target.workerName = workerFromEnv;
+    }
   }
   const d1FromEnv = usable(env.CLOUDFLARE_D1_DATABASE_ID);
   if (d1FromEnv !== null) {
     merged.d1DatabaseId = d1FromEnv;
     for (const target of Object.values(merged.environments ?? {})) {
       target.d1DatabaseId = d1FromEnv;
+    }
+  }
+  const originFromEnv = usable(env.CLOUDFLARE_PUBLIC_ORIGIN);
+  if (originFromEnv !== null) {
+    merged.customDomain = originFromEnv;
+    for (const target of Object.values(merged.environments ?? {})) {
+      target.origin = originFromEnv;
     }
   }
 
@@ -267,7 +301,7 @@ export type ResolutionLayer = 'environment' | 'local-file' | 'default';
 // only to satisfy the index type. `usable('')` is `null`, so the unreachable branch
 // reads as "not set" — the same answer the default path gives.
 export const describeResolution = (
-  field: 'accountId' | 'd1DatabaseId' | 'workerName',
+  field: 'accountId' | 'd1DatabaseId' | 'workerName' | 'origin',
   env: NodeJS.ProcessEnv = process.env,
   root: string = REPO_ROOT,
 ): ResolutionLayer => {
@@ -275,6 +309,7 @@ export const describeResolution = (
     accountId: 'CLOUDFLARE_ACCOUNT_ID',
     d1DatabaseId: 'CLOUDFLARE_D1_DATABASE_ID',
     workerName: 'CLOUDFLARE_WORKER_NAME',
+    origin: 'CLOUDFLARE_PUBLIC_ORIGIN',
   };
 
   if (usable(env[FROM_ENV[field] ?? '']) !== null) {
@@ -282,9 +317,27 @@ export const describeResolution = (
   }
 
   const local = readLocalFile(root);
-  const fromLocal = local[field];
-  if (typeof fromLocal === 'string' && fromLocal !== '') {
+
+  // `origin` has no top-level key on the resolved values — it lives per
+  // environment — so it is handled separately below rather than indexed here,
+  // which would need a cast to compile and would then answer about the wrong key.
+  if (field !== 'origin') {
+    const fromLocal = local[field];
+    if (typeof fromLocal === 'string' && fromLocal !== '') {
+      return 'local-file';
+    }
+    return 'default';
+  }
+
+  const fromTopLevel = local.customDomain;
+  if (usable(fromTopLevel) !== null) {
     return 'local-file';
+  }
+
+  for (const entry of Object.values(local.environments ?? {})) {
+    if (usable(entry.origin) !== null) {
+      return 'local-file';
+    }
   }
 
   return 'default';
@@ -333,12 +386,28 @@ export const effectiveDeploymentValues = (): DeploymentValues =>
  * and is refused rather than defaulted. Absent `environments` means the project has
  * only ever had one, so the single set still applies.
  */
-export const targetsFor = (environment: DeploymentEnvironment): EnvironmentTargets | null => {
-  const values = effectiveDeploymentValues();
-
+/**
+ * The configured topology for one environment, or `null`.
+ *
+ * The layer-1 fallback is consulted only when the project has never declared
+ * per-environment targets. A project that has *some* environments gets a refusal
+ * for the ones it does not, which is what stops `--env production` from being
+ * served staging's Worker.
+ */
+export const topologyFor = (
+  environment: DeploymentEnvironment,
+  values: DeploymentValues = effectiveDeploymentValues(),
+): EnvironmentTargets | null => {
   if (values.environments === undefined) {
-    return { workerName: values.workerName, d1DatabaseId: values.d1DatabaseId };
+    return {
+      workerName: values.workerName,
+      d1DatabaseId: values.d1DatabaseId,
+      origin: values.customDomain,
+    };
   }
 
   return values.environments[environment] ?? null;
 };
+
+/** Alias kept for existing callers; `topologyFor` is the name that says what it is. */
+export const targetsFor = topologyFor;

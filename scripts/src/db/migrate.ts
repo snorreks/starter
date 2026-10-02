@@ -65,11 +65,19 @@ export type Plan =
  * Separated from execution so `--dry-run` and the test suite can assert on the
  * exact arguments, and so a missing prerequisite is reported before a mutation.
  *
+ * `options.databaseId` lets a caller supply a destination it has already validated
+ * through `resolveTarget`. It exists because of a real divergence: this function
+ * resolved the database itself, so a caller holding a *validated* target could still
+ * have this one silently disagree — and the pipeline would then migrate one database
+ * while deploying to another. Passing the validated id in makes the migration
+ * destination and the deploy destination the same value by construction.
+ * `bun run db:migrate` keeps working on its own.
+ *
  * `args` are wrangler subcommand arguments only. The binary is supplied by
  * `runWrangler`, which resolves the pinned workspace copy; naming an executable
  * here is how `bunx` ended up running an unpinned wrangler fetched from npm.
  */
-export const planMigrate = (target: MigrateTarget): Plan => {
+export const planMigrate = (target: MigrateTarget, options: { databaseId?: string } = {}): Plan => {
   if (!existsSync(MIGRATIONS_DIR)) {
     return {
       ok: false,
@@ -95,12 +103,13 @@ export const planMigrate = (target: MigrateTarget): Plan => {
   }
 
   const targets = targetsFor(target);
-  if (targets === null || targets.d1DatabaseId === null) {
+  const databaseId = options.databaseId ?? targets?.d1DatabaseId ?? null;
+  if (targets === null || databaseId === null) {
     return {
       ok: false,
       reason: 'No D1 database id is configured, so there is no safe target to migrate.',
       remedy:
-        `Run \`bun run deploy:configure -- --provision\` to create the database, ` +
+        `Run \`bun run deploy:configure -- --env ${target} --provision\` to create the database, ` +
         'then re-run. Nothing has been changed.',
     };
   }

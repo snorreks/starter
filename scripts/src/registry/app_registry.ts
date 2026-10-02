@@ -111,8 +111,59 @@ export const AppLogConfigSchema = Type.Object(
 
 export type AppLogConfig = Static<typeof AppLogConfigSchema>;
 
+/**
+ * One deployable environment's topology, as *configuration*.
+ *
+ * `origin` and `requiredSecretNames` are nonsecret by construction and belong here
+ * rather than in a secret store: an origin is a public hostname, and the *names* of
+ * the secrets an environment needs are the only thing a plan can print without
+ * disclosing anything. What those secrets are stays a secret; that an environment
+ * needs `BETTER_AUTH_SECRET` does not.
+ */
+const EnvironmentTopologySchema = Type.Object(
+  {
+    /**
+     * The public origin this environment answers on, or `null` when unprovisioned.
+     *
+     * Required by `resolveTarget` before any deploy, because it is the only address
+     * a post-deploy verification can be made against. Deriving it from the Worker
+     * name is not possible: the `workers.dev` subdomain belongs to the account, not
+     * to the Worker, and an operator may be serving a custom domain instead.
+     */
+    origin: Type.Union([Type.String({ minLength: 1 }), Type.Null()]),
+    /**
+     * Secret *names* this environment requires, in the documented apply order.
+     *
+     * Names only. A value here would be a plaintext secret in a tracked file, which
+     * is the one thing the SOPS workflow in `docs/secrets.md` exists to prevent.
+     */
+    requiredSecretNames: Type.Array(Type.String({ minLength: 1 })),
+  },
+  { additionalProperties: false },
+);
+
 export const DEPLOYMENT_CONFIG_SCHEMA = Type.Object(
   {
+    /**
+     * Project identity, and the stem every derived name uses.
+     *
+     * Not a secret and not a resource id: it is the name this template keeps when
+     * it is renamed, and it is what ties a release record to a project rather than
+     * to whichever Worker happened to answer.
+     */
+    projectName: Type.String({ minLength: 1 }),
+    /**
+     * Per-environment topology that is configuration rather than a provisioned
+     * resource id. Resource ids stay out of the committed registry entirely and
+     * live in the gitignored overlay — see `deployment_values.ts`.
+     */
+    environments: Type.Object(
+      {
+        staging: EnvironmentTopologySchema,
+        production: EnvironmentTopologySchema,
+      },
+      { additionalProperties: false },
+    ),
     /**
      * The Cloudflare Worker name. `null` means "not provisioned yet" — the deploy
      * dry-run reports that as an actionable error instead of inventing a target.
@@ -122,6 +173,11 @@ export const DEPLOYMENT_CONFIG_SCHEMA = Type.Object(
      * an `api` entry would be two names for one resource, and the registry's own
      * stated rule is that a value in more than one place is a value nobody can
      * tell is in effect.
+     *
+     * This is the *single-set* fallback, used only by a project that has never
+     * declared per-environment targets. `resolveTarget` refuses rather than falling
+     * back to it for a deployed environment, because a staging request answered with
+     * production names is the outcome this whole layer exists to prevent.
      */
     workerName: Type.Union([Type.String({ minLength: 1 }), Type.Null()]),
     /**
@@ -170,12 +226,42 @@ export type DeploymentConfig = Static<typeof DEPLOYMENT_CONFIG_SCHEMA>;
  * must say so rather than reaching for a previous project's resources.
  */
 export const DEPLOYMENT_CONFIG: DeploymentConfig = {
+  projectName: 'starter',
+  // Origins start empty on purpose. A template cannot know the account's
+  // `workers.dev` subdomain, and inventing one would produce a verification step
+  // that silently targets somebody else's hostname. `deploy:configure --origin`
+  // writes the real value into the gitignored overlay.
+  environments: {
+    staging: { origin: null, requiredSecretNames: ['BETTER_AUTH_SECRET', 'RESEND_API_KEY'] },
+    production: { origin: null, requiredSecretNames: ['BETTER_AUTH_SECRET', 'RESEND_API_KEY'] },
+  },
   workerName: null,
   d1DatabaseId: null,
   r2BucketNames: { uploads: null },
   customDomain: null,
   accountId: null,
 };
+
+/**
+ * The secrets every remote environment needs, in the order they must be applied.
+ *
+ * Exported rather than left inline so the plan, the preflight and the documentation
+ * all name the same list. A required-secret list that exists in three places is a
+ * list where one of the three is wrong.
+ *
+ * `MAIL_FROM` and `DEPLOYMENT_ENV` are *vars*, not secrets: they are nonsecret
+ * configuration and are supplied through `wrangler.jsonc`'s environment vars, so
+ * they never pass through the secret channel or a process's argv.
+ */
+export const REQUIRED_REMOTE_SECRET_NAMES = ['BETTER_AUTH_SECRET', 'RESEND_API_KEY'] as const;
+
+/** Nonsecret vars every remote environment needs. Names only, never values. */
+export const REQUIRED_REMOTE_VAR_NAMES = [
+  'DEPLOYMENT_ENV',
+  'BETTER_AUTH_URL',
+  'MAIL_FROM',
+  'RELEASE',
+] as const;
 
 /**
  * The apps this project deploys.
@@ -278,6 +364,14 @@ export const APP_LOG_CONFIG: Record<AppId, AppLogConfig> = {
 export interface EnvironmentTargets {
   workerName: string | null;
   d1DatabaseId: string | null;
+  /**
+   * Public origin for this environment, or `null`.
+   *
+   * Part of the target rather than a display value because it is the destination
+   * verification is made against: a deploy that cannot be addressed cannot be
+   * verified, and "the deploy command exited 0" is not a release record.
+   */
+  origin: string | null;
 }
 
 // `Partial`: presence is the signal. A project with only staging must be able to say so

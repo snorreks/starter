@@ -108,5 +108,59 @@ export const handle: Handle = async ({ event, resolve }) => {
     return jsonError(404, 'not_found', 'No such route.');
   }
 
+  // Cache policy, applied here rather than per route.
+  //
+  // Two classes of response, and they must not be confused:
+  //
+  //   * **Session-dependent** — anything behind a sign-in, and every `/api/*`
+  //     response, authenticated or not. `private, no-store` says both halves: not
+  //     for a shared cache, and not for the browser either. A `Cache-Control:
+  //     public` on a page rendered with a session user is one CDN configuration
+  //     change away from serving one user's notes to another.
+  //   * **Anonymous HTML** — the landing page and the auth screens. These *could*
+  //     be cached, and are deliberately left to the deployment's own asset
+  //     headers rather than being declared cacheable here. A blanket `public`
+  //     would be a correctness claim this code cannot verify, since whether a page
+  //     is anonymous depends on the session rather than on the URL.
+  //
+  // Headers are copied rather than mutated: a `Response` from SvelteKit is often
+  // immutable, and assigning to `.headers` throws in workerd when it is.
+  const policy = cachePolicyFor(event.url.pathname, event.locals.user);
+  if (policy !== null) {
+    const headers = new Headers(response.headers);
+    headers.set('cache-control', policy);
+    return new Response(response.body, { status: response.status, headers });
+  }
+
   return response;
 };
+
+/**
+ * The `Cache-Control` for one request, or `null` to leave the response alone.
+ *
+ * Exported so the rule is assertable directly rather than only through a hook that
+ * needs a whole request to reach it.
+ */
+export const cachePolicyFor = (pathname: string, user: unknown): string | null => {
+  if (isApiPath(pathname)) {
+    return PRIVATE;
+  }
+  if (user !== null && user !== undefined) {
+    return PRIVATE;
+  }
+  if (isHealthPath(pathname)) {
+    // `/health` sets its own `no-store`; restating it here keeps the policy in one
+    // place for anyone auditing it, and costs nothing.
+    return NO_STORE;
+  }
+  return null;
+};
+
+/** Not for a shared cache, and not for the browser. */
+const PRIVATE = 'private, no-store, max-age=0';
+
+/** Not cached at all, by anyone. */
+const NO_STORE = 'no-store';
+
+const isHealthPath = (pathname: string): boolean =>
+  pathname === '/health' || pathname === '/health/ready';

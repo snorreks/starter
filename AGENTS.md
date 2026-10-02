@@ -61,15 +61,16 @@ bun run smoke               # fresh checkout of this template, no credentials
 # Database
 bun run db:generate         # drizzle-kit generate
 bun run db:migrate          # local
-bun run db:migrate:remote   # requires an explicit environment and --yes
+bun run db:migrate:remote staging --yes    # requires an explicit environment
 bun run db:status
 bun run db:seed
 
-# Deploy — reads a plan; nothing happens without --yes
-bun run deploy:configure
-bun run deploy:check
-bun run deploy -- --dry-run
-bun run deploy -- web --env staging --yes
+# Deploy — four phases, because they have different authority
+bun run deploy:status                       # configured + last release. Read-only.
+bun run deploy:check --env staging          # the offline plan. No credential, no network.
+bun run deploy:preflight --env staging      # authenticated, read-only
+bun run deploy:apply --env staging --yes    # build, migrate, deploy, verify, record
+bun run deploy verify --env staging
 
 # Logs — one app; --source tells the two halves apart
 bun run logs web --mode local --follow
@@ -137,6 +138,12 @@ Three directory rules that are *not* stylistic:
   from inside the process that serves `/api/notes` is a second, differently
   authenticated path to the same data.
 
+- **One authority decides what a command would change.** `scripts/src/deploy/target.ts`
+  exports `resolveTarget(environment)`. Every command that can reach a remote
+  resource resolves its destination through it and nothing else resolves one
+  independently. Two lookups that are each correct about different things is how a
+  deploy ended up migrating staging while publishing production.
+
 ## Tool resolution
 
 Never `bunx <tool>` for anything that mutates state or runs a build. `wrangler`,
@@ -161,7 +168,7 @@ bun run --cwd packages/backend/database db:generate
   against the repository — proving a guard fails would otherwise mean breaking the
   repository.
 - **Prefer real processes and real entrypoints** over mocks at the edges that
-  matter. `scripts/tests/deploy_process_boundary.test.ts` observes the argv that
+  matter. `scripts/tests/deployment_pipeline.test.ts` observes the argv that
   would be spawned; `apps/frontend/client/tests/worker_integration.test.ts` drives
   the built Worker in real workerd.
 - **Drive a browser, not `curl`, when the question is about a browser.**
@@ -201,7 +208,8 @@ bun run --cwd packages/backend/database db:generate
 | [docs/first-round-review.md](docs/first-round-review.md) | fixed and open findings |
 | [docs/architecture.md](docs/architecture.md) | boundaries and why |
 | [docs/auth.md](docs/auth.md) | the account lifecycle, the D1 rate limiter, and mail |
-| [docs/cloudflare.md](docs/cloudflare.md) | deploy, D1, workers, credentials |
+| [docs/cloudflare.md](docs/cloudflare.md) | Workers, D1, credentials, the deployment-mode binding |
+| [docs/deployment.md](docs/deployment.md) | the one deployment path: authority, pipeline, migrations, concurrency, health, rollback recovery |
 | [docs/logs.md](docs/logs.md) | the log CLI and its refusals |
 | [docs/secrets.md](docs/secrets.md) | SOPS: the operations, and what each one refuses |
 | [docs/agent.md](docs/agent.md) | Pi extensions and trust |

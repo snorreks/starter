@@ -14,6 +14,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import type { DeploymentEnvironment } from '@starter/schemas';
 import { captureWrangler, hasCloudflareCredential, REPO_ROOT } from '../cloudflare/wrangler.ts';
+import { DEPLOYMENT_CONFIG } from '../registry/app_registry.ts';
 import {
   type DeploymentValues,
   describeResolution,
@@ -24,6 +25,12 @@ import {
   resolveDeploymentValues,
 } from '../registry/deployment_values.ts';
 import { CLIENT_DIR_RELATIVE } from '../shared/paths.ts';
+import {
+  DEPLOYABLE_ENVIRONMENTS,
+  environmentIsolationProblem,
+  resolveTarget,
+  suggestOrigin,
+} from './target.ts';
 
 /**
  * The committed wrangler config, relative to a repository root.
@@ -47,7 +54,7 @@ export interface ConfigCheck {
 const stripJsonComments = (input: string): string =>
   input.replace(/^\s*\/\/.*$/gm, '').replace(/\/\*[\s\S]*?\*\//g, '');
 
-/** What is still unconfigured. Read-only. */
+/** What is still unconfigured. Read-only. Offline: no credential, no network. */
 export const inspectConfig = (
   values: DeploymentValues = resolveDeploymentValues(),
 ): ConfigCheck => {
@@ -79,25 +86,25 @@ export const inspectConfig = (
     );
   }
 
-  const scopes = values.environments === undefined ? { default: values } : values.environments;
-  for (const [environment, targets] of Object.entries(scopes)) {
-    const scope = values.environments === undefined ? '' : ` in ${environment}`;
-    if (targets.workerName === null) {
-      problems.push(`No Worker name configured${scope}.`);
-    }
-    if (targets.d1DatabaseId === null) {
-      problems.push(`No D1 database id configured${scope}.`);
-    }
+  // Reported per environment through the same authority the deploy uses, so this
+  // report and `bun run deploy plan --env <env>` can never disagree about what is
+  // missing. Reporting the top-level single set instead would say "configured"
+  // for a project whose environments are not — which is how provisioning appeared
+  // to complete while every deploy still refused.
+  const isolation = environmentIsolationProblem(values);
+  if (isolation !== null) {
+    problems.push(isolation);
   }
 
-  if (
-    values.environments === undefined &&
-    values.d1DatabaseId !== null &&
-    describeResolution('d1DatabaseId') === 'local-file'
-  ) {
-    // Naming the source is what stops the next question being "where did this id
-    // come from, and is it mine?"
-    notices.push(`D1 database id read from ${LOCAL_DEPLOYMENT_FILE}.`);
+  for (const environment of DEPLOYABLE_ENVIRONMENTS) {
+    const resolved = resolveTarget(environment, { values });
+    if (!resolved.ok) {
+      problems.push(`${environment}: ${resolved.reason}`);
+      continue;
+    }
+    if (describeResolution('d1DatabaseId') === 'local-file') {
+      notices.push(`D1 database id read from ${LOCAL_DEPLOYMENT_FILE}.`);
+    }
   }
 
   if (!existsSync(wranglerConfigAt(REPO_ROOT))) {
@@ -115,13 +122,14 @@ export const inspectConfig = (
 
   if (values.customDomain === null) {
     notices.push(
-      'No custom domain configured. The application will be reachable at *.workers.dev only.',
+      'No custom domain configured. Applications will be reachable at *.workers.dev only.',
     );
   }
   if (values.r2BucketNames.uploads === null) {
     notices.push(
       'No R2 upload bucket configured. That is fine: uploads are a documented future ' +
-        'capability and nothing in the application reads a bucket.',
+        'capability, nothing in the application reads a bucket, and this command cannot ' +
+        'create one. See docs/deployment.md for what adding it would require.',
     );
   }
 
@@ -180,14 +188,21 @@ export const provisionDatabase = (
     write?: (current: LocalDeploymentValues) => LocalDeploymentValues;
     root?: string;
     hasCredential?: () => boolean;
+    /** Which environment's topology this database belongs to. */
+    environment?: DeploymentEnvironment;
   } = {},
 ): number => {
   const root = options.root ?? REPO_ROOT;
   const credentialed = options.hasCredential ?? hasCloudflareCredential;
+  const environment = options.environment ?? 'staging';
   const create =
     options.create ??
     ((): { ok: boolean; stdout: string; stderr: string } =>
-      captureWrangler(['d1', 'create', 'starter-api']));
+      // Named from the environment, so the two databases are visibly distinct at
+      // the provider. The previous literal was `starter-api` — a name for an
+      // application this repository deleted in PR B, applied to whichever
+      // environment happened to run the command.
+      captureWrangler(['d1', 'create', `${DEPLOYMENT_CONFIG.projectName}-${environment}-db`]));
 
   if (!credentialed()) {
     process.stderr.write('No Cloudflare credential. Nothing has been changed.\n');
@@ -208,7 +223,8 @@ export const provisionDatabase = (
   if (id === undefined) {
     process.stderr.write(
       'The database was created but its id could not be parsed from the output.\n' +
-        `Nothing was written. Add it to ${LOCAL_DEPLOYMENT_FILE} by hand.\n`,
+        `Nothing was written. Add it to ${LOCAL_DEPLOYMENT_FILE} by hand under\n` +
+        `  "environments": { "${environment}": { "d1DatabaseId": "<id>" } }.\n`,
     );
     return 1;
   }
@@ -237,17 +253,31 @@ export const provisionDatabase = (
     }
   }
 
+  // Per environment, not top-level. A single `d1DatabaseId` is the value that let
+  // staging and production share one database: `--env staging` and `--env
+  // production` both read it, so a staging release reached live data.
+  // `resolveTarget` now refuses that configuration outright, but the writer has to
+  // stop producing it.
   const write =
     options.write ??
-    ((current: LocalDeploymentValues): LocalDeploymentValues => ({
-      ...current,
-      d1DatabaseId: id,
-      accountId: account ?? current.accountId,
-    }));
+    ((current: LocalDeploymentValues): LocalDeploymentValues => {
+      const environments = { ...(current.environments ?? {}) };
+      environments[environment] = {
+        ...(environments[environment] ?? {}),
+        d1DatabaseId: id,
+      };
+      return {
+        ...current,
+        environments,
+        accountId: account ?? current.accountId,
+      };
+    });
 
   writeLocalValues(write, root);
 
-  process.stdout.write(`D1 database id written to ${LOCAL_DEPLOYMENT_FILE}: ${id}\n`);
+  process.stdout.write(
+    `D1 database id for ${environment} written to ${LOCAL_DEPLOYMENT_FILE}: ${id}\n`,
+  );
   if (account !== null) {
     process.stdout.write(`Cloudflare account id recorded: ${account}\n`);
   } else {
@@ -283,11 +313,93 @@ export const provisionDatabase = (
  * directory. It was hardcoded to `REPO_ROOT`, which meant the one operation that
  * *writes* the local overlay had no test at all.
  */
-export const setAccount = (args: readonly string[], root: string = REPO_ROOT): number => {
-  const accountIndex = args.indexOf('--account');
-  const account = accountIndex === -1 ? undefined : args[accountIndex + 1];
+/**
+ * Record configuration without provisioning anything: the account id, a Worker
+ * name, a public origin.
+ *
+ *     bun run deploy:configure -- --account <32-hex>
+ *     bun run deploy:configure -- --env staging --worker starter-web-staging
+ *     bun run deploy:configure -- --env staging --origin https://starter.example
+ *
+ * Every write is nonsecret by construction — an account id, a Worker name and a
+ * public hostname are all configuration. Nothing here takes a secret, and that is
+ * why these values live in a gitignored overlay rather than in SOPS: an encrypted
+ * file whose only contents are public would make "is this configured?" a question
+ * that requires a decryption key.
+ *
+ * `--worker` takes **one** argument: the Worker's name. The previous form took
+ * two — an app and a name — because there were two Workers. Given a single
+ * argument it read the *target* as the name and recorded the literal string
+ * `"api"`, which wrangler accepts, so nothing failed until the deploy published to
+ * the wrong place.
+ *
+ * `--env` is required for `--worker` and `--origin`. Without it they would land in
+ * the single-set fallback, which is the value both environments used to read — the
+ * exact ambiguity the per-environment layer removes.
+ *
+ * `root` is a parameter so this is testable against a throwaway directory. It was
+ * hardcoded to `REPO_ROOT`, which meant the one operation that *writes* the local
+ * overlay had no test at all.
+ */
+export const setConfig = (args: readonly string[], root: string = REPO_ROOT): number => {
+  const valueAfter = (flag: string): string | undefined => {
+    const index = args.indexOf(flag);
+    return index === -1 ? undefined : args[index + 1];
+  };
 
-  if (account === undefined || !/^[0-9a-f]{32}$/i.test(account)) {
+  const rawEnvironment = valueAfter('--env');
+
+  if (rawEnvironment !== undefined && !DEPLOYABLE_ENVIRONMENTS.includes(rawEnvironment as never)) {
+    process.stderr.write(
+      `--env must be ${DEPLOYABLE_ENVIRONMENTS.join(' or ')} (got "${rawEnvironment}").\n` +
+        '  Nothing has been changed. `local` is a runtime, not a deployment target.\n',
+    );
+    return 2;
+  }
+
+  const environment = rawEnvironment as DeploymentEnvironment | undefined;
+
+  const account = valueAfter('--account');
+  const workerName = valueAfter('--worker');
+  const origin = valueAfter('--origin');
+
+  if (account === undefined && workerName === undefined && origin === undefined) {
+    process.stderr.write(
+      'Nothing to write. Pass --account <32-hex>, --env <env> --worker <name>, or\n' +
+        '  --env <env> --origin https://<host>.\n',
+    );
+    return 2;
+  }
+
+  if (workerName?.startsWith('-') === true) {
+    process.stderr.write(
+      "--worker takes the Worker's name: --worker <name>\n" +
+        '  Nothing has been changed. A Worker name is a single value, and accepting a\n' +
+        '  target as well is how the previous two-argument form recorded "api" as a name.\n',
+    );
+    return 2;
+  }
+
+  if (workerName !== undefined && environment === undefined) {
+    process.stderr.write(
+      '--worker needs --env. Nothing has been changed.\n' +
+        '  Staging and production are different Workers; a name written without an\n' +
+        '  environment is the shared value both of them used to read.\n',
+    );
+    return 2;
+  }
+
+  if (origin !== undefined && environment === undefined) {
+    process.stderr.write(
+      '--origin needs --env. Nothing has been changed.\n' +
+        '  An origin is per environment: staging and production answer on different\n' +
+        '  hostnames, and one shared value means both are verified against the same\n' +
+        '  address.\n',
+    );
+    return 2;
+  }
+
+  if (account !== undefined && !/^[0-9a-f]{32}$/i.test(account)) {
     process.stderr.write(
       '--account needs a 32-character hex Cloudflare account id.\n' +
         '  Find it at https://dash.cloudflare.com → Workers & Pages → Account ID.\n' +
@@ -296,31 +408,49 @@ export const setAccount = (args: readonly string[], root: string = REPO_ROOT): n
     return 2;
   }
 
-  const workerIndex = args.indexOf('--worker');
-  const workerName = workerIndex === -1 ? undefined : args[workerIndex + 1];
-
-  if (workerName?.startsWith('-') === true) {
+  if (origin !== undefined && !/^https:\/\/[^/?#]+$/.test(origin)) {
     process.stderr.write(
-      `--worker takes the Worker's name: --worker <name>\n` +
-        '  Nothing has been changed. A Worker name is a single value, and accepting a\n' +
-        '  target as well is how the previous two-argument form recorded "api" as a name.\n',
+      `--origin "${origin}" is not an absolute https URL with no path, query or fragment.\n` +
+        '  Nothing has been changed. It is the base URL Better Auth issues cookies for\n' +
+        '  and the address verification fetches.\n',
     );
     return 2;
   }
 
-  writeLocalValues(
-    (current) => ({
+  writeLocalValues((current) => {
+    const environments = { ...(current.environments ?? {}) };
+    if (environment !== undefined) {
+      environments[environment] = {
+        ...(environments[environment] ?? {}),
+        ...(workerName === undefined ? {} : { workerName }),
+        ...(origin === undefined ? {} : { origin }),
+      };
+    }
+    return {
       ...current,
-      accountId: account.toLowerCase(),
-      ...(workerName === undefined ? {} : { workerName }),
-    }),
-    root,
-  );
+      ...(account === undefined ? {} : { accountId: account.toLowerCase() }),
+      ...(environment === undefined ? {} : { environments }),
+    };
+  }, root);
 
-  process.stdout.write(`Account id written to ${LOCAL_DEPLOYMENT_FILE}.\n`);
-  if (workerName !== undefined) {
-    process.stdout.write(`Worker name written: ${workerName}\n`);
+  if (account !== undefined) {
+    process.stdout.write(`Account id written to ${LOCAL_DEPLOYMENT_FILE}.\n`);
   }
+  if (workerName !== undefined) {
+    process.stdout.write(`Worker name for ${environment}: ${workerName}\n`);
+  }
+  if (origin !== undefined) {
+    process.stdout.write(`Origin for ${environment}: ${origin}\n`);
+  }
+
+  if (workerName !== undefined && origin === undefined && environment !== undefined) {
+    process.stdout.write(
+      `\nStill needed for ${environment}:\n` +
+        `  bun run deploy:configure -- --env ${environment} --origin ${suggestOrigin(workerName)}\n` +
+        '  Replace the placeholder with the real workers.dev subdomain, or a custom domain.\n',
+    );
+  }
+
   return 0;
 };
 
@@ -338,11 +468,24 @@ export const main = (args: readonly string[]): number => {
   }
 
   if (args.includes('--provision')) {
-    return provisionDatabase();
+    const rawEnvironment = args[args.indexOf('--env') + 1];
+    if (
+      rawEnvironment !== undefined &&
+      !DEPLOYABLE_ENVIRONMENTS.includes(rawEnvironment as never)
+    ) {
+      process.stderr.write(
+        `--env must be ${DEPLOYABLE_ENVIRONMENTS.join(' or ')} (got "${rawEnvironment}").\n` +
+          '  Nothing has been created.\n',
+      );
+      return 2;
+    }
+    return provisionDatabase({
+      environment: (rawEnvironment as DeploymentEnvironment | undefined) ?? 'staging',
+    });
   }
 
-  if (args.includes('--account')) {
-    return setAccount(args, REPO_ROOT);
+  if (args.includes('--account') || args.includes('--worker') || args.includes('--origin')) {
+    return setConfig(args, REPO_ROOT);
   }
 
   const check = inspectConfig();
@@ -354,10 +497,13 @@ export const main = (args: readonly string[]): number => {
     process.stdout.write(`  notice:  ${notice}\n`);
   }
   process.stdout.write(
-    '\nNext steps:\n' +
-      '  bun run deploy:configure -- --provision   # create the D1 database\n' +
-      '  bun run deploy:configure -- --check       # verify\n' +
-      '  bun run deploy:check                     # validate the deploy plan (dry run)\n',
+    '\nNext steps, per environment:\n' +
+      '  bun run deploy:configure -- --account <32-hex>\n' +
+      '  bun run deploy:configure -- --env staging --worker <name>\n' +
+      '  bun run deploy:configure -- --env staging --origin https://<host>\n' +
+      '  bun run deploy:configure -- --env staging --provision\n' +
+      '  bun run deploy:configure -- --check                # verify\n' +
+      '  bun run deploy:check --env staging                # the offline plan\n',
   );
   return 0;
 };
