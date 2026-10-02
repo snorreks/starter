@@ -169,7 +169,7 @@ jobs:
         run: set -o pipefail; bun run test 2>&1 | tee "$RUNNER_TEMP/unit.log"
 
       - name: Assert the unit lane discovered and passed tests
-        # Four projects declare `bun test --pass-with-no-tests`, so a green run can
+        # Three projects declare `bun test --pass-with-no-tests`, so a green run can
         # legitimately contain no tests. The lane as a whole may not: if none of
         # them discovered anything, the runner matched nothing and the job is a
         # green no-op.
