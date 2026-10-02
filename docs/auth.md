@@ -156,7 +156,7 @@ cannot be mistaken for a fresh one.
 including a context with **scripting disabled**, because the form action is the only
 sign-in path available to a browser that never runs a script.
 
-Three things are **not** verified, and the capability matrix says so too:
+Two things are **not** verified, and the capability matrix says so too:
 
 - **No real mail was sent.** Every message went to the capture inbox. Resend delivery,
   its SPF/DKIM posture and its error shape are unverified.
@@ -165,8 +165,6 @@ Three things are **not** verified, and the capability matrix says so too:
   counter persistence across a Worker restart, and resistance to rotating a local
   client's `cf-connecting-ip`. These checks do not simulate Cloudflare's production
   routing across simultaneous isolates.
-- **`bun run test:browser` is blocked** by the runner's Chromium launch, which is not
-  this feature's to fix. See the capability matrix for the exact requirement.
 
 ## Two things that will surprise you
 
