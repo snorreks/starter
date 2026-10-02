@@ -7,7 +7,7 @@
 // the *parent* of the repository, and the symptom was:
 //
 //   ENOENT: no such file or directory,
-//   open '/home/sonny/.../passion/apps/frontend/client/wrangler.jsonc'
+//   open '/home/<user>/.../apps/frontend/client/wrangler.jsonc'
 //
 // — one directory above the checkout, phrased as a missing file. `planMigrate` then
 // reported "No migrations found", and the deploy plan could not name its config.

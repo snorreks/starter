@@ -70,7 +70,6 @@ export const PACKAGE_SOURCE_DIRS = [
   'packages/shared/logger',
   'packages/shared/utils',
   'packages/frontend/ui',
-  'packages/frontend/services',
   'packages/backend/database',
   'packages/backend/auth',
 ] as const;
