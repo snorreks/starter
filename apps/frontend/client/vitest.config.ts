@@ -13,7 +13,15 @@
 //
 // This config deliberately does NOT extend the SvelteKit Vite config. It stands
 // alone, which is why the aliases are spelled out here — resolution must not
-// depend on SvelteKit generating anything.
+// depend on SvelteKit generating anything, and the browser lane has to keep
+// working in a checkout where `svelte-kit sync` has not been run.
+//
+// `src/dom_repair.d.ts` is loaded through `server.deps.inline` rather than being
+// listed in `compilerOptions.types`. That is deliberate: the file exists to merge
+// the DOM signatures back over the `Element` interface the Workers runtime types
+// declare (sveltejs/kit#8268), and it has to be in the *type* program, which is
+// this file's own program — not the application's. See the file for the full
+// explanation.
 
 import { fileURLToPath } from 'node:url';
 import { svelte } from '@sveltejs/vite-plugin-svelte';
@@ -40,8 +48,8 @@ const packageAliases = [
     replacement: src('../../../packages/shared/schemas/src/index.ts'),
   },
 
-  // The logger's subpath exports point at `src/lib/*` rather than `src/*`, so
-  // they need spelling out.
+  // The logger's subpath exports point at `src/lib/*` rather than `src/*`, so they
+  // need spelling out.
   {
     find: /^@starter\/logger\/browser$/,
     replacement: src('../../../packages/shared/logger/src/lib/browser_logger.ts'),

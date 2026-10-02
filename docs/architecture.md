@@ -44,10 +44,13 @@ its first query in a browser, and `better-auth` is a server library.
 may import `node:*` or `bun:*`: they run where those do not exist. Platform work
 goes behind an adapter here, not behind a runtime check.
 
-### `apps/backend/api` — the Worker
+### `apps/backend/api` — removed
 
-Elysia 1.4. Reads bindings from the fetch signature, builds a container per binding
-set, and resolves the user per request.
+This was the Elysia Worker: a separate application on a separate port, reached by
+the browser through a Vite proxy, and deployed as its own Worker. It no longer
+exists. Its routes, services, container and environment policy now live in
+`apps/frontend/client/src/lib/server/`, and the browser and the Worker are one
+SvelteKit server on one origin.
 
 ### `apps/frontend/client` — the app
 
@@ -138,8 +141,9 @@ already returned the row to a function that can log it.
 field is silently dropped and the client is told the write succeeded.
 
 **`ownerId` never appears in a create payload.** Ownership comes from the session.
-`apps/backend/api/src/lib/notes.ts` builds the row from `user.id`, and the create
-schema rejects a body that carries one — refused, not ignored.
+`apps/frontend/client/src/lib/server/notes_service.ts` builds the row from
+`user.id`, and the create schema rejects a body that carries one — refused, not
+ignored.
 
 ## Deliberate non-goals
 

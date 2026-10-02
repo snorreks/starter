@@ -14,7 +14,7 @@ import { MemoryLogSink } from './memory_sink.ts';
 import { Timer } from './timer.ts';
 
 const context: LogContext = {
-  app: 'api',
+  app: 'web',
   environment: 'local',
   source: 'worker',
   release: 'test',
@@ -47,7 +47,7 @@ describe('toLogEvent', () => {
   test('carries the context onto every event', () => {
     const event = toLogEvent(entry(), context);
 
-    expect(event.app).toBe('api');
+    expect(event.app).toBe('web');
     expect(event.environment).toBe('local');
     expect(event.source).toBe('worker');
     expect(event.release).toBe('test');
@@ -114,7 +114,7 @@ describe('toLogEvent', () => {
     // would show up as `[object Object]` in the captured stream.
     for (const level of LOG_LEVELS) {
       const event = toLogEvent(entry({ logLevel: level }), context, { detail: 1 });
-      expect(JSON.parse(JSON.stringify(event))).toMatchObject({ level, app: 'api' });
+      expect(JSON.parse(JSON.stringify(event))).toMatchObject({ level, app: 'web' });
     }
   });
 });

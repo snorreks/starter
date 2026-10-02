@@ -8,7 +8,7 @@
 
 import { join } from 'node:path';
 import { runWrangler } from '../cloudflare/wrangler.ts';
-import { API_DIR } from '../shared/paths.ts';
+import { CLIENT_DIR } from '../shared/paths.ts';
 
 /** Statements are fixed and parameterless. Never interpolate input into SQL. */
 export const SEED_STATEMENTS: readonly string[] = [
@@ -34,7 +34,7 @@ export const main = (_args: readonly string[] = []): number => {
     'DB',
     '--local',
     '--config',
-    join(API_DIR, 'wrangler.jsonc'),
+    join(CLIENT_DIR, 'wrangler.jsonc'),
     '--command',
     SEED_STATEMENTS.join('; '),
   ]);

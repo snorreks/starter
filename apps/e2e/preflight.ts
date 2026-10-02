@@ -1,38 +1,34 @@
 // apps/e2e/preflight.ts
 //
-// Proving this run's servers are this run's servers.
+// Proving this run's server is this run's server.
 //
-// The problem this exists to solve: a leftover `wrangler dev` from an earlier
-// command keeps port 8787. Playwright's `webServer` sees the port answer and —
-// depending on version and reuse settings — either fails confusingly or, worse,
-// *passes*, running every test against the stale process. That stale process has
-// a stale D1 with a stale schema and stale seeded users. The suite then reports a
-// product bug that is actually a leftover socket.
+// The problem this exists to solve: a leftover server from an earlier command
+// keeps its port. Playwright's `webServer` sees the port answer and — depending on
+// version and reuse settings — either fails confusingly or, worse, *passes*, running
+// every test against the stale process. That stale process has a stale D1 with a
+// stale schema and stale seeded users. The suite then reports a product bug that is
+// actually a leftover socket.
 //
-// The check is an identity assertion, not a liveness assertion. The API echoes a
+// The check is an identity assertion, not a liveness assertion. The app echoes a
 // run id; global-setup sends a fresh one and requires it back. A server that
 // cannot prove it is the one just started is not used.
 //
-// (`pkill -f wrangler` is deliberately not used anywhere: the pattern broad
-// enough to match the dev server also matches the shell that launched it, which
-// kills the caller.)
+// (`pkill -f` is deliberately not used anywhere: the pattern broad enough to match
+// the dev server also matches the shell that launched it, which kills the caller.)
 
 import { join } from 'node:path';
+import { REPO_ROOT } from '../../scripts/src/shared/paths.ts';
 
 export interface RunIdentity {
   /** Unique per Playwright invocation. */
   runId: string;
-  apiBaseUrl: string;
-  clientBaseUrl: string;
-  apiPort: number;
-  clientPort: number;
+  appBaseUrl: string;
+  appPort: number;
 }
 
-export const CLIENT_PORT = Number(process.env.E2E_CLIENT_PORT ?? 4183);
-export const API_PORT = Number(process.env.E2E_API_PORT ?? 8788);
+export const APP_PORT = Number(process.env.E2E_APP_PORT ?? 4183);
 
-export const clientBaseUrl = `http://127.0.0.1:${CLIENT_PORT}`;
-export const apiBaseUrl = `http://127.0.0.1:${API_PORT}`;
+export const appBaseUrl = `http://127.0.0.1:${APP_PORT}`;
 
 let currentRun: RunIdentity | undefined;
 
@@ -55,27 +51,27 @@ export interface PreflightSuccess {
 }
 
 /**
- * Verify the API is this run's API.
+ * Verify the app is this run's app.
  *
- * The Worker reports `testRunId` from its `TEST_RUN_ID` binding when one is set,
- * so this harness generates the id, puts it in the environment the API inherits,
- * and requires `/api/health` to report the same value.
+ * The app reports `testRunId` from its `TEST_RUN_ID` binding when one is set, so
+ * this harness generates the id, puts it in the environment the app inherits, and
+ * requires `/api/health` to report the same value.
  *
  * A stale listener answers `/api/health` just as readily as a correct one. A
  * readiness probe that only checks for a 200 will run a whole suite against the
  * wrong process — passing, and proving nothing.
  *
  * A *missing* id is also a failure, not something to pass through: it means
- * either a leftover server from before this feature, or an API started without
+ * either a leftover server from before this feature, or a server started without
  * the binding. Both mean this suite would not be testing what it claims to.
  */
-export const verifyApiIdentity = async (
-  baseUrl: string = apiBaseUrl,
+export const verifyAppIdentity = async (
+  baseUrl: string = appBaseUrl,
   expectedRunId: string = currentIdentity().runId,
   timeoutMs = 60_000,
 ): Promise<PreflightSuccess | PreflightFailure> => {
   if (expectedRunId.length === 0) {
-    throw new Error('verifyApiIdentity needs a run id to compare against.');
+    throw new Error('verifyAppIdentity needs a run id to compare against.');
   }
   const deadline = Date.now() + timeoutMs;
 
@@ -101,23 +97,19 @@ export const verifyApiIdentity = async (
           return {
             ok: false,
             reason:
-              `The API on port ${port} reports no testRunId.\n` +
+              `The server on port ${port} reports no testRunId.\n` +
               '  Either it is a leftover process started before this check existed, or\n' +
               '  TEST_RUN_ID was not passed through to the Worker.',
-            remedy:
-              `  Find it:  ss -lptn 'sport = :${port}'\n` +
-              `  Stop it:  kill <pid>          # not pkill -f: it matches this shell too`,
+            remedy: findAndKill(port),
           };
         }
 
         return {
           ok: false,
           reason:
-            `The API on port ${port} is a leftover process from an earlier run.\n` +
+            `The server on port ${port} is a leftover process from an earlier run.\n` +
             `  It reports run id ${JSON.stringify(body.testRunId)}, not this run's.`,
-          remedy:
-            `  Find it:  ss -lptn 'sport = :${port}'\n` +
-            `  Stop it:  kill <pid>          # not pkill -f: it matches this shell too`,
+          remedy: findAndKill(port),
         };
       }
     } catch (error) {
@@ -130,12 +122,23 @@ export const verifyApiIdentity = async (
 
   return {
     ok: false,
-    reason: `The API did not become ready within ${Math.round(timeoutMs / 1000)}s. Last error: ${lastError}`,
+    reason: `The app did not become ready within ${Math.round(timeoutMs / 1000)}s. Last error: ${lastError}`,
     remedy:
       '  bun run db:migrate      # a missing schema makes every route fail\n' +
-      '  bun run dev:api         # then start it, and watch its output',
+      '  bun run dev:worker      # then start it, and watch its output',
   };
 };
+
+/**
+ * How to stop a leftover listener.
+ *
+ * `kill <pid>` rather than `pkill -f`, and the comment says why: a pattern broad
+ * enough to match this project's server also matches the shell that launched it,
+ * so the pattern kill takes down the caller. The pid has to be looked up.
+ */
+const findAndKill = (port: string): string =>
+  `  Find it:  ss -lptn 'sport = :${port}'\n` +
+  `  Stop it:  kill <pid>          # not pkill -f: it matches this shell too`;
 
 export const recordIdentity = (identity: RunIdentity): void => {
   currentRun = identity;
@@ -143,4 +146,4 @@ export const recordIdentity = (identity: RunIdentity): void => {
 
 /** Where Playwright's per-run artefacts go. Outside the repo, and cleaned. */
 export const evidenceDir = (): string =>
-  process.env.E2E_EVIDENCE_DIR ?? join('/tmp', 'starter-evidence');
+  process.env.E2E_EVIDENCE_DIR ?? join(REPO_ROOT, '.wrangler', 'evidence');

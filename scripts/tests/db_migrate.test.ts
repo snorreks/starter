@@ -13,15 +13,29 @@
 
 import { afterEach, describe, expect, test } from 'bun:test';
 import { type MigrateTarget, parseTarget, planMigrate } from '../src/db/migrate.ts';
-import { DEPLOYMENT_CONFIG } from '../src/registry/app_registry.ts';
+import {
+  effectiveDeploymentValues,
+  setDeploymentValues,
+} from '../src/registry/deployment_values.ts';
 
-const savedDatabaseId = DEPLOYMENT_CONFIG.d1DatabaseIds.api;
+const savedDatabaseId = effectiveDeploymentValues().d1DatabaseId;
 
+/**
+ * Install a database id for the duration of a test.
+ *
+ * Through the resolver seam, not by mutating the committed `DEPLOYMENT_CONFIG`.
+ * `planMigrate` reads `targetsFor`, which reads the *resolved* values; writing to
+ * the module production does not read is how a migration test passes while the
+ * command refuses.
+ */
 const setDatabaseId = (value: string | null): void => {
-  DEPLOYMENT_CONFIG.d1DatabaseIds.api = value;
+  setDeploymentValues({ ...effectiveDeploymentValues(), d1DatabaseId: value });
 };
 
 afterEach(() => {
+  // Clear rather than restore: leaving values installed leaks them into every
+  // later test file in this process.
+  setDeploymentValues(null);
   setDatabaseId(savedDatabaseId);
 });
 
@@ -151,7 +165,7 @@ describe('planMigrate', () => {
     expect(commandFor('production')).toContain('--env production');
   });
 
-  test('every plan names the api wrangler config', () => {
+  test('every plan names the wrangler config of the one application', () => {
     // Without it, wrangler resolves the config from the working directory, and
     // the migrations would apply to whichever database that config names.
     for (const target of ['local', 'staging', 'production'] as const) {

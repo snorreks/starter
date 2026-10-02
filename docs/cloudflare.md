@@ -27,9 +27,10 @@ bun run deploy:check                      # validate a deploy; changes nothing
 
 `--provision` creates the database and records its id in the gitignored
 `.starter/deployment.local.json`, which the deployment and migration tooling reads.
-It also updates `apps/backend/api/wrangler.jsonc` when a database entry is present.
+It also updates `apps/frontend/client/wrangler.jsonc` when a database entry is
+present.
 Record the account and Worker names with `deploy:configure -- --account <account-id>
---worker api <worker-name>` (repeat for `client`). Keep the committed defaults in
+--worker <worker-name>`. Keep the committed defaults in
 `scripts/src/registry/app_registry.ts` unprovisioned. Provisioning creates no Worker
 and deploys nothing. The local file can also hold per-environment targets.
 
@@ -101,7 +102,7 @@ a single-target production deploy into a deploy of both apps.
 ### The wrangler that runs
 
 Commands resolve to the pinned workspace copy at
-`apps/backend/api/node_modules/.bin/wrangler`, never to `bunx wrangler`.
+`apps/frontend/client/node_modules/.bin/wrangler`, never to `bunx wrangler`.
 
 `bunx` from the repository root does not find a binary that only one workspace
 package depends on, so it downloads whatever the registry serves that day. Observed
@@ -151,8 +152,8 @@ Now:
   explicitly**, as is any secret under 32 characters
 - a configuration failure is a 503 whose body names the binding, not an opaque 500
 
-Every `wrangler dev` caller passes `DEPLOYMENT_ENV` and `BETTER_AUTH_URL`:
-`scripts/src/dev-api.ts`, the integration suite, and `dev-worker.sh`.
+Every `wrangler dev` caller passes `DEPLOYMENT_ENV`: `scripts/src/dev-app.ts` and
+the integration suite.
 
 ## Migrations are separate, and deliberately so
 

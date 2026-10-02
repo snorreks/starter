@@ -100,8 +100,8 @@ bun run test:all          # each lane prints its own count
 
 ### Unit
 
-Across `packages/shared/*`, `scripts`, `apps/backend/api` (deployment-mode
-resolution and the real `worker.fetch` entrypoint), the client's Bun lane, and the
+Across `packages/shared/*`, `scripts`, the client's Bun lane (which now includes
+the deployment-mode resolution tests that used to live in the API app), and the
 Pi extensions plus their loader smoke test.
 
 Pure logic, schema refusals, redaction, flag parsing, deploy and migration plans,
@@ -132,7 +132,7 @@ Two things to know when adding tests here:
 - **Effects need a macrotask.** `flushSync()` alone is not always enough after
   mount; `await tick()` is the reliable form.
 
-### Integration — `apps/backend/api/tests/worker_integration.test.ts`
+### Integration — `apps/frontend/client/tests/worker_integration.test.ts`
 
 Against a real `wrangler dev` with real local D1, on an OS-assigned port.
 

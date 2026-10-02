@@ -16,17 +16,9 @@
 
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import {
-  chmodSync,
-  copyFileSync,
-  existsSync,
-  mkdirSync,
-  readFileSync,
-  rmSync,
-  writeFileSync,
-} from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { API_DIR, CLIENT_DIR, REPO_ROOT } from '../shared/paths.ts';
+import { CLIENT_DIR, REPO_ROOT } from '../shared/paths.ts';
 import { playwrightBin } from '../shared/tools.ts';
 import { inspect, type Report } from './doctor.ts';
 import { declaredPlaywrightVersion, readPins } from './pins.ts';
@@ -42,7 +34,7 @@ PUBLIC_MODE=local
 PUBLIC_LOG_LEVEL=DEBUG
 PUBLIC_APP_VERSION=dev
 PUBLIC_API_BASE_URL=
-PUBLIC_API_PORT=8787
+PUBLIC_TELEMETRY_ENDPOINT=/api/telemetry
 `;
 
 /** Create a file only if it is absent. Never overwrites. */
@@ -55,22 +47,6 @@ const writeIfAbsent = (path: string, contents: string, mode?: number): boolean =
   if (mode !== undefined) {
     chmodSync(path, mode);
   }
-  return true;
-};
-
-/**
- * Copy a committed example into place, if the destination does not exist.
- *
- * Never overwrites. A developer's `.dev.vars` holds their own
- * `BETTER_AUTH_SECRET`, and a setup script that silently replaced it would
- * invalidate every session they have.
- */
-const copyIfAbsent = (from: string, to: string): boolean => {
-  if (existsSync(to) || !existsSync(from)) {
-    return false;
-  }
-  mkdirSync(join(to, '..'), { recursive: true });
-  copyFileSync(from, to);
   return true;
 };
 
@@ -88,13 +64,15 @@ const copyIfAbsent = (from: string, to: string): boolean => {
  * `cachesStillExist`. A hash cannot tell you a browser was deleted.
  */
 const fingerprint = (root = REPO_ROOT): string => {
+  // The API application used to be listed here. It is gone, and `fingerprint` hashes
+  // a missing path as the constant 'absent' — a contribution to the hash that could
+  // never change, which is worse than useless because it looks like coverage.
   const inputs = [
     'bun.lock',
     'package.json',
     'config/toolchain.json',
     'apps/e2e/package.json',
     join('apps', 'frontend', 'client', 'package.json'),
-    join('apps', 'backend', 'api', 'package.json'),
   ];
 
   const hash = createHash('sha256');
@@ -222,11 +200,6 @@ export const performSetup = (options: { force?: boolean; quiet?: boolean } = {})
   if (writeIfAbsent(join(CLIENT_DIR, '.env'), LOCAL_ENV)) {
     created.push('apps/frontend/client/.env');
   }
-  // The Worker reads `.dev.vars`, not `.env` — a different filename for the
-  // different runtime, which is Wrangler's convention rather than an accident.
-  if (copyIfAbsent(join(API_DIR, '.dev.vars.example'), join(API_DIR, '.dev.vars'))) {
-    created.push('apps/backend/api/.dev.vars (from the example; local defaults)');
-  }
 
   // 3. Browsers matching the locked Playwright version.
   //
@@ -332,8 +305,7 @@ export const runSetup = (args: readonly string[] = []): number => {
     '\nNext:\n' +
       '  bun run db:generate   # create migrations from the Drizzle schema\n' +
       '  bun run db:migrate    # apply them to the local database\n' +
-      '  bun run dev:api       # start the local Worker\n' +
-      '  bun run dev           # start the client\n',
+      '  bun run dev           # start the app: pages, assets and /api, one origin\n',
   );
   return 0;
 };

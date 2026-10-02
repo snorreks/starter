@@ -11,17 +11,21 @@
 // It is also the single place to change when a screen's dependencies change:
 // one file, not every ViewModel.
 
+import type { Note } from '@starter/schemas/notes';
 import { type NotesService, notesService } from './notes_service.svelte.ts';
 import { createNotesViewModel, type NotesViewModel } from './notes_view_model.svelte.ts';
 
 export interface NotesComposition {
   notes?: NotesService;
+  /** The list the SSR load already produced, so the first paint is not empty. */
+  initialNotes?: Note[];
 }
 
 export const getNotesViewModel = (options: NotesComposition = {}): NotesViewModel =>
   createNotesViewModel({
     className: 'NotesViewModel',
     ...(options.notes === undefined ? {} : { notes: options.notes }),
+    ...(options.initialNotes === undefined ? {} : { initialNotes: options.initialNotes }),
   });
 
 /** The app-wide default. Prefer `getNotesViewModel` so the seam stays obvious. */

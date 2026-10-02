@@ -22,8 +22,28 @@ const at = (relative: string): string =>
   fileURLToPath(new URL(relative, import.meta.url)).replace(/\/$/, '');
 
 export const REPO_ROOT = at('../../../');
-export const API_DIR = at('../../../apps/backend/api');
+
+/**
+ * The one application: `apps/frontend/client`.
+ *
+ * Named `CLIENT_DIR` because that is the path it has always had, and moving it
+ * would be a rename unrelated to the runtime change. The comment is here so a
+ * reader is not misled by the name into looking for a second application: the
+ * `apps/backend/api` application this used to be paired with is gone, and this
+ * directory now holds the browser half and the Worker half of a single SvelteKit
+ * app. See docs/architecture.md.
+ */
 export const CLIENT_DIR = at('../../../apps/frontend/client');
+
+/**
+ * `CLIENT_DIR` relative to `REPO_ROOT`, for callers that take a `root`.
+ *
+ * `CLIENT_DIR` is absolute, so `join(root, CLIENT_DIR)` silently ignores `root`
+ * and returns `CLIENT_DIR` — which is how `provisionDatabase` ended up writing its
+ * test fixture's database id into the repository's committed `wrangler.jsonc`.
+ * Anything that honours a caller-supplied root resolves through this instead.
+ */
+export const CLIENT_DIR_RELATIVE = 'apps/frontend/client';
 export const E2E_DIR = at('../../../apps/e2e');
 export const DATABASE_DIR = at('../../../packages/backend/database');
 export const PI_DIR = at('../../../.pi');

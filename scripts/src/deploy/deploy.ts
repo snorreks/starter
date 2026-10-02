@@ -4,13 +4,20 @@
 //
 //   bun run deploy:check              # validate + print the plan. Mutates nothing.
 //   bun run deploy -- --dry-run       # the same plan, printed
-//   bun run deploy -- api --env staging --yes
-//   bun run deploy -- client api --env production --yes
+//   bun run deploy -- --env staging --yes
+//   bun run deploy -- --env production --yes
 //
 // The separation this command preserves: **build, source publication, resource
 // provisioning and application deployment are four different things**, and this
 // one only ever does the last. Publishing a repository does not deploy it.
 // Creating a database does not deploy code. A deploy does not publish anything.
+//
+// There is exactly one target. The application deploys as one Worker plus its
+// static assets, so there is one `wrangler deploy` to plan and one Worker name to
+// provision. The two-target form this replaced cost something real: a partial
+// deploy in which the Worker succeeded and the assets did not leaves a live
+// deployment whose pages 404, and nothing in the plan could express that as a
+// state to avoid.
 //
 // Three things this file is strict about, because each was previously a way to
 // change something nobody asked for:
@@ -20,16 +27,15 @@
 //   * `--env local` is rejected. Running this CLI on a laptop is "a local
 //     invocation" and has nothing to do with `--env local`, which would mean
 //     "deploy to a local target" — a thing this command does not do. The local
-//     *runtime* is `bun run dev:api` (`wrangler dev`).
+//     *runtime* is `bun run dev`.
 //   * An unrecognised target word is an error, not a no-op. Filtering unknown
-//     words out and defaulting to "both" turns `--app clientt` into a production
-//     deploy of the wrong app.
+//     words out and defaulting to "everything" turns `--app clien` into a
+//     production deploy that nobody asked for.
 
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import type { DeploymentEnvironment } from '@starter/schemas';
 import {
-  API_DIR,
   CLIENT_DIR,
   type ProcessRunner,
   requireRemoteConsent,
@@ -40,7 +46,7 @@ import {
 import { LOCAL_DEPLOYMENT_FILE, targetsFor } from '../registry/deployment_values.ts';
 import { type ConfigCheck, inspectConfig } from './configure.ts';
 
-export type DeployTarget = 'api' | 'client';
+export type DeployTarget = 'web';
 
 export interface Step {
   target: DeployTarget;
@@ -57,7 +63,7 @@ export type Plan =
   | { ok: true; steps: Step[]; notices: string[] }
   | { ok: false; reason: string; remedy: string };
 
-export const VALID_TARGETS: readonly DeployTarget[] = ['api', 'client'];
+export const VALID_TARGETS: readonly DeployTarget[] = ['web'];
 const VALID_ENVIRONMENTS: readonly DeploymentEnvironment[] = ['staging', 'production'];
 
 /**
@@ -99,7 +105,7 @@ export type ArgvResult =
  *
  * Defaults, both of which are *absences of input* rather than mistakes:
  *   * no `--env` at all -> `staging`, the safe direction for a live-mutating command
- *   * no target words at all -> both targets, which is what running `bun run deploy`
+ *   * no target words at all -> the one target, which is what running `bun run deploy`
  *     with no arguments plainly asks for
  *
  * `--env local` is a mistake, not an absence: it is an explicit request for a
@@ -149,9 +155,8 @@ export const parseDeployArgs = (argv: readonly string[]): ArgvResult => {
       if (value === 'local') {
         errors.push(
           '--env local is not a deployment target. This command deploys to a remote ' +
-            'Cloudflare environment. For local workerd, use `bun run dev:api` ' +
-            '(`wrangler dev`) — that is a different thing from running this command ' +
-            'on your own machine.',
+            'Cloudflare environment. For local workerd, use `bun run dev` — that is a ' +
+            'different thing from running this command on your own machine.',
         );
         continue;
       }
@@ -232,12 +237,10 @@ export const parseDeployArgs = (argv: readonly string[]): ArgvResult => {
 
 export const usageText = (): string =>
   [
-    'Usage: bun run deploy [targets] [flags]',
+    'Usage: bun run deploy [flags]',
     '',
     'Targets:',
-    '  api       the backend Worker',
-    '  client    the static-assets Worker',
-    '  (omit)    both',
+    '  web       the application Worker and its static assets (the only target)',
     '',
     'Flags:',
     '  --env staging|production   Where to deploy. Default: staging.',
@@ -247,7 +250,7 @@ export const usageText = (): string =>
     '  --help                     This text.',
     '',
     'Notes:',
-    '  --env local is rejected. Local workerd is `bun run dev:api`.',
+    '  --env local is rejected. Local workerd is `bun run dev`.',
     '  A Cloudflare credential must be present as CLOUDFLARE_API_TOKEN.',
   ].join('\n');
 
@@ -265,15 +268,18 @@ export const planDeploy = (
   environment: DeploymentEnvironment,
   config: ConfigCheck = inspectConfig(),
   /**
-   * Where the client's build output is expected.
+   * Where the built artifact is expected.
    *
    * A parameter rather than a constant, because this check reads the working tree.
-   * Pointing it at the real `CLIENT_DIR` made the test suite depend on whether
-   * someone had run `bun run build`: locally green, and failing in CI, where the
-   * unit-test step runs before the build. A test that asserts against the repository
-   * is asserting against whoever cloned it last.
+   * Pointing it at the real `.svelte-kit` directory made the test suite depend on
+   * whether someone had run `bun run build`: locally green, and failing in CI,
+   * where the unit-test step runs before the build. A test that asserts against the
+   * repository is asserting against whoever cloned it last.
+   *
+   * The path is the SvelteKit build directory, not the app directory, because that
+   * is what `vite build` writes and what the artifact check inspects.
    */
-  clientDir: string = CLIENT_DIR,
+  buildDir: string = CLIENT_DIR,
 ): Plan => {
   for (const target of targets) {
     if (!VALID_TARGETS.includes(target)) {
@@ -289,7 +295,7 @@ export const planDeploy = (
     return {
       ok: false,
       reason: `"${environment}" is not a deployable environment.`,
-      remedy: `Environments: ${VALID_ENVIRONMENTS.join(', ')}. Use \`bun run dev:api\` for local workerd.`,
+      remedy: `Environments: ${VALID_ENVIRONMENTS.join(', ')}. Use \`bun run dev\` for local workerd.`,
     };
   }
 
@@ -327,55 +333,57 @@ export const planDeploy = (
     };
   }
 
-  for (const target of targets) {
-    const workerName = scoped.workerNames[target];
-    if (workerName === null) {
-      return {
-        ok: false,
-        reason: `No Worker name is configured for "${target}" in the ${environment} environment.`,
-        // Named the file the tooling reads, not the committed registry: the
-        // `registry-valid` guard fails the build on a literal id there, so telling
-        // an operator to edit that module sent them into a dead end.
-        remedy:
-          `bun run deploy:configure -- --worker ${target} <name>\n` +
-          `  (recorded in ${LOCAL_DEPLOYMENT_FILE}, which is gitignored)`,
-      };
-    }
-  }
-
-  // A static deploy needs something to deploy. `--assets-only` against a missing
-  // `build/` does not fail loudly: wrangler publishes an empty site, which reads as
-  // a successful deploy of a blank page. So the artifact is checked before the plan
-  // is built, and the same rule as the API's `check:bundle` applies.
-  const clientRequested = targets.includes('client');
-  if (clientRequested && !existsSync(join(clientDir, 'build', 'index.html'))) {
+  // One Worker, so one name: this is not a per-target check that happens to be
+  // short. There is no target that could be deployed with a different Worker, which
+  // is the property the single-target plan buys.
+  if (scoped.workerName === null) {
     return {
       ok: false,
-      reason: 'The client build output is missing, so there is nothing to deploy.',
+      reason: `No Worker name is configured for the ${environment} environment.`,
+      // Named the file the tooling reads, not the committed registry: the
+      // `registry-valid` guard fails the build on a literal id there, so telling
+      // an operator to edit that module sent them into a dead end.
+      remedy:
+        `bun run deploy:configure -- --worker web <name>\n` +
+        `  (recorded in ${LOCAL_DEPLOYMENT_FILE}, which is gitignored)`,
+    };
+  }
+
+  // A deploy needs something to deploy. `wrangler deploy` against a missing
+  // `.svelte-kit/cloudflare` does not fail loudly: wrangler publishes an empty
+  // deployment whose every page 404s, which reads as a successful deploy of a blank
+  // site. So the artifact is checked before the plan is built, and the same rule as
+  // `check:bundle` applies — that check is what confirms the directory is a Worker
+  // with assets rather than a directory of files.
+  if (!existsSync(join(buildDir, 'cloudflare', '_worker.js'))) {
+    return {
+      ok: false,
+      reason: 'The build output is missing, so there is nothing to deploy.',
       remedy:
         'Run `bun run build` first, then `bun run check:bundle` to confirm the artifact.\n' +
-        '  A client deploy with no build/ would publish an empty site and report success.',
+        '  A deploy with no _worker.js would publish assets alone and report success, ' +
+        'leaving a site where every route 404s.',
     };
   }
 
   const steps: Step[] = targets.map((target) => ({
     target,
-    description: `Deploy the ${target} Worker to Cloudflare (${environment})`,
+    description: `Deploy the ${target} Worker and its assets to Cloudflare (${environment})`,
     command: 'wrangler',
     args: [
       'deploy',
       '--env',
       environment,
-      // The Worker name is passed explicitly rather than read from each config, so
+      // The Worker name is passed explicitly rather than read from the config, so
       // the name `deploy:check` printed is the name that gets deployed. A config
       // that carried its own name would make the plan a description of one thing and
       // the execution another.
       '--name',
-      scoped.workerNames[target] as string,
-      ...(target === 'client' ? ['--assets-only', '--config', 'wrangler.jsonc'] : []),
-      ...(target === 'api' ? ['--config', `${API_DIR}/wrangler.jsonc`] : []),
+      scoped.workerName as string,
+      '--config',
+      join(CLIENT_DIR, 'wrangler.jsonc'),
     ],
-    cwd: target === 'client' ? CLIENT_DIR : API_DIR,
+    cwd: CLIENT_DIR,
     remote: true,
   }));
 
@@ -447,7 +455,7 @@ export const executePlan = (
     }
   }
 
-  process.stdout.write(`\nDeployed. Verify with:\n  bun run logs api --mode ${environment}\n`);
+  process.stdout.write(`\nDeployed. Verify with:\n  bun run logs web --mode ${environment}\n`);
   return { code: 0 };
 };
 

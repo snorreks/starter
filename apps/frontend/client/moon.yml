@@ -6,8 +6,8 @@ $schema: 'https://moonrepo.dev/schemas/v2/project.json'
 #
 #   * `build` was `echo "nothing to build (TypeScript source)"`, which made
 #     `bun run build` at the repository root a command that printed a message.
-#     This is a SvelteKit SPA: it produces `build/`, and both the E2E lane and
-#     `check:bundle` need it to exist.
+#     It produces `.svelte-kit/cloudflare/` — the Worker plus its static assets —
+#     and both the E2E lane and `check:bundle` need it to exist.
 #   * `test-browser` is separate from `test` so the browser lane can be invoked,
 #     cached and failed independently. Folding it into `test` meant `test:all`
 #     ran it twice, once via `moon run :test` and once explicitly.
@@ -24,6 +24,7 @@ fileGroups:
     - 'moon.yml'
     - 'vite.config.ts'
     - 'vitest.config.ts'
+    - 'wrangler.jsonc'
   tests:
     - 'src/**/*.test.ts'
     - 'src/**/*.spec.ts'
@@ -35,6 +36,12 @@ toolchains:
   javascript:
 
 dependsOn:
+  # `database` and `auth` are here because the server half of *this* project
+  # imports both. They were dependencies of a separate `api` project before the
+  # two halves became one application, and leaving them out would let a build
+  # succeed against a stale copy of the schema it persists to.
+  - auth
+  - database
   - frontend-services
   - logger
   - schemas
@@ -42,11 +49,22 @@ dependsOn:
   - utils
 
 tasks:
-  # `preset: server` is Moon's own: cache off, persistent on, not run in CI. A dev
-  # task that exited, or that CI tried to run, would both be wrong.
+  # `dev` delegates to the CLI, which is the single implementation of "run the app
+  # locally": it owns the per-checkout pid file, the log capture and the signal
+  # forwarding. This task exists so `moon run client:dev` also works. A second
+  # implementation here is exactly how the old two-process setup came to disagree
+  # about ports and about teardown.
   dev:
     command: 'bun'
     args: ['run', 'dev']
+    preset: 'server'
+
+  # The dev server without the CLI wrapper: no log capture, no pid file, no signal
+  # forwarding. It exists for the E2E harness, which starts and stops the server
+  # itself and must own that lifecycle. `bun run dev` is the command for a human.
+  dev-worker:
+    command: 'bun'
+    args: ['run', 'dev:worker']
     preset: 'server'
 
   typecheck:
@@ -74,7 +92,8 @@ tasks:
       - '@group(sources)'
       - '@group(configs)'
 
-  # Unit only. The browser lane is `test-browser` and is not folded in.
+  # Unit only. The browser lane is `test-browser` and the Worker lane is
+  # `test-worker`; neither is folded in, for the same reason.
   test:
     command: 'bun'
     args: ['run', 'test']
@@ -93,6 +112,20 @@ tasks:
       - '@group(sources)'
       - '@group(configs)'
 
+  # The built Worker, in real workerd, against real local D1. Never cached: it
+  # asserts against a database and a running runtime, so a restored "pass" would
+  # certify processes this run never started.
+  test-worker:
+    command: 'bun'
+    args: ['run', 'test:worker']
+    deps:
+      - '~:build'
+    inputs:
+      - '@group(sources)'
+      - '@group(configs)'
+    options:
+      cache: false
+
   build:
     command: 'bun'
     args: ['run', 'build']
@@ -100,15 +133,15 @@ tasks:
       - '@group(sources)'
       - '@group(configs)'
     outputs:
-      - 'build'
+      - '.svelte-kit/cloudflare'
 
   check-bundle:
     command: 'bun'
     args: ['run', 'check:bundle']
     deps:
       - 'build'
-    # Never cached: it inspects `build/`, and a restored result would be a claim
-    # about an artifact this run did not produce.
+    # Never cached: it inspects `.svelte-kit/cloudflare/`, and a restored result
+    # would be a claim about an artifact this run did not produce.
     options:
       cache: false
 

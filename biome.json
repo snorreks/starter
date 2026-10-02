@@ -137,7 +137,13 @@
       }
     },
     {
-      "includes": ["packages/backend/**/*.ts", "apps/backend/**/*.ts", "scripts/**/*.ts"],
+      "includes": [
+        "apps/frontend/client/src/lib/server/**/*.ts",
+        "apps/frontend/client/src/hooks.server.ts",
+        "apps/frontend/client/src/routes/**/+server.ts",
+        "apps/frontend/client/src/routes/**/+page.server.ts",
+        "apps/frontend/client/src/routes/**/+layout.server.ts"
+      ],
       "linter": {
         "rules": {
           "style": {
@@ -158,7 +164,64 @@
               "options": {
                 "patterns": [
                   {
-                    "group": ["svelte", "@sveltejs/kit", "@sveltejs/vite-plugin-svelte", "svelte/"],
+                    "group": [
+                      "svelte/internal",
+                      "svelte/reactivity",
+                      "svelte/store",
+                      "svelte/animate",
+                      "svelte/transition",
+                      "svelte/easing",
+                      "svelte/motion",
+                      "svelte/events",
+                      "@sveltejs/vite-plugin-svelte",
+                      "svelte/"
+                    ],
+                    "message": "The server plane must not depend on Svelte's client runtime. It runs in workerd with no DOM. Shared view logic belongs in packages/frontend, which this plane may not import."
+                  },
+                  {
+                    "group": [
+                      "@starter/ui",
+                      "@starter/frontend-services",
+                      "@starter/frontend-services/*",
+                      "@starter/ui/*"
+                    ],
+                    "message": "The server plane must not import frontend packages. Move shared pure logic into packages/shared."
+                  }
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "includes": ["packages/backend/**/*.ts", "scripts/**/*.ts"],
+      "linter": {
+        "rules": {
+          "style": {
+            "noRestrictedGlobals": {
+              "level": "error",
+              "options": {
+                "deniedGlobals": {
+                  "window": "Server code has no DOM. Put browser work behind a UI component in packages/frontend.",
+                  "document": "Server code has no DOM. Put browser work behind a UI component in packages/frontend.",
+                  "localStorage": "Sessions live on the server; the client holds no credential.",
+                  "sessionStorage": "Sessions live on the server; the client holds no credential.",
+                  "navigator": "Use the shared environment helper in @starter/utils instead."
+                }
+              }
+            },
+            "noRestrictedImports": {
+              "level": "error",
+              "options": {
+                "patterns": [
+                  {
+                    "group": [
+                      "svelte",
+                      "@sveltejs/kit",
+                      "@sveltejs/vite-plugin-svelte",
+                      "svelte/"
+                    ],
                     "message": "The server plane must not depend on Svelte. Shared view logic belongs in packages/frontend, which this plane may not import."
                   },
                   {
@@ -184,7 +247,12 @@
         "!apps/frontend/**/vite.config.ts",
         "!apps/frontend/**/vitest.config.ts",
         "!apps/frontend/**/svelte.config.js",
-        "!apps/frontend/**/scripts/**"
+        "!apps/frontend/**/scripts/**",
+        "!apps/frontend/client/src/lib/server/**",
+        "!apps/frontend/client/src/hooks.server.ts",
+        "!apps/frontend/client/src/routes/**/+server.ts",
+        "!apps/frontend/client/src/routes/**/+page.server.ts",
+        "!apps/frontend/client/src/routes/**/+layout.server.ts"
       ],
       "linter": {
         "rules": {
@@ -193,7 +261,7 @@
               "level": "error",
               "options": {
                 "deniedGlobals": {
-                  "Bun": "Frontend code runs in a browser and a Tauri webview, where Bun is not defined. Put platform-specific work behind an adapter in packages/frontend."
+                  "Bun": "Frontend code runs in a browser, where Bun is not defined. Put platform-specific work behind an adapter in packages/frontend."
                 }
               }
             },
@@ -203,7 +271,7 @@
                 "patterns": [
                   {
                     "group": ["node:*", "bun:*"],
-                    "message": "Frontend code runs in a browser and a Tauri webview. Put platform-specific work behind a platform adapter in packages/frontend."
+                    "message": "Frontend code runs in a browser. Put platform-specific work behind a platform adapter in packages/frontend."
                   },
                   {
                     "group": ["@starter/database", "@starter/auth"],
@@ -301,7 +369,7 @@
       }
     },
     {
-      "includes": ["apps/backend/api/src/lib/container.ts"],
+      "includes": ["apps/frontend/client/src/lib/server/container.ts"],
       "linter": {
         "rules": {
           "style": { "useConsistentTypeDefinitions": "off" }

@@ -96,9 +96,9 @@ Four things to copy:
   `.then()` widens the result to a union that no longer matches the declared
   response schema.
 
-Register the group in `apps/backend/api/src/index.ts` **before** the auth mount.
-The mount must stay last: `.mount()` on a plain function drops every route
-registered after it.
+Register the route by creating the directory — there is no central file to edit,
+because there is no application to register it with. SvelteKit routes on
+filesystem layout, and one `+server.ts` per verb.
 
 ## 4. Service
 
@@ -155,8 +155,9 @@ Three rules:
 ## 6. View
 
 A component receives props and raises intents. It holds no logic beyond
-formatting, and imports nothing from `apps/backend` — `@starter/ui` in a Worker
-compiles and then fails, or drags `svelte/internal` into a bundle with no DOM.
+formatting, and imports nothing from `packages/backend` — `@starter/ui` in a
+Worker compiles and then fails, or drags `svelte/internal` into a bundle with no
+DOM.
 
 Compose it in a `*_composition.ts` next to the ViewModel, so the wiring is in one
 place and a test can construct the ViewModel without mounting anything.
