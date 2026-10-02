@@ -19,10 +19,11 @@
 
 import { toAppError } from '@starter/utils';
 import { fail, redirect } from '@sveltejs/kit';
+import { submitAuthAction } from '#lib/server/auth_action.ts';
 import type { Actions } from './$types';
 
 export const actions: Actions = {
-  default: async ({ request, locals }) => {
+  default: async ({ request, locals, cookies }) => {
     const form = await request.formData();
     const email = String(form.get('email') ?? '').trim();
 
@@ -33,8 +34,9 @@ export const actions: Actions = {
     try {
       // Better Auth's own enumeration protection: a request for an unknown
       // address returns success without sending anything.
-      await locals.container.auth.api.requestPasswordReset({
-        body: { email, redirectTo: '/reset-password' },
+      await submitAuthAction(locals.container, request, cookies, 'request-password-reset', {
+        email,
+        redirectTo: '/reset-password',
       });
     } catch (error) {
       const appError = toAppError(error, 'Could not send that email.');

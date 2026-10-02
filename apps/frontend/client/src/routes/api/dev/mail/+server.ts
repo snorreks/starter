@@ -61,7 +61,7 @@ export const GET: RequestHandler = ({ locals, url }) => {
     mode: capture.mode,
     // Echoed so a harness can prove the inbox it is reading belongs to its own
     // run rather than to a leftover container.
-    inbox: container.env.TEST_RUN_ID ?? 'local',
+    inbox: capture.inboxId,
     messages: [...messages],
   });
 };

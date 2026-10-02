@@ -21,6 +21,7 @@
 import { AccountErrorCode } from '@starter/schemas/auth';
 import { toAppError } from '@starter/utils';
 import { fail } from '@sveltejs/kit';
+import { submitAuthAction } from '#lib/server/auth_action.ts';
 import type { Actions, PageServerLoad } from './$types';
 
 export const load: PageServerLoad = async ({ url, locals }) => {
@@ -42,7 +43,7 @@ export const load: PageServerLoad = async ({ url, locals }) => {
 };
 
 export const actions: Actions = {
-  default: async ({ request, locals }) => {
+  default: async ({ request, locals, cookies }) => {
     const form = await request.formData();
     const email = String(form.get('email') ?? '').trim();
 
@@ -51,7 +52,9 @@ export const actions: Actions = {
     }
 
     try {
-      await locals.container.auth.api.sendVerificationEmail({ body: { email } });
+      await submitAuthAction(locals.container, request, cookies, 'send-verification-email', {
+        email,
+      });
     } catch (error) {
       const appError = toAppError(error, 'Could not send that email.');
       if (appError.errorType === 'rate_limited') {

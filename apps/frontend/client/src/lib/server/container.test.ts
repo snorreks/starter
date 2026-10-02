@@ -179,17 +179,18 @@ describe('the container is memoized per binding set and origin, and never across
     expect(stagingContainer.environment).toBe('staging');
   });
 
-  test('two local runs sharing one D1 keep separate inboxes', () => {
-    // The container is memoized per binding set, so two `TEST_RUN_ID`s on one
-    // binding set share it — and the inbox id is read per container build. What
-    // must not happen is one run reading another's messages, which the inbox id in
-    // the `/api/dev/mail` response is what proves.
-    const first = getContainer(localEnv({ TEST_RUN_ID: 'run-a' }));
-    const second = getContainer(localEnv({ TEST_RUN_ID: 'run-b' }));
+  test('two local runs sharing one binding set keep separate inboxes', async () => {
+    const env = localEnv({ TEST_RUN_ID: 'run-a' });
+    const first = getContainer(env);
+    await first.mail.send({ to: 'someone@example.test', subject: 'Run A', text: 'first' });
 
-    expect(first.mailCapture).not.toBe(second.mailCapture);
-    expect(first.env.TEST_RUN_ID).toBe('run-a');
-    expect(second.env.TEST_RUN_ID).toBe('run-b');
+    env.TEST_RUN_ID = 'run-b';
+    const second = getContainer(env);
+    expect(second).toBe(getContainer(env));
+    expect(first.mailCapture?.inboxId).toBe('run-a');
+    expect(second.mailCapture?.inboxId).toBe('run-b');
+    expect(first.mailCapture?.inbox()).toHaveLength(1);
+    expect(second.mailCapture?.inbox()).toHaveLength(0);
   });
 });
 

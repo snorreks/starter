@@ -26,13 +26,14 @@
 //   2. **Own processes only.** Ports are chosen by binding to port 0 and letting
 //      the OS pick, and only processes this file started are ever stopped.
 
-import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
+import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:test';
 import { type ChildProcess, spawn } from 'node:child_process';
-import { existsSync, openSync, rmSync } from 'node:fs';
+import { closeSync, existsSync, openSync, rmSync } from 'node:fs';
 import { createServer } from 'node:net';
 import { join } from 'node:path';
 import { createId } from '@starter/utils';
 import { killTree } from '@starter/utils/process';
+import { sleep, spawnSync } from 'bun';
 import { MAX_BODY_BYTES } from '../src/lib/server/telemetry_service.ts';
 import { REPO_ROOT } from './database_paths.ts';
 
@@ -115,7 +116,7 @@ const waitForOurWorker = async (timeoutMs = 120_000): Promise<Readiness> => {
     } catch {
       // Not listening yet.
     }
-    await Bun.sleep(400);
+    await sleep(400);
   }
 
   return {
@@ -149,7 +150,7 @@ beforeAll(async () => {
   // depend on whatever a previous run left behind.
   rmSync(LOCAL_STATE, { recursive: true, force: true });
 
-  const migrate = Bun.spawnSync(
+  const migrate = spawnSync(
     [WRANGLER, 'd1', 'migrations', 'apply', 'DB', '--local', '--config', APP_CONFIG],
     { cwd: REPO_ROOT, stdout: 'pipe', stderr: 'pipe' },
   );
@@ -621,7 +622,9 @@ describe('email verification', () => {
     const link = await verificationLinkFor(email);
     const first = await fetch(link, { redirect: 'manual' });
     expect(first.status).toBe(302);
-    expect(new URL(first.headers.get('location') ?? '', base()).searchParams.get('error')).toBeNull();
+    expect(
+      new URL(first.headers.get('location') ?? '', base()).searchParams.get('error'),
+    ).toBeNull();
 
     const replay = await fetch(link, { redirect: 'manual' });
 
@@ -993,81 +996,273 @@ describe('authorization', () => {
   });
 });
 
-describe('the database-backed rate limit', () => {
-  test('two auth instances share one budget across concurrent requests', async () => {
-    // The property a per-isolate `Map` cannot have. Cloudflare may serve any of these
-    // from any isolate; a local counter would hand the last few a fresh budget, so the
-    // total allowed would be a multiple of the configured limit rather than the limit.
-    //
-    // The limit is set high for this suite (`AUTH_RATE_LIMIT_MAX`), so this asserts
-    // the *shape* of the answer — every concurrent request gets exactly one verdict
-    // and no request is silently unaccounted for — rather than a specific refusal
-    // count. A refusal count would be a function of the budget and the timing.
-    const attempts = 12;
-    const body = JSON.stringify({
-      email: `ratelimit-${createId('t', 8)}@example.invalid`,
-      password: 'wrong-password-entirely',
-    });
-
-    const responses = await Promise.all(
-      Array.from({ length: attempts }, () =>
-        authFetch('/api/auth/sign-in/email', { method: 'POST', body }),
-      ),
-    );
-
-    // Every attempt got a real verdict: 401 for the wrong password, or 429 once the
-    // budget ran out. A 500 or a 200 would mean the limiter threw or did nothing.
-    for (const response of responses) {
-      expect([401, 429]).toContain(response.status);
-    }
-    // At least one attempt reached the auth handler, so the budget was not simply
-    // exhausted by the counter's own bookkeeping before any request was evaluated.
-    expect(responses.some((response) => response.status === 401)).toBe(true);
-  });
-
-  test('the counter is persisted, not per-request', async () => {
-    // The D1 table existing after a burst of sign-in attempts is the observable
-    // evidence that the store is the database rather than an isolate-local map. The
-    // key format is Better Auth's `"<ip>|<path>"`.
-    const email = `ratelimit-persist-${createId('t', 8)}@example.invalid`;
-    await authFetch('/api/auth/sign-in/email', {
+describe('authentication form actions', () => {
+  test('sign-in applies the session cookie before redirecting', async () => {
+    const account = await signUp('form-cookie');
+    const response = await fetch(`${base()}/login`, {
       method: 'POST',
-      body: JSON.stringify({ email, password: 'wrong-password-entirely' }),
+      redirect: 'manual',
+      headers: { ...originHeaders(), accept: 'text/html' },
+      body: new URLSearchParams({
+        intent: 'sign-in',
+        email: account.email,
+        password: account.password,
+      }),
+    });
+    expect(response.status).toBe(303);
+    expect(response.headers.get('location')).toBe('/notes');
+    const cookie = response.headers.get('set-cookie')?.split(';')[0] ?? '';
+    expect(cookie).toContain('better-auth');
+    expect(
+      (await fetch(`${base()}/notes`, { headers: { cookie }, redirect: 'manual' })).status,
+    ).toBe(200);
+  });
+
+  for (const [intent, next] of [
+    ['sign-in', 'sign-up'],
+    ['sign-up', 'sign-in'],
+    ['', 'sign-in'],
+  ] as const) {
+    test(`mode toggle with intent "${intent}" redirects to ${next} and retains email`, async () => {
+      const body = new URLSearchParams({
+        toggle: '1',
+        email: 'someone@example.test',
+        name: 'Someone',
+      });
+      if (intent) {
+        body.set('intent', intent);
+      }
+      const response = await fetch(`${base()}/login`, {
+        method: 'POST',
+        redirect: 'manual',
+        headers: { ...originHeaders(), accept: 'text/html' },
+        body,
+      });
+      expect(response.status).toBe(303);
+      expect(response.headers.get('location')).toBe(
+        `/login?mode=${next}&email=someone%40example.test`,
+      );
+    });
+  }
+});
+
+describe('the database-backed rate limit', () => {
+  const budget = 3;
+  const state = join(APP_DIR, `.wrangler/rate-limit-${RUN_ID}`);
+  const workers: ChildProcess[] = [];
+  const origins: string[] = [];
+
+  const sql = (command: string): void => {
+    const result = spawnSync(
+      [
+        WRANGLER,
+        'd1',
+        'execute',
+        'DB',
+        '--local',
+        '--config',
+        APP_CONFIG,
+        '--persist-to',
+        state,
+        '--command',
+        command,
+      ],
+      { cwd: APP_DIR, stdout: 'pipe', stderr: 'pipe' },
+    );
+    if (result.exitCode !== 0) {
+      throw new Error(`Rate-limit fixture SQL failed: ${result.stderr.toString()}`);
+    }
+  };
+
+  const start = async (workerPort: number): Promise<ChildProcess> => {
+    const origin = `http://127.0.0.1:${workerPort}`;
+    const workerRunId = `${RUN_ID}-rate-${workers.length}`;
+    const logFd = openSync(`${WORKER_LOG}.${workerPort}`, 'a');
+    const worker = spawn(
+      WRANGLER,
+      [
+        'dev',
+        WORKER_ENTRY,
+        '--port',
+        String(workerPort),
+        '--local',
+        '--config',
+        APP_CONFIG,
+        '--persist-to',
+        state,
+        '--var',
+        `TEST_RUN_ID:${workerRunId}`,
+        '--var',
+        'DEPLOYMENT_ENV:local',
+        '--var',
+        `AUTH_RATE_LIMIT_MAX:${budget}`,
+        // Keep the test window open across process restarts without a clock race.
+        '--var',
+        'AUTH_RATE_LIMIT_WINDOW:3600',
+      ],
+      { cwd: APP_DIR, stdio: ['ignore', logFd, logFd] },
+    );
+    closeSync(logFd);
+    workers.push(worker);
+    const deadline = Date.now() + 60_000;
+    while (Date.now() < deadline) {
+      try {
+        const response = await fetch(`${origin}/api/health`);
+        const health = (await response.json()) as { testRunId?: string };
+        if (response.ok && health.testRunId === workerRunId) {
+          return worker;
+        }
+      } catch {
+        // The process has not bound its socket yet.
+      }
+      if (worker.exitCode !== null) {
+        throw new Error('Rate-limit worker exited during startup');
+      }
+      await sleep(200);
+    }
+    throw new Error(`Rate-limit worker did not become ready: ${origin}`);
+  };
+
+  beforeAll(async () => {
+    const migrate = spawnSync(
+      [
+        WRANGLER,
+        'd1',
+        'migrations',
+        'apply',
+        'DB',
+        '--local',
+        '--config',
+        APP_CONFIG,
+        '--persist-to',
+        state,
+      ],
+      { cwd: APP_DIR, stdout: 'pipe', stderr: 'pipe' },
+    );
+    if (migrate.exitCode !== 0) {
+      throw new Error(migrate.stderr.toString());
+    }
+    const workerPort = await findFreePort();
+    // Local origin derivation creates a distinct auth instance for each host.
+    // Both use the same D1 binding in one runtime, which serializes its writes.
+    // Separate Wrangler processes cannot concurrently own one local SQLite file.
+    origins.push(`http://127.0.0.1:${workerPort}`, `http://localhost:${workerPort}`);
+    await start(workerPort);
+  }, 150_000);
+
+  beforeEach(() => sql('DELETE FROM rate_limits'), 30_000);
+
+  afterAll(() => {
+    for (const worker of workers) {
+      if (worker.pid !== undefined && worker.exitCode === null) {
+        killTree(worker.pid, { graceMs: 200, attempts: 20 });
+      }
+    }
+    rmSync(state, { recursive: true, force: true });
+  });
+
+  const attempt = (index = 0, headers: Record<string, string> = {}) =>
+    fetch(`${origins[index % 2]}/api/auth/sign-in/email`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', origin: origins[index % 2] ?? '', ...headers },
+      body: JSON.stringify({
+        email: 'absent@example.invalid',
+        password: 'wrong-password-entirely',
+      }),
     });
 
-    // No endpoint exposes the table, and this suite will not add one that does: the
-    // proof is that the requests above were answered consistently, plus the health
-    // report above naming `d1`. Asserting on internals through a debug endpoint would
-    // add a surface that exists only for tests.
-    const health = (await (await fetch(`${base()}/api/health`)).json()) as {
-      rateLimit: { storage: string };
-    };
-    expect(health.rateLimit.storage).toBe('d1');
-  });
-
-  test('a client IP header is honoured, so one caller cannot dodge the budget', async () => {
-    // The counter is keyed on the client IP. A forwarded header is only trusted
-    // through a configured proxy list, and this suite configures none — so a caller
-    // sending `cf-connecting-ip` is believed only if it is what Cloudflare set.
-    //
-    // Asserting the limiter still answers consistently while the header changes is
-    // the observable half: if the header *were* trusted from the client, rotating it
-    // per request would produce 401s with no 429s at all.
-    const email = `ratelimit-ip-${createId('t', 8)}@example.invalid`;
-    const responses = await Promise.all(
-      Array.from({ length: 6 }, (_, index) =>
-        authFetch('/api/auth/sign-in/email', {
-          method: 'POST',
-          body: JSON.stringify({ email, password: 'wrong-password-entirely' }),
-          headers: { 'cf-connecting-ip': `203.0.113.${index + 1}` },
-        }),
-      ),
-    );
-
+  const counts = async (responses: Response[]) => {
     for (const response of responses) {
-      expect([401, 429]).toContain(response.status);
+      if (response.status !== 401 && response.status !== 429) {
+        throw new Error(`Unexpected limiter response ${response.status}: ${await response.text()}`);
+      }
     }
+    expect(responses.map((r) => r.status).sort()).toEqual([
+      ...Array.from({ length: budget }, () => 401),
+      ...Array.from({ length: responses.length - budget }, () => 429),
+    ]);
+  };
+
+  test('two auth instances share one budget across concurrent requests', async () => {
+    await counts(
+      await Promise.all(Array.from({ length: budget + 5 }, (_, index) => attempt(index))),
+    );
   });
+
+  test('the counter survives separate requests and a worker restart', async () => {
+    expect((await attempt()).status).toBe(401);
+    expect((await attempt(1)).status).toBe(401);
+    const first = workers[0];
+    if (first?.pid === undefined) {
+      throw new Error('Missing first worker');
+    }
+    expect(killTree(first.pid, { graceMs: 200, attempts: 20 })).toEqual([]);
+    await start(Number(new URL(origins[0] ?? '').port));
+    expect((await attempt()).status).toBe(401);
+    expect((await attempt()).status).toBe(429);
+    expect((await attempt(1)).status).toBe(429);
+  }, 90_000);
+
+  test('rotating cf-connecting-ip cannot evade the local ingress budget', async () => {
+    const responses: Response[] = [];
+    for (let index = 0; index < budget + 3; index += 1) {
+      responses.push(await attempt(index, { 'cf-connecting-ip': `203.0.113.${index + 1}` }));
+    }
+    await counts(responses);
+  });
+
+  test('login forms share the API sign-in budget', async () => {
+    expect((await attempt()).status).toBe(401);
+    const responses: Response[] = [];
+    for (let index = 0; index < budget + 1; index += 1) {
+      const origin = origins[index % 2] ?? '';
+      responses.push(
+        await fetch(`${origin}/login`, {
+          method: 'POST',
+          redirect: 'manual',
+          headers: { origin, accept: 'text/html' },
+          body: new URLSearchParams({
+            intent: 'sign-in',
+            email: 'absent@example.invalid',
+            password: 'wrong-password-entirely',
+          }),
+        }),
+      );
+    }
+    expect(responses.map((r) => r.status)).toEqual([400, 400, 429, 429]);
+  });
+
+  for (const [path, fields, limit, accepted] of [
+    [
+      '/login',
+      {
+        intent: 'sign-up',
+        email: 'new@example.invalid',
+        password: 'correct horse battery',
+        name: 'New',
+      },
+      budget,
+      200,
+    ],
+    ['/forgot-password', { email: 'absent@example.invalid' }, budget * 2, 303],
+    ['/verify-email', { email: 'absent@example.invalid' }, budget * 2, 200],
+    ['/reset-password?token=invalid', { newPassword: 'correct horse battery' }, budget, 400],
+  ] as const) {
+    test(`${path} forms enforce their middleware budget`, async () => {
+      const origin = origins[0] ?? '';
+      const statuses: number[] = [];
+      for (let index = 0; index <= limit; index += 1) {
+        const response = await fetch(`${origin}${path}`, {
+          method: 'POST',
+          redirect: 'manual',
+          headers: { origin, accept: 'text/html' },
+          body: new URLSearchParams(fields),
+        });
+        statuses.push(response.status);
+      }
+      expect(statuses).toEqual([...Array.from({ length: limit }, () => accepted), 429]);
+    });
+  }
 });
 
 describe('telemetry', () => {

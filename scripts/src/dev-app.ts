@@ -154,18 +154,10 @@ const clearStale = (): void => {
  * `BETTER_AUTH_URL` is handled separately and deliberately, because nothing else
  * can supply it correctly.
  *
- * In a local environment the application derives its own public origin from the
- * request (see `resolveDeploymentEnvironment`). That derivation cannot work under
- * `wrangler dev`: wrangler serves the Worker on its internal default port and
- * rewrites both `event.url` and the `Host` header to `http://127.0.0.1` — verified,
- * not assumed. So the Worker believes it is on port 80 while the browser is talking
- * to port 5173, and every origin it puts into a link is wrong. That is invisible
- * for HTML, assets and same-origin fetches, which is why it survived until the
- * account lifecycle put a verification link in an email.
- *
- * This launcher knows the real port, so it states it. The alternative — leaving the
- * derivation to fail — produces a local run whose recovery mail is a dead link, and
- * an E2E lane that cannot exercise verification at all.
+ * The launcher passes `--host`, which makes Wrangler 4.142.0 rewrite the request
+ * URL, Host and Origin to omit the public port. Without that flag the port is
+ * preserved. `requestOriginFor` cannot recover a port absent from both URL and
+ * Host, so this launcher supplies the public origin through `BETTER_AUTH_URL`.
  *
  * A caller that already set `BETTER_AUTH_URL` keeps their value: this is a default,
  * not an override.

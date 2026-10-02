@@ -67,12 +67,23 @@ So the storage is `customStorage`, implemented in
 `packages/backend/database/src/lib/d1_rate_limit.ts` as **one** statement:
 
 ```sql
-INSERT INTO rate_limits (key, count, last_request) VALUES (?, 1, ?)
-ON CONFLICT (key) DO UPDATE SET
-  count = CASE WHEN last_request < ? THEN 1 ELSE count + 1 END,
-  last_request = CASE WHEN last_request < ? THEN excluded.last_request ELSE last_request END
+INSERT INTO rate_limits (key, count, last_request)
+VALUES (?, 1, ?)
+ON CONFLICT(key) DO UPDATE SET
+  count = CASE
+    WHEN ? - last_request >= ? THEN 1
+    ELSE count + 1
+  END,
+  last_request = CASE
+    WHEN ? - last_request >= ? THEN ?
+    ELSE last_request
+  END
 RETURNING count, last_request
 ```
+
+The bindings are `(key, at, at, windowMs, at, windowMs, at)`, where `at` is
+one clock reading in milliseconds. A window resets at `at - last_request >= windowMs`,
+including the exact boundary.
 
 One statement, because a read-then-write is a race: two concurrent requests both
 read `count = 4`, both write `5`, and one of five attempts is never recorded. D1
@@ -90,9 +101,15 @@ The prune cutoff is a flat 24 hours of row age, deliberately **not** `now - wind
 A short rule reaping a long rule's row would let a burst on one endpoint reset
 another endpoint's counter.
 
-Per-path budgets come from `AUTH_RATE_LIMIT_MAX` and `AUTH_RATE_LIMIT_WINDOW`; sign-in
-and sign-up are the two paths with their own rules, because they are the two worth
-brute-forcing.
+Per-path budgets use `AUTH_RATE_LIMIT_WINDOW` and these five custom rules:
+
+| Path | Budget per window |
+|---|---|
+| `/sign-in/email` | `AUTH_RATE_LIMIT_MAX` |
+| `/sign-up/email` | `AUTH_RATE_LIMIT_MAX` |
+| `/request-password-reset` | `AUTH_RATE_LIMIT_MAX × 2` |
+| `/send-verification-email` | `AUTH_RATE_LIMIT_MAX × 2` |
+| `/verify-email` | `AUTH_RATE_LIMIT_MAX × 4` |
 
 ### Client addresses
 
@@ -135,7 +152,7 @@ cannot be mistaken for a fresh one.
 ## What the tests do and do not prove
 
 `bun run test:worker` drives the built Worker in real workerd against real local D1
-(36 tests). `bun run e2e` drives a real browser against that Worker (26 tests),
+(45 tests). `bun run e2e` drives a real browser against that Worker (26 tests),
 including a context with **scripting disabled**, because the form action is the only
 sign-in path available to a browser that never runs a script.
 
@@ -143,9 +160,11 @@ Three things are **not** verified, and the capability matrix says so too:
 
 - **No real mail was sent.** Every message went to the capture inbox. Resend delivery,
   its SPF/DKIM posture and its error shape are unverified.
-- **No rate limit was observed under genuine concurrency** beyond the parallel
-  requests in `d1_rate_limit.test.ts`; the atomicity argument rests on D1's documented
-  serialization, not on a load test.
+- **No distributed load test was run.** `worker_integration.test.ts` checks exact
+  401/429 counts across concurrent requests to two auth instances sharing local D1,
+  counter persistence across a Worker restart, and resistance to rotating a local
+  client's `cf-connecting-ip`. These checks do not simulate Cloudflare's production
+  routing across simultaneous isolates.
 - **`bun run test:browser` is blocked** by the runner's Chromium launch, which is not
   this feature's to fix. See the capability matrix for the exact requirement.
 
@@ -154,7 +173,7 @@ Three things are **not** verified, and the capability matrix says so too:
 **Verification tokens are replayable within their hour.** They are signed JWTs, and
 Better Auth accepts a second use. Recovery tokens are single-use. Asserting
 single-use verification would be asserting a behaviour the library does not have;
-`auth_lifecycle.test.ts` asserts what actually happens instead — the replay is
+`worker_integration.test.ts` asserts what actually happens instead — the replay is
 idempotent and issues no session.
 
 **`getSession` answers 200 with a literal `null` for a revoked session.** Revocation is

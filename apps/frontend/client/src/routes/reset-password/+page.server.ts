@@ -33,7 +33,9 @@ import {
   PASSWORD_MAX_LENGTH,
   PASSWORD_MIN_LENGTH,
 } from '@starter/schemas/auth';
+import { toAppError } from '@starter/utils';
 import { fail, redirect } from '@sveltejs/kit';
+import { submitAuthAction } from '#lib/server/auth_action.ts';
 import type { Actions, PageServerLoad } from './$types';
 
 export const load: PageServerLoad = async ({ url, locals }) => {
@@ -61,7 +63,7 @@ export const load: PageServerLoad = async ({ url, locals }) => {
 };
 
 export const actions: Actions = {
-  default: async ({ request, url, locals }) => {
+  default: async ({ request, url, locals, cookies }) => {
     const form = await request.formData();
     const newPassword = String(form.get('newPassword') ?? '');
 
@@ -82,10 +84,16 @@ export const actions: Actions = {
     }
 
     try {
-      await locals.container.auth.api.resetPassword({
-        body: { newPassword, token },
+      await submitAuthAction(locals.container, request, cookies, 'reset-password', {
+        newPassword,
+        token,
       });
     } catch (error) {
+      if (toAppError(error).errorType === 'rate_limited') {
+        return fail(429, {
+          errors: { newPassword: 'Too many requests. Wait a minute and try again.' },
+        });
+      }
       const code = authErrorCode(error);
 
       // Three codes collapse into two messages on purpose. A user cannot act on

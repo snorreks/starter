@@ -3,23 +3,12 @@
 
   Sign-in, sign-up, and the states either of those can end in.
 
-  Semantic HTML with no ARIA on the happy path. A `<form>` submits on Enter, gets
-  focus order for free, and is announced correctly; a div with `onclick` needs all
-  of that re-added by hand and usually gets one of them wrong.
+  Semantic HTML supplies form submission and keyboard order. Field components
+  associate labels and errors with inputs. The submission message uses
+  `role="alert"` so assistive technology can announce it.
 
-  Two accessibility decisions worth stating, because both are easy to get subtly
-  wrong:
-
-  - The message is a live region with `role="alert"`, so it is announced when it
-    appears. It is *not* `aria-live` on a container that is always in the DOM:
-    that announces the container on load and nothing when the content changes.
-  - Focus moves to the first invalid field on a failed submission. Reporting an
-    error without moving focus means a keyboard or screen-reader user is told
-    something is wrong and left where they were.
-
-  No ViewModel is required for either link or either field. They are two links and
-  two inputs with no state of their own, and giving them one would be a layer with
-  nothing to do.
+  AuthViewModel owns the screen state; individual fields and links do not need
+  separate ViewModels.
 -->
 <script lang="ts">
 import { Field } from '@starter/ui';

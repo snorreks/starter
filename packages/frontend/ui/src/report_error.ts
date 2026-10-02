@@ -21,10 +21,6 @@ import { showSnackbar } from './dialogs.ts';
 
 /**
  * Classify, log-worthy detail aside, and report `error`.
- *
- * Returns the classified error so a caller can branch on `errorType` — a screen
- * that wants a different treatment for `forbidden` than for `network` can decide
- * for itself instead of re-parsing the same value.
  */
 export const reportError = (error: unknown, fallbackMessage = 'Something went wrong.'): void => {
   const appError = toAppError(error, fallbackMessage);

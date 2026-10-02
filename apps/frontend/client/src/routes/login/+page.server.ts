@@ -9,15 +9,15 @@
 //
 // Both branches converge on the same Better Auth endpoints the browser calls
 // directly. There is no second authorization rule here and no second place where a
-// session is created: this calls `auth.api`, which is the same handler the
-// `/api/auth/[...all]` route delegates to.
+// session is created: this calls `auth.handler`, including the middleware used
+// by `/api/auth/[...all]`.
 //
 // What it does with a success depends on which success. A sign-in redirects, because
 // the only thing that can act on a session in a browser that never ran this page's
 // script is the browser itself. A sign-up returns an outcome instead, because the next
 // step happens in an inbox and the message has to be *shown*, not navigated away from.
 // A client submission never reaches this file at all: with scripting on, the ViewModel
-// calls `auth.api` itself and the ViewModel navigates.
+// calls the HTTP auth endpoints and the ViewModel navigates.
 
 import {
   AccountErrorCode,
@@ -27,7 +27,7 @@ import {
 } from '@starter/schemas/auth';
 import { toAppError } from '@starter/utils';
 import { error, fail, redirect } from '@sveltejs/kit';
-import { applySetCookies } from '#lib/server/response_cookies.ts';
+import { submitAuthAction } from '#lib/server/auth_action.ts';
 import type { Actions, PageServerLoad } from './$types';
 
 /**
@@ -60,8 +60,8 @@ export const actions: Actions = {
     // report the press as an ordinary sign-in.
     if (form.has('toggle')) {
       const email = String(form.get('email') ?? '').trim();
-      const name = String(form.get('name') ?? '').trim();
-      const next = name.length > 0 || email.length > 0 ? 'sign-in' : 'sign-up';
+      const intent = form.get('intent');
+      const next = intent === 'sign-in' ? 'sign-up' : 'sign-in';
       // `303` so a reload of the result is a GET, not another toggle.
       redirect(
         303,
@@ -101,7 +101,7 @@ export const actions: Actions = {
       return fail(422, { errors, values: { email, displayName } });
     }
 
-    const result = await attemptCredentials(locals.container.auth.api, {
+    const result = await attemptCredentials(locals.container, request, cookies, {
       intent,
       email,
       password,
@@ -109,14 +109,13 @@ export const actions: Actions = {
     });
 
     if (result.kind === 'refused') {
-      return fail(400, { errors: result.errors });
+      return fail(result.status, { errors: result.errors });
     }
 
     if (result.kind === 'signed-in') {
-      // Applied *before* the redirect: `redirect` throws, so a cookie applied after it
-      // would never be written, and one applied inside the auth call's `try` would be
-      // reported as a rejected password.
-      if (applySetCookies(cookies, result.cookies) === 0) {
+      // The helper applied response cookies before this redirect, which throws.
+      // Require a cookie so a successful sign-in cannot silently lose its session.
+      if (result.cookies === 0) {
         // Better Auth reported success and set no session. Failing loudly beats a
         // redirect to a page that bounces straight back here, which is what a
         // zero-cookie sign-in otherwise produces.
@@ -142,7 +141,7 @@ export const actions: Actions = {
 };
 
 /** The slice of Better Auth this action calls, taken from the container it comes from. */
-type AuthApi = App.Locals['container']['auth']['api'];
+type AuthContainer = App.Locals['container'];
 
 /**
  * What one attempt at the credentials produced.
@@ -153,11 +152,11 @@ type AuthApi = App.Locals['container']['auth']['api'];
  * three visible at the call site.
  */
 type AuthAttempt =
-  /** Signed in. `cookies` carries the session cookie the browser is about to need. */
-  | { kind: 'signed-in'; cookies: Headers }
+  /** Signed in. `cookies` counts the response cookies applied to the browser. */
+  | { kind: 'signed-in'; cookies: number }
   /** Account created; nothing to navigate to and nothing to store. */
   | { kind: 'signed-up' }
-  | { kind: 'refused'; errors: Record<string, string> };
+  | { kind: 'refused'; status: number; errors: Record<string, string> };
 
 /**
  * Run the credentials against Better Auth, turning a rejection into a refusal.
@@ -167,33 +166,31 @@ type AuthAttempt =
  * `try` covers both turns every success into a 400.
  */
 const attemptCredentials = async (
-  auth: AuthApi,
+  container: AuthContainer,
+  request: Request,
+  cookies: Parameters<typeof submitAuthAction>[2],
   credentials: { intent: string; email: string; password: string; displayName: string },
 ): Promise<AuthAttempt> => {
   try {
-    if (credentials.intent === 'sign-up') {
-      await auth.signUpEmail({
-        body: {
-          email: credentials.email,
-          password: credentials.password,
-          name: credentials.displayName,
-        },
-      });
-      // No session, and no navigation: `autoSignIn` is off because the address is
-      // unconfirmed, and the next step happens in an inbox. There is no cookie to collect
-      // either — `auth_lifecycle.test.ts` asserts a null token on sign-up.
-      return { kind: 'signed-up' };
-    }
-
-    // `returnHeaders` because that is where the session cookie is. Without it the sign-in
-    // succeeds, redirects, and leaves the browser holding nothing.
-    const signedIn = await auth.signInEmail({
-      body: { email: credentials.email, password: credentials.password },
-      returnHeaders: true,
-    });
-    return { kind: 'signed-in', cookies: signedIn.headers };
+    const signingUp = credentials.intent === 'sign-up';
+    const applied = await submitAuthAction(
+      container,
+      request,
+      cookies,
+      signingUp ? 'sign-up/email' : 'sign-in/email',
+      {
+        email: credentials.email,
+        password: credentials.password,
+        ...(signingUp ? { name: credentials.displayName } : {}),
+      },
+    );
+    return signingUp ? { kind: 'signed-up' } : { kind: 'signed-in', cookies: applied };
   } catch (error) {
-    return { kind: 'refused', errors: classify(error) };
+    return {
+      kind: 'refused',
+      status: toAppError(error).errorType === 'rate_limited' ? 429 : 400,
+      errors: classify(error),
+    };
   }
 };
 

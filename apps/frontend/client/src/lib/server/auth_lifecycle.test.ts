@@ -28,6 +28,7 @@ import { betterAuthSchema } from '@starter/database';
 import { AccountErrorCode, authErrorCode } from '@starter/schemas/auth';
 import { betterAuth } from 'better-auth';
 import { drizzleAdapter } from 'better-auth/adapters/drizzle';
+import { hashPassword } from 'better-auth/crypto';
 import { drizzle } from 'drizzle-orm/bun-sqlite';
 import { databaseMigrationsDir } from '../../../tests/database_paths.ts';
 
@@ -665,11 +666,11 @@ describe('password recovery', () => {
     ).rejects.toThrow(/EXPIRED|expired|invalid/i);
 
     // And the old password still stands, which is the part a user would notice.
-    await auth.api
-      .signInEmail({
+    await expect(
+      auth.api.signInEmail({
         body: { email: 'leo@example.test', password: 'correct horse battery' },
-      })
-      .catch(() => undefined);
+      }),
+    ).resolves.toBeDefined();
   });
 
   test('a forged recovery token is refused', async () => {
@@ -749,12 +750,7 @@ const fromToken = (token: string | null | undefined): Headers =>
   );
 
 /**
- * Mint a verification-shaped token that expired an hour ago.
- *
- * HS256 by hand rather than by asking the instance: the point is to present a
- * correctly *signed* token whose expiry has passed, which is a different input from
- * a corrupted one. A rejected signature would pass the same test for the wrong
- * reason.
+ * Store an expired recovery token for an account with a known valid password.
  */
 const mintExpiredToken = async (database: TestDatabase, email: string): Promise<string> => {
   // A recovery token is **not** a JWT: Better Auth stores it as the
@@ -783,7 +779,7 @@ const mintExpiredToken = async (database: TestDatabase, email: string): Promise<
     userId: 'user_expired',
     providerId: 'credential',
     accountId: 'user_expired',
-    password: 'x',
+    password: await hashPassword('correct horse battery'),
     createdAt: new Date(),
     updatedAt: new Date(),
   });

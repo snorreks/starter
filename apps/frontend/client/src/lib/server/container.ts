@@ -17,7 +17,7 @@
 //
 //   So the two are separated deliberately:
 //
-//     * bindings / db / auth  -> a container, memoized per (binding set, origin)
+//     * bindings / db / auth  -> a container, memoized per (binding set, origin, local run)
 //     * user identity / trace -> built fresh for every request, in
 //                                `buildRequestContext`, from the request itself
 //
@@ -86,16 +86,12 @@ export interface Container {
   isLocal: boolean;
   /** The public origin this container answers on. */
   baseUrl: string;
-  /**
-   * Transactional mail.
-   *
-   * Present only when the mode is `capture`. Typed as `MailService | undefined`
-   * rather than narrowed by `mode`, so a caller that reaches for the inbox in a
-   * deployed environment gets a type error and a null check rather than an inbox
-   * that quietly swallows mail.
-   */
+  /** Required transactional mail transport. */
   mail: MailService;
-  /** Present only in a local environment. Read by the local capture endpoint. */
+  /**
+   * Present only in capture mode. Callers must check for an inbox before reading
+   * it; deployed environments deliver mail and have no capture service.
+   */
   mailCapture?: CaptureMailService;
 }
 
@@ -112,7 +108,8 @@ export const VERIFICATION_CALLBACK_PATH = '/verify-email';
 const containers = new WeakMap<AppEnv, Map<string, Container>>();
 
 /**
- * The container for a binding set and origin. Built once per isolate per origin.
+ * The container for a binding set, origin and local run. Built once per isolate.
+ * The run id participates in the key so a new run cannot reuse a stale inbox.
  *
  * The auth instance is created here rather than per request: Better Auth is
  * expensive to construct and is stateless with respect to a request.
@@ -135,8 +132,9 @@ export const getContainer = (rawEnv: unknown, requestOrigin?: string): Container
 
   const { environment, isLocal, baseUrl } = resolved;
 
+  const cacheKey = JSON.stringify([baseUrl, isLocal ? (env.TEST_RUN_ID?.trim() ?? 'local') : null]);
   const byOrigin = containers.get(env);
-  const existing = byOrigin?.get(baseUrl);
+  const existing = byOrigin?.get(cacheKey);
   if (existing !== undefined) {
     return existing;
   }
@@ -187,9 +185,9 @@ export const getContainer = (rawEnv: unknown, requestOrigin?: string): Container
   };
 
   if (byOrigin === undefined) {
-    containers.set(env, new Map([[baseUrl, container]]));
+    containers.set(env, new Map([[cacheKey, container]]));
   } else {
-    byOrigin.set(baseUrl, container);
+    byOrigin.set(cacheKey, container);
   }
   return container;
 };
