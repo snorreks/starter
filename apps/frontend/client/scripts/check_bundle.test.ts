@@ -1,14 +1,19 @@
 // apps/frontend/client/scripts/check_bundle.test.ts
 //
-// The bundle check, against fixture bundles.
+// The artifact check, against fixture bundles.
 //
 // Every fixture here is written to a temporary directory, so these tests need no
-// build and cannot pass by accident on whatever happens to be in `build/`.
+// build and cannot pass by accident on whatever happens to be in
+// `.svelte-kit/cloudflare/`.
 //
-// The native-import check is the one that earns the file. `@tauri-apps/*` calls
-// into a shell that does not exist here, so it compiles, it bundles, and it
-// throws when the screen that reaches it first runs. Only the assertion catches
-// that, which is why it is here rather than left to a reviewer.
+// Two checks earn this file. The native-import one is older: `@tauri-apps/*` calls
+// into a shell that does not exist here, so it compiles, it bundles, and it throws
+// when the screen that reaches it first runs.
+//
+// The server-code one is newer and is the reason the browser half and the Worker
+// half of one application need an artifact-level gate at all. They share a build,
+// which is exactly the situation in which `drizzle-orm` or `better-auth` ends up
+// in a file the browser downloads — and the build stays green when it does.
 
 import { describe, expect, test } from 'bun:test';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
@@ -16,14 +21,15 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { checkBundle } from './check_bundle.ts';
 
-const fixture = (
-  scripts: Record<string, string>,
-  index = '<script>import("/_app/immutable/entry/start.abc123.js")</script>',
-): string => {
+/** A well-formed artifact: a Worker entry, one client chunk, the asset dirs. */
+const fixture = (scripts: Record<string, string>, options: { worker?: string } = {}): string => {
   const dir = mkdtempSync(join(tmpdir(), 'bundle-'));
   mkdirSync(join(dir, '_app/immutable/entry'), { recursive: true });
   mkdirSync(join(dir, '_app/immutable/chunks'), { recursive: true });
-  writeFileSync(join(dir, 'index.html'), `<html><body>${index}</body></html>`);
+  writeFileSync(
+    join(dir, '_worker.js'),
+    options.worker ?? 'import { env } from "cloudflare:workers";\nexport default { fetch() {} };\n',
+  );
   writeFileSync(join(dir, '_app/immutable/entry/start.abc123.js'), '// entry\n');
   for (const [name, source] of Object.entries(scripts)) {
     writeFileSync(join(dir, `_app/immutable/chunks/${name}`), source);
@@ -49,10 +55,29 @@ describe('checkBundle', () => {
     });
   });
 
-  test('a well-formed bundle passes', () => {
+  test('a well-formed artifact passes', () => {
     const dir = fixture({ 'a.js': 'export const a = 1;\n' });
     withDir(dir, () => {
       expect(checkBundle(dir)).toEqual([]);
+    });
+  });
+
+  test('a missing Worker entrypoint is reported', () => {
+    // The build stays green without it. `wrangler deploy` would then publish the
+    // assets alone, and every route — page and API — would 404 with a Worker that
+    // reported a successful deploy.
+    const dir = fixture({ 'a.js': 'export const a = 1;\n' });
+    withDir(dir, () => {
+      rmSync(join(dir, '_worker.js'));
+      expect(codes(dir)).toContain('no_worker');
+    });
+  });
+
+  test('a shell with no client assets is reported', () => {
+    const dir = fixture({ 'a.js': 'export const a = 1;\n' });
+    withDir(dir, () => {
+      rmSync(join(dir, '_app/immutable'), { recursive: true, force: true });
+      expect(codes(dir)).toContain('no_assets');
     });
   });
 
@@ -77,37 +102,63 @@ describe('checkBundle', () => {
     });
   });
 
-  test('a missing index.html is reported', () => {
-    const dir = fixture({ 'a.js': 'export const a = 1;\n' });
+  test('server code in a client chunk is reported, and the file is named', () => {
+    for (const marker of [
+      'BETTER_AUTH_SECRET',
+      'cloudflare:workers',
+      'notes_owner_id_idx',
+      'device_codes',
+      'emailVerified',
+    ]) {
+      const dir = fixture({
+        'clean.js': 'export const b = 2;\n',
+        'dirty.js': `import x from "${marker}";\nexport { x };`,
+      });
+      withDir(dir, () => {
+        const leaked = checkBundle(dir).filter((p) => p.code === 'server_code_in_client');
+        expect(leaked).toHaveLength(1);
+        expect(leaked[0]?.message).toContain('dirty.js');
+        expect(leaked[0]?.message).toContain(marker);
+      });
+    }
+  });
+
+  test('a minified schema leak is caught even though the library name is gone', () => {
+    // The measured failure this list was rewritten for. A real negative control —
+    // `import { notes } from '@starter/database'` in a client service — produced a
+    // green build and a green check under a name-based marker list, because
+    // minification removes `drizzle-orm` and keeps the DDL. A marker list that
+    // cannot see that is worse than no list: it reports the artifact as clean.
+    const dir = fixture({
+      'chunk.js': 'const t="notes_owner_id_idx",i="notes_owner_updated_idx";export{t,i};\n',
+    });
     withDir(dir, () => {
-      rmSync(join(dir, 'index.html'));
-      expect(codes(dir)).toContain('no_index');
+      const leaked = checkBundle(dir).filter((p) => p.code === 'server_code_in_client');
+      expect(leaked).toHaveLength(1);
+      expect(leaked[0]?.message).toContain('chunk.js');
     });
   });
 
-  test('an index.html with no SvelteKit entry is reported', () => {
-    const dir = fixture({ 'a.js': 'export const a = 1;\n' }, '<html></html>');
-    withDir(dir, () => {
-      expect(codes(dir)).toContain('no_entry_script');
+  test('the Worker entrypoint is exempt: it is where that code belongs', () => {
+    // The check is about what the *browser* downloads. Failing `_worker.js` would
+    // make this unpassable, and an assertion that can never pass is an assertion
+    // nobody reads.
+    const dir = fixture({}, {
+      worker:
+        'import { env } from "cloudflare:workers";\nimport { drizzle } from "drizzle-orm/d1";\n' +
+        'const s = "BETTER_AUTH_SECRET";\nexport default { fetch() { return new Response(s + !!drizzle + !!env); } };\n',
     });
-  });
-
-  test('a shell with no assets is reported', () => {
-    const dir = fixture({ 'a.js': 'export const a = 1;\n' });
     withDir(dir, () => {
-      rmSync(join(dir, '_app/immutable'), { recursive: true, force: true });
-      expect(codes(dir)).toContain('no_assets');
+      expect(checkBundle(dir)).toEqual([]);
     });
   });
 
   test('a loopback URL in the bundle is not itself a failure', () => {
-    // It is there on purpose, in the branch that resolves the API base URL when
-    // there is no browser origin to be relative to. A static scan cannot tell a
-    // guarded fallback from an unconditional destination, so asserting on it
-    // asserts nothing — and this test exists so nobody "fixes" it by deleting
-    // the check.
+    // A static scan cannot tell a guarded fallback from an unconditional
+    // destination, so asserting on a URL asserts nothing. This test exists so
+    // nobody "fixes" the check by banning the string.
     const dir = fixture({
-      'a.js': 'const b=typeof window==="undefined"?`http://127.0.0.1:${p}`:window.location.origin;',
+      'a.js': 'const b = process.env.API_ORIGIN ?? "http://127.0.0.1:5173";\nexport { b };',
     });
     withDir(dir, () => {
       expect(checkBundle(dir)).toEqual([]);

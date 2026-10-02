@@ -4,8 +4,8 @@
 // private so a screen's wiring can change without touching every caller.
 
 export { getNotesViewModel, type NotesComposition } from './notes_composition.ts';
-export { default as NotesView } from './notes_view.svelte';
 export { type NotesService, notesService } from './notes_service.svelte.ts';
+export { default as NotesView } from './notes_view.svelte';
 export {
   createNotesViewModel,
   type NotesStatus,

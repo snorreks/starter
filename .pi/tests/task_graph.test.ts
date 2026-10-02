@@ -67,7 +67,12 @@ describe('the real task graph', () => {
 
     // `bun run test:all` runs four lanes, and each must be reachable by name so a
     // failure can be isolated rather than re-running everything.
-    for (const id of ['client:test-browser', 'api:test-integration', 'e2e:e2e']) {
+    //
+    // `client:test-worker`, not `api:test-integration`: PR B merged the Elysia API
+    // app into the SvelteKit app, so the lane that runs a real Worker now lives in
+    // the client project. Only the id changed — the lane still starts workerd, still
+    // uses real local D1, and still needs `node` on PATH.
+    for (const id of ['client:test-browser', 'client:test-worker', 'e2e:e2e']) {
       expect(resolveTask(tasks, id)).toBeDefined();
     }
   }, 120_000);

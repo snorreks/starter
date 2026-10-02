@@ -1,14 +1,19 @@
-// apps/backend/api/tests/worker_integration.test.ts
+// apps/frontend/client/tests/worker_integration.test.ts
 //
-// Worker integration test against the real local runtime.
+// Integration test against the real local runtime and the **built** Worker.
 //
-// This drives `wrangler dev` — the actual Workers runtime, with its own
-// isolated local D1 — over real HTTP. It is not a mocked router: the Elysia app,
-// Better Auth, Drizzle and D1 are all genuinely involved.
+// This drives `wrangler dev .svelte-kit/cloudflare/_worker.js` — the actual
+// Workers runtime, with its own isolated local D1 — over real HTTP. It is not a
+// mocked router and it is not the dev server: SvelteKit, Better Auth, Drizzle and
+// D1 are all genuinely involved, and the artifact under test is the one a deploy
+// would ship.
 //
-// Why it looks like this: Elysia 1.4's in-process `app.handle()` returns 404
-// unless the app is actually listening, so an in-process test would be testing
-// nothing. Booting the real runtime is both the honest and the workable option.
+// That distinction is the whole point of this file. `vite dev` runs the server
+// code in Node, where a bundling mistake is invisible: a `node:fs` import in a
+// server module resolves, an import that only Vite's dev transform understands
+// resolves, and a `cloudflare:workers` binding that is a stub in dev is a real
+// module in production. Only workerd over the built bundle exercises the thing
+// that gets deployed.
 //
 // Two properties this file is careful about, both learned the hard way:
 //
@@ -25,34 +30,29 @@ import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { type ChildProcess, spawn } from 'node:child_process';
 import { existsSync, openSync, rmSync } from 'node:fs';
 import { createServer } from 'node:net';
-import { dirname, join } from 'node:path';
+import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createId } from '@starter/utils';
 import { killTree } from '@starter/utils/process';
-import { MAX_BODY_BYTES } from '../src/lib/telemetry.ts';
+import { MAX_BODY_BYTES } from '../src/lib/server/telemetry_service.ts';
 
 // `import.meta.url` is this file's URL: four levels up from
-// apps/backend/api/tests/ reaches the repository root.
+// apps/frontend/client/tests/ reaches the repository root.
 const REPO_ROOT = fileURLToPath(new URL('../../../../', import.meta.url)).replace(/\/$/, '');
-const API_DIR = join(REPO_ROOT, 'apps/backend/api');
-const API_CONFIG = join(API_DIR, 'wrangler.jsonc');
-const LOCAL_STATE = join(API_DIR, '.wrangler/state');
+const APP_DIR = join(REPO_ROOT, 'apps/frontend/client');
+const APP_CONFIG = join(APP_DIR, 'wrangler.jsonc');
+const WORKER_ENTRY = join(APP_DIR, '.svelte-kit/cloudflare/_worker.js');
+const LOCAL_STATE = join(APP_DIR, '.wrangler/state');
 
 /**
  * The pinned workspace copy of wrangler.
  *
  * `bunx wrangler` from here or from the repository root does not find a binary
- * that only `apps/backend/api` depends on, so it downloads whatever npm serves
- * that day. This suite then prepares a database and boots a Worker with a tool
- * version the project never validated.
+ * that only `apps/frontend/client` depends on, so it downloads whatever npm
+ * serves that day. This suite then prepares a database and boots a Worker with a
+ * tool version the project never validated.
  */
-const WRANGLER = join(
-  dirname(fileURLToPath(import.meta.url)),
-  '..',
-  'node_modules',
-  '.bin',
-  'wrangler',
-);
+const WRANGLER = join(APP_DIR, 'node_modules', '.bin', 'wrangler');
 
 const WORKER_LOG = process.env.WORKER_LOG ?? '/tmp/starter-integration-worker.log';
 
@@ -128,12 +128,21 @@ const waitForOurWorker = async (timeoutMs = 120_000): Promise<Readiness> => {
 };
 
 beforeAll(async () => {
-  if (!existsSync(API_CONFIG)) {
-    throw new Error(`Missing ${API_CONFIG}`);
+  if (!existsSync(APP_CONFIG)) {
+    throw new Error(`Missing ${APP_CONFIG}`);
   }
   if (!existsSync(WRANGLER)) {
     throw new Error(
       `wrangler is not installed at ${WRANGLER}. Run \`bun install\` from the repository root.`,
+    );
+  }
+  // The built Worker is the subject. Testing the dev server instead would be a
+  // different suite, and one that cannot see a bundling mistake.
+  if (!existsSync(WORKER_ENTRY)) {
+    throw new Error(
+      `Missing ${WORKER_ENTRY}.\n` +
+        '  This suite drives the built Worker, not `vite dev`: a bundling mistake ' +
+        'only reproduces in workerd. Run `bun run build` first.',
     );
   }
 
@@ -144,7 +153,7 @@ beforeAll(async () => {
   rmSync(LOCAL_STATE, { recursive: true, force: true });
 
   const migrate = Bun.spawnSync(
-    [WRANGLER, 'd1', 'migrations', 'apply', 'DB', '--local', '--config', API_CONFIG],
+    [WRANGLER, 'd1', 'migrations', 'apply', 'DB', '--local', '--config', APP_CONFIG],
     { cwd: REPO_ROOT, stdout: 'pipe', stderr: 'pipe' },
   );
   if (migrate.exitCode !== 0) {
@@ -157,35 +166,38 @@ beforeAll(async () => {
     WRANGLER,
     [
       'dev',
+      WORKER_ENTRY,
       '--port',
       String(port),
       '--local',
       '--config',
-      API_CONFIG,
+      APP_CONFIG,
       '--var',
       `TEST_RUN_ID:${RUN_ID}`,
-      // Explicit, and the default in wrangler.jsonc too. The Worker decides
-      // whether development defaults are permitted from this binding alone, so a
-      // suite that omitted it would be exercising a different code path from the
-      // one a developer runs.
+      // Explicit, and the default in wrangler.jsonc too. The app decides whether
+      // development defaults are permitted from this binding alone, so a suite
+      // that omitted it would be exercising a different code path from the one a
+      // developer runs.
       '--var',
       'DEPLOYMENT_ENV:local',
-      // Required in every environment now. The Worker validates it structurally,
-      // and a local run without it fails closed with a 503 naming the binding —
-      // which is what made this suite hang before it was passed.
+      // Required in a deployed environment, optional in a local one — where it is
+      // derived from the origin this Worker is reached on, which is the port
+      // chosen above. That derivation is what lets one suite run on an ephemeral
+      // port without a second configured value to keep in step.
+      //
+      // The secret is real and is the only thing standing between this suite and
+      // a session signed with a value in this repository.
       '--var',
-      `BETTER_AUTH_URL:http://127.0.0.1:${port}`,
+      'BETTER_AUTH_SECRET:integration-test-secret-not-for-production-use',
       // The sign-in rate limit is real and stays on. A test run creates an
       // account per case, which exceeds a production-sane per-minute budget, so
       // the budget is raised for the run rather than disabled — disabling it
       // would also stop this suite from exercising the limit's existence.
       '--var',
       `AUTH_RATE_LIMIT_MAX:${AUTH_RATE_LIMIT_MAX}`,
-      '--var',
-      'BETTER_AUTH_SECRET:integration-test-secret-not-for-production-use',
     ],
     {
-      cwd: API_DIR,
+      cwd: APP_DIR,
       // Captured rather than ignored: a Worker that throws answers 500 with an
       // empty body, and a swallowed log makes that undebuggable.
       stdio: ['ignore', logFd, logFd],
@@ -222,13 +234,24 @@ interface Account {
   cookie: string;
 }
 
+/**
+ * The headers a browser sends on a same-origin mutating request.
+ *
+ * `Origin` is not decoration. SvelteKit refuses a `POST`/`PATCH`/`DELETE` whose
+ * content type is a form type (or absent) unless the `Origin` matches the app's
+ * own — which is the correct CSRF boundary for a cookie-authenticated API, and it
+ * is stricter than the API this suite used to drive. A real browser always sends
+ * it, so a test that omits it is testing a request shape no user can produce.
+ */
+const originHeaders = (): Record<string, string> => ({ origin: base() });
+
 const signUp = async (label: string): Promise<Account> => {
   const email = `${label}-${createId('t', 8)}@example.invalid`;
   const password = 'correct-horse-battery-staple';
 
   const response = await fetch(`${base()}/api/auth/sign-up/email`, {
     method: 'POST',
-    headers: { 'content-type': 'application/json' },
+    headers: { 'content-type': 'application/json', ...originHeaders() },
     body: JSON.stringify({ email, password, name: label }),
   });
 
@@ -246,10 +269,11 @@ const api = (account: Account, path: string, init: RequestInit = {}): Promise<Re
   fetch(`${base()}${path}`, {
     ...init,
     headers: {
-      // Only when there is a body. Sending `content-type: application/json`
-      // with no body makes the router attempt to parse an empty stream, and a
-      // DELETE then fails with a 500 that has nothing to do with DELETE.
+      // Only when there is a body. Sending `content-type: application/json` with
+      // no body makes the app attempt to parse an empty stream, and a DELETE then
+      // fails with a 500 that has nothing to do with DELETE.
       ...(init.body === undefined ? {} : { 'content-type': 'application/json' }),
+      ...originHeaders(),
       cookie: account.cookie,
       ...(init.headers ?? {}),
     },
@@ -265,10 +289,65 @@ describe('health', () => {
     // Asserted field by field: the endpoint also reports effective
     // configuration, and an exact-equality assertion breaks every time that
     // grows.
-    const health = (await response.json()) as { ok: boolean; service: string; testRunId: string };
+    const health = (await response.json()) as {
+      ok: boolean;
+      service: string;
+      testRunId: string;
+      baseUrl: string;
+    };
     expect(health.ok).toBe(true);
-    expect(health.service).toBe('api');
+    expect(health.service).toBe('web');
     expect(health.testRunId).toBe(RUN_ID);
+    // The public origin was derived from the request, which is only permitted on
+    // loopback and only when DEPLOYMENT_ENV says local. Getting this wrong means
+    // session cookies are issued for an origin the user never visited.
+    expect(health.baseUrl).toBe(base());
+  });
+});
+
+describe('same-origin routing, with no proxy anywhere', () => {
+  test('a server-rendered public page', async () => {
+    const response = await fetch(`${base()}/`);
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get('content-type')).toContain('text/html');
+    // Server-rendered: the heading is in the HTML, not produced by hydration.
+    const html = await response.text();
+    expect(html).toContain('One application, one Worker');
+  });
+
+  test('a deep link to a client route renders, rather than 404ing', async () => {
+    const response = await fetch(`${base()}/login`);
+
+    expect(response.status).toBe(200);
+    expect(await response.text()).toContain('auth-form');
+  });
+
+  test('a real asset is served by the Worker', async () => {
+    // The asset URL is read out of the rendered HTML rather than hard-coded: a
+    // hash changes on every build, and a test that hard-codes one either rots or
+    // gets "fixed" into asserting nothing.
+    const html = await (await fetch(`${base()}/`)).text();
+    const asset = /["'](\.?\/[._a-zA-Z0-9/-]*\/start\.[\w-]+\.js)["']/.exec(html)?.[1];
+    expect(asset).toBeDefined();
+
+    const response = await fetch(new URL(asset ?? '', base()));
+    expect(response.status).toBe(200);
+    expect(response.headers.get('content-type')).toContain('javascript');
+  });
+
+  test('an unknown API route is a JSON 404, not an HTML error page', async () => {
+    // SvelteKit's own fallback for an unmatched route is HTML. A client that got
+    // that would have to guess between a wrong URL and a broken deploy.
+    const response = await fetch(`${base()}/api/no-such-route`);
+
+    expect(response.status).toBe(404);
+    expect(response.headers.get('content-type')).toContain('application/json');
+    expect(await response.json()).toMatchObject({ error: 'not_found' });
+  });
+
+  test('an unknown page is a 404 too', async () => {
+    expect((await fetch(`${base()}/no-such-page`)).status).toBe(404);
   });
 });
 
@@ -280,14 +359,13 @@ describe('authentication', () => {
     expect(body.error).toBe('unauthorized');
   });
 
-  test('signs a user up and returns a session', async () => {
+  test('signs a user up and the session cookie identifies them', async () => {
     const account = await signUp('integration');
     expect(account.cookie).toContain('better-auth');
 
-    const whoami = await api(account, '/api/whoami');
-    expect(whoami.status).toBe(200);
-    const identity = (await whoami.json()) as { email: string };
-    expect(identity.email).toBe(account.email);
+    const session = await api(account, '/api/auth/get-session');
+    const identity = (await session.json()) as { user: { email: string } | null };
+    expect(identity.user?.email).toBe(account.email);
   });
 
   test('resolves a session from the cookie alone', async () => {
@@ -304,7 +382,7 @@ describe('authentication', () => {
     const account = await signUp('integration-badpw');
     const response = await fetch(`${base()}/api/auth/sign-in/email`, {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: { 'content-type': 'application/json', ...originHeaders() },
       body: JSON.stringify({ email: account.email, password: 'wrong-password-entirely' }),
     });
     expect(response.ok).toBe(false);
@@ -351,8 +429,8 @@ describe('notes CRUD', () => {
       method: 'POST',
       body: JSON.stringify({ title: '', body: 'x' }),
     });
-    // 422 from Elysia's body validation, not 500.
-    expect([400, 422]).toContain(response.status);
+    // 422 from the TypeBox validation in `readJsonBody`, not 500.
+    expect(response.status).toBe(422);
   });
 
   test('returns 404 for a note that does not exist', async () => {
@@ -396,6 +474,38 @@ describe('authorization', () => {
     expect(survivor?.title).toBe('Private');
   });
 
+  test("one user's page data does not contain another user's notes", async () => {
+    // The SSR case, which the API tests above cannot reach. `locals.user` is
+    // resolved per request, so two sessions in flight at the same time each get
+    // their own list — a module-level identity would interleave them and this is
+    // the assertion that catches it.
+    const owner = await signUp('integration-ssr-owner');
+    const stranger = await signUp('integration-ssr-stranger');
+
+    await api(owner, '/api/notes', {
+      method: 'POST',
+      body: JSON.stringify({ title: 'Owner only', body: 'x' }),
+    });
+
+    const [ownerPage, strangerPage] = await Promise.all([
+      fetch(`${base()}/notes`, { headers: { cookie: owner.cookie } }),
+      fetch(`${base()}/notes`, { headers: { cookie: stranger.cookie } }),
+    ]);
+
+    expect(ownerPage.status).toBe(200);
+    expect(strangerPage.status).toBe(200);
+    expect(await ownerPage.text()).toContain('Owner only');
+    // The specific leak: the stranger's rendered page must not contain the
+    // owner's note, even though both pages were produced concurrently.
+    expect(await strangerPage.text()).not.toContain('Owner only');
+  });
+
+  test('an anonymous request for the notes page is redirected, not rendered', async () => {
+    const response = await fetch(`${base()}/notes`, { redirect: 'manual' });
+    expect(response.status).toBe(303);
+    expect(response.headers.get('location')).toContain('/login');
+  });
+
   test('the owner id comes from the session, not the request body', async () => {
     const account = await signUp('integration-ownerid');
     const response = await api(account, '/api/notes', {
@@ -404,7 +514,7 @@ describe('authorization', () => {
       body: JSON.stringify({ title: 'Injected', body: '', ownerId: 'someone-else' }),
     });
 
-    expect([400, 422]).toContain(response.status);
+    expect(response.status).toBe(422);
   });
 });
 
@@ -412,7 +522,7 @@ describe('telemetry', () => {
   test('accepts a well-formed event and rejects a malformed one', async () => {
     const event = {
       timestamp: Date.now(),
-      app: 'client',
+      app: 'web',
       environment: 'local',
       source: 'browser',
       level: 'INFO',
@@ -430,19 +540,18 @@ describe('telemetry', () => {
 
     const rejected = await fetch(`${base()}/api/telemetry`, {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: { 'content-type': 'application/json', ...originHeaders() },
       body: JSON.stringify({ not: 'a log event' }),
     });
-    // 422: the router validates the body against the TypeBox schema, so a
-    // malformed record is refused as a bad request rather than silently
-    // accepted and dropped.
+    // 422: the body is validated against the TypeBox schema, so a malformed record
+    // is refused as a bad request rather than silently accepted and dropped.
     expect(rejected.status).toBe(422);
   });
 
   test('refuses an oversized submission', async () => {
     const oversized = JSON.stringify({
       timestamp: Date.now(),
-      app: 'client',
+      app: 'web',
       environment: 'local',
       source: 'browser',
       level: 'INFO',
@@ -453,11 +562,11 @@ describe('telemetry', () => {
 
     const response = await fetch(`${base()}/api/telemetry`, {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: { 'content-type': 'application/json', ...originHeaders() },
       body: oversized,
     });
-    // 413 from the router's body limit, or 422 from validation if it got that
-    // far. Either is a refusal; a 202 would mean it was stored.
-    expect([413, 422]).toContain(response.status);
+    // 413 from the body cap. A 202 would mean it was stored, which is the failure
+    // this limit exists to prevent.
+    expect(response.status).toBe(413);
   });
 });

@@ -15,8 +15,8 @@
 
 import { describe, expect, test } from 'bun:test';
 import type { Note } from '@starter/schemas/notes';
-import { NotesViewModel } from './notes_view_model.svelte.ts';
 import type { NotesService } from './notes_service.svelte.ts';
+import { NotesViewModel } from './notes_view_model.svelte.ts';
 
 /**
  * Distinct timestamps, so the ViewModel's newest-first sort produces a

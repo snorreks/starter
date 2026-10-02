@@ -13,6 +13,15 @@ import { goto } from '$app/navigation';
 
 export type AuthMode = 'sign-in' | 'sign-up';
 
+/**
+ * Where a successful sign-in lands.
+ *
+ * Named rather than inlined at each call site because it appears twice and the two
+ * have to agree: a sign-in that went to the public landing page and a sign-up that
+ * went to the notes screen would be a difference nobody could explain.
+ */
+export const AUTHENTICATED_PATH = '/notes';
+
 export interface AuthViewModelOptions {
   className?: string;
   session?: SessionService;
@@ -69,7 +78,7 @@ export class AuthViewModel extends BaseFormViewModel<
       const password = String(this.form.password ?? '');
 
       await this.#session.signIn(email, password);
-      await this.#navigate('/');
+      await this.#navigate(AUTHENTICATED_PATH);
       return true;
     } catch (error) {
       // An authentication failure is an expected outcome of this form, not an
@@ -92,7 +101,7 @@ export class AuthViewModel extends BaseFormViewModel<
         password,
         name: email.split('@')[0] ?? 'user',
       });
-      await this.#navigate('/');
+      await this.#navigate(AUTHENTICATED_PATH);
       return true;
     } catch (error) {
       this.serverMessage = error instanceof Error ? error.message : 'Could not create the account.';

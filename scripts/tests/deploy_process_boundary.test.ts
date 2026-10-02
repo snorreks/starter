@@ -1,4 +1,4 @@
-// scripts/src/deploy/process_boundary.test.ts
+// scripts/tests/deploy_process_boundary.test.ts
 //
 // The deploy command at its process boundary.
 //
@@ -11,6 +11,15 @@
 // would spawn, plus whether anything was spawned at all. Nothing here reaches the
 // network: `runBounded`/`setProcessRunner` replaces the spawn, and the consent
 // gate is exercised with the credential absent and present.
+//
+// Migrated for the single-Worker deployment. The old file named two targets
+// (`api`, `client`), resolved wrangler through the deleted API app's
+// `node_modules`, and staged a build tree containing `build/index.html` — a
+// static-site artifact, which is what the old split deployment produced. There is
+// one target (`web`), wrangler is resolved through `apps/frontend/client`, and the
+// artifact that must exist before a deploy is `.svelte-kit/cloudflare/_worker.js`.
+// All three were changed together on purpose: keeping any one of the old shapes
+// would have let a plan be built against an artifact that cannot exist.
 
 import { afterAll, afterEach, describe, expect, test } from 'bun:test';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
@@ -20,23 +29,26 @@ import { type ProcessRunner, setProcessRunner } from '../src/cloudflare/wrangler
 import { deployCommand } from '../src/commands/deploy.ts';
 import type { ConfigCheck } from '../src/deploy/configure.ts';
 import { executePlan, parseDeployArgs, planDeploy, renderPlan } from '../src/deploy/deploy.ts';
-import { DEPLOYMENT_CONFIG } from '../src/registry/app_registry.ts';
+import {
+  effectiveDeploymentValues,
+  setDeploymentValues,
+} from '../src/registry/deployment_values.ts';
 
 const READY: ConfigCheck = { ok: true, problems: [], notices: [] };
 
 /**
- * A client tree with a build output, in a temp directory.
+ * A build tree with a compiled Worker, in a temp directory.
  *
- * `planDeploy` refuses a client deploy whose `build/index.html` is absent, so a test
+ * `planDeploy` refuses a deploy whose `cloudflare/_worker.js` is absent, so a test
  * that plans one has to say which world it is in. Pointing it at the repository's own
- * `CLIENT_DIR` made this suite's result depend on whether someone had run
- * `bun run build` — green locally, failing in CI, where the unit-test step runs before
- * the build.
+ * build directory made this suite's result depend on whether someone had run
+ * `bun run build` — green locally, failing in CI, where the unit-test step runs
+ * before the build.
  */
-const CLIENT_WITH_BUILD = (): string => {
-  const dir = mkdtempSync(join(tmpdir(), 'starter-boundary-client-'));
-  mkdirSync(join(dir, 'build'), { recursive: true });
-  writeFileSync(join(dir, 'build', 'index.html'), '<!doctype html><title>t</title>\n', 'utf8');
+const BUILD_WITH_WORKER = (): string => {
+  const dir = mkdtempSync(join(tmpdir(), 'starter-boundary-build-'));
+  mkdirSync(join(dir, 'cloudflare'), { recursive: true });
+  writeFileSync(join(dir, 'cloudflare', '_worker.js'), 'export default {};\n', 'utf8');
   created.push(dir);
   return dir;
 };
@@ -49,7 +61,7 @@ afterAll(() => {
   }
 });
 
-const savedWorkerNames = { ...DEPLOYMENT_CONFIG.workerNames };
+const savedWorkerName = effectiveDeploymentValues().workerName;
 const savedToken = process.env.CLOUDFLARE_API_TOKEN;
 
 interface Spawned {
@@ -73,9 +85,17 @@ const recordSpawns = (
   };
 };
 
-const namesSet = (): void => {
-  DEPLOYMENT_CONFIG.workerNames.api = 'test-api-worker';
-  DEPLOYMENT_CONFIG.workerNames.client = 'test-client-worker';
+/**
+ * Name the Worker for the duration of a test.
+ *
+ * Through the resolver seam, not by mutating the committed `DEPLOYMENT_CONFIG`.
+ * `planDeploy` reads `targetsFor`, which reads the *resolved* values; a test that
+ * wrote to the module production ignores is a test that proves nothing. That gap
+ * is exactly how "every deploy test passed while `deploy:check` reported no Worker"
+ * ever happened.
+ */
+const nameSet = (): void => {
+  setDeploymentValues({ ...effectiveDeploymentValues(), workerName: 'test-web-worker' });
 };
 
 /**
@@ -104,7 +124,13 @@ const quiet = <T>(body: () => T): T => {
 
 afterEach(() => {
   setProcessRunner(null);
-  DEPLOYMENT_CONFIG.workerNames = { ...savedWorkerNames };
+  // Clear the injection rather than restoring a snapshot: leaving values installed
+  // leaks them into every later test file in this process, and a test that passes
+  // because of another file's leftovers is not a test.
+  setDeploymentValues(null);
+  if (savedWorkerName !== null) {
+    setDeploymentValues({ ...effectiveDeploymentValues(), workerName: savedWorkerName });
+  }
   if (savedToken === undefined) {
     delete process.env.CLOUDFLARE_API_TOKEN;
   } else {
@@ -114,12 +140,12 @@ afterEach(() => {
 
 describe('the process boundary', () => {
   test('the spawned argv contains the wrangler token exactly once', () => {
-    namesSet();
+    nameSet();
     tokenSet();
     const { spawned, runner } = recordSpawns();
     setProcessRunner(runner);
 
-    const plan = planDeploy(['api'], 'staging', READY);
+    const plan = planDeploy(['web'], 'staging', READY, BUILD_WITH_WORKER());
     expect(plan.ok).toBe(true);
     if (!plan.ok) {
       return;
@@ -132,9 +158,11 @@ describe('the process boundary', () => {
     // The wrapper supplies the binary, so argv itself must not carry the token...
     expect(call?.args.filter((token) => token === 'wrangler')).toHaveLength(0);
     // ...and the executable it resolved is the pinned workspace copy, not a
-    // network-fetched `bunx wrangler`.
+    // network-fetched `bunx wrangler`. `apps/frontend/client` is where the Worker is
+    // built and where wrangler is declared; the API app that used to answer this is
+    // gone, and a path pointing at it would resolve to nothing at all.
     expect(call?.command.endsWith('wrangler')).toBe(true);
-    expect(call?.command).toContain('apps/backend/api/node_modules/.bin/wrangler');
+    expect(call?.command).toContain('apps/frontend/client/node_modules/.bin/wrangler');
     // Rendered as the process will actually be spawned: the wrangler executable path
     // is the only `wrangler` in the command line. The old defect produced two.
     const tokens = [call?.command, ...(call?.args ?? [])].join(' ').split(/\s+/);
@@ -143,41 +171,62 @@ describe('the process boundary', () => {
     expect(tokens.slice(2)).toEqual(call?.args.slice(1));
   });
 
-  test('a typo in the target starts no process at all', () => {
-    namesSet();
+  // One Worker means one `wrangler deploy`. Two targets meant a plan that could
+  // half-succeed — Worker published, assets not — leaving a live deployment whose
+  // pages 404, which nothing in the plan could name as a state to avoid.
+  test('one target is one spawn, not one spawn per app in a list', () => {
+    nameSet();
+    tokenSet();
     const { spawned, runner } = recordSpawns();
     setProcessRunner(runner);
 
-    const code = quiet(() => deployCommand.run(['clientt', '--env', 'production', '--yes']));
+    const plan = planDeploy(['web'], 'staging', READY, BUILD_WITH_WORKER());
+    if (!plan.ok) {
+      throw new Error(`expected a plan, got refusal: ${plan.reason}`);
+    }
+    expect(plan.steps).toHaveLength(1);
+    expect(plan.steps[0]?.target).toBe('web');
+
+    quiet(() => executePlan(plan, 'staging', ['--yes']));
+
+    expect(spawned).toHaveLength(1);
+  });
+
+  test('a typo in the target starts no process at all', () => {
+    nameSet();
+    const { spawned, runner } = recordSpawns();
+    setProcessRunner(runner);
+
+    const code = quiet(() => deployCommand.run(['webb', '--env', 'production', '--yes']));
 
     expect(code).toBe(2);
     expect(spawned).toEqual([]);
   });
 
   test('--env local starts no process at all', () => {
-    namesSet();
+    nameSet();
     const { spawned, runner } = recordSpawns();
     setProcessRunner(runner);
 
-    const code = quiet(() => deployCommand.run(['api', '--env', 'local', '--yes']));
+    const code = quiet(() => deployCommand.run(['web', '--env', 'local', '--yes']));
 
     expect(code).toBe(2);
     expect(spawned).toEqual([]);
   });
 
   test('an unknown flag starts no process at all', () => {
-    namesSet();
+    nameSet();
     const { spawned, runner } = recordSpawns();
     setProcessRunner(runner);
 
-    const code = quiet(() => deployCommand.run(['api', '--forse', '--yes']));
+    const code = quiet(() => deployCommand.run(['web', '--forse', '--yes']));
 
     expect(code).toBe(2);
     expect(spawned).toEqual([]);
   });
 
   test('a dry run starts no process at all', () => {
-    namesSet();
+    nameSet();
     tokenSet();
     const { spawned, runner } = recordSpawns();
     setProcessRunner(runner);
@@ -185,7 +234,7 @@ describe('the process boundary', () => {
     // The template provisions nothing, so `main` reaches the real
     // `inspectConfig()` and refuses before it has a plan. That refusal is the
     // correct outcome and the property under test is unchanged: nothing spawned.
-    const code = quiet(() => deployCommand.run(['api', '--env', 'production', '--dry-run']));
+    const code = quiet(() => deployCommand.run(['web', '--env', 'production', '--dry-run']));
 
     expect(code).not.toBe(0);
     expect(spawned).toEqual([]);
@@ -198,19 +247,19 @@ describe('the process boundary', () => {
   // The renderer is the same function `main` calls, so this asserts on what a real
   // dry run prints.
   test('a dry run against a ready config renders the plan and spawns nothing', () => {
-    namesSet();
+    nameSet();
     tokenSet();
     const { spawned, runner } = recordSpawns();
     setProcessRunner(runner);
 
-    const parsed = parseDeployArgs(['api', '--env', 'production', '--dry-run']);
+    const parsed = parseDeployArgs(['web', '--env', 'production', '--dry-run']);
     expect(parsed.ok).toBe(true);
     if (!parsed.ok) {
       return;
     }
     expect(parsed.dryRun).toBe(true);
 
-    const plan = planDeploy(parsed.targets, parsed.environment, READY);
+    const plan = planDeploy(parsed.targets, parsed.environment, READY, BUILD_WITH_WORKER());
     expect(plan.ok).toBe(true);
     if (!plan.ok) {
       return;
@@ -221,7 +270,7 @@ describe('the process boundary', () => {
     // What a dry run prints is the command a real run would spawn, so this is the
     // observable difference between the two paths rather than an internal flag.
     expect(rendered).toContain('wrangler deploy --env production');
-    expect(rendered).toContain('Deploy the api Worker');
+    expect(rendered).toContain('Deploy the web Worker and its assets');
     expect(rendered).toContain(plan.steps[0]?.cwd ?? 'missing');
     // The notices a production deploy carries, rendered.
     expect(rendered).toContain('changes live traffic');
@@ -232,12 +281,12 @@ describe('the process boundary', () => {
   });
 
   test('missing --yes starts no process, even with a credential present', () => {
-    namesSet();
+    nameSet();
     tokenSet();
     const { spawned, runner } = recordSpawns();
     setProcessRunner(runner);
 
-    const code = quiet(() => deployCommand.run(['api', '--env', 'production']));
+    const code = quiet(() => deployCommand.run(['web', '--env', 'production']));
 
     expect(code).toBe(1);
     expect(spawned).toEqual([]);
@@ -251,30 +300,30 @@ describe('the process boundary', () => {
     const { requireRemoteConsent } = await import('../src/cloudflare/wrangler.ts');
 
     // `interactive: true` is exactly what a TTY looks like.
-    expect(requireRemoteConsent('api', [], true).allowed).toBe(false);
-    expect(requireRemoteConsent('api', ['--yes'], true).allowed).toBe(true);
-    expect(requireRemoteConsent('api', ['--yes'], false).allowed).toBe(true);
+    expect(requireRemoteConsent('web', [], true).allowed).toBe(false);
+    expect(requireRemoteConsent('web', ['--yes'], true).allowed).toBe(true);
+    expect(requireRemoteConsent('web', ['--yes'], false).allowed).toBe(true);
   });
 
   test('no credential starts no process even with --yes', () => {
-    namesSet();
+    nameSet();
     delete process.env.CLOUDFLARE_API_TOKEN;
     const { spawned, runner } = recordSpawns();
     setProcessRunner(runner);
 
-    const code = quiet(() => deployCommand.run(['api', '--env', 'production', '--yes']));
+    const code = quiet(() => deployCommand.run(['web', '--env', 'production', '--yes']));
 
     expect(code).toBe(1);
     expect(spawned).toEqual([]);
   });
 
-  test('a failing step stops the plan and reports its exit code', () => {
-    namesSet();
+  test('a failing step reports its exit code and nothing after it runs', () => {
+    nameSet();
     tokenSet();
     const { spawned, runner } = recordSpawns({ run: () => 7 });
     setProcessRunner(runner);
 
-    const plan = planDeploy(['api', 'client'], 'staging', READY, CLIENT_WITH_BUILD());
+    const plan = planDeploy(['web'], 'staging', READY, BUILD_WITH_WORKER());
     expect(plan.ok).toBe(true);
     if (!plan.ok) {
       return;
@@ -283,22 +332,24 @@ describe('the process boundary', () => {
     const code = quiet(() => executePlan(plan, 'staging', ['--yes']));
 
     expect(code.code).toBe(7);
-    // The api failed, so the client step must not have run.
+    // The plan has one step and it failed, so nothing else could have run. Asserted
+    // on the count rather than on "the api failed so the client did not run", which
+    // described a plan this deployment no longer has.
     expect(spawned).toHaveLength(1);
   });
 });
 
 describe('one plan, two consumers', () => {
   test('--dry-run and execution read the same plan', () => {
-    namesSet();
+    nameSet();
     tokenSet();
-    const parsed = parseDeployArgs(['api', '--env', 'production', '--dry-run']);
+    const parsed = parseDeployArgs(['web', '--env', 'production', '--dry-run']);
     expect(parsed.ok).toBe(true);
     if (!parsed.ok) {
       return;
     }
 
-    const plan = planDeploy(parsed.targets, parsed.environment, READY);
+    const plan = planDeploy(parsed.targets, parsed.environment, READY, BUILD_WITH_WORKER());
     expect(plan.ok).toBe(true);
     if (!plan.ok) {
       return;

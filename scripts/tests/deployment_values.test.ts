@@ -33,6 +33,7 @@ import {
   setDeploymentValues,
   targetsFor,
 } from '../src/registry/deployment_values.ts';
+import { REPO_ROOT } from '../src/shared/paths.ts';
 
 const created: string[] = [];
 
@@ -89,9 +90,8 @@ describe('resolveDeploymentValues', () => {
     const values = resolveDeploymentValues({}, makeTree({}));
 
     expect(values.accountId).toBeNull();
-    expect(values.workerNames.api).toBeNull();
-    expect(values.d1DatabaseIds.api).toBeNull();
-    expect(values.workerNames.client).toBeNull();
+    expect(values.workerName).toBeNull();
+    expect(values.d1DatabaseId).toBeNull();
   });
 
   test('reads provisioned ids from the gitignored local file', () => {
@@ -100,26 +100,26 @@ describe('resolveDeploymentValues', () => {
     const root = makeTree({
       [LOCAL_DEPLOYMENT_FILE]: local({
         accountId: 'a'.repeat(32),
-        workerNames: { api: 'starter-api' },
-        d1DatabaseIds: { api: 'db-123' },
+        workerName: 'starter-web',
+        d1DatabaseId: 'db-123',
       }),
     });
 
     const values = resolveDeploymentValues({}, root);
     expect(values.accountId).toBe('a'.repeat(32));
-    expect(values.workerNames.api).toBe('starter-api');
-    expect(values.d1DatabaseIds.api).toBe('db-123');
+    expect(values.workerName).toBe('starter-web');
+    expect(values.d1DatabaseId).toBe('db-123');
   });
 
   test('the environment wins over the local file', () => {
     // CI injects rather than persists, so an environment value must override a
     // developer's stale local file rather than be silently ignored by it.
     const root = makeTree({
-      [LOCAL_DEPLOYMENT_FILE]: local({ d1DatabaseIds: { api: 'local-db' } }),
+      [LOCAL_DEPLOYMENT_FILE]: local({ d1DatabaseId: 'local-db' }),
     });
 
     const values = resolveDeploymentValues({ CLOUDFLARE_D1_DATABASE_ID: 'ci-db' }, root);
-    expect(values.d1DatabaseIds.api).toBe('ci-db');
+    expect(values.d1DatabaseId).toBe('ci-db');
   });
 
   test('the environment supplies an account id with no local file at all', () => {
@@ -132,12 +132,12 @@ describe('resolveDeploymentValues', () => {
     // Otherwise `--account ""` would satisfy `!== null` and every later check would
     // treat the project as provisioned with an account that does not exist.
     const root = makeTree({
-      [LOCAL_DEPLOYMENT_FILE]: local({ accountId: '   ', workerNames: { api: '' } }),
+      [LOCAL_DEPLOYMENT_FILE]: local({ accountId: '   ', workerName: '' }),
     });
 
     const values = resolveDeploymentValues({}, root);
     expect(values.accountId).toBeNull();
-    expect(values.workerNames.api).toBeNull();
+    expect(values.workerName).toBeNull();
   });
 
   test('a malformed local file yields no values rather than throwing', () => {
@@ -146,29 +146,27 @@ describe('resolveDeploymentValues', () => {
     const root = makeTree({ [LOCAL_DEPLOYMENT_FILE]: '{ not json' });
     const values = resolveDeploymentValues({}, root);
 
-    expect(values.d1DatabaseIds.api).toBeNull();
+    expect(values.d1DatabaseId).toBeNull();
     expect(localConfigProblem(root)).toContain('not valid JSON');
   });
 
   test.each([null, false, 42, 'invalid', []].map((section) => ({ section })))(
     'ignores non-object sections: %j',
     ({ section }) => {
+      // `r2BucketNames` is the only section that is still an object, so it is the
+      // one that can receive a non-object. The scalar fields cannot, and `usable`
+      // has to reject their *values* — which is what the "empty or whitespace" test
+      // above covers.
       const root = makeTree({
         [LOCAL_DEPLOYMENT_FILE]: local({
-          workerNames: section,
-          d1DatabaseIds: section,
           r2BucketNames: section,
-          customDomains: section,
-          environments: { staging: { workerNames: section, d1DatabaseIds: section } },
         }),
       });
       const values = resolveDeploymentValues({}, root);
-      expect(values.workerNames.api).toBeNull();
-      expect(values.d1DatabaseIds.api).toBeNull();
+      expect(values.workerName).toBeNull();
+      expect(values.d1DatabaseId).toBeNull();
       expect(values.r2BucketNames.uploads).toBeNull();
-      expect(values.customDomains.api).toBeNull();
-      expect(values.environments?.staging?.workerNames.api).toBeNull();
-      expect(values.environments?.staging?.d1DatabaseIds.api).toBeNull();
+      expect(values.customDomain).toBeNull();
     },
   );
 
@@ -177,15 +175,15 @@ describe('resolveDeploymentValues', () => {
       [LOCAL_DEPLOYMENT_FILE]: local({
         environments: {
           staging: {
-            workerNames: { api: 'staging-api' },
-            d1DatabaseIds: { api: 'local-db' },
+            workerName: 'staging-api',
+            d1DatabaseId: 'local-db',
           },
         },
       }),
     });
     setDeploymentValues(resolveDeploymentValues({ CLOUDFLARE_D1_DATABASE_ID: 'ci-db' }, root));
-    expect(targetsFor('staging')?.d1DatabaseIds.api).toBe('ci-db');
-    expect(targetsFor('staging')?.workerNames.api).toBe('staging-api');
+    expect(targetsFor('staging')?.d1DatabaseId).toBe('ci-db');
+    expect(targetsFor('staging')?.workerName).toBe('staging-api');
     expect(targetsFor('production')).toBeNull();
   });
 
@@ -197,20 +195,23 @@ describe('resolveDeploymentValues', () => {
     // Only the keys the overlay mentions change. A partial overlay must not blank
     // out values someone set elsewhere.
     const root = makeTree({
-      [LOCAL_DEPLOYMENT_FILE]: local({ workerNames: { api: 'starter-api' } }),
+      [LOCAL_DEPLOYMENT_FILE]: local({ workerName: 'starter-web' }),
     });
 
     const values = resolveDeploymentValues({}, root);
-    expect(values.workerNames.api).toBe('starter-api');
-    expect(values.workerNames.client).toBeNull();
-    expect(values.customDomains.api).toBeNull();
+    expect(values.workerName).toBe('starter-web');
+    // The keys the overlay does not mention keep the committed floor. With one
+    // Worker and one database there is no longer a second name to survive, so this
+    // is asserted on the fields that were never in the overlay.
+    expect(values.d1DatabaseId).toBeNull();
+    expect(values.customDomain).toBeNull();
   });
 
   test('the committed registry is never given a literal id', () => {
     // The guard enforces this; asserting it here means the reason is written down
     // next to the thing that depends on it.
-    expect(DEPLOYMENT_CONFIG.d1DatabaseIds.api).toBeNull();
-    expect(DEPLOYMENT_CONFIG.workerNames.api).toBeNull();
+    expect(DEPLOYMENT_CONFIG.d1DatabaseId).toBeNull();
+    expect(DEPLOYMENT_CONFIG.workerName).toBeNull();
     expect(DEPLOYMENT_CONFIG.accountId).toBeNull();
   });
 });
@@ -218,14 +219,14 @@ describe('resolveDeploymentValues', () => {
 describe('describeResolution', () => {
   test('names the layer that answered, so a report need not guess', () => {
     const root = makeTree({
-      [LOCAL_DEPLOYMENT_FILE]: local({ d1DatabaseIds: { api: 'db-123' } }),
+      [LOCAL_DEPLOYMENT_FILE]: local({ d1DatabaseId: 'db-123' }),
     });
 
-    expect(describeResolution('d1DatabaseIds.api', {}, root)).toBe('local-file');
-    expect(describeResolution('d1DatabaseIds.api', { CLOUDFLARE_D1_DATABASE_ID: 'x' }, root)).toBe(
+    expect(describeResolution('d1DatabaseId', {}, root)).toBe('local-file');
+    expect(describeResolution('d1DatabaseId', { CLOUDFLARE_D1_DATABASE_ID: 'x' }, root)).toBe(
       'environment',
     );
-    expect(describeResolution('workerNames.api', {}, root)).toBe('default');
+    expect(describeResolution('workerName', {}, root)).toBe('default');
   });
 });
 
@@ -254,8 +255,8 @@ describe('provisionDatabase', () => {
 
   const tree = (): string =>
     makeTree({
-      'apps/backend/api/wrangler.jsonc':
-        '{\n  "d1_databases": [\n    {\n      "binding": "DB",\n      "database_name": "starter-api",\n      "database_id": ""\n    }\n  ]\n}\n',
+      'apps/frontend/client/wrangler.jsonc':
+        '{\n  "d1_databases": [\n    {\n      "binding": "DB",\n      "database_name": "starter-web",\n      "database_id": ""\n    }\n  ]\n}\n',
     });
 
   test('records the id where the tooling reads it, not only in wrangler.jsonc', () => {
@@ -275,7 +276,7 @@ describe('provisionDatabase', () => {
       // wrangler.jsonc too, so a test asserting only that would pass while the bug
       // was still present.
       const values = resolveDeploymentValues({}, root);
-      expect(values.d1DatabaseIds.api).toBe(UUID);
+      expect(values.d1DatabaseId).toBe(UUID);
       expect(values.accountId).toBe(ACCOUNT);
 
       // And the file the tooling reads is on disk, not merely in memory.
@@ -297,11 +298,37 @@ describe('provisionDatabase', () => {
         create: () => ({ ok: true, stdout: `${UUID}\n`, stderr: '' }),
       });
 
-      const wrangler = readFileSync(join(root, 'apps/backend/api/wrangler.jsonc'), 'utf8');
+      const wrangler = readFileSync(join(root, 'apps/frontend/client/wrangler.jsonc'), 'utf8');
+      // Both places, and that is the point of the test: wrangler reads the config
+      // at deploy time, and the registry is what `deploy:check` and `db:migrate`
+      // read. A value in one and not the other is a deploy that succeeds and a
+      // `deploy:check` that reports the project unprovisioned.
       expect(wrangler).toContain(`"database_id": "${UUID}"`);
+      expect(resolveDeploymentValues({}, root).d1DatabaseId).toBe(UUID);
     } finally {
       restore();
     }
+  });
+
+  // The negative control for the control above. `provisionDatabase` resolved the
+  // wrangler config through the absolute `CLIENT_DIR` while taking a `root`
+  // parameter, so `join(root, '/abs/path')` returned `/abs/path` and every one of
+  // these tests wrote its fixture UUID into the repository's committed
+  // `wrangler.jsonc` — the test passed, and the repository was left carrying a D1
+  // id that a fresh clone would have tried to deploy against.
+  //
+  // Asserting the committed file directly is the only assertion that can catch it:
+  // the fixture assertions above pass either way, because both paths end at a file
+  // that exists.
+  test('the repository wrangler.jsonc carries no provisioned resource id', () => {
+    const committed = readFileSync(join(REPO_ROOT, 'apps/frontend/client/wrangler.jsonc'), 'utf8');
+
+    // Not merely "not the fixture's id" — no `database_id` at all. The comment in
+    // that file says why: an invented id fails at deploy time with an opaque
+    // wrangler error, whereas an absent one fails at configuration time with a
+    // clear one, and `bun run deploy:configure` is what writes the real value.
+    expect(committed).not.toContain('"database_id"');
+    expect(committed).toContain('"migrations_dir"');
   });
 
   test('refuses without a credential and writes nothing at all', () => {
@@ -363,8 +390,8 @@ describe('provisionDatabase', () => {
     // Read-modify-write, not overwrite: the local file also carries worker names,
     // and creating a database must not blank one out.
     const root = makeTree({
-      [LOCAL_DEPLOYMENT_FILE]: local({ workerNames: { api: 'starter-api' } }),
-      'apps/backend/api/wrangler.jsonc': '{\n  "d1_databases": []\n}\n',
+      [LOCAL_DEPLOYMENT_FILE]: local({ workerName: 'starter-web' }),
+      'apps/frontend/client/wrangler.jsonc': '{\n  "d1_databases": []\n}\n',
     });
     const restore = quiet();
     const output: string[] = [];
@@ -381,11 +408,14 @@ describe('provisionDatabase', () => {
       });
 
       const values = resolveDeploymentValues({}, root);
-      expect(values.workerNames.api).toBe('starter-api');
-      expect(values.d1DatabaseIds.api).toBe(UUID);
+      expect(values.workerName).toBe('starter-web');
+      expect(values.d1DatabaseId).toBe(UUID);
       expect(output.join('')).not.toContain('written to wrangler.jsonc');
       expect(output.join('')).toContain(`written to ${LOCAL_DEPLOYMENT_FILE}`);
-      expect(readFileSync(join(root, 'apps/backend/api/wrangler.jsonc'), 'utf8')).toBe(
+      // The app's own wrangler config, which is now the only one: the
+      // `apps/backend/api` application is gone and the SvelteKit app is what
+      // declares the D1 binding a deploy reads.
+      expect(readFileSync(join(root, 'apps/frontend/client/wrangler.jsonc'), 'utf8')).toBe(
         '{\n  "d1_databases": []\n}\n',
       );
     } finally {
@@ -401,10 +431,10 @@ describe('targetsFor', () => {
   // the flag changed a notice and nothing else.
 
   const base = {
-    workerNames: { client: null, api: 'single-api' },
-    d1DatabaseIds: { api: 'single-db' },
+    workerName: 'single-web',
+    d1DatabaseId: 'single-db',
     r2BucketNames: { uploads: null },
-    customDomains: { client: null, api: null },
+    customDomain: null,
     accountId: 'a'.repeat(32),
   };
 
@@ -415,8 +445,8 @@ describe('targetsFor', () => {
     const staging = targetsFor('staging');
     const production = targetsFor('production');
 
-    expect(staging?.workerNames.api).toBe('single-api');
-    expect(production?.workerNames.api).toBe('single-api');
+    expect(staging?.workerName).toBe('single-web');
+    expect(production?.workerName).toBe('single-web');
   });
 
   test('gives each environment its own Worker and database', () => {
@@ -424,12 +454,12 @@ describe('targetsFor', () => {
       ...base,
       environments: {
         staging: {
-          workerNames: { client: 'client-staging', api: 'api-staging' },
-          d1DatabaseIds: { api: 'db-staging' },
+          workerName: 'web-staging',
+          d1DatabaseId: 'db-staging',
         },
         production: {
-          workerNames: { client: 'client-prod', api: 'api-prod' },
-          d1DatabaseIds: { api: 'db-prod' },
+          workerName: 'web-prod',
+          d1DatabaseId: 'db-prod',
         },
       },
     });
@@ -437,10 +467,10 @@ describe('targetsFor', () => {
     const staging = targetsFor('staging');
     const production = targetsFor('production');
 
-    expect(staging?.workerNames.api).toBe('api-staging');
-    expect(production?.workerNames.api).toBe('api-prod');
-    expect(staging?.d1DatabaseIds.api).toBe('db-staging');
-    expect(production?.d1DatabaseIds.api).toBe('db-prod');
+    expect(staging?.workerName).toBe('web-staging');
+    expect(production?.workerName).toBe('web-prod');
+    expect(staging?.d1DatabaseId).toBe('db-staging');
+    expect(production?.d1DatabaseId).toBe('db-prod');
   });
 
   test('refuses an environment the project has no topology for', () => {
@@ -450,8 +480,8 @@ describe('targetsFor', () => {
       ...base,
       environments: {
         staging: {
-          workerNames: { client: null, api: 'api-staging' },
-          d1DatabaseIds: { api: 'db-staging' },
+          workerName: 'web-staging',
+          d1DatabaseId: 'db-staging',
         },
       },
     });
@@ -468,19 +498,19 @@ describe('targetsFor', () => {
       ...base,
       environments: {
         staging: {
-          workerNames: { client: null, api: 'api-staging' },
-          d1DatabaseIds: { api: null },
+          workerName: 'web-staging',
+          d1DatabaseId: null,
         },
         production: {
-          workerNames: { client: null, api: 'api-prod' },
-          d1DatabaseIds: { api: 'db-prod' },
+          workerName: 'web-prod',
+          d1DatabaseId: 'db-prod',
         },
       },
     });
 
     const staging = targetsFor('staging');
-    expect(staging?.workerNames.api).toBe('api-staging');
-    expect(staging?.d1DatabaseIds.api).toBeNull();
+    expect(staging?.workerName).toBe('web-staging');
+    expect(staging?.d1DatabaseId).toBeNull();
   });
 
   test('reads per-environment targets from the local file', () => {
@@ -489,23 +519,23 @@ describe('targetsFor', () => {
         accountId: 'a'.repeat(32),
         environments: {
           staging: {
-            workerNames: { api: 'from-file-staging' },
-            d1DatabaseIds: { api: 'db-staging' },
+            workerName: 'from-file-staging',
+            d1DatabaseId: 'db-staging',
           },
           production: {
-            workerNames: { api: 'from-file-prod' },
-            d1DatabaseIds: { api: 'db-prod' },
+            workerName: 'from-file-prod',
+            d1DatabaseId: 'db-prod',
           },
         },
       }),
     });
 
     const values = resolveDeploymentValues({}, root);
-    expect(values.environments?.staging?.workerNames.api).toBe('from-file-staging');
-    expect(values.environments?.production?.d1DatabaseIds.api).toBe('db-prod');
+    expect(values.environments?.staging?.workerName).toBe('from-file-staging');
+    expect(values.environments?.production?.d1DatabaseId).toBe('db-prod');
     // And the single set stays empty, so a project that configures per-environment
     // is not also deployable against a nameless default.
-    expect(values.workerNames.api).toBeNull();
+    expect(values.workerName).toBeNull();
   });
 
   test('an unknown environment name in the file is ignored, not trusted', () => {
@@ -516,8 +546,8 @@ describe('targetsFor', () => {
       [LOCAL_DEPLOYMENT_FILE]: local({
         environments: {
           prodution: {
-            workerNames: { api: 'typo-api' },
-            d1DatabaseIds: { api: 'typo-db' },
+            workerName: 'typo-api',
+            d1DatabaseId: 'typo-db',
           },
         },
       }),
@@ -533,14 +563,14 @@ describe('targetsFor', () => {
     const root = makeTree({
       [LOCAL_DEPLOYMENT_FILE]: local({
         environments: {
-          staging: { workerNames: { api: 'ok-api' }, d1DatabaseIds: { api: 'ok-db' } },
+          staging: { workerName: 'ok-api', d1DatabaseId: 'ok-db' },
           production: 'not-an-object',
         },
       }),
     });
 
     const values = resolveDeploymentValues({}, root);
-    expect(values.environments?.staging?.workerNames.api).toBe('ok-api');
+    expect(values.environments?.staging?.workerName).toBe('ok-api');
     expect(values.environments?.production).toBeUndefined();
   });
 });
@@ -556,6 +586,11 @@ describe('setAccount', () => {
   // was read as "the name is `api`", and recorded the literal string `"api"` as the
   // Worker's name. Wrangler accepts that as a valid name, so the deploy plan printed
   // `--name api` and nothing failed until it published to the wrong place.
+  //
+  // The form is now `--worker <name>` with no app to confuse it with, which removes
+  // the possibility rather than adding a check for it. The test below asserts the
+  // shape directly, because "there is only one thing this argument can mean" is a
+  // property of the signature and not of any validation.
 
   const ACCOUNT = 'a'.repeat(32);
 
@@ -569,52 +604,44 @@ describe('setAccount', () => {
       const values = resolveDeploymentValues({}, root);
       expect(values.accountId).toBe(ACCOUNT);
       // Setting the account must not invent a Worker or a database.
-      expect(values.workerNames.api).toBeNull();
-      expect(values.d1DatabaseIds.api).toBeNull();
+      expect(values.workerName).toBeNull();
+      expect(values.d1DatabaseId).toBeNull();
     } finally {
       restore();
     }
   });
 
-  test('records a Worker name against the app it was given', () => {
-    // The regression: `api` is the app, `starter-api` is the name.
+  test('records the Worker name it was given', () => {
+    // `--worker` takes one argument now: the name. There is no app to confuse it
+    // with, which is the fix for the regression this replaces — the two-argument
+    // form read `api` as the name when only one argument was given, and
+    // `deploy:check` then printed `--name api`, which wrangler accepts.
     const root = makeTree({});
     const restore = quiet();
 
     try {
-      expect(setAccount(['--account', ACCOUNT, '--worker', 'api', 'starter-api'], root)).toBe(0);
+      expect(setAccount(['--account', ACCOUNT, '--worker', 'starter-web'], root)).toBe(0);
 
       const values = resolveDeploymentValues({}, root);
-      expect(values.workerNames.api).toBe('starter-api');
-      // And the *other* app is untouched, rather than given the same name.
-      expect(values.workerNames.client).toBeNull();
-      // The decisive assertion: the name is not the app id.
-      expect(values.workerNames.api).not.toBe('api');
+      expect(values.workerName).toBe('starter-web');
+      // The decisive assertion: the name is not a target word that used to be an
+      // app id, and it is not the account id.
+      expect(values.workerName).not.toBe('api');
+      expect(values.workerName).not.toBe('client');
     } finally {
       restore();
     }
   });
 
-  test('records the client Worker name just as readily as the API one', () => {
+  test('refuses a --worker with no name rather than recording a flag', () => {
+    // `--worker` followed by another flag means the name was forgotten. Recording
+    // the flag as the name is the same class of mistake the two-argument form had,
+    // and it would pass every check downstream.
     const root = makeTree({});
     const restore = quiet();
 
     try {
-      setAccount(['--account', ACCOUNT, '--worker', 'client', 'starter-client'], root);
-
-      expect(resolveDeploymentValues({}, root).workerNames.client).toBe('starter-client');
-    } finally {
-      restore();
-    }
-  });
-
-  test('refuses a single --worker argument rather than guessing the target', () => {
-    // Guessing is what produced the bug. Refusing costs one line of extra typing.
-    const root = makeTree({});
-    const restore = quiet();
-
-    try {
-      expect(setAccount(['--account', ACCOUNT, '--worker', 'starter-api'], root)).toBe(2);
+      expect(setAccount(['--account', ACCOUNT, '--worker', '--yes'], root)).toBe(2);
 
       // Nothing written at all, not even the account id: the invocation was wrong.
       expect(existsSync(join(root, LOCAL_DEPLOYMENT_FILE))).toBe(false);
@@ -623,13 +650,19 @@ describe('setAccount', () => {
     }
   });
 
-  test('refuses a --worker target that is not an app', () => {
+  test('a second --worker name replaces the first, and the account id survives', () => {
+    // Re-running the command is how an operator corrects a typo. It must not
+    // accumulate a second name or drop the account id written by the first run.
     const root = makeTree({});
     const restore = quiet();
 
     try {
-      expect(setAccount(['--account', ACCOUNT, '--worker', 'frontend', 'x'], root)).toBe(2);
-      expect(existsSync(join(root, LOCAL_DEPLOYMENT_FILE))).toBe(false);
+      setAccount(['--account', ACCOUNT, '--worker', 'typo-web'], root);
+      setAccount(['--account', ACCOUNT, '--worker', 'starter-web'], root);
+
+      const values = resolveDeploymentValues({}, root);
+      expect(values.accountId).toBe(ACCOUNT);
+      expect(values.workerName).toBe('starter-web');
     } finally {
       restore();
     }
@@ -649,18 +682,16 @@ describe('setAccount', () => {
     }
   });
 
-  test('recording a Worker name does not erase the account id or the other app', () => {
+  test('recording a Worker name twice does not erase the account id', () => {
     const root = makeTree({});
     const restore = quiet();
 
     try {
-      setAccount(['--account', ACCOUNT, '--worker', 'api', 'starter-api'], root);
-      setAccount(['--account', ACCOUNT, '--worker', 'client', 'starter-client'], root);
+      setAccount(['--account', ACCOUNT, '--worker', 'starter-web'], root);
 
       const values = resolveDeploymentValues({}, root);
       expect(values.accountId).toBe(ACCOUNT);
-      expect(values.workerNames.api).toBe('starter-api');
-      expect(values.workerNames.client).toBe('starter-client');
+      expect(values.workerName).toBe('starter-web');
     } finally {
       restore();
     }
@@ -672,7 +703,7 @@ describe('local configuration writes', () => {
     const root = makeTree({
       [LOCAL_DEPLOYMENT_FILE]: local({
         accountId: 'local-account',
-        d1DatabaseIds: { api: 'local-db' },
+        d1DatabaseId: 'local-db',
         extra: { keep: true },
       }),
     });
@@ -681,11 +712,11 @@ describe('local configuration writes', () => {
     try {
       process.env.CLOUDFLARE_ACCOUNT_ID = 'ci-account';
       process.env.CLOUDFLARE_D1_DATABASE_ID = 'ci-db';
-      writeLocalValues((current) => ({ ...current, workerNames: { api: 'new-worker' } }), root);
+      writeLocalValues((current) => ({ ...current, workerName: 'new-worker' }), root);
       expect(JSON.parse(readFileSync(join(root, LOCAL_DEPLOYMENT_FILE), 'utf8'))).toEqual({
         accountId: 'local-account',
-        d1DatabaseIds: { api: 'local-db' },
-        workerNames: { api: 'new-worker' },
+        d1DatabaseId: 'local-db',
+        workerName: 'new-worker',
         extra: { keep: true },
       });
     } finally {
@@ -718,8 +749,8 @@ describe('environment configuration consumers', () => {
           accountId: 'a'.repeat(32),
           environments: {
             staging: {
-              workerNames: { client: 'staging-client', api: 'staging-api' },
-              d1DatabaseIds: { api: 'staging-db' },
+              workerName: 'staging-web',
+              d1DatabaseId: 'staging-db',
             },
           },
         }),
@@ -736,11 +767,14 @@ describe('environment configuration consumers', () => {
       if (staging === undefined) {
         throw new Error('Missing staging fixture');
       }
-      staging.workerNames.api = null;
-      staging.d1DatabaseIds.api = null;
+      staging.workerName = null;
+      staging.d1DatabaseId = null;
+      // The messages name the environment and not an app, because there is no
+      // longer more than one app to disambiguate between. A message that said
+      // `for "api"` would point an operator at a name that no longer exists.
       expect(inspectConfig(configured).problems).toEqual([
-        'No Worker name configured for "api" in staging.',
-        'No D1 database id configured for the API in staging.',
+        'No Worker name configured in staging.',
+        'No D1 database id configured in staging.',
       ]);
     } finally {
       if (saved === undefined) {
@@ -755,13 +789,13 @@ describe('environment configuration consumers', () => {
     const configured = values();
     setDeploymentValues(configured);
     expect(planMigrate('staging').ok).toBe(true);
-    configured.d1DatabaseIds.api = 'single-db';
+    configured.d1DatabaseId = 'single-db';
     expect(planMigrate('production').ok).toBe(false);
     const staging = configured.environments?.staging;
     if (staging === undefined) {
       throw new Error('Missing staging fixture');
     }
-    staging.d1DatabaseIds.api = null;
+    staging.d1DatabaseId = null;
     expect(planMigrate('staging').ok).toBe(false);
   });
 });

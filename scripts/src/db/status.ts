@@ -6,7 +6,7 @@
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { runWrangler } from '../cloudflare/wrangler.ts';
-import { API_DIR, REPO_ROOT } from '../shared/paths.ts';
+import { CLIENT_DIR, REPO_ROOT } from '../shared/paths.ts';
 
 const MIGRATIONS_DIR = join(REPO_ROOT, 'packages/backend/database/drizzle-d1');
 
@@ -24,6 +24,6 @@ export const main = (_args: readonly string[] = []): number => {
     'DB',
     '--local',
     '--config',
-    join(API_DIR, 'wrangler.jsonc'),
+    join(CLIENT_DIR, 'wrangler.jsonc'),
   ]);
 };

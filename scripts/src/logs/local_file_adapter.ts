@@ -3,44 +3,46 @@
 // Local log capture. The adapter that always works: no credentials, no network,
 // which is what makes local log verification part of ordinary CI.
 //
-// Where the events come from:
+// Where the events come from, and why there is only one file.
 //
-//   api     — `bun run dev:api` captures the Worker's stdout into
-//             /tmp/starter-logs/api.ndjson.
-//   client  — the browser forwards structured events to the API's
-//             `/api/telemetry`; the Worker records them; so they end up in the
-//             same file and are told apart by `app`/`source`.
+// `bun run dev` starts the SvelteKit dev server and redirects its stdout into
+// `.wrangler/logs/app.ndjson`. The server's own request logger writes one NDJSON
+// line per event there (see `apps/frontend/client/src/lib/server/request_context.ts`),
+// and the browser's structured events reach the same file by being POSTed to
+// `/api/telemetry`, which the same server records.
 //
-// A browser cannot write a local file. That is why client events are read from
-// the Worker's file rather than from a client-owned one.
+// One file for both, and there is no alternative worth offering: **a browser cannot
+// write a local file.** A second file would have to be written by something the
+// browser cannot reach, which means the browser's events would land in the server's
+// file anyway and be told apart by `source` rather than by filename.
 
 import { existsSync } from 'node:fs';
 import { readdir, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { LogEvent } from '@starter/schemas/logging';
-import { APP_LOG_CONFIG } from '../registry/app_registry.ts';
+import { APP_LOG_CONFIG, type AppId } from '../registry/app_registry.ts';
+import { REPO_ROOT } from '../shared/paths.ts';
 import { buildFilter } from './filter.ts';
 import { capabilitiesFor } from './registry.ts';
 import type { LogQuery, LogQueryResult } from './types.ts';
 
-export const LOCAL_LOG_DIR = process.env.STARTER_LOG_DIR ?? '/tmp/starter-logs';
+/**
+ * Where the dev launcher writes the log stream.
+ *
+ * Under `.wrangler/logs/` rather than a shared `/tmp` path, so two worktrees on
+ * one machine do not read each other's events. The directory is gitignored.
+ */
+export const LOCAL_LOG_DIR = process.env.STARTER_LOG_DIR ?? join(REPO_ROOT, '.wrangler', 'logs');
 
 /**
  * Which file an app's events are read from locally.
  *
- * Note there is no `client.ndjson`, and that is not an oversight: **a browser
- * cannot write a local file.** Client events are forwarded to
- * `/api/telemetry`, the Worker records them, and `bun run dev:api` captures the
- * Worker's stream — so client events live in `api.ndjson` and are told apart by
- * their `app`/`source` fields rather than by a separate file.
- *
- * Mapping `client` to a file nothing writes would make
- * `bun run logs client --mode local` report "unavailable" forever, which reads
- * as a broken tool rather than as an accurate description.
+ * Keyed by `AppId` rather than `string`, so a new app id cannot be added to the
+ * registry without this map having an entry for it — a missing entry would report
+ * "no local log file" for a real app, which reads as a broken tool.
  */
-const FILE_FOR_APP: Record<string, string> = {
-  client: join(LOCAL_LOG_DIR, 'api.ndjson'),
-  api: join(LOCAL_LOG_DIR, 'api.ndjson'),
+const FILE_FOR_APP: Record<AppId, string> = {
+  web: join(LOCAL_LOG_DIR, 'app.ndjson'),
 };
 
 /** Parse NDJSON, skipping a truncated final line rather than failing. */
@@ -108,10 +110,9 @@ export const readLocal = async (
         status: 'unavailable',
         events: [],
         message:
-          `No local log file for "${query.app}". Start the app in local mode ` +
-          `first (\`bun run dev\` for the client, \`bun run dev:api\` for the API); ` +
-          `logs are written to ${LOCAL_LOG_DIR}.`,
-        limitations: ['Local capture is only active when PUBLIC_MODE=local.'],
+          `No local log file for "${query.app}". Run \`bun run dev\` first; it writes ` +
+          `${LOCAL_LOG_DIR}.`,
+        limitations: ['Local capture is only active when the dev server is running.'],
       },
     };
   }

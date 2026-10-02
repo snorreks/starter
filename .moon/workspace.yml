@@ -28,8 +28,13 @@ projects:
   pi: '.pi'
 
   # Applications.
+  #
+  # One application, not two. `api: 'apps/backend/api'` was removed with the
+  # application it pointed at: a separate Elysia Worker that the browser reached
+  # through a Vite proxy. The browser half and the Worker half are now the same
+  # SvelteKit project, so there is one project here and its two runtimes are a
+  # property of the source layout, not of the build graph.
   client: 'apps/frontend/client'
-  api: 'apps/backend/api'
   e2e: 'apps/e2e'
 
   # Shared packages: portable, no project dependencies at all.

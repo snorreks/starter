@@ -63,7 +63,7 @@ const importComment = (specifier: string): string => `// import { thing } from '
 describe('workspace-boundary', () => {
   test('allows a layer to import a layer it depends on', () => {
     const root = makeTree({
-      'apps/backend/api/src/lib/db.ts': `${importLine(pkg('database'))}\n`,
+      'apps/frontend/client/src/lib/server/db.ts': `${importLine(pkg('database'))}\n`,
     });
 
     const result = guardWorkspaceBoundary(root);
@@ -74,7 +74,7 @@ describe('workspace-boundary', () => {
     // The split between `client` and `api` exists for this: `@starter/ui` is
     // Svelte, and a Worker has no DOM to compile it against.
     const root = makeTree({
-      'apps/backend/api/src/lib/render.ts': `${importLine(pkg('ui'))}\n`,
+      'apps/frontend/client/src/lib/server/render.ts': `${importLine(pkg('ui'))}\n`,
     });
 
     const result = guardWorkspaceBoundary(root);
@@ -116,7 +116,7 @@ describe('workspace-boundary', () => {
 
   test('ignores a specifier mentioned only in a comment', () => {
     const root = makeTree({
-      'apps/backend/api/src/lib/render.ts': `${importComment(pkg('ui'))}\nexport const a = 1;\n`,
+      'apps/frontend/client/src/lib/server/render.ts': `${importComment(pkg('ui'))}\nexport const a = 1;\n`,
     });
 
     expect(guardWorkspaceBoundary(root).violations).toEqual([]);
@@ -124,7 +124,7 @@ describe('workspace-boundary', () => {
 
   test('every result declares a zero baseline', () => {
     // Guards are invariants. A baseline count is how a failure learns to hide.
-    const root = makeTree({ 'apps/backend/api/src/lib/a.ts': 'export const a = 1;\n' });
+    const root = makeTree({ 'apps/frontend/client/src/lib/server/a.ts': 'export const a = 1;\n' });
 
     expect(guardWorkspaceBoundary(root).baselineCount).toBe(0);
     expect(guardRequestState(root).baselineCount).toBe(0);
@@ -136,7 +136,7 @@ describe('workspace-boundary', () => {
 describe('request-state', () => {
   test('flags a module-level env binding', () => {
     const root = makeTree({
-      'apps/backend/api/src/lib/context.ts': 'let currentEnv: ApiEnv | undefined;\n',
+      'apps/frontend/client/src/lib/server/context.ts': 'let currentEnv: ApiEnv | undefined;\n',
     });
 
     expect(guardRequestState(root).violations).toHaveLength(1);
@@ -144,7 +144,7 @@ describe('request-state', () => {
 
   test('flags a setter that stashes request state on the module', () => {
     const root = makeTree({
-      'apps/backend/api/src/lib/context.ts':
+      'apps/frontend/client/src/lib/server/context.ts':
         'export const setEnvForRequest = (env: unknown): void => {\n  stored = env;\n};\n',
     });
 
@@ -153,7 +153,7 @@ describe('request-state', () => {
 
   test('allows a per-request value built inside a handler', () => {
     const root = makeTree({
-      'apps/backend/api/src/lib/context.ts':
+      'apps/frontend/client/src/lib/server/context.ts':
         'export const buildRequestContext = (request: Request, env: ApiEnv) => {\n' +
         '  const user = resolveUser(request, env);\n' +
         '  return { user, traceId: crypto.randomUUID() };\n' +
@@ -165,7 +165,7 @@ describe('request-state', () => {
 
   test('does not fire on an immutable module-level binding', () => {
     const root = makeTree({
-      'apps/backend/api/src/lib/notes.ts': 'const MAX_BODY_BYTES = 64_000;\n',
+      'apps/frontend/client/src/lib/server/notes.ts': 'const MAX_BODY_BYTES = 64_000;\n',
     });
 
     expect(guardRequestState(root).violations).toEqual([]);
@@ -175,7 +175,7 @@ describe('request-state', () => {
 describe('no-leftovers', () => {
   test('flags console.log in production source', () => {
     const root = makeTree({
-      'apps/backend/api/src/lib/notes.ts': "export const a = () => console.log('hi');\n",
+      'apps/frontend/client/src/lib/server/notes.ts': "export const a = () => console.log('hi');\n",
     });
 
     expect(guardNoLeftovers(root).violations).toHaveLength(1);
@@ -183,7 +183,7 @@ describe('no-leftovers', () => {
 
   test('flags a bare debugger statement', () => {
     const root = makeTree({
-      'apps/backend/api/src/lib/notes.ts': 'export const a = () => {\n  debugger;\n};\n',
+      'apps/frontend/client/src/lib/server/notes.ts': 'export const a = () => {\n  debugger;\n};\n',
     });
 
     expect(guardNoLeftovers(root).violations).toHaveLength(1);
@@ -193,7 +193,7 @@ describe('no-leftovers', () => {
     // An unanchored /\bdebugger\b/ matches this, and then the guard fails on its
     // own pattern literal.
     const root = makeTree({
-      'apps/backend/api/src/lib/notes.ts':
+      'apps/frontend/client/src/lib/server/notes.ts':
         "export const hint = 'set a debugger breakpoint here';\n",
     });
 
@@ -202,7 +202,7 @@ describe('no-leftovers', () => {
 
   test('allows console output in a test file', () => {
     const root = makeTree({
-      'apps/backend/api/tests/notes.test.ts': "console.log('diagnostic');\n",
+      'apps/frontend/client/tests/notes.test.ts': "console.log('diagnostic');\n",
     });
 
     expect(guardNoLeftovers(root).violations).toEqual([]);
@@ -235,7 +235,7 @@ describe('source-is-tracked', () => {
   test('flags a source file excluded by name', () => {
     const root = makeTree({
       '.gitignore': 'secret_notes.ts\n',
-      'apps/backend/api/src/lib/secret_notes.ts': 'export const a = 1;\n',
+      'apps/frontend/client/src/lib/server/secret_notes.ts': 'export const a = 1;\n',
     });
 
     expect(guardSourceIsTracked(root).violations).toHaveLength(1);
@@ -244,7 +244,7 @@ describe('source-is-tracked', () => {
   test('respects a negation that re-includes a path', () => {
     const root = makeTree({
       '.gitignore': '*.log.ts\n!keep.log.ts\n',
-      'apps/backend/api/src/lib/keep.log.ts': 'export const a = 1;\n',
+      'apps/frontend/client/src/lib/server/keep.log.ts': 'export const a = 1;\n',
     });
 
     expect(guardSourceIsTracked(root).violations).toEqual([]);
@@ -253,7 +253,7 @@ describe('source-is-tracked', () => {
   test('reports the last matching rule, as git does', () => {
     const root = makeTree({
       '.gitignore': '/src/lib/gone.ts\n!src/lib/gone.ts\n',
-      'apps/backend/api/src/lib/gone.ts': 'export const a = 1;\n',
+      'apps/frontend/client/src/lib/server/gone.ts': 'export const a = 1;\n',
     });
 
     expect(guardSourceIsTracked(root).violations).toEqual([]);
@@ -264,7 +264,7 @@ describe('source-is-tracked', () => {
     // span directories, and a version that did would hide a whole tree.
     const root = makeTree({
       '.gitignore': '*.log\n',
-      'apps/backend/api/src/lib/build/notes.ts': 'export const a = 1;\n',
+      'apps/frontend/client/src/lib/server/build/notes.ts': 'export const a = 1;\n',
     });
 
     expect(guardSourceIsTracked(root).violations).toEqual([]);
@@ -514,7 +514,7 @@ describe('workspace-boundary: import scanning', () => {
     // live one. `importComment` only covered `//`, which is why this survived: the
     // suite had a comment case and it passed.
     const root = makeTree({
-      'apps/backend/api/src/lib/db.ts': `/* import { thing } from '${pkg('ui')}'; */\nexport const x = 1;\n`,
+      'apps/frontend/client/src/lib/server/db.ts': `/* import { thing } from '${pkg('ui')}'; */\nexport const x = 1;\n`,
     });
 
     expect(guardWorkspaceBoundary(root).violations).toEqual([]);
@@ -522,7 +522,7 @@ describe('workspace-boundary: import scanning', () => {
 
   test('sees an import inside a block comment that also contains real code', () => {
     const root = makeTree({
-      'apps/backend/api/src/lib/db.ts': `/*\n * notes:\n */\nimport { thing } from '${pkg('ui')}';\n`,
+      'apps/frontend/client/src/lib/server/db.ts': `/*\n * notes:\n */\nimport { thing } from '${pkg('ui')}';\n`,
     });
 
     const violations = guardWorkspaceBoundary(root).violations;
@@ -535,7 +535,7 @@ describe('workspace-boundary: import scanning', () => {
     // violation quoted in a string would be invisible, and the guard would report a
     // clean tree.
     const root = makeTree({
-      'apps/backend/api/src/lib/db.ts':
+      'apps/frontend/client/src/lib/server/db.ts':
         `export const docs =\n  "run: import { thing } from '${pkg('ui')}'";\n` +
         `import { thing } from '${pkg('ui')}';\n`,
     });
@@ -550,7 +550,7 @@ describe('workspace-boundary: import scanning', () => {
     'sees a forbidden import after a literal containing a comment marker: %s',
     (literal) => {
       const root = makeTree({
-        'apps/backend/api/src/lib/db.ts': `const value = ${literal};\nimport { thing } from '${pkg('ui')}';\n`,
+        'apps/frontend/client/src/lib/server/db.ts': `const value = ${literal};\nimport { thing } from '${pkg('ui')}';\n`,
       });
       const violations = guardWorkspaceBoundary(root).violations;
       expect(violations).toHaveLength(1);
@@ -562,7 +562,7 @@ describe('workspace-boundary: import scanning', () => {
     // The interpolation is code, so blanking the whole template would hide a real
     // import. The static prefix is what makes this resolvable.
     const root = makeTree({
-      'apps/backend/api/src/lib/db.ts': `export const load = () => import(\`${pkg('ui')}/thing\`);\n`,
+      'apps/frontend/client/src/lib/server/db.ts': `export const load = () => import(\`${pkg('ui')}/thing\`);\n`,
     });
 
     expect(guardWorkspaceBoundary(root).violations).toHaveLength(1);
@@ -583,7 +583,7 @@ describe('workspace-boundary: import scanning', () => {
     const INTERPOLATION = '$' + '{name}';
     const fixture = `export const load = (name: string) => import(\`../../${INTERPOLATION}/thing\`);\n`;
 
-    const root = makeTree({ 'apps/backend/api/src/lib/db.ts': fixture });
+    const root = makeTree({ 'apps/frontend/client/src/lib/server/db.ts': fixture });
 
     expect(guardWorkspaceBoundary(root).violations).toEqual([]);
   });
@@ -593,7 +593,7 @@ describe('workspace-boundary: import scanning', () => {
     // Nothing in this repository uses it, but a boundary that can be crossed
     // quietly is not a boundary.
     const root = makeTree({
-      'apps/backend/api/src/lib/db.ts': `const ui = require('${pkg('ui')}');\n`,
+      'apps/frontend/client/src/lib/server/db.ts': `const ui = require('${pkg('ui')}');\n`,
     });
 
     const violations = guardWorkspaceBoundary(root).violations;
@@ -618,7 +618,7 @@ describe('workspace-boundary: import scanning', () => {
     ];
 
     for (const form of forms) {
-      const root = makeTree({ 'apps/backend/api/src/lib/db.ts': `${form}\n` });
+      const root = makeTree({ 'apps/frontend/client/src/lib/server/db.ts': `${form}\n` });
       expect(guardWorkspaceBoundary(root).violations, form).toHaveLength(1);
     }
   });
@@ -627,7 +627,7 @@ describe('workspace-boundary: import scanning', () => {
     // Offsets are preserved by blanking rather than deleting, so a multi-line comment
     // above an import cannot shift the reported line.
     const root = makeTree({
-      'apps/backend/api/src/lib/db.ts': `/*\n * a\n * b\n * c\n */\nimport { thing } from '${pkg('ui')}';\n`,
+      'apps/frontend/client/src/lib/server/db.ts': `/*\n * a\n * b\n * c\n */\nimport { thing } from '${pkg('ui')}';\n`,
     });
 
     expect(guardWorkspaceBoundary(root).violations[0]?.line).toBe(6);

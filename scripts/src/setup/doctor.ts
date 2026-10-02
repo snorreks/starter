@@ -21,7 +21,7 @@ import { spawnSync } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { resolveBrowser } from '../shared/browser_path.ts';
-import { API_DIR } from '../shared/paths.ts';
+import { CLIENT_DIR } from '../shared/paths.ts';
 import { playwrightBin, wranglerBin } from '../shared/tools.ts';
 import { checkMirrors, declaredPlaywrightVersion, readPins } from './pins.ts';
 
@@ -133,7 +133,7 @@ const wranglerCheck = (): Check => {
       severity: 'required',
       ok: false,
       detail: 'not installed in the workspace',
-      remedy: 'Run `bun install`. It is a pinned dependency of apps/backend/api.',
+      remedy: 'Run `bun install`. It is a pinned dependency of apps/frontend/client.',
     };
   }
 
@@ -277,7 +277,7 @@ const sopsCheck = (): Check => {
 };
 
 const configCheck = (): Check => {
-  const config = join(API_DIR, 'wrangler.jsonc');
+  const config = join(CLIENT_DIR, 'wrangler.jsonc');
 
   if (!existsSync(config)) {
     return {

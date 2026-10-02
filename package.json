@@ -9,15 +9,14 @@
     "packages/backend/*",
     "packages/frontend/*",
     "apps/frontend/*",
-    "apps/backend/*",
     "apps/e2e",
     "scripts",
     ".pi"
   ],
   "scripts": {
     "moon": "bunx moon",
-    "dev": "moon run client:dev",
-    "dev:api": "bun run scripts/src/cli.ts dev api",
+    "dev": "bun run scripts/src/cli.ts dev app",
+    "dev:worker": "bun run scripts/src/cli.ts dev built",
     "build": "moon run client:build",
     "check:bundle": "moon run client:check-bundle",
     "test": "moon run :test",
@@ -36,7 +35,7 @@
     "setup:doctor": "bun run scripts/src/cli.ts doctor",
     "setup:secrets": "bun run scripts/src/cli.ts secrets doctor",
     "logs": "bun run scripts/src/cli.ts logs",
-    "logs:local": "bun run scripts/src/cli.ts logs all --mode local --follow",
+    "logs:local": "bun run scripts/src/cli.ts logs web --mode local --follow",
     "db:generate": "moon run database:db-generate",
     "db:migrate": "bun run scripts/src/cli.ts db migrate --local",
     "db:migrate:remote": "bun run scripts/src/cli.ts db migrate --remote",
@@ -54,10 +53,10 @@
     "secrets:decrypt": "bun run scripts/src/cli.ts secrets decrypt",
     "secrets:exec": "bun run scripts/src/cli.ts secrets exec",
     "secrets:update-recipients": "bun run scripts/src/cli.ts secrets update-recipients",
-    "test:integration": "moon run api:test-integration",
+    "test:worker": "moon run client:test-worker",
     "test:browser": "moon run client:test-browser",
     "test:e2e": "moon run e2e:e2e",
-    "test:all": "bun run test && bun run test:browser && bun run test:integration && bun run test:e2e"
+    "test:all": "bun run test && bun run test:browser && bun run test:worker && bun run test:e2e"
   },
   "devDependencies": {
     "@biomejs/biome": "2.5.13",

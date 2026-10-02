@@ -1,6 +1,6 @@
 // apps/e2e/tests/notes.spec.ts
 //
-// The full path, through the built client, against a real Worker and a real D1.
+// The full path, through the built Worker, in a real browser, against real D1.
 //
 // One test file on purpose. These tests share one local database and one set of
 // seeded users, and they run in declaration order (`workers: 1`), so the file
@@ -9,12 +9,18 @@
 //
 // What this lane is for, and what it is not:
 //
-//   It IS the only place a contract mismatch between client and server can be
-//   caught — the client validating a payload the Worker rejects, a field renamed
-//   on one side only, a proxy that strips the session cookie.
+//   It IS the only place a contract mismatch between the page and the API can be
+//   caught — a field renamed on one side only, a session cookie the server stops
+//   setting, a route that 404s where a deep link used to render. It is also the
+//   only place a *bundling* mistake can be caught, because the artifact under test
+//   is the compiled Worker rather than the dev server.
 //
 //   It is NOT a place to test that a button renders. `apps/frontend/client` has a
 //   real-browser lane for that, which runs in under a second instead of a minute.
+//
+// The notes route is `/notes`, not `/`. The public landing page took the root, so
+// a signed-out visit to `/` is a real page rather than a redirect — which is what
+// makes the "a deep link renders" assertion in this file mean something.
 
 import { expect, type Page, test } from '@playwright/test';
 
@@ -46,7 +52,7 @@ test.describe('notes, end to end', () => {
   test('signs up and lands on the notes screen', async ({ page }) => {
     await signUp(page);
 
-    await expect(page).toHaveURL(/\/$/);
+    await expect(page).toHaveURL(/\/notes$/);
     await expect(page.getByRole('heading', { name: 'Your notes' })).toBeVisible();
     // A brand-new account has nothing in it: the empty state, not an error.
     await expect(page.getByText('No notes yet')).toBeVisible();
@@ -128,7 +134,7 @@ test.describe('notes, end to end', () => {
 
     // A fresh visit must go back to sign-in. If the route rendered the notes
     // anyway, the session check on the client is doing nothing.
-    await page.goto('/');
+    await page.goto('/notes');
     await expect(page).toHaveURL(/\/login/);
   });
 });

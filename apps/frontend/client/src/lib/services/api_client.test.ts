@@ -50,9 +50,27 @@ describe('ApiClient', () => {
     }).get('/api/health');
 
     expect(seenUrl).toBe('https://api.example.test/api/health');
-    // The session cookie must be sent in a browser; this is what makes the
-    // same-origin dev proxy behave like production.
+    // The session cookie must be sent in a browser. This is what makes a
+    // same-origin request carry the session at all — and since there is no
+    // separate API origin any more, it is also what keeps the cookie first-party.
     expect(seenInit?.credentials).toBe('include');
+  });
+
+  test('the default base URL is same-origin, so a request stays relative', async () => {
+    // No `baseUrl` option at all, which is what the browser gets. The old default
+    // was `http://127.0.0.1:8787` on the server pass — a port that no longer hosts
+    // anything, and one a deployed build would have shipped into the client bundle
+    // as a hard-coded destination.
+    let seenUrl = '';
+    await new ApiClient({
+      className: 'ApiClient',
+      fetch: async (input) => {
+        seenUrl = String(input);
+        return jsonResponse({ ok: true });
+      },
+    }).get('/api/notes');
+
+    expect(seenUrl).toBe('/api/notes');
   });
 
   test('a path without a leading slash still resolves to one URL', async () => {
@@ -75,7 +93,7 @@ describe('ApiClient', () => {
     await client(async (_input, init) => {
       seen.push(new Headers(init?.headers).get('authorization'));
       return jsonResponse({});
-    }).get('/api/whoami');
+    }).get('/api/auth/get-session');
 
     expect(seen).toEqual([null]);
   });

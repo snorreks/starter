@@ -46,10 +46,10 @@ export type { EnvironmentTargets };
 export const LOCAL_DEPLOYMENT_FILE = '.starter/deployment.local.json';
 
 export interface DeploymentValues {
-  workerNames: { client: string | null; api: string | null };
-  d1DatabaseIds: { api: string | null };
+  workerName: string | null;
+  d1DatabaseId: string | null;
   r2BucketNames: { uploads: string | null };
-  customDomains: { client: string | null; api: string | null };
+  customDomain: string | null;
   accountId: string | null;
   /**
    * Per-environment targets, or absent when the project has only ever had one
@@ -66,7 +66,7 @@ export interface DeploymentValues {
    * name unless it is `null` — which is exactly the ambiguity this layer removes.
    *
    * `local` is included for completeness but never carries a Worker: there is no
-   * remote target for it, and `bun run dev:api` is the local story.
+   * remote target for it, and `bun run dev` is the local story.
    *
    * Absent means "no per-environment layer", not "no environments": a single-set
    * project keeps working, and `targetsFor` refuses only when the map exists and the
@@ -82,10 +82,10 @@ export type LocalDeploymentValues = {
 };
 
 const NULL_VALUES: DeploymentValues = {
-  workerNames: { client: null, api: null },
-  d1DatabaseIds: { api: null },
+  workerName: null,
+  d1DatabaseId: null,
   r2BucketNames: { uploads: null },
-  customDomains: { client: null, api: null },
+  customDomain: null,
   accountId: null,
 };
 
@@ -127,25 +127,19 @@ const readLocalFile = (root: string): Partial<DeploymentValues> => {
   const raw = readLocalValues(root);
   const out: Partial<DeploymentValues> = {};
 
-  const workers = objectSection(raw.workerNames);
-  const d1 = objectSection(raw.d1DatabaseIds);
   const r2 = objectSection(raw.r2BucketNames);
-  const domains = objectSection(raw.customDomains);
 
-  if (workers !== undefined) {
-    out.workerNames = { client: usable(workers.client) ?? null, api: usable(workers.api) ?? null };
+  if (raw.workerName !== undefined) {
+    out.workerName = usable(raw.workerName);
   }
-  if (d1 !== undefined) {
-    out.d1DatabaseIds = { api: usable(d1.api) ?? null };
+  if (raw.d1DatabaseId !== undefined) {
+    out.d1DatabaseId = usable(raw.d1DatabaseId);
   }
   if (r2 !== undefined) {
     out.r2BucketNames = { uploads: usable(r2.uploads) ?? null };
   }
-  if (domains !== undefined) {
-    out.customDomains = {
-      client: usable(domains.client) ?? null,
-      api: usable(domains.api) ?? null,
-    };
+  if (raw.customDomain !== undefined) {
+    out.customDomain = usable(raw.customDomain);
   }
   const account = usable(raw.accountId);
   if (account !== null) {
@@ -167,17 +161,10 @@ const readLocalFile = (root: string): Partial<DeploymentValues> => {
       if (entry === undefined) {
         continue;
       }
-      const names = objectSection(entry.workerNames);
-      const d1 = objectSection(entry.d1DatabaseIds);
 
       parsed[name] = {
-        workerNames: {
-          client: names === undefined ? null : (usable(names.client) ?? null),
-          api: names === undefined ? null : (usable(names.api) ?? null),
-        },
-        d1DatabaseIds: {
-          api: d1 === undefined ? null : (usable(d1.api) ?? null),
-        },
+        workerName: usable(entry.workerName),
+        d1DatabaseId: usable(entry.d1DatabaseId),
       };
     }
     if (Object.keys(parsed).length > 0) {
@@ -201,25 +188,25 @@ export const resolveDeploymentValues = (
 
   // Defaults, with the committed module as the floor.
   const merged: DeploymentValues = {
-    workerNames: { ...NULL_VALUES.workerNames, ...DEPLOYMENT_CONFIG.workerNames },
-    d1DatabaseIds: { ...NULL_VALUES.d1DatabaseIds, ...DEPLOYMENT_CONFIG.d1DatabaseIds },
+    workerName: DEPLOYMENT_CONFIG.workerName,
+    d1DatabaseId: DEPLOYMENT_CONFIG.d1DatabaseId,
     r2BucketNames: { ...NULL_VALUES.r2BucketNames, ...DEPLOYMENT_CONFIG.r2BucketNames },
-    customDomains: { ...NULL_VALUES.customDomains, ...DEPLOYMENT_CONFIG.customDomains },
+    customDomain: DEPLOYMENT_CONFIG.customDomain,
     accountId: DEPLOYMENT_CONFIG.accountId,
   };
 
   // Layer 2: the gitignored local file.
-  if (local.workerNames !== undefined) {
-    merged.workerNames = { ...merged.workerNames, ...local.workerNames };
+  if (local.workerName !== undefined) {
+    merged.workerName = local.workerName;
   }
-  if (local.d1DatabaseIds !== undefined) {
-    merged.d1DatabaseIds = { ...merged.d1DatabaseIds, ...local.d1DatabaseIds };
+  if (local.d1DatabaseId !== undefined) {
+    merged.d1DatabaseId = local.d1DatabaseId;
   }
   if (local.r2BucketNames !== undefined) {
     merged.r2BucketNames = { ...merged.r2BucketNames, ...local.r2BucketNames };
   }
-  if (local.customDomains !== undefined) {
-    merged.customDomains = { ...merged.customDomains, ...local.customDomains };
+  if (local.customDomain !== undefined) {
+    merged.customDomain = local.customDomain;
   }
   if (local.accountId !== undefined) {
     merged.accountId = local.accountId;
@@ -233,11 +220,15 @@ export const resolveDeploymentValues = (
   if (fromEnv !== null) {
     merged.accountId = fromEnv;
   }
-  const apiFromEnv = usable(env.CLOUDFLARE_D1_DATABASE_ID);
-  if (apiFromEnv !== null) {
-    merged.d1DatabaseIds = { ...merged.d1DatabaseIds, api: apiFromEnv };
+  const workerFromEnv = usable(env.CLOUDFLARE_WORKER_NAME);
+  if (workerFromEnv !== null) {
+    merged.workerName = workerFromEnv;
+  }
+  const d1FromEnv = usable(env.CLOUDFLARE_D1_DATABASE_ID);
+  if (d1FromEnv !== null) {
+    merged.d1DatabaseId = d1FromEnv;
     for (const target of Object.values(merged.environments ?? {})) {
-      target.d1DatabaseIds = { ...target.d1DatabaseIds, api: apiFromEnv };
+      target.d1DatabaseId = d1FromEnv;
     }
   }
 
@@ -272,33 +263,28 @@ export const localConfigProblem = (root: string = REPO_ROOT): string | null => {
 /** Where one value came from, so a report can name it rather than guess. */
 export type ResolutionLayer = 'environment' | 'local-file' | 'default';
 
+// `FROM_ENV` is total over `field`, so the `?? ''` below is unreachable and exists
+// only to satisfy the index type. `usable('')` is `null`, so the unreachable branch
+// reads as "not set" — the same answer the default path gives.
 export const describeResolution = (
-  field: 'accountId' | 'd1DatabaseIds.api' | 'workerNames.api',
+  field: 'accountId' | 'd1DatabaseId' | 'workerName',
   env: NodeJS.ProcessEnv = process.env,
   root: string = REPO_ROOT,
 ): ResolutionLayer => {
-  if (field === 'accountId' && usable(env.CLOUDFLARE_ACCOUNT_ID) !== null) {
-    return 'environment';
-  }
-  if (field === 'd1DatabaseIds.api' && usable(env.CLOUDFLARE_D1_DATABASE_ID) !== null) {
+  const FROM_ENV: Record<typeof field, NodeJS.ProcessEnv[string]> = {
+    accountId: 'CLOUDFLARE_ACCOUNT_ID',
+    d1DatabaseId: 'CLOUDFLARE_D1_DATABASE_ID',
+    workerName: 'CLOUDFLARE_WORKER_NAME',
+  };
+
+  if (usable(env[FROM_ENV[field] ?? '']) !== null) {
     return 'environment';
   }
 
   const local = readLocalFile(root);
-  if (field === 'accountId' && local.accountId !== null && local.accountId !== undefined) {
+  const fromLocal = local[field];
+  if (typeof fromLocal === 'string' && fromLocal !== '') {
     return 'local-file';
-  }
-  if (field === 'd1DatabaseIds.api') {
-    const id = local.d1DatabaseIds?.api;
-    if (id !== null && id !== undefined) {
-      return 'local-file';
-    }
-  }
-  if (field === 'workerNames.api') {
-    const name = local.workerNames?.api;
-    if (name !== null && name !== undefined) {
-      return 'local-file';
-    }
   }
 
   return 'default';
@@ -351,7 +337,7 @@ export const targetsFor = (environment: DeploymentEnvironment): EnvironmentTarge
   const values = effectiveDeploymentValues();
 
   if (values.environments === undefined) {
-    return { workerNames: values.workerNames, d1DatabaseIds: values.d1DatabaseIds };
+    return { workerName: values.workerName, d1DatabaseId: values.d1DatabaseId };
   }
 
   return values.environments[environment] ?? null;

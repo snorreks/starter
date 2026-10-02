@@ -4,13 +4,13 @@
 //
 // Local capture for browser events works like this:
 //
-//     browser --POST /api/telemetry--> Worker (wrangler dev)
+//     browser --POST /api/telemetry--> the same Worker
 //                                        |
 //                                  stdout, redirected by
-//                                  `bun run dev:api` into
-//                                  /tmp/starter-logs/api.ndjson
+//                                  `bun run dev` into
+//                                  .wrangler/logs/app.ndjson
 //
-// and `bun run logs --mode local` reads that file.
+// and `bun run logs web --mode local` reads that file.
 //
 // The important consequence: **a browser cannot write a local file.** An
 // earlier version of this file attached a Node NDJSON sink here, which simply
@@ -33,7 +33,7 @@ const transport =
       });
 
 export const clientLogger = new BrowserLogger({
-  app: 'client',
+  app: 'web',
   environment: clientConfig.environment,
   source: 'browser',
   release: clientConfig.release,
