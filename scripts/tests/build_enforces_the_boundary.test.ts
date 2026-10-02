@@ -22,6 +22,10 @@
 // Cost, stated plainly: this runs the production build twice, and that is most of the
 // wall clock of this lane. It is here because a gate never observed to close is a
 // belief rather than a gate.
+//
+// Two details below were found by CI rather than by reading: the build's output goes to
+// files instead of pipes, and each build case carries an explicit timeout. See
+// `BUILD_TIMEOUT_MS` and the note on `build`.
 
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { closeSync, openSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
@@ -126,36 +130,58 @@ afterAll(() => {
   }
 });
 
+/**
+ * Bun's per-test deadline for these two cases.
+ *
+ * The default is 5000 ms, and a production build of this application takes longer than
+ * that on a cold CI runner — about 5.1 s in the run that found this. Past the deadline Bun
+ * sends SIGTERM to the test's children, so the build died mid-adapter-step and reported a
+ * null exit code: a timeout wearing the costume of a bundler failure. The two assertions
+ * below are about the build's verdict, so the deadline has to be one the build can meet.
+ *
+ * Generous rather than tight, because a deadline that fails when a machine is slow
+ * teaches people to re-run instead of read.
+ */
+const BUILD_TIMEOUT_MS = 5 * 60 * 1000;
+
 describe('the production build is a second gate', () => {
-  test('the unmodified application builds', () => {
-    // The positive half, and it comes first on purpose. A test that only ever asserts
-    // failure cannot tell a build that rejects a server import from a build that
-    // rejects everything, including the repository as committed.
-    const result = build();
-    expect(result.code, `build failed on a clean tree:\n${result.output}`).toBe(0);
-  });
-
-  test('rejects browser access to a server module, and restores the tree', () => {
-    writeFileSync(path, inject(original ?? ''), 'utf8');
-
-    try {
+  test(
+    'the unmodified application builds',
+    () => {
+      // The positive half, and it comes first on purpose. A test that only ever asserts
+      // failure cannot tell a build that rejects a server import from a build that
+      // rejects everything, including the repository as committed.
       const result = build();
+      expect(result.code, `build failed on a clean tree:\n${result.output}`).toBe(0);
+    },
+    BUILD_TIMEOUT_MS,
+  );
 
-      expect(
-        result.code,
-        'the production build accepted a server import in the browser half',
-      ).not.toBe(0);
-      // The framework's own error code, not merely "the build failed". Asserting on the
-      // code is what distinguishes this from an unrelated breakage.
-      expect(result.output).toContain('server_only_import');
-      expect(result.output).toContain('container.ts');
-    } finally {
-      // Restored in a `finally`, so a failed assertion cannot leave a broken tree for
-      // the next test or the next run. The whole point of injecting a fault is to undo
-      // it.
-      writeFileSync(path, original ?? '', 'utf8');
-    }
-  });
+  test(
+    'rejects browser access to a server module, and restores the tree',
+    () => {
+      writeFileSync(path, inject(original ?? ''), 'utf8');
+
+      try {
+        const result = build();
+
+        expect(
+          result.code,
+          'the production build accepted a server import in the browser half',
+        ).not.toBe(0);
+        // The framework's own error code, not merely "the build failed". Asserting on the
+        // code is what distinguishes this from an unrelated breakage.
+        expect(result.output).toContain('server_only_import');
+        expect(result.output).toContain('container.ts');
+      } finally {
+        // Restored in a `finally`, so a failed assertion cannot leave a broken tree for
+        // the next test or the next run. The whole point of injecting a fault is to undo
+        // it.
+        writeFileSync(path, original ?? '', 'utf8');
+      }
+    },
+    BUILD_TIMEOUT_MS,
+  );
 
   test('the graph guard rejects the same import, on the same file, with no build', () => {
     // The two gates are independent, and this is why both exist. The guard catches it
