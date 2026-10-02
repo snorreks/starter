@@ -22,6 +22,7 @@
 // a decision nobody made.
 
 import { type Browser, chromium, type Page } from '@playwright/test';
+import { playwrightLaunchOptions } from '../../scripts/src/shared/browser_path.ts';
 import { appBaseUrl } from './preflight.ts';
 import {
   type EvidenceResult,
@@ -149,7 +150,17 @@ const visionRound = (): { available: boolean; reason?: string } => {
 async function main(): Promise<number> {
   process.stdout.write(`capturing visual evidence from ${appBaseUrl}\n`);
 
-  const browser = await chromium.launch();
+  // Through the shared resolver, exactly as `playwright.config.ts` does it. A bare
+  // `chromium.launch()` uses Playwright's own resolution, which finds the cached
+  // download and launches it — on a Nix host that binary cannot load its shared
+  // libraries, so this command failed with
+  //
+  //   error while loading shared libraries: libglib-2.0.so.0
+  //
+  // while the E2E suite beside it passed, because the suite was given the Nix
+  // Chromium. One browser-resolution path, shared by both callers, is the whole
+  // fix; re-deciding it here is what let the two disagree.
+  const browser = await chromium.launch(playwrightLaunchOptions());
   let result: EvidenceResult;
 
   try {
