@@ -56,12 +56,47 @@ const SCREENS: readonly { name: string; path: string; prepare?: (page: Page) => 
   ];
 
 async function signIn(page: Page): Promise<void> {
+  const email = `visual-${crypto.randomUUID()}@example.test`;
   await page.goto(`${appBaseUrl}/login`);
   await page.getByTestId('auth-toggle-mode').click();
-  await page.getByTestId('auth-email-input').fill(`visual-${crypto.randomUUID()}@example.test`);
+  await page.getByTestId('auth-email-input').fill(email);
   await page.getByTestId('auth-password-input').fill('correct horse battery staple');
   await page.getByTestId('auth-submit').click();
+  await confirmAddress(page, email);
+  await page.goto(`${appBaseUrl}/notes`);
   await page.getByRole('heading', { name: 'Your notes' }).waitFor();
+}
+
+/**
+ * Confirm the address through the local mail capture.
+ *
+ * Without this the two `/notes` screens could never be captured, and the failure
+ * looked like a broken screenshot rather than a broken fixture: a brand-new account
+ * has no session, `/notes` redirects to `/login`, and the wait above timed out after
+ * 30s per screen — 60s of a run that had already reported its other three captures
+ * as fine. Nothing in this file can sign in as a verified user otherwise.
+ *
+ * `/api/dev/mail` is the same local, per-run capture the E2E suite reads. It is
+ * namespaced to this run and does not exist outside a local D1, which is why this
+ * is a fixture helper and not part of the product.
+ */
+async function confirmAddress(page: Page, email: string): Promise<void> {
+  const response = await page.request.get(
+    `${appBaseUrl}/api/dev/mail?to=${encodeURIComponent(email)}`,
+  );
+  if (!response.ok()) {
+    throw new Error(`mail inbox unavailable: ${response.status()} ${await response.text()}`);
+  }
+  const body = (await response.json()) as { messages: Array<{ subject: string; text: string }> };
+  const message = body.messages.find((entry) => /Verify/i.test(entry.subject));
+  const link = message?.text.split('\n').find((entry) => entry.startsWith('http'));
+  if (link === undefined) {
+    throw new Error(
+      `no verification link captured for ${email}; captured: ` +
+        JSON.stringify(body.messages.map((entry) => entry.subject)),
+    );
+  }
+  await page.goto(link.trim());
 }
 
 async function submitBadCredentials(page: Page): Promise<void> {
