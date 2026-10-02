@@ -235,7 +235,7 @@ async function main(): Promise<number> {
   if (result.captured.length === 0) {
     process.stderr.write(
       `\nNo screen was captured from ${appBaseUrl}, and the evidence directory is empty.\n` +
-        '  Nothing is listening on that port. The Worker\'s own default port is 5173,\n' +
+        '  Nothing is listening on that port. The dev server default is 5173,\n' +
         '  which is a different port from this one — so start it here explicitly:\n\n' +
         `    PORT=${APP_PORT} bun run dev:worker\n\n` +
         '  (or let `bun run e2e` start a server for you)\n',
