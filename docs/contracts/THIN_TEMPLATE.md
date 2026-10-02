@@ -36,7 +36,7 @@
   question. That is the whole test.
 
   Bad:  "the logs are better"
-  Good: "`bun run logs api --mode production --uid <id>` returns only that user's
+  Good: "`bun run logs web --mode production --uid <id>` returns only that user's
         events, or reports `capability_unsupported` if the adapter cannot filter"
 
   Bad:  "add tests"
