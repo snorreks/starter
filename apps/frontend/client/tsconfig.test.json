@@ -18,8 +18,6 @@
       "@starter/logger/*": ["../../../packages/shared/logger/src/*"],
       "@starter/utils": ["../../../packages/shared/utils/src/index.ts"],
       "@starter/utils/*": ["../../../packages/shared/utils/src/*"],
-      "@starter/frontend-services": ["../../../packages/frontend/services/src/index.ts"],
-      "@starter/frontend-services/*": ["../../../packages/frontend/services/src/*"],
       "@starter/ui": ["../../../packages/frontend/ui/src/index.ts"],
       "@starter/ui/*": ["../../../packages/frontend/ui/src/*"]
     }

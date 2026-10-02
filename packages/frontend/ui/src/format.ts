@@ -1,7 +1,11 @@
-// packages/frontend/services/src/platform/format.ts
+// packages/frontend/ui/src/format.ts
 //
-// Small presentation helpers shared by views. Kept out of components so they
-// are unit-testable without a DOM and reusable without importing a component.
+// Presentation formatting shared by views. Kept out of components so they are
+// testable without a DOM and reusable without importing a component.
+//
+// Moved here from the deleted `@starter/frontend-services` workspace: the only
+// consumer in this repository was `note_card.svelte`, and a shared package that
+// exists to serve one caller is an indirection with no boundary behind it.
 
 const RELATIVE_UNITS: readonly [Intl.RelativeTimeFormatUnit, number][] = [
   ['year', 31_536_000_000],

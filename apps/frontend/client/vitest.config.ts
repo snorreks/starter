@@ -65,15 +65,6 @@ const packageAliases = [
   { find: /^@starter\/utils\//, replacement: `${src('../../../packages/shared/utils/src')}/` },
   { find: /^@starter\/utils$/, replacement: src('../../../packages/shared/utils/src/index.ts') },
 
-  {
-    find: /^@starter\/frontend-services\//,
-    replacement: `${src('../../../packages/frontend/services/src')}/`,
-  },
-  {
-    find: /^@starter\/frontend-services$/,
-    replacement: src('../../../packages/frontend/services/src/index.ts'),
-  },
-
   { find: /^@starter\/ui\//, replacement: `${src('../../../packages/frontend/ui/src')}/` },
   { find: /^@starter\/ui$/, replacement: src('../../../packages/frontend/ui/src/index.ts') },
 ];

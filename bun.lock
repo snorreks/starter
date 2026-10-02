@@ -38,7 +38,6 @@
         "@sinclair/typebox": "0.34.52",
         "@starter/auth": "workspace:*",
         "@starter/database": "workspace:*",
-        "@starter/frontend-services": "workspace:*",
         "@starter/logger": "workspace:*",
         "@starter/schemas": "workspace:*",
         "@starter/ui": "workspace:*",
@@ -84,24 +83,10 @@
         "drizzle-kit": "0.31.11",
       },
     },
-    "packages/frontend/services": {
-      "name": "@starter/frontend-services",
-      "version": "0.1.0",
-      "dependencies": {
-        "@sinclair/typebox": "0.34.52",
-        "@starter/logger": "workspace:*",
-        "@starter/schemas": "workspace:*",
-        "@starter/utils": "workspace:*",
-      },
-      "devDependencies": {
-        "svelte-check": "4.7.6",
-      },
-    },
     "packages/frontend/ui": {
       "name": "@starter/ui",
       "version": "0.1.0",
       "dependencies": {
-        "@starter/frontend-services": "workspace:*",
         "@starter/schemas": "workspace:*",
         "@starter/utils": "workspace:*",
       },
@@ -505,8 +490,6 @@
     "@starter/database": ["@starter/database@workspace:packages/backend/database"],
 
     "@starter/e2e": ["@starter/e2e@workspace:apps/e2e"],
-
-    "@starter/frontend-services": ["@starter/frontend-services@workspace:packages/frontend/services"],
 
     "@starter/logger": ["@starter/logger@workspace:packages/shared/logger"],
 

@@ -108,7 +108,9 @@ describe('checkBundle', () => {
       'cloudflare:workers',
       'notes_owner_id_idx',
       'device_codes',
-      'emailVerified',
+      'account_id',
+      'provider_id',
+      'email_verified',
     ]) {
       const dir = fixture({
         'clean.js': 'export const b = 2;\n',
@@ -121,6 +123,21 @@ describe('checkBundle', () => {
         expect(leaked[0]?.message).toContain(marker);
       });
     }
+  });
+
+  test('the session shape the browser parses is not mistaken for a leak', () => {
+    // `SessionUserSchema` carries `emailVerified`, which is also a property name in
+    // Better Auth's schema. A marker list that fires on the browser's own session shape
+    // fails a clean build, and the fix people reach for is deleting the marker — which
+    // takes the real check with it. The identifiers that only `@starter/database` has
+    // carry that weight instead; this pins the collision that was actually hit.
+    const dir = fixture({
+      'chunk.js':
+        'const e={id:"u_1",email:"a@b.test",displayName:"A",provider:"email",emailVerified:true};export{e};\n',
+    });
+    withDir(dir, () => {
+      expect(checkBundle(dir).filter((p) => p.code === 'server_code_in_client')).toEqual([]);
+    });
   });
 
   test('a minified schema leak is caught even though the library name is gone', () => {

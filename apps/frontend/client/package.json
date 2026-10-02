@@ -25,7 +25,6 @@
   "dependencies": {
     "@starter/auth": "workspace:*",
     "@starter/database": "workspace:*",
-    "@starter/frontend-services": "workspace:*",
     "@starter/logger": "workspace:*",
     "@starter/schemas": "workspace:*",
     "@starter/ui": "workspace:*",

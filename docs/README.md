@@ -12,11 +12,13 @@ Start here. Nothing below is required reading before running a command — the
 | write or run tests | [testing.md](testing.md) |
 | understand a past decision | [first-round-review.md](first-round-review.md) |
 | change the architecture | [architecture.md](architecture.md) |
+| change accounts, sessions or mail | [auth.md](auth.md) |
 
 ## Guides
 
 - [testing.md](testing.md) — the four lanes, why they are separate, and how each is
   verified
+- [auth.md](auth.md) — the account lifecycle, the rate limiter, and mail
 - [cloudflare.md](cloudflare.md) — Workers, D1, deployment, credentials, and the
   Worker's deployment-mode binding
 - [logs.md](logs.md) — the `bun run logs` family and what each refusal means

@@ -200,6 +200,7 @@ bun run --cwd packages/backend/database db:generate
 | [docs/capability-matrix.md](docs/capability-matrix.md) | what is verified, fixture-verified, or not run |
 | [docs/first-round-review.md](docs/first-round-review.md) | fixed and open findings |
 | [docs/architecture.md](docs/architecture.md) | boundaries and why |
+| [docs/auth.md](docs/auth.md) | the account lifecycle, the D1 rate limiter, and mail |
 | [docs/cloudflare.md](docs/cloudflare.md) | deploy, D1, workers, credentials |
 | [docs/logs.md](docs/logs.md) | the log CLI and its refusals |
 | [docs/secrets.md](docs/secrets.md) | SOPS: the operations, and what each one refuses |

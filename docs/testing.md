@@ -509,9 +509,9 @@ fault was restored afterwards.
 | cleanup leaves no owned process after a failure | `ps`, `ss` after the failed worker run | no `workerd`, no `wrangler`, no listener in the port range |
 
 The `--pass-with-no-tests` row is the reason the CI job greps for a passing count
-rather than trusting an exit code. Four projects — `ui`, `database`, `auth`,
-`frontend-services` — declare it, so a green run can legitimately contain no tests;
-the lane as a whole may not.
+rather than trusting an exit code. Three projects — `ui`, `database` and `auth` —
+declare it, so a green run can legitimately contain no tests; the lane as a whole
+may not.
 
 ### Cache evidence, measured
 

@@ -15,8 +15,8 @@
 
 import { describe, expect, test } from 'bun:test';
 import type { Note } from '@starter/schemas/notes';
-import { NotesViewModel } from './notes_view_model.svelte.ts';
 import type { NotesService } from './notes_service.svelte.ts';
+import { NotesViewModel } from './notes_view_model.svelte.ts';
 
 /**
  * Distinct timestamps, so the ViewModel's newest-first sort produces a
@@ -75,7 +75,6 @@ describe('NotesViewModel writes after disposal', () => {
   test('a delete completing after dispose does not restore state', async () => {
     const gate = new Deferred();
     const model = new NotesViewModel({
-      className: 'NotesViewModel',
       notes: service({
         list: () => Promise.resolve([note('a', 2), note('b', 1)]),
         remove: () => gate.promise,
@@ -104,7 +103,6 @@ describe('NotesViewModel writes after disposal', () => {
   test('a delete completing after dispose does not resurrect an edit selection', async () => {
     const gate = new Deferred();
     const model = new NotesViewModel({
-      className: 'NotesViewModel',
       notes: service({
         list: () => Promise.resolve([note('a', 1)]),
         remove: () => gate.promise,
@@ -130,7 +128,6 @@ describe('NotesViewModel writes after disposal', () => {
   test('a mutation after dispose is refused outright', async () => {
     let removed = 0;
     const model = new NotesViewModel({
-      className: 'NotesViewModel',
       notes: service({
         list: () => Promise.resolve([note('a', 1)]),
         remove: () => {
@@ -158,7 +155,6 @@ describe('NotesViewModel overlapping optimistic deletions', () => {
     const gateB = new Deferred();
 
     const model = new NotesViewModel({
-      className: 'NotesViewModel',
       notes: service({
         list: () => Promise.resolve([note('a', 2), note('b', 1)]),
         remove: (id) => (id === 'a' ? gateA.promise : gateB.promise),
@@ -197,7 +193,6 @@ describe('NotesViewModel overlapping optimistic deletions', () => {
     const gateA = new Deferred();
     const gateB = new Deferred();
     const model = new NotesViewModel({
-      className: 'NotesViewModel',
       notes: service({
         list: () => Promise.resolve([note('a', 3), note('b', 2), note('c', 1)]),
         remove: (id) => (id === 'a' ? gateA.promise : gateB.promise),
@@ -227,7 +222,6 @@ describe('NotesViewModel overlapping optimistic deletions', () => {
   test('a failed delete restores only its own row', async () => {
     const gate = new Deferred();
     const model = new NotesViewModel({
-      className: 'NotesViewModel',
       notes: service({
         list: () => Promise.resolve([note('a', 3), note('b', 2), note('c', 1)]),
         remove: () => gate.promise,
@@ -254,7 +248,6 @@ describe('NotesViewModel overlapping optimistic deletions', () => {
     let listCalls = 0;
 
     const model = new NotesViewModel({
-      className: 'NotesViewModel',
       notes: service({
         list: () => {
           listCalls += 1;
@@ -282,7 +275,6 @@ describe('NotesViewModel overlapping optimistic deletions', () => {
     const gateA = new Deferred();
     const gateB = new Deferred();
     const model = new NotesViewModel({
-      className: 'NotesViewModel',
       notes: service({
         list: () => Promise.resolve([note('a', 2), note('b', 1)]),
         remove: (id) => (id === 'a' ? gateA.promise : gateB.promise),
@@ -308,10 +300,35 @@ describe('NotesViewModel overlapping optimistic deletions', () => {
 });
 
 describe('NotesViewModel disposal state', () => {
+  for (const operation of ['create', 'update'] as const) {
+    test(`${operation} completing after disposal returns false without reloading`, async () => {
+      const gate = new Deferred();
+      let loads = 0;
+      const model = new NotesViewModel({
+        notes: service({
+          list: async () => {
+            loads += 1;
+            return [note('a')];
+          },
+          [operation]: () => gate.promise,
+        }),
+      });
+      await model.initialize();
+      const pending =
+        operation === 'create'
+          ? model.createNote({ title: 'new', body: '' })
+          : model.updateNote('a', { title: 'updated' });
+      await model.dispose();
+      gate.resolve();
+      expect(await pending).toBe(false);
+      expect(loads).toBe(1);
+      expect(model.isMutating).toBe(false);
+    });
+  }
+
   test('a disposed ViewModel refuses a load', async () => {
     let listCalls = 0;
     const model = new NotesViewModel({
-      className: 'NotesViewModel',
       notes: service({
         list: () => {
           listCalls += 1;
@@ -330,7 +347,7 @@ describe('NotesViewModel disposal state', () => {
   });
 
   test('disposing twice is not an error', async () => {
-    const model = new NotesViewModel({ className: 'NotesViewModel', notes: service() });
+    const model = new NotesViewModel({ notes: service() });
     await model.initialize();
 
     await model.dispose();

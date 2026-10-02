@@ -10,9 +10,9 @@
       "svelte": "./src/index.ts",
       "default": "./src/index.ts"
     },
-    "./base": {
-      "svelte": "./src/base/index.ts",
-      "default": "./src/base/index.ts"
+    "./screen": {
+      "svelte": "./src/screen.ts",
+      "default": "./src/screen.ts"
     },
     "./feedback": {
       "svelte": "./src/feedback/index.ts",
@@ -28,7 +28,6 @@
     "test": "bun test --pass-with-no-tests"
   },
   "dependencies": {
-    "@starter/frontend-services": "workspace:*",
     "@starter/schemas": "workspace:*",
     "@starter/utils": "workspace:*"
   },

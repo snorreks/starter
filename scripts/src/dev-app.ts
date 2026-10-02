@@ -104,7 +104,6 @@ const FORWARDED_VARS = [
   'AUTH_RATE_LIMIT_MAX',
   'TRUSTED_ORIGINS',
   'BETTER_AUTH_SECRET',
-  'BETTER_AUTH_URL',
   'DEPLOYMENT_ENV',
 ] as const;
 
@@ -149,18 +148,47 @@ const clearStale = (): void => {
   rmSync(PIDFILE, { force: true });
 };
 
+/**
+ * Bindings to forward, with the local origin resolved by this launcher.
+ *
+ * `BETTER_AUTH_URL` is handled separately and deliberately, because nothing else
+ * can supply it correctly.
+ *
+ * The launcher passes `--host`, which makes Wrangler 4.142.0 rewrite the request
+ * URL, Host and Origin to omit the public port. Without that flag the port is
+ * preserved. `requestOriginFor` cannot recover a port absent from both URL and
+ * Host, so this launcher supplies the public origin through `BETTER_AUTH_URL`.
+ *
+ * A caller that already set `BETTER_AUTH_URL` keeps their value: this is a default,
+ * not an override.
+ */
 const varFlags = (): string[] => {
   const args: string[] = [];
+
   for (const name of FORWARDED_VARS) {
     const value = process.env[name];
     if (value !== undefined && value.length > 0) {
       args.push('--var', `${name}:${value}`);
     }
   }
+
+  const configuredUrl = process.env.BETTER_AUTH_URL;
+  const resolvedUrl =
+    configuredUrl !== undefined && configuredUrl.length > 0
+      ? configuredUrl
+      : `http://${HOST}:${PORT}`;
+  args.push('--var', `BETTER_AUTH_URL:${resolvedUrl}`);
+
   return args;
 };
 
-interface Target {
+/**
+ * The launcher surface these tests read.
+ *
+ * Declared here rather than re-invented at each call site: a test that re-declares
+ * the shape it expects is testing its own annotation, not the module.
+ */
+export interface Target {
   bin: string | null;
   declaringPackage: string;
   args: string[];

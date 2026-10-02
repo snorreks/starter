@@ -42,9 +42,15 @@ projects:
   logger: 'packages/shared/logger'
   utils: 'packages/shared/utils'
 
-  # Frontend packages: browser and webview code. Shared only.
+  # Frontend packages: browser code. Shared only.
+  #
+  # `frontend-services` is gone. It held a three-deep base-class chain
+  # (BaseFrontendClass -> BaseViewModel -> BaseFormViewModel) with three subclasses
+  # in the whole repository and thirteen members that had no caller at all. The
+  # parts that were load-bearing — StaleGuard, MutationGuard, OptimisticUpdate —
+  # were already in `@starter/utils`, and the one component that needed to survive
+  # moved into `@starter/ui` beside the components it renders.
   ui: 'packages/frontend/ui'
-  frontend-services: 'packages/frontend/services'
 
   # Backend packages: server code. Shared only.
   database: 'packages/backend/database'

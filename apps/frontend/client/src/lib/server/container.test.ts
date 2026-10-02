@@ -21,15 +21,39 @@
 
 import { describe, expect, test } from 'bun:test';
 import { getContainer } from './container.ts';
+import { resolveTrustedOrigins } from './env.ts';
 import { notConfigured } from './http.ts';
 
 /** A D1-shaped stub. The container only stores the handle; it never calls it. */
 const dbStub = {} as unknown as D1Database;
 
+/**
+ * A local environment. No mail configuration, and that is the point: local
+ * captures into an in-memory inbox, so these tests never need a provider key and
+ * never send anything.
+ */
 const localEnv = (overrides: Record<string, unknown> = {}): Record<string, unknown> => ({
   DB: dbStub,
   DEPLOYMENT_ENV: 'local',
   BETTER_AUTH_URL: 'http://127.0.0.1:5173',
+  ...overrides,
+});
+
+/**
+ * A deployed environment.
+ *
+ * Carries a complete mail configuration, because a remote one that lacks it is
+ * refused — see the production cases below. Writing the key here rather than in
+ * each test keeps the *absence* the deliberate change, which is what these tests
+ * vary.
+ */
+const remoteEnv = (overrides: Record<string, unknown> = {}): Record<string, unknown> => ({
+  DB: dbStub,
+  DEPLOYMENT_ENV: 'production',
+  BETTER_AUTH_URL: 'https://web.example.test',
+  BETTER_AUTH_SECRET: 'z'.repeat(48),
+  RESEND_API_KEY: 're_test_only_not_a_real_key',
+  MAIL_FROM: 'Starter <no-reply@example.test>',
   ...overrides,
 });
 
@@ -50,13 +74,28 @@ describe('the container refuses bad configuration with a named cause', () => {
   });
 
   test('a remote env carrying the development secret is refused', () => {
-    const env = localEnv({
-      DEPLOYMENT_ENV: 'production',
-      BETTER_AUTH_URL: 'https://web.example.test',
-      BETTER_AUTH_SECRET: 'development-only-not-a-secret',
-    });
+    expect(() =>
+      getContainer(remoteEnv({ BETTER_AUTH_SECRET: 'development-only-not-a-secret' })),
+    ).toThrow(/development placeholder/);
+  });
 
-    expect(() => getContainer(env)).toThrow(/development placeholder/);
+  // The other half of a complete account lifecycle. A deployed Worker with no mail
+  // transport would accept every sign-up, report them successful, and deliver
+  // nothing — so the accounts exist and nobody can ever finish setting them up.
+  test('a deployed env with no mail provider refuses to start', () => {
+    expect(() => getContainer(remoteEnv({ RESEND_API_KEY: undefined }))).toThrow(/RESEND_API_KEY/);
+  });
+
+  test('a deployed env with no sender address refuses to start', () => {
+    expect(() => getContainer(remoteEnv({ MAIL_FROM: undefined }))).toThrow(/MAIL_FROM/);
+  });
+
+  test('a deployed env cannot be talked into the local capture inbox', () => {
+    // The tempting configuration: no key, and a Worker that quietly keeps messages
+    // in memory. Nothing here has to look for it — the refusal is unconditional.
+    expect(() => getContainer(remoteEnv({ RESEND_API_KEY: '   ' }))).toThrow(
+      /not permitted to use the local capture inbox/,
+    );
   });
 });
 
@@ -72,15 +111,33 @@ describe('a valid env produces a container that names its own environment', () =
   test('a remote env with a real secret reports the resolved name, not a guess', () => {
     // Not `isLocal ? 'local' : 'production'` — the resolved name, so a
     // `development` deployment does not report itself as production.
-    const container = getContainer(
-      localEnv({
-        DEPLOYMENT_ENV: 'production',
-        BETTER_AUTH_URL: 'https://web.example.test',
-        BETTER_AUTH_SECRET: 'z'.repeat(48),
-      }),
-    );
+    const container = getContainer(remoteEnv());
     expect(container.environment).toBe('production');
     expect(container.isLocal).toBe(false);
+  });
+
+  test('a local env captures mail without a provider key', () => {
+    // The property every test in this repository relies on: a local run can
+    // exercise verification and recovery with no Resend account and no network.
+    const container = getContainer(localEnv());
+    expect(container.mail.mode).toBe('capture');
+    expect(container.mailCapture).toBeDefined();
+  });
+
+  test('a deployed env delivers through Resend and exposes no inbox', () => {
+    const container = getContainer(remoteEnv());
+
+    // `mailCapture` is absent, not merely empty. A caller reaching for it gets
+    // `undefined` and a type error, rather than an inbox that looks like a working
+    // deployment and swallows every verification mail.
+    expect(container.mail.mode).toBe('resend');
+    expect(container.mailCapture).toBeUndefined();
+  });
+
+  test('a local env holding a stray provider key still captures', () => {
+    // A developer with a real key in `.env` must not be able to mail strangers by
+    // running `bun run dev`.
+    expect(getContainer(localEnv({ RESEND_API_KEY: 're_live_real' })).mail.mode).toBe('capture');
   });
 });
 
@@ -107,7 +164,7 @@ describe('the container is memoized per binding set and origin, and never across
 
   test('two binding sets never share a container', () => {
     const local = localEnv();
-    const staging = localEnv({
+    const staging = remoteEnv({
       DEPLOYMENT_ENV: 'staging',
       BETTER_AUTH_URL: 'https://staging.example.test',
       BETTER_AUTH_SECRET: 'q'.repeat(48),
@@ -120,6 +177,80 @@ describe('the container is memoized per binding set and origin, and never across
     expect(firstLocal).toBe(secondLocal);
     expect(stagingContainer).not.toBe(firstLocal);
     expect(stagingContainer.environment).toBe('staging');
+  });
+
+  test('two local runs sharing one binding set keep separate inboxes', async () => {
+    const env = localEnv({ TEST_RUN_ID: 'run-a' });
+    const first = getContainer(env);
+    await first.mail.send({ to: 'someone@example.test', subject: 'Run A', text: 'first' });
+
+    env.TEST_RUN_ID = 'run-b';
+    const second = getContainer(env);
+    expect(second).toBe(getContainer(env));
+    expect(first.mailCapture?.inboxId).toBe('run-a');
+    expect(second.mailCapture?.inboxId).toBe('run-b');
+    expect(first.mailCapture?.inbox()).toHaveLength(1);
+    expect(second.mailCapture?.inbox()).toHaveLength(0);
+  });
+});
+
+describe('the trusted-origin list accepts the origin the browser actually sends', () => {
+  test('a local origin is accepted with and without its port', () => {
+    // `wrangler dev` rewrites the inbound `Origin` header to drop the port before the
+    // Worker sees it, while the browser sent the ported form. Trusting only one of
+    // them makes every credentialed request fail with INVALID_ORIGIN — which is
+    // exactly what happened to the E2E lane before this was handled.
+    const origins = resolveTrustedOrigins({}, 'http://127.0.0.1:4183', true);
+
+    expect(origins).toContain('http://127.0.0.1:4183');
+    expect(origins).toContain('http://127.0.0.1');
+  });
+
+  test('the portless form is not added when it would be a duplicate', () => {
+    const origins = resolveTrustedOrigins({}, 'http://localhost', true);
+    expect(origins.filter((origin) => origin === 'http://localhost')).toHaveLength(1);
+  });
+
+  test('a remote deployment gets no portless variant', () => {
+    // In production there is one hostname. Inventing a second acceptable origin there
+    // would widen the allowlist rather than correct a mismatch.
+    const origins = resolveTrustedOrigins({}, 'https://web.example.test', false);
+
+    expect(origins).toEqual(['https://web.example.test']);
+  });
+
+  test('configured origins are kept, and duplicates collapse', () => {
+    const origins = resolveTrustedOrigins(
+      { TRUSTED_ORIGINS: 'https://a.example.test, https://b.example.test' },
+      'https://a.example.test',
+      false,
+    );
+
+    expect(origins).toEqual(['https://a.example.test', 'https://b.example.test']);
+  });
+
+  test('a configured origin is never dropped, only added to', () => {
+    // A second trusted origin is a deliberate operator choice; this must never
+    // quietly remove it.
+    const origins = resolveTrustedOrigins(
+      { TRUSTED_ORIGINS: 'https://other.example.test' },
+      'https://web.example.test',
+      false,
+    );
+
+    expect(origins).toContain('https://other.example.test');
+    expect(origins).toContain('https://web.example.test');
+  });
+
+  test('a container built from a local env trusts the portless origin too', () => {
+    // End to end through the container, because the list is only correct if it
+    // actually reaches the auth instance.
+    const container = getContainer(localEnv({ BETTER_AUTH_URL: 'http://127.0.0.1:6100' }));
+    expect(container.baseUrl).toBe('http://127.0.0.1:6100');
+    // `container.auth.options.trustedOrigins` is the list Better Auth checks against.
+    const trusted = container.auth.options.trustedOrigins as string[] | undefined;
+    expect(trusted ?? []).toContain('http://127.0.0.1:6100');
+    expect(trusted ?? []).toContain('http://127.0.0.1');
   });
 });
 

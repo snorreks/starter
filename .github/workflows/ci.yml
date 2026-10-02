@@ -77,7 +77,7 @@ env:
   # certify a count it could not read. `[1-9]` rather than `[0-9]` so a lane that
   # printed "0 passed" is still a failure.
   #
-  # Four projects — ui, database, auth, frontend-services — declare
+  # Three projects — ui, database and auth — declare
   # `bun test --pass-with-no-tests`, and they print no count at all. So the count
   # has to be an aggregate over the lane, not a per-project check.
   TESTS_PASSED_PATTERN: '(^|[[:space:]])[1-9][0-9]* (pass|passed)'
@@ -169,7 +169,7 @@ jobs:
         run: set -o pipefail; bun run test 2>&1 | tee "$RUNNER_TEMP/unit.log"
 
       - name: Assert the unit lane discovered and passed tests
-        # Four projects declare `bun test --pass-with-no-tests`, so a green run can
+        # Three projects declare `bun test --pass-with-no-tests`, so a green run can
         # legitimately contain no tests. The lane as a whole may not: if none of
         # them discovered anything, the runner matched nothing and the job is a
         # green no-op.

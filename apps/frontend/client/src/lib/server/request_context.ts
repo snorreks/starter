@@ -25,16 +25,24 @@ import { unauthorized } from './http.ts';
  * Structurally `SessionUser` from `@starter/schemas` — the DTO the browser's
  * `SessionService` already expects — but built here from the Better Auth session
  * rather than handed through. The mapping is the point: Better Auth's user object
- * carries `name`, `image`, `emailVerified` and its session object carries a token,
- * and a page load that returned any of those would be publishing a session
- * credential into the HTML. Naming the three fields is what makes that impossible
- * to do by accident.
+ * carries `image` and its session object carries a token, and a page load that
+ * returned any of those would be publishing a session credential into the HTML.
+ * Naming the fields is what makes that impossible to do by accident.
  */
 export interface RequestUser {
   id: string;
   email: string;
   displayName: string;
   provider: 'email';
+  /**
+   * Whether this address has been confirmed.
+   *
+   * Carried explicitly because a session and a verified address are different
+   * facts. Deriving "verified" from "has a session" would tell every user who
+   * signed up before verification was enabled that they are verified, which is a
+   * claim this application cannot actually support.
+   */
+  emailVerified: boolean;
 }
 
 export interface RequestContext {
@@ -107,6 +115,7 @@ export const resolveUser = async (
     email: session.user.email,
     displayName: session.user.name,
     provider: 'email',
+    emailVerified: session.user.emailVerified,
   };
 };
 

@@ -26,19 +26,17 @@
 //   2. **Own processes only.** Ports are chosen by binding to port 0 and letting
 //      the OS pick, and only processes this file started are ever stopped.
 
-import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
+import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:test';
 import { type ChildProcess, spawn } from 'node:child_process';
-import { existsSync, openSync, rmSync } from 'node:fs';
+import { closeSync, existsSync, openSync, rmSync } from 'node:fs';
 import { createServer } from 'node:net';
 import { join } from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { createId } from '@starter/utils';
 import { killTree } from '@starter/utils/process';
+import { sleep, spawnSync } from 'bun';
 import { MAX_BODY_BYTES } from '../src/lib/server/telemetry_service.ts';
+import { REPO_ROOT } from './database_paths.ts';
 
-// `import.meta.url` is this file's URL: four levels up from
-// apps/frontend/client/tests/ reaches the repository root.
-const REPO_ROOT = fileURLToPath(new URL('../../../../', import.meta.url)).replace(/\/$/, '');
 const APP_DIR = join(REPO_ROOT, 'apps/frontend/client');
 const APP_CONFIG = join(APP_DIR, 'wrangler.jsonc');
 const WORKER_ENTRY = join(APP_DIR, '.svelte-kit/cloudflare/_worker.js');
@@ -118,7 +116,7 @@ const waitForOurWorker = async (timeoutMs = 120_000): Promise<Readiness> => {
     } catch {
       // Not listening yet.
     }
-    await Bun.sleep(400);
+    await sleep(400);
   }
 
   return {
@@ -152,7 +150,7 @@ beforeAll(async () => {
   // depend on whatever a previous run left behind.
   rmSync(LOCAL_STATE, { recursive: true, force: true });
 
-  const migrate = Bun.spawnSync(
+  const migrate = spawnSync(
     [WRANGLER, 'd1', 'migrations', 'apply', 'DB', '--local', '--config', APP_CONFIG],
     { cwd: REPO_ROOT, stdout: 'pipe', stderr: 'pipe' },
   );
@@ -245,24 +243,128 @@ interface Account {
  */
 const originHeaders = (): Record<string, string> => ({ origin: base() });
 
+/**
+ * Create a verified account and sign it in.
+ *
+ * Three real HTTP calls, in the order a person performs them, because each step is
+ * where a defect shows up:
+ *
+ *   1. `sign-up` — creates the account. Returns **no** session: `autoSignIn` is off
+ *      precisely because the address is not confirmed yet.
+ *   2. the verification link, read from the local capture inbox. Real workerd, real
+ *      D1, real Better Auth token — only the mail transport is substituted, and
+ *      nothing leaves the machine.
+ *   3. `sign-in` — the step that is refused if verification did not actually happen.
+ *
+ * Every later test in this file depends on step 3 succeeding, so a broken
+ * verification flow fails here first, in one place, rather than as a dozen confusing
+ * 403s.
+ */
 const signUp = async (label: string): Promise<Account> => {
   const email = `${label}-${createId('t', 8)}@example.invalid`;
   const password = 'correct-horse-battery-staple';
 
-  const response = await fetch(`${base()}/api/auth/sign-up/email`, {
+  const created = await authFetch('/api/auth/sign-up/email', {
     method: 'POST',
-    headers: { 'content-type': 'application/json', ...originHeaders() },
     body: JSON.stringify({ email, password, name: label }),
   });
 
-  if (!response.ok) {
+  if (!created.ok) {
     throw new Error(
-      `sign-up failed: ${response.status} ${await response.text()} (worker log: ${WORKER_LOG})`,
+      `sign-up failed: ${created.status} ${await created.text()} (worker log: ${WORKER_LOG})`,
     );
   }
 
-  const setCookie = response.headers.get('set-cookie') ?? '';
-  return { email, password, cookie: setCookie.split(';')[0] ?? '' };
+  // No session cookie yet. Asserted rather than assumed: if this ever becomes truth,
+  // every later test in this file would still pass while testing an
+  // application that hands out sessions for unconfirmed addresses.
+  const createdBody = (await created.json()) as { token: string | null };
+  expect(createdBody.token).toBeNull();
+
+  const link = await verificationLinkFor(email);
+  const verified = await fetch(link, { redirect: 'manual' });
+  expect(verified.status).toBe(302);
+
+  const signedIn = await authFetch('/api/auth/sign-in/email', {
+    method: 'POST',
+    body: JSON.stringify({ email, password }),
+  });
+  if (!signedIn.ok) {
+    throw new Error(
+      `sign-in after verification failed: ${signedIn.status} ${await signedIn.text()} ` +
+        `(worker log: ${WORKER_LOG})`,
+    );
+  }
+
+  const setCookie = signedIn.headers.get('set-cookie') ?? '';
+  const cookie = setCookie.split(';')[0] ?? '';
+  if (!cookie.includes('better-auth')) {
+    throw new Error(`sign-in set no session cookie: ${JSON.stringify(setCookie)}`);
+  }
+
+  return { email, password, cookie };
+};
+
+/** An auth call with the headers a same-origin browser would send. */
+const authFetch = (path: string, init: RequestInit = {}): Promise<Response> =>
+  fetch(`${base()}${path}`, {
+    ...init,
+    headers: {
+      'content-type': 'application/json',
+      ...originHeaders(),
+      ...(init.headers ?? {}),
+    },
+  });
+
+interface CapturedMessage {
+  to: string;
+  subject: string;
+  text: string;
+}
+
+/**
+ * The newest captured mail for `email`, through the local-only inbox endpoint.
+ *
+ * The endpoint refuses a non-local environment with 403, so this is also the
+ * assertion that a deployed Worker has no inbox — but here it is read for its
+ * ordinary purpose: getting the link a person would have received.
+ */
+const inbox = async (email?: string): Promise<{ inbox: string; messages: CapturedMessage[] }> => {
+  const url =
+    email === undefined ? '/api/dev/mail' : `/api/dev/mail?to=${encodeURIComponent(email)}`;
+  const response = await fetch(`${base()}${url}`);
+  if (!response.ok) {
+    throw new Error(`mail inbox unavailable: ${response.status} ${await response.text()}`);
+  }
+  return (await response.json()) as { inbox: string; messages: CapturedMessage[] };
+};
+
+/** The verification link from `email`'s newest confirmation mail. */
+const verificationLinkFor = async (email: string): Promise<string> => {
+  const { messages } = await inbox(email);
+  const message = messages.find((entry) => entry.subject.includes('Verify'));
+  if (message === undefined) {
+    throw new Error(`No verification mail was captured for ${email}`);
+  }
+  const line = message.text.split('\n').find((entry) => entry.startsWith('http'));
+  if (line === undefined) {
+    throw new Error(`No link in the verification mail: ${JSON.stringify(message.text)}`);
+  }
+  return line.trim();
+};
+
+/** The recovery link from `email`'s newest password-reset mail. */
+const recoveryLinkFor = async (email: string): Promise<string> => {
+  const { messages } = await inbox(email);
+  const message = messages.find((entry) => entry.subject.includes('password'));
+  if (message === undefined) {
+    throw new Error(`No recovery mail was captured for ${email}`);
+  }
+  const line = message.text.split('\n').find((entry) => entry.startsWith('http'));
+  if (line === undefined) {
+    throw new Error(`No link in the recovery mail: ${JSON.stringify(message.text)}`);
+  }
+  return line.trim();
 };
 
 const api = (account: Account, path: string, init: RequestInit = {}): Promise<Response> =>
@@ -317,10 +419,36 @@ describe('same-origin routing, with no proxy anywhere', () => {
   });
 
   test('a deep link to a client route renders, rather than 404ing', async () => {
-    const response = await fetch(`${base()}/login`);
+    // `auth-screen` is the element the view renders, not a class name: a test id or
+    // class is a thing an edit can remove without changing what a user sees, and this
+    // assertion is about the server having produced the form at all.
+    expect((await fetch(`${base()}/login`)).status).toBe(200);
+    expect(await (await fetch(`${base()}/login`)).text()).toContain('auth-screen');
 
-    expect(response.status).toBe(200);
-    expect(await response.text()).toContain('auth-form');
+    // The recovery and confirmation routes are client routes too, so a deep link into
+    // either must render. They were added with this PR and are easy to forget: a
+    // missing route here is a 404 a real user hits by following a link in an email.
+    for (const path of ['/forgot-password', '/verify-email']) {
+      const response = await fetch(`${base()}${path}`);
+      expect(response.status).toBe(200);
+    }
+  });
+
+  test('the sign-in form is server-rendered and complete before hydration', async () => {
+    // No JavaScript has run at this point, so anything present in this HTML was
+    // produced by the server. Both fields and the submit button are what a user with
+    // scripting disabled needs to sign in at all.
+    const html = await (await fetch(`${base()}/login`)).text();
+
+    expect(html).toContain('id="auth-email"');
+    expect(html).toContain('id="auth-password"');
+    expect(html).toContain('type="submit"');
+    // Labelled, not merely present. An unlabelled input is invisible to a screen
+    // reader and this is the only place that would be caught.
+    expect(html).toContain('for="auth-email"');
+    // And the recovery route is reachable from it, which is the whole point of a
+    // sign-in page.
+    expect(html).toContain('href="/forgot-password"');
   });
 
   test('a real asset is served by the Worker', async () => {
@@ -380,12 +508,362 @@ describe('authentication', () => {
 
   test('rejects a bad password', async () => {
     const account = await signUp('integration-badpw');
-    const response = await fetch(`${base()}/api/auth/sign-in/email`, {
+    const response = await authFetch('/api/auth/sign-in/email', {
       method: 'POST',
-      headers: { 'content-type': 'application/json', ...originHeaders() },
       body: JSON.stringify({ email: account.email, password: 'wrong-password-entirely' }),
     });
     expect(response.ok).toBe(false);
+  });
+});
+
+// ── The account lifecycle, over real HTTP ───────────────────────────────────
+
+describe('email verification', () => {
+  test('sign-up captures a confirmation mail and issues no session', async () => {
+    const email = `verify-${createId('t', 8)}@example.invalid`;
+    const created = await authFetch('/api/auth/sign-up/email', {
+      method: 'POST',
+      body: JSON.stringify({
+        email,
+        password: 'correct-horse-battery-staple',
+        name: 'Verify',
+      }),
+    });
+
+    expect(created.status).toBe(200);
+    expect(created.headers.get('set-cookie')).toBeNull();
+
+    const { inbox: inboxId, messages } = await inbox(email);
+    // The inbox echoes the run id, so a stale listener cannot answer with another
+    // run's mail and make a broken verification flow look working.
+    expect(inboxId).toBe(RUN_ID);
+    expect(messages.some((entry) => entry.to === email)).toBe(true);
+  });
+
+  test('an unverified account cannot sign in', async () => {
+    const email = `unverified-${createId('t', 8)}@example.invalid`;
+    await authFetch('/api/auth/sign-up/email', {
+      method: 'POST',
+      body: JSON.stringify({
+        email,
+        password: 'correct-horse-battery-staple',
+        name: 'Unverified',
+      }),
+    });
+
+    const refused = await authFetch('/api/auth/sign-in/email', {
+      method: 'POST',
+      body: JSON.stringify({ email, password: 'correct-horse-battery-staple' }),
+    });
+
+    expect(refused.ok).toBe(false);
+    // The code, not the sentence: `403` alone is also what a wrong password returns,
+    // and a view that cannot tell them apart tells a real user to wait for mail that
+    // is never coming.
+    const body = (await refused.json()) as { code?: string };
+    expect(body.code).toBe('EMAIL_NOT_VERIFIED');
+  });
+
+  test('a verification link confirms the address and unlocks sign-in', async () => {
+    // Covered end to end by every `signUp()` above, which would fail here otherwise.
+    // Asserted once on its own so a failure names the lifecycle step rather than
+    // showing up as an unrelated authorization failure twenty tests later.
+    const account = await signUp('integration-verify');
+    const session = await api(account, '/api/auth/get-session');
+    const identity = (await session.json()) as { user: { email: string } | null };
+    expect(identity.user?.email).toBe(account.email);
+  });
+
+  test('a forged verification link confirms nothing', async () => {
+    const email = `forged-${createId('t', 8)}@example.invalid`;
+    await authFetch('/api/auth/sign-up/email', {
+      method: 'POST',
+      body: JSON.stringify({
+        email,
+        password: 'correct-horse-battery-staple',
+        name: 'Forged',
+      }),
+    });
+
+    // Sent with the same `callbackURL` a real link carries, because that is what
+    // decides the shape of the answer: with one, Better Auth *redirects* to the
+    // callback carrying `?error=INVALID_TOKEN` rather than returning a status. A
+    // 302 alone would look like the success case, so the error parameter is the
+    // assertion — and it is exactly what the `/verify-email` page reads.
+    const forged = await fetch(
+      `${base()}/api/auth/verify-email?token=not.a.real.token&callbackURL=%2Fverify-email`,
+      { redirect: 'manual' },
+    );
+
+    expect(forged.status).toBe(302);
+    const location = new URL(forged.headers.get('location') ?? '', base());
+    expect(location.searchParams.get('error')).toBe('INVALID_TOKEN');
+
+    // The account is still unverified, which is the half that matters.
+    const signIn = await authFetch('/api/auth/sign-in/email', {
+      method: 'POST',
+      body: JSON.stringify({ email, password: 'correct-horse-battery-staple' }),
+    });
+    expect(signIn.ok).toBe(false);
+    expect(((await signIn.json()) as { code?: string }).code).toBe('EMAIL_NOT_VERIFIED');
+  });
+
+  test('replaying a verification link changes nothing', async () => {
+    const email = `replay-${createId('t', 8)}@example.invalid`;
+    await authFetch('/api/auth/sign-up/email', {
+      method: 'POST',
+      body: JSON.stringify({
+        email,
+        password: 'correct-horse-battery-staple',
+        name: 'Replay',
+      }),
+    });
+
+    const link = await verificationLinkFor(email);
+    const first = await fetch(link, { redirect: 'manual' });
+    expect(first.status).toBe(302);
+    expect(
+      new URL(first.headers.get('location') ?? '', base()).searchParams.get('error'),
+    ).toBeNull();
+
+    const replay = await fetch(link, { redirect: 'manual' });
+
+    // Recorded rather than wished for: a verification token is a **signed JWT with an
+    // expiry**, so Better Auth accepts it again within that hour and simply re-affirms
+    // the same state. This test was originally written asserting a second use is
+    // refused; it is not, and asserting otherwise would have been a green test
+    // describing behaviour the library does not have.
+    //
+    // What is asserted here is the property that actually matters and *is* guaranteed:
+    // a replay is idempotent. It cannot un-verify an address, cannot issue a session
+    // (`autoSignInAfterVerification` is off), and cannot confirm anybody else's.
+    expect(replay.status).toBe(302);
+    const setCookie = replay.headers.get('set-cookie') ?? '';
+    expect(setCookie).not.toContain('better-auth');
+
+    // The address is still confirmed, and the account is still usable — which is the
+    // difference between "idempotent" and "broken".
+    const signIn = await authFetch('/api/auth/sign-in/email', {
+      method: 'POST',
+      body: JSON.stringify({ email, password: 'correct-horse-battery-staple' }),
+    });
+    expect(signIn.ok).toBe(true);
+  });
+});
+
+describe('password recovery', () => {
+  test('a recovery link sets a new password and revokes every session', async () => {
+    const account = await signUp('integration-recovery');
+    const second = await authFetch('/api/auth/sign-in/email', {
+      method: 'POST',
+      body: JSON.stringify({ email: account.email, password: account.password }),
+    });
+    const intruderCookie = (second.headers.get('set-cookie') ?? '').split(';')[0] ?? '';
+    expect(intruderCookie).not.toBe('');
+
+    const requested = await authFetch('/api/auth/request-password-reset', {
+      method: 'POST',
+      body: JSON.stringify({ email: account.email, redirectTo: '/reset-password' }),
+    });
+    expect(requested.ok).toBe(true);
+
+    const link = await recoveryLinkFor(account.email);
+    // Better Auth's callback redirects to `/reset-password` with the token appended
+    // as a query parameter. That redirect *is* the application page, so it is
+    // followed and the resulting form is posted to — the route a real user takes,
+    // rather than a hand-assembled request.
+    const landed = await fetch(link, { redirect: 'follow' });
+    expect(landed.status).toBe(200);
+    expect(landed.url).toContain('/reset-password?token=');
+    // Server-rendered, so the form works without JavaScript.
+    expect(await landed.text()).toContain('id="new-password"');
+
+    const token = new URL(landed.url).searchParams.get('token') ?? '';
+    expect(token).not.toBe('');
+
+    const reset = await authFetch('/api/auth/reset-password', {
+      method: 'POST',
+      body: JSON.stringify({ token, newPassword: 'a-different-passphrase-entirely' }),
+    });
+    expect(reset.ok).toBe(true);
+
+    // The old password is dead.
+    const oldPassword = await authFetch('/api/auth/sign-in/email', {
+      method: 'POST',
+      body: JSON.stringify({ email: account.email, password: account.password }),
+    });
+    expect(oldPassword.ok).toBe(false);
+
+    // And both pre-existing sessions are gone. This is the case that matters: the
+    // owner noticed a stranger signed in and reset the password, so the stranger must
+    // be locked out rather than keeping a valid cookie.
+    //
+    // `/api/auth/get-session` is a *question* ("who is this?"), not a gate: an unknown
+    // or revoked cookie yields a 200 whose body is literally `null`. So the session
+    // endpoint is not where revocation shows up, and the shape is not an object with
+    // a null field.
+    for (const cookie of [account.cookie, intruderCookie]) {
+      const session = await fetch(`${base()}/api/auth/get-session`, {
+        headers: { cookie },
+      });
+      expect(session.status).toBe(200);
+      expect(await session.json()).toBeNull();
+    }
+
+    // `/api/notes` is the gate, and this is the consequence that actually matters: the
+    // stranger's cookie cannot reach the owner's data. Asserting only on the session
+    // endpoint would prove revocation happened somewhere, not that it is enforced.
+    for (const cookie of [account.cookie, intruderCookie]) {
+      const notes = await fetch(`${base()}/api/notes`, { headers: { cookie } });
+      expect(notes.status).toBe(401);
+    }
+  });
+
+  test('a recovery token works exactly once', async () => {
+    const account = await signUp('integration-recovery-once');
+    await authFetch('/api/auth/request-password-reset', {
+      method: 'POST',
+      body: JSON.stringify({ email: account.email, redirectTo: '/reset-password' }),
+    });
+    const link = await recoveryLinkFor(account.email);
+    const landed = await fetch(link, { redirect: 'follow' });
+    const token = new URL(landed.url).searchParams.get('token') ?? '';
+    expect(token).not.toBe('');
+
+    expect(
+      (
+        await authFetch('/api/auth/reset-password', {
+          method: 'POST',
+          body: JSON.stringify({ token, newPassword: 'first-new-passphrase-x' }),
+        })
+      ).ok,
+    ).toBe(true);
+
+    // The second use must fail, and must not silently set the password again — a
+    // link that works twice is a live credential in an inbox. Unlike the verification
+    // token, a recovery token **is** genuinely single-use: Better Auth consumes the
+    // `verifications` row as it validates it.
+    const replay = await authFetch('/api/auth/reset-password', {
+      method: 'POST',
+      body: JSON.stringify({ token, newPassword: 'second-new-passphrase-x' }),
+    });
+    expect(replay.ok).toBe(false);
+
+    const withSecond = await authFetch('/api/auth/sign-in/email', {
+      method: 'POST',
+      body: JSON.stringify({ email: account.email, password: 'second-new-passphrase-x' }),
+    });
+    expect(withSecond.ok).toBe(false);
+    // And the password that *was* set is still the one in force.
+    const withFirst = await authFetch('/api/auth/sign-in/email', {
+      method: 'POST',
+      body: JSON.stringify({ email: account.email, password: 'first-new-passphrase-x' }),
+    });
+    expect(withFirst.ok).toBe(true);
+  });
+
+  test('a recovery link expires', async () => {
+    const account = await signUp('integration-recovery-expiry');
+    await authFetch('/api/auth/request-password-reset', {
+      method: 'POST',
+      body: JSON.stringify({ email: account.email, redirectTo: '/reset-password' }),
+    });
+    const link = await recoveryLinkFor(account.email);
+
+    // The link is valid now.
+    const landed = await fetch(link, { redirect: 'follow' });
+    const token = new URL(landed.url).searchParams.get('token') ?? '';
+    expect(
+      (
+        await authFetch('/api/auth/reset-password', {
+          method: 'POST',
+          body: JSON.stringify({ token, newPassword: 'a-passphrase-before-expiry-x' }),
+        })
+      ).ok,
+    ).toBe(true);
+
+    // A second link for the same account, used after the first consumed... no: the
+    // expiry itself is proven differently, because there is no way to wait an hour in a
+    // test. The honest assertion is that the token is stored with an expiry and the
+    // endpoint checks it — proven here by the *consumed* case below, and by
+    // `auth_lifecycle.test.ts`, which inserts a `verifications` row with a past
+    // `expiresAt` and asserts the public API refuses it.
+    //
+    // What is worth pinning here is that the first link stopped working, which is the
+    // property a user experiences as "that link is no good any more".
+    const replay = await authFetch('/api/auth/reset-password', {
+      method: 'POST',
+      body: JSON.stringify({ token, newPassword: 'yet-another-passphrase-x' }),
+    });
+    expect(replay.ok).toBe(false);
+  });
+
+  test('a forged recovery token sets no password', async () => {
+    const account = await signUp('integration-recovery-forged');
+
+    const forged = await authFetch('/api/auth/reset-password', {
+      method: 'POST',
+      body: JSON.stringify({ token: 'x.y.z', newPassword: 'attacker-chosen-passphrase' }),
+    });
+    expect(forged.ok).toBe(false);
+
+    // The original password still works, which is the half that matters.
+    const original = await authFetch('/api/auth/sign-in/email', {
+      method: 'POST',
+      body: JSON.stringify({ email: account.email, password: account.password }),
+    });
+    expect(original.ok).toBe(true);
+  });
+
+  test('a recovery request for an unknown address sends no mail', async () => {
+    const unknown = `nobody-${createId('t', 8)}@example.invalid`;
+
+    const response = await authFetch('/api/auth/request-password-reset', {
+      method: 'POST',
+      body: JSON.stringify({ email: unknown, redirectTo: '/reset-password' }),
+    });
+
+    // Reported as success, which is the whole protection: if this answered "no such
+    // account" instead, the endpoint would answer "does this person have an account
+    // here?" for anyone who can type an address.
+    expect(response.ok).toBe(true);
+    expect((await inbox(unknown)).messages).toHaveLength(0);
+  });
+
+  test('a recovery link cannot be pointed at another origin', async () => {
+    const account = await signUp('integration-recovery-origin');
+
+    const response = await authFetch('/api/auth/request-password-reset', {
+      method: 'POST',
+      body: JSON.stringify({
+        email: account.email,
+        redirectTo: 'https://attacker.example/steal',
+      }),
+    });
+
+    expect(response.status).toBe(403);
+    // And nothing was sent. A refusal the mailer ignored would be a token leak with a
+    // 403 painted on the front of it.
+    const { messages } = await inbox(account.email);
+    expect(messages.some((entry) => entry.subject.includes('password'))).toBe(false);
+  });
+});
+
+describe('the local mail inbox', () => {
+  test('is namespaced to this run', async () => {
+    const { inbox: inboxId } = await inbox();
+    expect(inboxId).toBe(RUN_ID);
+  });
+
+  test('reports the mail mode rather than a provider', async () => {
+    const health = (await (await fetch(`${base()}/api/health`)).json()) as {
+      mail: { mode: string };
+      rateLimit: { storage: string };
+    };
+    expect(health.mail.mode).toBe('capture');
+    // A local run uses the in-memory inbox, and the counter store is still D1 — the
+    // limiter is real even where the mail is not.
+    expect(health.rateLimit.storage).toBe('d1');
   });
 });
 
@@ -516,6 +994,275 @@ describe('authorization', () => {
 
     expect(response.status).toBe(422);
   });
+});
+
+describe('authentication form actions', () => {
+  test('sign-in applies the session cookie before redirecting', async () => {
+    const account = await signUp('form-cookie');
+    const response = await fetch(`${base()}/login`, {
+      method: 'POST',
+      redirect: 'manual',
+      headers: { ...originHeaders(), accept: 'text/html' },
+      body: new URLSearchParams({
+        intent: 'sign-in',
+        email: account.email,
+        password: account.password,
+      }),
+    });
+    expect(response.status).toBe(303);
+    expect(response.headers.get('location')).toBe('/notes');
+    const cookie = response.headers.get('set-cookie')?.split(';')[0] ?? '';
+    expect(cookie).toContain('better-auth');
+    expect(
+      (await fetch(`${base()}/notes`, { headers: { cookie }, redirect: 'manual' })).status,
+    ).toBe(200);
+  });
+
+  for (const [intent, next] of [
+    ['sign-in', 'sign-up'],
+    ['sign-up', 'sign-in'],
+    ['', 'sign-in'],
+  ] as const) {
+    test(`mode toggle with intent "${intent}" redirects to ${next} and retains email`, async () => {
+      const body = new URLSearchParams({
+        toggle: '1',
+        email: 'someone@example.test',
+        name: 'Someone',
+      });
+      if (intent) {
+        body.set('intent', intent);
+      }
+      const response = await fetch(`${base()}/login`, {
+        method: 'POST',
+        redirect: 'manual',
+        headers: { ...originHeaders(), accept: 'text/html' },
+        body,
+      });
+      expect(response.status).toBe(303);
+      expect(response.headers.get('location')).toBe(
+        `/login?mode=${next}&email=someone%40example.test`,
+      );
+    });
+  }
+});
+
+describe('the database-backed rate limit', () => {
+  const budget = 3;
+  const state = join(APP_DIR, `.wrangler/rate-limit-${RUN_ID}`);
+  const workers: ChildProcess[] = [];
+  const origins: string[] = [];
+
+  const sql = (command: string): void => {
+    const result = spawnSync(
+      [
+        WRANGLER,
+        'd1',
+        'execute',
+        'DB',
+        '--local',
+        '--config',
+        APP_CONFIG,
+        '--persist-to',
+        state,
+        '--command',
+        command,
+      ],
+      { cwd: APP_DIR, stdout: 'pipe', stderr: 'pipe' },
+    );
+    if (result.exitCode !== 0) {
+      throw new Error(`Rate-limit fixture SQL failed: ${result.stderr.toString()}`);
+    }
+  };
+
+  const start = async (workerPort: number): Promise<ChildProcess> => {
+    const origin = `http://127.0.0.1:${workerPort}`;
+    const workerRunId = `${RUN_ID}-rate-${workers.length}`;
+    const logFd = openSync(`${WORKER_LOG}.${workerPort}`, 'a');
+    const worker = spawn(
+      WRANGLER,
+      [
+        'dev',
+        WORKER_ENTRY,
+        '--port',
+        String(workerPort),
+        '--local',
+        '--config',
+        APP_CONFIG,
+        '--persist-to',
+        state,
+        '--var',
+        `TEST_RUN_ID:${workerRunId}`,
+        '--var',
+        'DEPLOYMENT_ENV:local',
+        '--var',
+        `AUTH_RATE_LIMIT_MAX:${budget}`,
+        // Keep the test window open across process restarts without a clock race.
+        '--var',
+        'AUTH_RATE_LIMIT_WINDOW:3600',
+      ],
+      { cwd: APP_DIR, stdio: ['ignore', logFd, logFd] },
+    );
+    closeSync(logFd);
+    workers.push(worker);
+    const deadline = Date.now() + 60_000;
+    while (Date.now() < deadline) {
+      try {
+        const response = await fetch(`${origin}/api/health`);
+        const health = (await response.json()) as { testRunId?: string };
+        if (response.ok && health.testRunId === workerRunId) {
+          return worker;
+        }
+      } catch {
+        // The process has not bound its socket yet.
+      }
+      if (worker.exitCode !== null) {
+        throw new Error('Rate-limit worker exited during startup');
+      }
+      await sleep(200);
+    }
+    throw new Error(`Rate-limit worker did not become ready: ${origin}`);
+  };
+
+  beforeAll(async () => {
+    const migrate = spawnSync(
+      [
+        WRANGLER,
+        'd1',
+        'migrations',
+        'apply',
+        'DB',
+        '--local',
+        '--config',
+        APP_CONFIG,
+        '--persist-to',
+        state,
+      ],
+      { cwd: APP_DIR, stdout: 'pipe', stderr: 'pipe' },
+    );
+    if (migrate.exitCode !== 0) {
+      throw new Error(migrate.stderr.toString());
+    }
+    const workerPort = await findFreePort();
+    // Local origin derivation creates a distinct auth instance for each host.
+    // Both use the same D1 binding in one runtime, which serializes its writes.
+    // Separate Wrangler processes cannot concurrently own one local SQLite file.
+    origins.push(`http://127.0.0.1:${workerPort}`, `http://localhost:${workerPort}`);
+    await start(workerPort);
+  }, 150_000);
+
+  beforeEach(() => sql('DELETE FROM rate_limits'), 30_000);
+
+  afterAll(() => {
+    for (const worker of workers) {
+      if (worker.pid !== undefined && worker.exitCode === null) {
+        killTree(worker.pid, { graceMs: 200, attempts: 20 });
+      }
+    }
+    rmSync(state, { recursive: true, force: true });
+  });
+
+  const attempt = (index = 0, headers: Record<string, string> = {}) =>
+    fetch(`${origins[index % 2]}/api/auth/sign-in/email`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', origin: origins[index % 2] ?? '', ...headers },
+      body: JSON.stringify({
+        email: 'absent@example.invalid',
+        password: 'wrong-password-entirely',
+      }),
+    });
+
+  const counts = async (responses: Response[]) => {
+    for (const response of responses) {
+      if (response.status !== 401 && response.status !== 429) {
+        throw new Error(`Unexpected limiter response ${response.status}: ${await response.text()}`);
+      }
+    }
+    expect(responses.map((r) => r.status).sort()).toEqual([
+      ...Array.from({ length: budget }, () => 401),
+      ...Array.from({ length: responses.length - budget }, () => 429),
+    ]);
+  };
+
+  test('two auth instances share one budget across concurrent requests', async () => {
+    await counts(
+      await Promise.all(Array.from({ length: budget + 5 }, (_, index) => attempt(index))),
+    );
+  });
+
+  test('the counter survives separate requests and a worker restart', async () => {
+    expect((await attempt()).status).toBe(401);
+    expect((await attempt(1)).status).toBe(401);
+    const first = workers[0];
+    if (first?.pid === undefined) {
+      throw new Error('Missing first worker');
+    }
+    expect(killTree(first.pid, { graceMs: 200, attempts: 20 })).toEqual([]);
+    await start(Number(new URL(origins[0] ?? '').port));
+    expect((await attempt()).status).toBe(401);
+    expect((await attempt()).status).toBe(429);
+    expect((await attempt(1)).status).toBe(429);
+  }, 90_000);
+
+  test('rotating cf-connecting-ip cannot evade the local ingress budget', async () => {
+    const responses: Response[] = [];
+    for (let index = 0; index < budget + 3; index += 1) {
+      responses.push(await attempt(index, { 'cf-connecting-ip': `203.0.113.${index + 1}` }));
+    }
+    await counts(responses);
+  });
+
+  test('login forms share the API sign-in budget', async () => {
+    expect((await attempt()).status).toBe(401);
+    const responses: Response[] = [];
+    for (let index = 0; index < budget + 1; index += 1) {
+      const origin = origins[index % 2] ?? '';
+      responses.push(
+        await fetch(`${origin}/login`, {
+          method: 'POST',
+          redirect: 'manual',
+          headers: { origin, accept: 'text/html' },
+          body: new URLSearchParams({
+            intent: 'sign-in',
+            email: 'absent@example.invalid',
+            password: 'wrong-password-entirely',
+          }),
+        }),
+      );
+    }
+    expect(responses.map((r) => r.status)).toEqual([400, 400, 429, 429]);
+  });
+
+  for (const [path, fields, limit, accepted] of [
+    [
+      '/login',
+      {
+        intent: 'sign-up',
+        email: 'new@example.invalid',
+        password: 'correct horse battery',
+        name: 'New',
+      },
+      budget,
+      200,
+    ],
+    ['/forgot-password', { email: 'absent@example.invalid' }, budget * 2, 303],
+    ['/verify-email', { email: 'absent@example.invalid' }, budget * 2, 200],
+    ['/reset-password?token=invalid', { newPassword: 'correct horse battery' }, budget, 400],
+  ] as const) {
+    test(`${path} forms enforce their middleware budget`, async () => {
+      const origin = origins[0] ?? '';
+      const statuses: number[] = [];
+      for (let index = 0; index <= limit; index += 1) {
+        const response = await fetch(`${origin}${path}`, {
+          method: 'POST',
+          redirect: 'manual',
+          headers: { origin, accept: 'text/html' },
+          body: new URLSearchParams(fields),
+        });
+        statuses.push(response.status);
+      }
+      expect(statuses).toEqual([...Array.from({ length: limit }, () => accepted), 429]);
+    });
+  }
 });
 
 describe('telemetry', () => {

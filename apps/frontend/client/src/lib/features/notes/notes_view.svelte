@@ -7,9 +7,14 @@
 
   The `#if` chain below is exhaustive over the status union, so adding a status
   is a compile error in exactly one place rather than a silently blank screen.
+
+  Hydration note: the server rendered this exact list from `+page.server.ts`, and
+  the ViewModel is seeded with it. Nothing here fetches on mount, so what a user
+  sees before and after hydration is the same markup — a client fetch that races
+  the first paint would flash an empty state over real content.
 -->
 <script lang="ts">
-import { BaseViewModelContainer, EmptyState, ErrorState, Spinner } from '@starter/ui';
+import { EmptyState, ErrorState, ScreenContainer, Spinner } from '@starter/ui';
 import NoteCard from './note_card.svelte';
 import NoteForm from './note_form.svelte';
 import type { NotesViewModel } from './notes_view_model.svelte.ts';
@@ -21,7 +26,7 @@ type Props = {
 let { viewModel }: Props = $props();
 </script>
 
-<BaseViewModelContainer {viewModel} element="section" id="notes-screen">
+<ScreenContainer screen={viewModel} element="section" id="notes-screen">
   <header class="notes__header">
     <div>
       <h1 class="notes__title">Your notes</h1>
@@ -43,7 +48,7 @@ let { viewModel }: Props = $props();
   <NoteForm
     viewModel={viewModel}
     note={viewModel.noteBeingEdited}
-    onCancelEdit={() => viewModel.stopEditing()}
+    onCancelEdit={() => viewModel.startEditing(null)}
   />
 
   <div class="notes__body">
@@ -80,7 +85,7 @@ let { viewModel }: Props = $props();
       </ul>
     {/if}
   </div>
-</BaseViewModelContainer>
+</ScreenContainer>
 
 <style>
   .notes__header {

@@ -191,9 +191,9 @@ Three rules:
 ## 7. View
 
 A component receives props and raises intents. It holds no logic beyond
-formatting, and imports nothing from `@starter/ui` or `@starter/frontend-services` —
-Svelte components in a Worker compile and then fail, or drag `svelte/internal` into
-a bundle with no DOM. Both Biome and `bun run guard` refuse it.
+formatting, and imports nothing from `@starter/ui` — Svelte components in a Worker
+compile and then fail, or drag `svelte/internal` into a bundle with no DOM. Both
+Biome and `bun run guard` refuse it.
 
 Compose it in a `*_composition.ts` next to the ViewModel, so the wiring is in one
 place and a test can construct the ViewModel without mounting anything.

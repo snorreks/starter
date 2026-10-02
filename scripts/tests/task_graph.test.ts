@@ -20,8 +20,9 @@
 
 import { describe, expect, test } from 'bun:test';
 import { spawnSync } from 'node:child_process';
-import { readdirSync, statSync } from 'node:fs';
+import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { join, relative, sep } from 'node:path';
+import { parse } from 'yaml';
 import { REPO_ROOT } from '../src/shared/paths.ts';
 
 interface ResolvedTask {
@@ -135,11 +136,27 @@ const allTasks = Object.entries(graph).flatMap(([project, tasks]) =>
 );
 
 describe('the resolved graph is the graph, not a stale cache', () => {
-  test('Moon resolved every project in the workspace', () => {
+  test('Moon resolved every project the workspace declares, and nothing else', () => {
     // A `moon.yml` that fails to parse makes *every* `moon run` fail, which is why
     // the projects used to be unreachable. Zero resolved projects is that failure
     // wearing a different hat.
-    expect(Object.keys(graph).length).toBeGreaterThanOrEqual(11);
+    //
+    // Compared against `projects:` in `.moon/workspace.yml` rather than against a
+    // number. A floor is what this used to assert, and a floor is a number that has
+    // to be lowered every time a project is legitimately removed — at which point
+    // nobody asks what the new number should catch. The declaration is the truth, so
+    // removing `frontend-services` from the workspace without deleting it still fails
+    // here, and deleting the directory without removing it from the workspace fails
+    // too. Both are the failures this test exists for.
+    const declared = Object.keys(
+      (
+        parse(readFileSync(join(REPO_ROOT, '.moon/workspace.yml'), 'utf8')) as {
+          projects?: Record<string, string>;
+        }
+      ).projects ?? {},
+    ).sort();
+
+    expect(Object.keys(graph).sort()).toEqual(declared);
   });
 
   test('a resolved input glob is never an empty one', () => {

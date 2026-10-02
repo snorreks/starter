@@ -143,7 +143,9 @@ own source, not assumed:
 - Biome 2.5.13 formats the `<script lang="ts">` block of a `.svelte` file —
   including `$props()`, `$derived`, `$effect` and TypeScript generics — and leaves
   the markup, `{#if}` blocks and `<style>` untouched.
-- `packages/frontend/ui/src/base/base_view_model_container.svelte` round-trips
+- `packages/frontend/ui/src/screen_container.svelte` — a Svelte component with a
+  `<script lang="ts">` block and a `<style>` block, formerly
+  `packages/frontend/ui/src/base/base_view_model_container.svelte` — round-trips
   through `biome format --write` with a byte-identical result.
 
 Biome's Svelte support is partial: the **markup and CSS are not formatted**. That
