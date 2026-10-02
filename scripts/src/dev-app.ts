@@ -104,7 +104,6 @@ const FORWARDED_VARS = [
   'AUTH_RATE_LIMIT_MAX',
   'TRUSTED_ORIGINS',
   'BETTER_AUTH_SECRET',
-  'BETTER_AUTH_URL',
   'DEPLOYMENT_ENV',
 ] as const;
 
@@ -149,18 +148,55 @@ const clearStale = (): void => {
   rmSync(PIDFILE, { force: true });
 };
 
+/**
+ * Bindings to forward, with the local origin resolved by this launcher.
+ *
+ * `BETTER_AUTH_URL` is handled separately and deliberately, because nothing else
+ * can supply it correctly.
+ *
+ * In a local environment the application derives its own public origin from the
+ * request (see `resolveDeploymentEnvironment`). That derivation cannot work under
+ * `wrangler dev`: wrangler serves the Worker on its internal default port and
+ * rewrites both `event.url` and the `Host` header to `http://127.0.0.1` — verified,
+ * not assumed. So the Worker believes it is on port 80 while the browser is talking
+ * to port 5173, and every origin it puts into a link is wrong. That is invisible
+ * for HTML, assets and same-origin fetches, which is why it survived until the
+ * account lifecycle put a verification link in an email.
+ *
+ * This launcher knows the real port, so it states it. The alternative — leaving the
+ * derivation to fail — produces a local run whose recovery mail is a dead link, and
+ * an E2E lane that cannot exercise verification at all.
+ *
+ * A caller that already set `BETTER_AUTH_URL` keeps their value: this is a default,
+ * not an override.
+ */
 const varFlags = (): string[] => {
   const args: string[] = [];
+
   for (const name of FORWARDED_VARS) {
     const value = process.env[name];
     if (value !== undefined && value.length > 0) {
       args.push('--var', `${name}:${value}`);
     }
   }
+
+  const configuredUrl = process.env.BETTER_AUTH_URL;
+  const resolvedUrl =
+    configuredUrl !== undefined && configuredUrl.length > 0
+      ? configuredUrl
+      : `http://${HOST}:${PORT}`;
+  args.push('--var', `BETTER_AUTH_URL:${resolvedUrl}`);
+
   return args;
 };
 
-interface Target {
+/**
+ * The launcher surface these tests read.
+ *
+ * Declared here rather than re-invented at each call site: a test that re-declares
+ * the shape it expects is testing its own annotation, not the module.
+ */
+export interface Target {
   bin: string | null;
   declaringPackage: string;
   args: string[];

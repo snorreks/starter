@@ -5,14 +5,14 @@
 // This is the lane that catches the failures a stubbed-rune test cannot:
 //   - `$state` writes that do not reach the DOM
 //   - `$derived` recomputing when its dependencies change
-//   - `BaseViewModelContainer` disposing exactly once per mount
+//   - `ScreenContainer` disposing exactly once per mount
 //   - `StaleGuard` cancelling an in-flight request when a newer one starts
 //
 // No network and no server: services are faked, which is the point of the
 // composition seam.
 
 import type { Note } from '@starter/schemas/notes';
-import { BaseViewModelContainer, ErrorState } from '@starter/ui';
+import { ErrorState, ScreenContainer } from '@starter/ui';
 import { StaleGuard } from '@starter/utils';
 import { flushSync } from 'svelte';
 import { describe, expect, test } from 'vitest';
@@ -46,7 +46,7 @@ const fakeNotesService = (
 const tick = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 0));
 
 const makeViewModel = (service: NotesService): NotesViewModel =>
-  new NotesViewModel({ className: 'NotesViewModel', notes: service });
+  new NotesViewModel({ notes: service });
 
 class Deferred<T> {
   promise: Promise<T>;
@@ -115,7 +115,6 @@ describe('NotesViewModel reactivity', () => {
 
     expect(viewModel.status.kind).toBe('ready');
     expect(viewModel.isEmpty).toBe(true);
-    expect(viewModel.errorMessage).toBeUndefined();
   });
 
   test('a rejected load becomes a recoverable error state', async () => {
@@ -277,7 +276,7 @@ describe('ErrorState', () => {
 
 // ── Container lifecycle ─────────────────────────────────────────────────────
 
-describe('BaseViewModelContainer lifecycle', () => {
+describe('ScreenContainer lifecycle', () => {
   test('initializes on mount and disposes exactly once on unmount', async () => {
     const viewModel = makeViewModel(fakeNotesService());
     let initializations = 0;
@@ -294,8 +293,8 @@ describe('BaseViewModelContainer lifecycle', () => {
       await originalDispose();
     };
 
-    const mounted = mountInDocument(BaseViewModelContainer, {
-      viewModel,
+    const mounted = mountInDocument(ScreenContainer, {
+      screen: viewModel,
       children: emptySnippet,
     });
 
@@ -303,14 +302,14 @@ describe('BaseViewModelContainer lifecycle', () => {
     flushSync();
 
     expect(initializations).toBe(1);
-    expect(viewModel.__mounted).toBe(true);
+    expect(viewModel.mounted).toBe(true);
 
     mounted.destroy();
     await tick();
     flushSync();
 
     expect(disposals).toBe(1);
-    expect(viewModel.__mounted).toBe(false);
+    expect(viewModel.mounted).toBe(false);
   });
 
   test('a lifecycle failure is reported rather than becoming an unhandled rejection', async () => {
@@ -330,8 +329,8 @@ describe('BaseViewModelContainer lifecycle', () => {
       );
     };
 
-    const mounted = mountInDocument(BaseViewModelContainer, {
-      viewModel,
+    const mounted = mountInDocument(ScreenContainer, {
+      screen: viewModel,
       children: emptySnippet,
     });
 

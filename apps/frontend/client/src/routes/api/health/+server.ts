@@ -36,6 +36,14 @@ export const GET: RequestHandler = ({ locals }) => {
     authRateLimitMax: container.env.AUTH_RATE_LIMIT_MAX ?? '10 (default)',
     trustedOriginCount:
       container.env.TRUSTED_ORIGINS?.split(',').filter((o) => o.trim() !== '').length ?? 0,
+    // Which implementation is in use, and whether the limiter is enforced at all.
+    // "mode" and a budget are what an operator needs; the API key is not here and
+    // must never be, so its presence is reported as a boolean-by-omission.
+    mail: { mode: container.mail.mode, from: container.mail.from },
+    rateLimit: {
+      storage: 'd1',
+      max: container.env.AUTH_RATE_LIMIT_MAX ?? '10 (default)',
+    },
     ...(container.env.TEST_RUN_ID === undefined ? {} : { testRunId: container.env.TEST_RUN_ID }),
   });
 };

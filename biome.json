@@ -179,12 +179,7 @@
                     "message": "The server plane must not depend on Svelte's client runtime. It runs in workerd with no DOM. Shared view logic belongs in packages/frontend, which this plane may not import."
                   },
                   {
-                    "group": [
-                      "@starter/ui",
-                      "@starter/frontend-services",
-                      "@starter/frontend-services/*",
-                      "@starter/ui/*"
-                    ],
+                    "group": ["@starter/ui", "@starter/ui/*"],
                     "message": "The server plane must not import frontend packages. Move shared pure logic into packages/shared."
                   }
                 ]
@@ -225,12 +220,7 @@
                     "message": "The server plane must not depend on Svelte. Shared view logic belongs in packages/frontend, which this plane may not import."
                   },
                   {
-                    "group": [
-                      "@starter/ui",
-                      "@starter/frontend-services",
-                      "@starter/frontend-services/*",
-                      "@starter/ui/*"
-                    ],
+                    "group": ["@starter/ui", "@starter/ui/*"],
                     "message": "The server plane must not import frontend packages. Move shared pure logic into packages/shared."
                   }
                 ]
@@ -379,7 +369,7 @@
     {
       "includes": [
         "apps/frontend/client/src/routes/+layout.svelte",
-        "packages/frontend/ui/src/base/base_view_model_container.svelte"
+        "packages/frontend/ui/src/screen_container.svelte"
       ],
       "linter": { "rules": { "suspicious": { "noConsole": "off" } } }
     }

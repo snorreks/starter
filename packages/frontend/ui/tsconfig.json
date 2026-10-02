@@ -3,8 +3,6 @@
   "compilerOptions": {
     "types": ["bun"],
     "paths": {
-      "@starter/frontend-services": ["../services/src/index.ts"],
-      "@starter/frontend-services/*": ["../services/src/*"],
       "@starter/schemas": ["../../shared/schemas/src/index.ts"],
       "@starter/schemas/*": ["../../shared/schemas/src/*"],
       "@starter/utils": ["../../shared/utils/src/index.ts"],

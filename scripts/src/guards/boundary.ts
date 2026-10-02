@@ -199,29 +199,17 @@ const ALLOWED_IMPORTS: Record<string, readonly string[]> = {
     '@starter/auth',
   ],
   // Frontend may use shared. Never backend.
-  frontend: [
-    '@starter/schemas',
-    '@starter/logger',
-    '@starter/utils',
-    '@starter/ui',
-    '@starter/frontend-services',
-  ],
+  frontend: ['@starter/schemas', '@starter/logger', '@starter/utils', '@starter/ui'],
   // The client app: frontend and shared. Never the database or auth packages —
   // `better-auth` and `drizzle-orm` are server libraries.
-  client: [
-    '@starter/schemas',
-    '@starter/logger',
-    '@starter/utils',
-    '@starter/ui',
-    '@starter/frontend-services',
-  ],
+  client: ['@starter/schemas', '@starter/logger', '@starter/utils', '@starter/ui'],
   // Server-only modules inside the client app. Backend and shared, plus the same
   // set `client` has: a route adapter legitimately imports a DTO type from
   // `@starter/schemas`, and a page's own ViewModel, because a `+page.svelte` and
   // its `+page.server.ts` are different halves of one screen.
   //
-  // What it must never gain: `@starter/ui` or `@starter/frontend-services`, which
-  // are browser code. Svelte components in a Worker compile and then fail, and
+  // What it must never gain: `@starter/ui`, which is browser code. Svelte
+  // components in a Worker compile and then fail, and
   // `svelte/internal` in a bundle with no DOM is the same problem one layer down.
   'client-server': [
     '@starter/schemas',

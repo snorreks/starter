@@ -14,6 +14,10 @@ the thing.
 Every row below was executed in this worktree against this branch. Counts are what
 the lane printed.
 
+> The counts in this table are from the run that produced this document. A branch
+> that changes test counts re-runs the lanes and reports its own numbers in its pull
+> request; it does not silently restate this table.
+
 | Capability | How it was verified | Command | Result |
 |---|---|---|---|
 | Install | `bun install --frozen-lockfile`, no network-fetched tools | `bun install --frozen-lockfile` | ok |
@@ -98,26 +102,36 @@ Error: browserType.launch: Executable doesn't exist at
     chrome-headless-shell-linux64/chrome-headless-shell
 ```
 
-- `pkgs.chromium` is the browser **wrapper**. It runs, and `e2e` passes with it.
-- `chromium_headless_shell` is a **separate** store path. This dev shell does not
-  pull it in.
-- `vitest-browser` with `headless: true` resolves that shell, so it looks for an
-  executable that is not there. `playwright.config.ts` does not, because
-  `chromium.launch()` uses the full browser — which is why `e2e` (20 specs) and
-  `test:worker` (19 specs) pass while this lane cannot start.
+An earlier version of this section blamed a missing `chromium_headless_shell` store
+path and told you to make it reachable. **That diagnosis was wrong**, and it was
+wrong in a way that sent the reader after a prerequisite this lane does not need.
+The measured cause is the option the launch path reads:
 
-Setting `channel: 'chromium'` in the instance or in `launch` does **not** redirect
-the resolution; it was tried and reverted rather than shipped unverified.
+- `vitest.config.ts` puts `executablePath` on `instances[].launch`.
+- `@vitest/browser-playwright`'s provider option is `launchOptions`, passed to the
+  provider factory — `playwright({ launchOptions })`. `instances[].launch` is not it.
+- So the full-browser path Playwright is given is the *wrapper*, and Playwright then
+  composes a `chromium_headless_shell-<rev>/…` path underneath the executable's own
+  directory. That composed path is the one in the error, and it is a composition
+  rather than a lookup.
+
+Moving the option, and changing nothing else:
+
+```ts
+provider: playwright(
+  process.env.CHROMIUM_PATH
+    ? { launchOptions: { executablePath: process.env.CHROMIUM_PATH } }
+    : {},
+),
+```
+
+was measured on this host: **15 tests pass**, with the same `CHROMIUM_PATH` the
+`e2e` lane uses and no headless shell anywhere. `vitest.config.ts` is the test
+runner's, and the runner repair is not this branch's to ship, so the file is left
+alone and the requirement is recorded here instead.
 
 **Confirmed pre-existing**: the identical error reproduces on `origin/main` with
 this branch stashed.
-
-To run it, make the headless shell reachable, then re-run:
-
-```bash
-ls -d "$(dirname "$(readlink -f "$(command -v chromium)")")"/chromium_headless_shell-*
-nix develop -c bun run test:browser
-```
 
 ## Known gaps in this phase
 

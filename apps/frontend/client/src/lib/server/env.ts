@@ -59,8 +59,37 @@ export interface AppEnv {
    * can prove it reached this app rather than a stale listener.
    */
   TEST_RUN_ID?: string;
-  /** Sign-in attempts allowed per minute per IP. Default 10. */
+  /**
+   * Sign-in attempts allowed per minute per IP.
+   *
+   * Parsed and validated by `resolveRateLimitBudget`, not by `Number()` at the
+   * call site. `Number('ten')` is `NaN`, and `NaN` flowing into a limit is a
+   * limit nobody can reason about — `NaN < max` is false for every request, so
+   * the symptom would be either "everything is limited" or "nothing is",
+   * depending on which comparison Better Auth happens to reach first.
+   */
   AUTH_RATE_LIMIT_MAX?: string;
+  /** Rate limit window in seconds. Default 60. */
+  AUTH_RATE_LIMIT_WINDOW?: string;
+  /**
+   * Comma-separated IPs or CIDR ranges whose forwarded client address may be
+   * believed. Only meaningful when a forwarded header is in the ingress list.
+   */
+  TRUSTED_PROXIES?: string;
+  /**
+   * Resend API key. Required in a deployed environment; see `resolveMail`.
+   *
+   * Never logged, never returned by an endpoint, and never part of a readiness
+   * report — only its *presence* is observable.
+   */
+  RESEND_API_KEY?: string;
+  /**
+   * Sender address for transactional mail. Required alongside `RESEND_API_KEY`.
+   *
+   * Not a secret, but not published either: it identifies the deployment to the
+   * public.
+   */
+  MAIL_FROM?: string;
   /** Minimum level a log event must meet to be stored. */
   LOG_LEVEL?: string;
   /** Build identifier attached to every log event. Injected by the deploy step. */
@@ -290,4 +319,156 @@ export const requireBindings = (raw: unknown): AppEnv => {
     );
   }
   return candidate;
+};
+
+export interface RateLimitBudget {
+  /** Requests allowed per window per key. `0` means the limiter is disabled. */
+  max: number;
+  /** Window length in seconds. Always at least 1, even when the limiter is off. */
+  window: number;
+}
+
+export const DEFAULT_RATE_LIMIT_MAX = 10;
+export const DEFAULT_RATE_LIMIT_WINDOW = 60;
+
+/**
+ * The rate limit budget, parsed rather than coerced.
+ *
+ * A non-numeric value is a configuration error, not a limit. The previous
+ * `Number(env.AUTH_RATE_LIMIT_MAX)` turned `'ten'` into `NaN` and `'5; DROP'` into
+ * `NaN` too, and passed both straight into the limiter.
+ */
+export const resolveRateLimitBudget = (env: {
+  AUTH_RATE_LIMIT_MAX?: string;
+  AUTH_RATE_LIMIT_WINDOW?: string;
+}): RateLimitBudget => {
+  const max = positiveIntegerOr(env.AUTH_RATE_LIMIT_MAX, DEFAULT_RATE_LIMIT_MAX, {
+    min: 0,
+    label: 'AUTH_RATE_LIMIT_MAX',
+  });
+  const window = positiveIntegerOr(env.AUTH_RATE_LIMIT_WINDOW, DEFAULT_RATE_LIMIT_WINDOW, {
+    min: 1,
+    label: 'AUTH_RATE_LIMIT_WINDOW',
+  });
+  return { max, window };
+};
+
+const positiveIntegerOr = (
+  raw: string | undefined,
+  fallback: number,
+  options: { min: number; label: string },
+): number => {
+  if (raw === undefined || raw.trim().length === 0) {
+    return fallback;
+  }
+  const text = raw.trim();
+  if (!/^\d+$/.test(text)) {
+    throw new Error(
+      `${options.label} is "${raw}", which is not ${options.min === 0 ? 'a whole number' : 'a positive whole number'}. ` +
+        'Refusing to start: a rate limit nobody can read is not a rate limit. Unset it to use ' +
+        `the default of ${fallback}, or set 0 to disable the limiter deliberately.`,
+    );
+  }
+  const value = Number(text);
+  return value < options.min ? options.min : value;
+};
+
+export interface RateLimitIngress {
+  /** Headers to read a client IP from, in order. */
+  headers: readonly string[];
+  /** Proxies whose forwarded address may be believed. */
+  trustedProxies: readonly string[];
+}
+
+/**
+ * Cloudflare's own header. Set by the edge on every request and stripped from
+ * what the client sent, so it cannot be spoofed by a caller.
+ */
+export const EDGE_IP_HEADER = 'cf-connecting-ip';
+
+/**
+ * Headers a deployment may choose to believe about the client IP.
+ *
+ * A forwarded header is a claim made by whoever sent the request. Trusting one
+ * unconditionally does not merely mis-attribute traffic — it hands the caller the
+ * rate limiter, because a per-IP limit keyed on a spoofable address is a per-IP
+ * limit the caller chooses. `203.0.113.1, 203.0.113.2, 203.0.113.3` is three
+ * buckets for one caller; one fresh address per request is unlimited.
+ *
+ * So the ingress list is configuration:
+ *   - a local environment trusts nothing and falls back to Better Auth's
+ *     development default, because every request comes from this machine;
+ *   - a deployed environment trusts the Cloudflare edge header, and additionally
+ *     trusts `x-forwarded-for` only when the operator names the proxies in front
+ *     of the Worker.
+ *
+ * An operator running behind their own proxy therefore has to say so, which is
+ * the point: the safe default and the "it works with my load balancer" default
+ * are different, and only one of them is safe.
+ */
+export const resolveAuthRateLimitIngress = (
+  env: { TRUSTED_PROXIES?: string },
+  isLocal: boolean,
+): RateLimitIngress => {
+  const proxies = (env.TRUSTED_PROXIES ?? '')
+    .split(',')
+    .map((entry) => entry.trim())
+    .filter((entry) => entry.length > 0);
+
+  if (isLocal) {
+    return { headers: [], trustedProxies: [] };
+  }
+
+  return {
+    headers: proxies.length === 0 ? [EDGE_IP_HEADER] : [EDGE_IP_HEADER, 'x-forwarded-for'],
+    trustedProxies: proxies,
+  };
+};
+
+/**
+ * Origins this deployment will accept a credentialed request from.
+ *
+ * `TRUSTED_ORIGINS` first, then this deployment's own `baseUrl`. The second entry is
+ * not redundant: Better Auth validates the request's `Origin` against this list, and a
+ * same-origin request carries an `Origin` header naming the origin the *browser* used —
+ * which is not always the string this deployment was configured with.
+ *
+ * Under `wrangler dev` the two genuinely differ, and this is not a subtlety:
+ *   * the browser sends `Origin: http://127.0.0.1:4183`
+ *   * wrangler rewrites it to `Origin: http://127.0.0.1` before the Worker sees it
+ *
+ * so a `TRUSTED_ORIGINS` naming the ported origin never matches, and every credentialed
+ * request is refused with `INVALID_ORIGIN`. Both forms are added for a local
+ * deployment, and they are both unambiguously this machine — which is the same reason
+ * `resolveDeploymentEnvironment` permits a loopback derivation at all.
+ *
+ * A remote deployment gets exactly its configured list plus its own origin, with no
+ * portless variant: there is one hostname in production, and inventing a second
+ * acceptable origin there would be a way to widen the allowlist rather than correct it.
+ */
+export const resolveTrustedOrigins = (
+  env: { TRUSTED_ORIGINS?: string },
+  baseUrl: string,
+  isLocal: boolean,
+): string[] => {
+  const configured = (env.TRUSTED_ORIGINS ?? '')
+    .split(',')
+    .map((entry) => entry.trim())
+    .filter((entry) => entry.length > 0);
+
+  const origins = [...new Set([...configured, baseUrl])];
+
+  if (isLocal) {
+    const parsed = parseAbsoluteHttpUrl(baseUrl);
+    if (parsed?.ok === true) {
+      // The portless form, e.g. `http://127.0.0.1` from `http://127.0.0.1:4183`.
+      // Only when one actually differs, so the common case adds nothing.
+      const withoutPort = `${parsed.url.protocol}//${parsed.url.hostname}`;
+      if (withoutPort !== baseUrl) {
+        origins.push(withoutPort);
+      }
+    }
+  }
+
+  return origins;
 };

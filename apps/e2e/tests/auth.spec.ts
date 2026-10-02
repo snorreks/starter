@@ -47,23 +47,110 @@ const newAccount = (): Account => ({
   password: 'correct horse battery staple',
 });
 
-const signUpViaUi = async (page: Page, account: Account): Promise<void> => {
-  await page.goto('/login');
-  await page.getByTestId('auth-toggle-mode').click();
-  await page.getByTestId('auth-email-input').fill(account.email);
-  await page.getByTestId('auth-password-input').fill(account.password);
-  await page.getByTestId('auth-submit').click();
-  await expect(page.getByRole('heading', { name: 'Your notes' })).toBeVisible();
+/**
+ * Read a link out of the local capture inbox.
+ *
+ * The E2E Worker runs with `DEPLOYMENT_ENV=local`, so `/api/dev/mail` holds the
+ * messages that would have been sent. That is what lets this lane exercise a
+ * *verified* account with no mail provider and no real inbox.
+ */
+const capturedLink = async (
+  request: APIRequestContext,
+  email: string,
+  subject: RegExp,
+): Promise<string> => {
+  const response = await request.get(`${appBaseUrl}/api/dev/mail?to=${encodeURIComponent(email)}`);
+  if (!response.ok()) {
+    throw new Error(`mail inbox unavailable: ${response.status()} ${await response.text()}`);
+  }
+  const body = (await response.json()) as {
+    messages: Array<{ subject: string; text: string }>;
+  };
+  const message = body.messages.find((entry) => subject.test(entry.subject));
+  if (message === undefined) {
+    throw new Error(
+      `No mail matching ${subject} captured for ${email}. ` +
+        `Captured: ${JSON.stringify(body.messages.map((entry) => entry.subject))}`,
+    );
+  }
+  const line = message.text.split('\n').find((entry) => entry.startsWith('http'));
+  if (line === undefined) {
+    throw new Error('No link in the captured mail');
+  }
+  return line.trim();
 };
 
-/** Register an account through the API and return its cookies. */
+/**
+ * Register and confirm an address, through the API.
+ *
+ * Both halves are required before any private endpoint will answer. A helper that
+ * stopped at sign-up would leave every authorization test below asserting on a 401
+ * and passing — which is precisely how an ownership bug survives a green suite.
+ */
 const registerViaApi = async (request: APIRequestContext, account: Account): Promise<void> => {
-  const response = await request.post(`${appBaseUrl}/api/auth/sign-up/email`, {
+  const created = await request.post(`${appBaseUrl}/api/auth/sign-up/email`, {
     data: { email: account.email, password: account.password, name: 'E2E' },
     headers: originHeaders,
   });
 
-  expect(response.ok(), `sign-up failed: ${response.status()} ${await response.text()}`).toBe(true);
+  expect(created.ok(), `sign-up failed: ${created.status()} ${await created.text()}`).toBe(true);
+
+  // No session yet, by design. Asserted rather than assumed.
+  expect(((await created.json()) as { token: string | null }).token).toBeNull();
+
+  const link = await capturedLink(request, account.email, /Verify/);
+  // `maxRedirects: 0` so the 302 Better Auth issues is observed rather than the page
+  // it points at. Following it would make a *failed* verification look like a
+  // success, because the error redirect also lands on a 200.
+  const verified = await request.get(link, { headers: originHeaders, maxRedirects: 0 });
+  expect(
+    verified.status(),
+    `verification failed: ${verified.status()} ${await verified.text()}`,
+  ).toBe(302);
+
+  const signedIn = await request.post(`${appBaseUrl}/api/auth/sign-in/email`, {
+    data: { email: account.email, password: account.password },
+    headers: originHeaders,
+  });
+  expect(
+    signedIn.ok(),
+    `sign-in after verification failed: ${signedIn.status()} ${await signedIn.text()}`,
+  ).toBe(true);
+};
+
+/**
+ * Sign up through the UI, confirm the address, sign in, and land on the notes screen.
+ *
+ * The full three-step flow, because that is what the product now does. Sign-up alone
+ * does not sign anyone in — `autoSignIn` is off precisely because the address is
+ * unconfirmed — so a helper that stopped at sign-up would leave every test below
+ * sitting on the login page, and the failure would read as a routing bug.
+ */
+const signUpViaUi = async (page: Page, account: Account): Promise<void> => {
+  await page.goto('/login');
+  await page.getByTestId('auth-toggle-mode').click();
+  await page.getByTestId('auth-name-input').fill('E2E User');
+  await page.getByTestId('auth-email-input').fill(account.email);
+  await page.getByTestId('auth-password-input').fill(account.password);
+  await page.getByTestId('auth-submit').click();
+
+  // The account exists but is not usable yet, and the screen says so.
+  await expect(page.getByTestId('auth-error')).toContainText(/confirm your address/i);
+  await expect(page).toHaveURL(/\/login/);
+
+  // Followed in the browser, which is the point: this is the navigation a person makes
+  // after clicking a link in an email client, and it is the only assertion here that
+  // proves the link and the page agree.
+  await page.goto(await capturedLink(page.request, account.email, /Verify/));
+  await expect(page).toHaveURL(/\/verify-email/);
+
+  // Verification is not a sign-in, so authenticate properly.
+  await page.goto('/login');
+  await page.getByTestId('auth-email-input').fill(account.email);
+  await page.getByTestId('auth-password-input').fill(account.password);
+  await page.getByTestId('auth-submit').click();
+
+  await expect(page.getByRole('heading', { name: 'Your notes' })).toBeVisible();
 };
 
 const createNoteViaApi = async (
@@ -83,22 +170,24 @@ test.describe('authentication', () => {
   test('a wrong password is refused', async ({ page }) => {
     const account = newAccount();
 
-    await page.goto('/login');
-    await page.getByTestId('auth-toggle-mode').click();
-    await page.getByTestId('auth-email-input').fill(account.email);
-    await page.getByTestId('auth-password-input').fill(account.password);
-    await page.getByTestId('auth-submit').click();
-    await expect(page.getByRole('heading', { name: 'Your notes' })).toBeVisible();
+    // A verified account, so the failure below is unambiguously about the password.
+    await signUpViaUi(page, account);
 
-    // Sign out, then try the same address with the wrong password.
+    // Sign out. `clearCookies` rather than a UI click, so this test is about the wrong
+    // password and not about the sign-out button.
     await page.context().clearCookies();
     await page.goto('/login');
+    await expect(page.getByTestId('auth-email-input')).toBeVisible();
+
     await page.getByTestId('auth-email-input').fill(account.email);
     await page.getByTestId('auth-password-input').fill('not the password');
     await page.getByTestId('auth-submit').click();
 
     await expect(page.getByTestId('auth-error')).toBeVisible();
     await expect(page).toHaveURL(/\/login/);
+    // And the message must not say which half was wrong — see the cross-account
+    // enumeration test below for why that is load-bearing.
+    await expect(page.getByTestId('auth-error')).not.toContainText(/no account|does not exist/i);
   });
 
   test('an unauthenticated request to the notes API is refused', async ({ request }) => {
@@ -141,6 +230,182 @@ test.describe('authentication', () => {
 
     expect(response?.status()).toBe(200);
     await expect(page.getByTestId('auth-form')).toBeVisible();
+  });
+
+  test('the recovery routes render from a deep link', async ({ page }) => {
+    // Both were added with the account lifecycle. A route that only works after a
+    // client-side navigation hides a real defect — someone following a link in an
+    // email lands on a 404 — and nothing else in this file would catch it.
+    for (const path of ['/forgot-password', '/verify-email']) {
+      const response = await page.goto(path);
+      expect(response?.status(), `${path} did not render`).toBe(200);
+      await expect(page.getByRole('heading', { level: 1 })).toBeVisible();
+    }
+  });
+
+  test('the sign-in form works with JavaScript disabled', async ({ browser }) => {
+    // The form action is a fallback, not decoration: a browser with no scripting must
+    // still be able to create an account *and* sign in. This context has scripting off,
+    // so the only thing that can answer is the server.
+    const context = await browser.newContext({ javaScriptEnabled: false });
+    const page = await context.newPage();
+
+    const account = newAccount();
+    await page.goto('/login');
+    // The mode switch is a submitter rather than an `onclick`, so it is the *only* way
+    // to reach the sign-up form here — and it has to work on a form with nothing filled
+    // in, which is the state someone switches modes from.
+    await page.getByTestId('auth-toggle-mode').click();
+    await page.getByTestId('auth-name-input').fill('No JS');
+    await page.getByTestId('auth-email-input').fill(account.email);
+    await page.getByTestId('auth-password-input').fill(account.password);
+    await page.getByTestId('auth-submit').click();
+
+    // The server-rendered response after the post, not a client-side transition. The
+    // wording lives in the ViewModel, so this is really an assertion that the action's
+    // result reaches the rendered page at all — and `$effect`, the obvious way to apply
+    // it, does not run on a server render.
+    await expect(page.getByTestId('auth-error')).toContainText(/confirm your address/i);
+
+    // Verify, then sign in. Signing in has to *navigate*: an action that returned an
+    // outcome instead would leave this browser — which will never run a script to read
+    // one — sitting on the form with a session cookie it has no way to act on.
+    await page.goto(await capturedLink(page.request, account.email, /Verify/));
+    await expect(page).toHaveURL(/\/verify-email/);
+
+    await page.goto('/login');
+    await page.getByTestId('auth-email-input').fill(account.email);
+    await page.getByTestId('auth-password-input').fill(account.password);
+    await page.getByTestId('auth-submit').click();
+
+    await expect(page).toHaveURL(/\/notes$/);
+    await expect(page.getByRole('heading', { name: 'Your notes' })).toBeVisible();
+
+    await context.close();
+  });
+
+  test('an unverified account is told to confirm, not that its password is wrong', async ({
+    page,
+    request,
+  }) => {
+    // A *fresh* account, registered through the API and deliberately never verified.
+    //
+    // `page.request` shares this page's cookie jar, so registering through it and then
+    // expecting the sign-in form would be contradictory: the helper signs in, and
+    // `/login` redirects a signed-in visitor to `/notes`. Registration therefore uses a
+    // bare `request` fixture, which has its own jar and leaves this page anonymous.
+    const pending = newAccount();
+    const created = await request.post(`${appBaseUrl}/api/auth/sign-up/email`, {
+      data: { email: pending.email, password: pending.password, name: 'Pending' },
+      headers: originHeaders,
+    });
+    expect(created.ok(), await created.text()).toBe(true);
+    expect(((await created.json()) as { token: string | null }).token).toBeNull();
+
+    await page.goto('/login');
+    await expect(page.getByTestId('auth-email-input')).toBeVisible();
+
+    await page.getByTestId('auth-email-input').fill(pending.email);
+    await page.getByTestId('auth-password-input').fill(pending.password);
+    await page.getByTestId('auth-submit').click();
+
+    // The correct password, the correct address, and the screen says "confirm your
+    // address". Telling this person their password is wrong would send them to reset
+    // a password that is fine — and "Email not verified" and "invalid credentials"
+    // arrive with the same HTTP status, so this only works because the ViewModel
+    // branches on Better Auth's error *code*.
+    await expect(page.getByTestId('auth-error')).toContainText(/confirm your address/i);
+    // And the resend affordance exists, which is the only thing the user can do.
+    await expect(page.getByTestId('auth-resend-verification')).toBeVisible();
+  });
+});
+
+test.describe('password recovery, in a browser', () => {
+  test('a recovery link sets a new password and the old one stops working', async ({
+    page,
+    request,
+  }) => {
+    const account = newAccount();
+    await registerViaApi(request, account);
+
+    await page.goto('/forgot-password');
+    await page.getByLabel('Email').fill(account.email);
+    await page.getByRole('button', { name: 'Send the link' }).click();
+
+    // Redirected with `?sent=1`, which is what makes a reload a GET rather than a
+    // second send. Without it, a refresh mails the user twice.
+    await expect(page).toHaveURL(/reset-password\?sent=1/);
+    await expect(page.getByText(/if that address has an account/i)).toBeVisible();
+
+    const link = await capturedLink(request, account.email, /password/i);
+    await page.goto(link);
+
+    // Better Auth validated the token before redirecting here, so the form is already
+    // live. Server-rendered, which is what makes the next step work without JS.
+    // `exact`, because the heading says "Choose a new password" and `getByLabel`
+    // substring-matches an element's accessible name as well as a `<label>` — without
+    // it this locator resolves the section as well as the input, and every use of it
+    // fails on a strict-mode violation rather than on anything about the page.
+    await expect(page.getByLabel('New password', { exact: true })).toBeVisible();
+
+    const replacement = 'a-replacement-passphrase-x';
+    await page.getByLabel('New password', { exact: true }).fill(replacement);
+    await page.getByRole('button', { name: 'Save the new password' }).click();
+
+    // Every session was revoked, so the reset lands on sign-in — signed out on
+    // purpose, because "we logged you out of everything" is the message.
+    await expect(page).toHaveURL(/\/login\?reset=1/);
+
+    // The old password is dead.
+    await page.getByTestId('auth-email-input').fill(account.email);
+    await page.getByTestId('auth-password-input').fill(account.password);
+    await page.getByTestId('auth-submit').click();
+    await expect(page.getByTestId('auth-error')).toContainText(/do not match/i);
+
+    // And the new one works.
+    await page.getByTestId('auth-password-input').fill(replacement);
+    await page.getByTestId('auth-submit').click();
+    await expect(page.getByRole('heading', { name: 'Your notes' })).toBeVisible();
+  });
+
+  test('asking for a recovery mail for an unknown address says the same thing', async ({
+    page,
+  }) => {
+    // The enumeration guarantee, in a real browser. Both addresses produce the same
+    // page, the same text, and the same URL — so this screen cannot answer "is this
+    // person registered here?".
+    const unknown = `e2e-${crypto.randomUUID()}@example.test`;
+
+    await page.goto('/forgot-password');
+    await page.getByLabel('Email').fill(unknown);
+    await page.getByRole('button', { name: 'Send the link' }).click();
+
+    await expect(page).toHaveURL(/reset-password\?sent=1/);
+    await expect(page.getByText(/if that address has an account/i)).toBeVisible();
+    // Explicitly not: "we could not find that account".
+    await expect(page.getByText(/no account|does not exist|unknown address/i)).toHaveCount(0);
+  });
+
+  test('a second use of a recovery link is refused, in the browser', async ({ page, request }) => {
+    const account = newAccount();
+    await registerViaApi(request, account);
+
+    await page.request.post(`${appBaseUrl}/api/auth/request-password-reset`, {
+      data: { email: account.email, redirectTo: '/reset-password' },
+      headers: originHeaders,
+    });
+    const link = await capturedLink(request, account.email, /password/i);
+
+    await page.goto(link);
+    await page.getByLabel('New password', { exact: true }).fill('first-replacement-x');
+    await page.getByRole('button', { name: 'Save the new password' }).click();
+    await expect(page).toHaveURL(/\/login\?reset=1/);
+
+    // The link is a live credential until it is used; after that it must be inert.
+    // Re-following it lands on the "no longer valid" page rather than a form.
+    await page.goto(link);
+    await expect(page.getByText(/no longer valid|expired/i)).toBeVisible();
+    await expect(page.getByLabel('New password', { exact: true })).toHaveCount(0);
   });
 });
 

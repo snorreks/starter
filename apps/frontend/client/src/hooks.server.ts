@@ -41,6 +41,7 @@ import { createLogger } from '@starter/logger';
 // the `@sveltejs/kit/hooks` subpath (it is *not* on the package root in Kit 3 —
 // checked against the installed types rather than assumed) and that is where the
 // hook's own type lives.
+import type { RequestEvent } from '@sveltejs/kit';
 import type { Handle } from '@sveltejs/kit/hooks';
 import { type Container, getContainer } from '#lib/server/container.ts';
 import { jsonError, notConfigured } from '#lib/server/http.ts';
@@ -62,13 +63,38 @@ const startupLogger = createLogger({
 const isApiPath = (pathname: string): boolean =>
   pathname === '/api' || pathname.startsWith('/api/');
 
+/**
+ * The origin this request actually arrived on, for local origin derivation.
+ *
+ * `event.url` is built from the request's own URL, and inside `wrangler dev` that URL
+ * loses the port — the Worker sees `http://127.0.0.1` while the browser is talking to
+ * `http://127.0.0.1:4183`. Deriving the base URL from `event.url.origin` therefore
+ * produced a link that pointed at port 80, and every verification and recovery mail
+ * sent during `bun run e2e` was a dead link. It is not visible on `/` or on any
+ * same-origin fetch, which is why it survived until this PR: nothing else in the
+ * application puts a derived origin into a link a person clicks.
+ *
+ * The `Host` header is what the browser actually sent, so it carries the port. It is
+ * used *only* as a candidate for the loopback derivation — `resolveDeploymentEnvironment`
+ * still refuses a non-loopback origin, and a deployed environment must set
+ * `BETTER_AUTH_URL` and never reaches this path at all. So a hostile `Host` cannot
+ * steer a deployment: it can only produce the same refusal a wrong origin already did.
+ */
+const requestOriginFor = (event: RequestEvent): string => {
+  const host = event.request.headers.get('host');
+  if (host !== null && host.length > 0) {
+    return `${event.url.protocol}//${host}`;
+  }
+  return event.url.origin;
+};
+
 export const handle: Handle = async ({ event, resolve }) => {
   // Typed rather than inferred from `undefined`: the whole point of the try is that
   // the assignment may not happen, and an inferred type would be the failure mode
   // this hook exists to turn into a readable response.
   let container: Container;
   try {
-    container = getContainer(env, event.url.origin);
+    container = getContainer(env, requestOriginFor(event));
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     startupLogger.error('config.invalid', { message });

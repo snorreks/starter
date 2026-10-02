@@ -44,6 +44,10 @@ declare global {
       readonly TRUSTED_ORIGINS?: string;
       readonly TEST_RUN_ID?: string;
       readonly AUTH_RATE_LIMIT_MAX?: string;
+      readonly AUTH_RATE_LIMIT_WINDOW?: string;
+      readonly TRUSTED_PROXIES?: string;
+      readonly RESEND_API_KEY?: string;
+      readonly MAIL_FROM?: string;
       readonly LOG_LEVEL?: string;
       readonly RELEASE?: string;
     }
@@ -58,6 +62,10 @@ declare global {
       readonly TRUSTED_ORIGINS?: string;
       readonly TEST_RUN_ID?: string;
       readonly AUTH_RATE_LIMIT_MAX?: string;
+      readonly AUTH_RATE_LIMIT_WINDOW?: string;
+      readonly TRUSTED_PROXIES?: string;
+      readonly RESEND_API_KEY?: string;
+      readonly MAIL_FROM?: string;
       readonly LOG_LEVEL?: string;
       readonly RELEASE?: string;
     }

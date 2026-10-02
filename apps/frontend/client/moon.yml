@@ -42,7 +42,6 @@ dependsOn:
   # succeed against a stale copy of the schema it persists to.
   - auth
   - database
-  - frontend-services
   - logger
   - schemas
   - ui

@@ -84,15 +84,25 @@ const SERVER_MARKERS = [
   // The Workers bindings module. Resolved to a stub in dev, so it never appears in
   // a client chunk even when the import is there.
   'cloudflare:workers',
-  // Drizzle/D1 table and index names from `@starter/database`. A row definition is
-  // the thing that leaks when a server package is reachable from browser code.
+  // Drizzle/D1 table, column and index names from `@starter/database`. A row
+  // definition is the thing that leaks when a server package is reachable from browser
+  // code.
   'notes_owner_id_idx',
   'notes_owner_updated_idx',
   'device_codes',
   'account_id',
-  // Better Auth's own DDL.
-  'emailVerified',
+  'provider_id',
+  // Better Auth's own DDL, snake-cased the way this application's migrations spell it.
   'email_verified',
+  // `emailVerified` was on this list and is deliberately not any more. It is the
+  // property name Better Auth's schema carries, and it is *also* a field of
+  // `SessionUserSchema` in `@starter/schemas` — which the browser is supposed to
+  // parse the signed-in user with. A marker that fires on correct code is a marker
+  // somebody deletes to make the build green, and `email_verified` plus the D1
+  // identifiers above catch the same leak without firing on the session shape. That
+  // collision was found by `bun run check:bundle` failing on a clean build, not by
+  // inspection: the one occurrence in the client bundle was the schema the browser
+  // needs.
 ] as const;
 
 export interface BundleProblem {

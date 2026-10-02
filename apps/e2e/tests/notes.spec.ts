@@ -36,6 +36,42 @@ const newAccount = () => ({
   password: 'correct horse battery staple',
 });
 
+/**
+ * Read the verification link out of the local capture inbox.
+ *
+ * The E2E Worker runs with `DEPLOYMENT_ENV=local`, so `/api/dev/mail` is available
+ * and holds the messages that would have been sent. That is what makes this lane able
+ * to exercise a *verified* account without a mail provider and without a real
+ * inbox — and it is the reason no test in this file can silently pass on an
+ * unverified account: `signUp` will not complete without it.
+ */
+const verificationLink = async (page: Page, email: string): Promise<string> => {
+  const response = await page.request.get(`/api/dev/mail?to=${encodeURIComponent(email)}`);
+  if (!response.ok()) {
+    throw new Error(`mail inbox unavailable: ${response.status()}`);
+  }
+  const body = (await response.json()) as {
+    messages: Array<{ subject: string; text: string }>;
+  };
+  const message = body.messages.find((entry) => entry.subject.includes('Verify'));
+  if (message === undefined) {
+    throw new Error(`No verification mail captured for ${email}`);
+  }
+  const line = message.text.split('\n').find((entry) => entry.startsWith('http'));
+  if (line === undefined) {
+    throw new Error('No link in the verification mail');
+  }
+  return line.trim();
+};
+
+/**
+ * Sign up, confirm the address, then sign in — and land on the notes screen.
+ *
+ * Three steps, because that is the product's actual flow now. Sign-up alone does not
+ * sign anyone in (`autoSignIn` is off precisely because the address is unconfirmed),
+ * so a helper that stopped at sign-up would leave every test below on the login page
+ * and the failure would read as a routing bug.
+ */
 const signUp = async (page: Page, account = newAccount()): Promise<void> => {
   await page.goto('/login');
   await expect(page.getByTestId('auth-form')).toBeVisible();
@@ -43,6 +79,22 @@ const signUp = async (page: Page, account = newAccount()): Promise<void> => {
   // The form starts in sign-in mode; switch before filling.
   await page.getByTestId('auth-toggle-mode').click();
 
+  await page.getByTestId('auth-name-input').fill('E2E User');
+  await page.getByTestId('auth-email-input').fill(account.email);
+  await page.getByTestId('auth-password-input').fill(account.password);
+  await page.getByTestId('auth-submit').click();
+
+  // No session yet. This is asserted rather than assumed: if sign-up ever handed out
+  // a session for an unconfirmed address, every test below would still pass while
+  // testing an application that does not verify anything.
+  await expect(page.getByTestId('auth-error')).toContainText(/confirm your address/i);
+
+  await page.goto(await verificationLink(page, account.email));
+  await expect(page).toHaveURL(/\/verify-email/);
+
+  // Verification does not sign anyone in — the link proves control of an address, it
+  // is not a credential. So the sign-in below is the real one.
+  await page.goto('/login');
   await page.getByTestId('auth-email-input').fill(account.email);
   await page.getByTestId('auth-password-input').fill(account.password);
   await page.getByTestId('auth-submit').click();

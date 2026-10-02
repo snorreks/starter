@@ -133,6 +133,28 @@ export const deviceCodes = sqliteTable(
 );
 
 // -----------------------------------------------------------------------------
+// Rate limiting
+// -----------------------------------------------------------------------------
+
+/**
+ * Fixed-window counters for the auth rate limiter.
+ *
+ * Not a Better Auth model. Better Auth's own `rateLimit` table has no `id` column,
+ * which its Drizzle adapter requires for the atomic increment it uses — see
+ * `d1_rate_limit.ts` for the full account. This table is reached only by that
+ * module's single-statement upsert, which is why the shape is exactly what the
+ * statement needs and nothing more.
+ *
+ * `key` is Better Auth's `"<ip>|<path>"` bucket, so it is unique by construction;
+ * making it the primary key is what lets `ON CONFLICT` do the work.
+ */
+export const rateLimits = sqliteTable('rate_limits', {
+  key: text('key').primaryKey(),
+  count: integer('count').notNull(),
+  lastRequest: integer('last_request').notNull(),
+});
+
+// -----------------------------------------------------------------------------
 // Domain: notes
 // -----------------------------------------------------------------------------
 

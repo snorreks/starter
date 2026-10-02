@@ -6,7 +6,7 @@
 import '@starter/ui/tokens.css';
 import '../app.css';
 import '#lib/runtime/logger';
-import { setDialogCapabilities } from '@starter/frontend-services/base';
+import { setDialogCapabilities } from '@starter/ui';
 import type { Snippet } from 'svelte';
 import { untrack } from 'svelte';
 import { sessionService, sessionState } from '#lib/services/session_service.svelte';
@@ -16,20 +16,17 @@ import type { LayoutData } from './$types';
 type Props = { data: LayoutData; children: Snippet };
 let { data, children }: Props = $props();
 
-// Dialog capability: the base classes reach user-facing dialogs through this
-// object rather than importing the app's component tree, which is what keeps
-// a ViewModel testable without mounting anything.
+// The feedback capability screens reach for. Registered here rather than imported
+// by them: a ViewModel that imported this layout would be a cycle, and would be
+// unusable in any test that did not mount the shell.
 setDialogCapabilities({
   showSnackbar: (snackbar) => {
-    // Round 1 has no toast system. Console output keeps the contract honest:
-    // a snackbar is requested, and the fact that no UI renders it is visible
-    // rather than silently swallowed. See docs/first-round-review.md.
+    // No toast system yet. Console output keeps the contract honest: a snackbar is
+    // requested, and the fact that no UI renders it is visible rather than
+    // silently swallowed. See docs/first-round-review.md.
     console.info(`[snackbar:${snackbar.tone}] ${snackbar.text}`);
   },
   confirm: async () => window.confirm('Are you sure?'),
-  requestSignIn: () => {
-    void goto('/login');
-  },
 });
 
 let user = $state(sessionState.user);

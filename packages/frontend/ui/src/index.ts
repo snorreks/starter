@@ -7,5 +7,9 @@
 // Prefer a subpath import (`@starter/ui/feedback`) over the barrel: the barrel
 // pulls every component into every graph.
 
-export * from './base/index.ts';
+export * from './dialogs.ts';
 export * from './feedback/index.ts';
+export * from './format.ts';
+export * from './report_error.ts';
+export * from './screen.ts';
+export { default as ScreenContainer } from './screen_container.svelte';
