@@ -192,6 +192,26 @@ jobs:
             exit 1
           fi
 
+      - name: Prove the browser selection reaches the launched process
+        # Deliberately not part of `bun run test`. It launches real Chromium
+        # processes, and `moon run :test` runs every project's `test` task
+        # concurrently — so inside the unit lane it competes for CPU with
+        # `pi:test`, whose ownership tests spawn a child and then read
+        # `/proc/<pid>/environ` after a fixed 150 ms. That race is one this branch
+        # introduced; this lane is what removed it. Loosening a sleep in another
+        # project's test would have hidden the coupling instead.
+        run: |
+          set -o pipefail
+          bun run scripts/src/cli.ts cached -- scripts:test-browser-launch \
+            2>&1 | tee "$RUNNER_TEMP/browser-launch.log"
+
+      - name: Assert the browser-launch proof ran
+        run: |
+          if ! grep -qE "$TESTS_PASSED_PATTERN" "$RUNNER_TEMP/browser-launch.log"; then
+            echo "::error::The browser-launch proof reported no passing tests. See the log above."
+            exit 1
+          fi
+
   worker:
     name: Worker integration
     runs-on: ubuntu-latest

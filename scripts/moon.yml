@@ -73,6 +73,28 @@ tasks:
       - '@group(tests)'
       - '@group(configs)'
 
+  # The browser-launch proof, in a lane of its own.
+  #
+  # `tests/browser_launch.test.ts` launches real Chromium processes. It belongs to
+  # the browser half of the suite, not the unit half, and the distinction is not
+  # cosmetic: `moon run :test` runs every project's `test` task concurrently, so a
+  # browser-spawning test inside `scripts:test` competes for CPU with
+  # `pi:test`, whose ownership tests spawn a child and then read `/proc/<pid>/environ`
+  # after a fixed 150 ms. That is a race the suite does not need to have, and it is
+  # this lane's existence that removed it — the alternative, loosening a sleep in
+  # another project's test, is hiding a real coupling rather than removing it.
+  #
+  # `cache: false` because it launches browsers, which are not inputs to a hash.
+  test-browser-launch:
+    command: 'bun'
+    args: ['run', 'test:browser-launch']
+    options:
+      cache: false
+    inputs:
+      - '@group(sources)'
+      - '@group(tests)'
+      - '@group(configs)'
+
   # No `build` task, and there must never be one that only prints. `moon run
   # :build` used to resolve here, run `echo 'nothing to build'`, and exit 0 — a
   # command that reported success while having done nothing, which is the failure

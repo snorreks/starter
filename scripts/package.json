@@ -11,7 +11,9 @@
     "format": "biome format src tests",
     "fix": "biome check --write src tests --error-on-warnings",
     "typecheck": "tsc --noEmit",
-    "test": "bun test",
+    "test": "bun run test:unit",
+    "test:unit": "bun test --path-ignore-patterns='tests/browser_launch.test.ts'",
+    "test:browser-launch": "bun test tests/browser_launch.test.ts",
     "guard": "bun run src/cli.ts guard",
     "guard:whole-repo": "bun run src/cli.ts guard --whole-repo"
   },

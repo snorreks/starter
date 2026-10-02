@@ -76,6 +76,19 @@ real provider, and asserts the marker file names the executable that ran:
 The second test is the negative control for the first: if the selection were
 dropped, Playwright would resolve a browser of its own and that run would pass.
 
+It runs in its own lane, not in `bun run test`:
+
+```bash
+bun run test:browser-launch    # scripts:test-browser-launch, uncached
+```
+
+Because it launches real Chromium processes, and `moon run :test` runs every
+project's `test` task **concurrently**. Leaving it in the unit lane made it compete
+for CPU with `pi:test`, whose ownership tests spawn a child and then read
+`/proc/<pid>/environ` after a fixed 150 ms. That surfaced as an intermittent CI
+failure in `.pi/tests/jobs.test.ts` on this branch — a race this work introduced,
+and the reason the proof moved rather than a sleep elsewhere being loosened.
+
 ### Two variables, not one
 
 `flake.nix` exports both, and they are not interchangeable:
