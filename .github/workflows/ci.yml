@@ -325,21 +325,34 @@ jobs:
     permissions: {}
     steps:
       - name: Require every lane
-        # Each result is read separately so the failure names the lane, rather
+        # The four results arrive through `env:`, not through `${{ }}` inside the
+        # script. Interpolating an expression directly into a `run:` body is how a
+        # value becomes shell source: anything a job name or result could contain
+        # would be parsed by bash, not treated as data. GitHub's own hardening guide
+        # recommends passing expression values through the environment for exactly
+        # this reason.
+        #
+        # Each result is a separate variable so a failure names the lane, rather
         # than reporting one boolean built from four interpolations.
+        env:
+          STATIC_RESULT: ${{ needs.static.result }}
+          UNIT_RESULT: ${{ needs.unit.result }}
+          WORKER_RESULT: ${{ needs.worker.result }}
+          E2E_RESULT: ${{ needs.e2e.result }}
         run: |
           status=0
-          declare -A results=(
-            [static]="${{ needs.static.result }}"
-            [unit]="${{ needs.unit.result }}"
-            [worker]="${{ needs.worker.result }}"
-            [e2e]="${{ needs.e2e.result }}"
-          )
-          for lane in static unit worker e2e; do
-            case "${results[$lane]}" in
+          # Iterate the variable names, not the lane names: `${!var}` is an indirect
+          # expansion, so the loop needs no `eval` and no index arithmetic. No `eval`
+          # is the point — it would re-introduce the "value parsed as source" problem
+          # the env block exists to remove.
+          for var in STATIC_RESULT UNIT_RESULT WORKER_RESULT E2E_RESULT; do
+            result="${!var}"
+            lane="$(printf '%s' "$var" | tr '[:upper:]' '[:lower:]')"
+            lane="${lane%_result}"
+            case "$result" in
               success) echo "ok    $lane" ;;
               *)
-                echo "::error::lane $lane reported '${results[$lane]}'"
+                echo "::error::lane $lane reported '$result'"
                 status=1
                 ;;
             esac

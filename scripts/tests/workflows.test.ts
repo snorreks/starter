@@ -43,9 +43,11 @@ describe('this repository’s own workflows satisfy the policy', () => {
   test('the real ci.yml reports no findings', () => {
     const report = auditWorkflows();
 
-    // Zero workflows checked would pass vacuously, which is the failure this whole
-    // check exists to prevent — so the count is asserted before the findings.
-    expect(report.checked.length).toBeGreaterThanOrEqual(1);
+    // Named, not merely counted. "At least one workflow" is satisfied by a file
+    // that has nothing to do with CI, so a renamed `ci.yml` — or one deleted while
+    // some other workflow remained — would leave this passing over a repository with
+    // no CI at all.
+    expect(report.checked).toContain('ci.yml');
     expect(report.findings).toEqual([]);
   });
 });
@@ -90,6 +92,43 @@ jobs:
     expect(rulesFor(source)).not.toContain('no-credential-on-untrusted-code');
   });
 
+  test('a bracket-notation secret reference is caught too', () => {
+    // Only the dot form was matched, so `${{ secrets['TOKEN'] }}` — equally valid —
+    // walked straight past the rule and the workflow using it went unchecked.
+    const source = `
+name: test
+on:
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  lane:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - run: echo "\${{ secrets['CLOUDFLARE_API_TOKEN'] }}"
+`;
+
+    expect(rulesFor(source)).toContain('no-credential-on-untrusted-code');
+  });
+
+  test('an expression that is not a secret reference is not flagged', () => {
+    // The negative half. Without it, a rule broad enough to catch `secrets[` would
+    // also catch any `${{ …[ … }}` subscript, and the finding would become noise
+    // people learn to ignore.
+    const source = compliant(`
+  lane:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - run: echo "\${{ github.event.inputs.name }}"
+      - run: echo "\${{ needs.other.outputs.result }}"
+      - run: echo "\${{ matrix.version }}"
+`);
+
+    expect(rulesFor(source)).not.toContain('no-credential-on-untrusted-code');
+  });
+
   test('`pull_request_target` is refused even with no secret', () => {
     // It runs with the base repository's privileges against code the pull request
     // controls, which is worse than a missing secret.
@@ -130,6 +169,33 @@ describe('an unpinned action is refused', () => {
     timeout-minutes: 5
     steps:
       - uses: ./.github/actions/setup
+`);
+
+    expect(rulesFor(local)).not.toContain('actions-pinned');
+  });
+
+  test('a self-repository reference with no ref is allowed', () => {
+    // Same argument as `./`: the code it resolves to is the code on this branch.
+    const local = compliant(`
+  lane:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: $/.github/actions/setup
+`);
+
+    expect(rulesFor(local)).not.toContain('actions-pinned');
+  });
+
+  test('a docker reference is allowed', () => {
+    // A published image carries its own digest and is not a commit in this
+    // repository's dependency graph.
+    const local = compliant(`
+  lane:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: docker://alpine:3.20
 `);
 
     expect(rulesFor(local)).not.toContain('actions-pinned');
@@ -193,6 +259,46 @@ jobs:
 `;
 
     expect(rulesFor(source)).toContain('no-self-hosted-on-untrusted:lane');
+  });
+
+  test('a reusable-workflow caller job is not required to declare a timeout', () => {
+    // A job with `uses:` calls a reusable workflow instead of running steps, and
+    // GitHub does not honour `timeout-minutes` there. Requiring it would make the
+    // rule unsatisfiable for the only job it cannot apply to — which is how a rule
+    // gets disabled. The bound still has to exist, on the called workflow's own jobs.
+    const source = `
+name: test
+on:
+  workflow_call:
+permissions:
+  contents: read
+jobs:
+  call:
+    uses: ./.github/workflows/lanes.yml
+    secrets: inherit
+`;
+
+    expect(rulesFor(source)).not.toContain('job-bounded:call');
+  });
+
+  test('an ordinary job with no timeout is still a finding', () => {
+    // The other half: skipping caller jobs must not have weakened the rule for
+    // everything else.
+    const source = `
+name: test
+on:
+  push:
+    branches: [main]
+permissions:
+  contents: read
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    steps:
+      - run: bun test
+`;
+
+    expect(rulesFor(source)).toContain('job-bounded:run');
   });
 
   test('a workflow that parses to nothing is a finding, not a pass', () => {

@@ -13,6 +13,7 @@ import { join } from 'node:path';
 import { REPO_ROOT } from '../src/shared/paths.ts';
 import {
   allocatePort,
+  CANDIDATE_COUNT,
   candidatePorts,
   isPortBusy,
   newRunId,
@@ -29,6 +30,25 @@ const hold = (port: number): Promise<Server> =>
     const server = createServer();
     server.listen(port, '127.0.0.1', () => {
       resolve(server);
+    });
+  });
+
+/** A port the kernel says is free, released again immediately. */
+const freePortFromOs = (): Promise<number> =>
+  new Promise((resolve, reject) => {
+    const server = createServer();
+    server.once('error', reject);
+    server.listen(0, '127.0.0.1', () => {
+      const address = server.address();
+      if (address === null || typeof address === 'string') {
+        server.close();
+        reject(new Error('expected an inet socket address'));
+        return;
+      }
+      const { port } = address;
+      server.close(() => {
+        resolve(port);
+      });
     });
   });
 
@@ -50,6 +70,23 @@ describe('two checkouts do not share a port', () => {
       expect(port).toBeLessThan(PORT_RANGE_START + PORT_RANGE_SIZE);
     }
   });
+
+  test('every checkout gets a full, in-range, duplicate-free candidate list', () => {
+    // 162 of 4000 checkout paths used to yield fewer than 16 candidates, because the
+    // tail was dropped rather than wrapped — so a checkout landing near the top of
+    // the range had fewer chances to find a free port, and `allocatePort` reported a
+    // collision sooner than it should have, on a port that was not the only option.
+    for (let i = 0; i < 500; i++) {
+      const ports = candidatePorts(`purpose-${i}`, `/checkouts/${i}`);
+
+      expect(ports).toHaveLength(CANDIDATE_COUNT);
+      expect(new Set(ports).size).toBe(CANDIDATE_COUNT);
+      for (const port of ports) {
+        expect(port).toBeGreaterThanOrEqual(PORT_RANGE_START);
+        expect(port).toBeLessThan(PORT_RANGE_START + PORT_RANGE_SIZE);
+      }
+    }
+  });
 });
 
 describe('a busy port is a refusal, never a silent reuse', () => {
@@ -69,8 +106,13 @@ describe('a busy port is a refusal, never a silent reuse', () => {
   });
 
   test('a free port is reported free', async () => {
-    const port = candidatePorts('probe', REPO_ROOT)[1] as number;
-
+    // A port obtained from the OS, not one picked out of the checkout's range. A
+    // candidate could be held by anything on the machine — a previous run of this
+    // suite, a developer's dev server — and the assertion would then be measuring
+    // that, not `isPortBusy`. `listen(0)` asks the kernel for a free port and
+    // releasing it keeps it free only until something else takes it, which is
+    // enough for the interval this test occupies.
+    const port = await freePortFromOs();
     expect(await isPortBusy(port)).toBe(false);
   });
 

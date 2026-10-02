@@ -202,10 +202,11 @@ describe('a task that runs tests hashes the tests it discovers', () => {
           // project id: `apps/frontend/client/tests/…` and `.pi/tests/…`, where the
           // ids are `client` and `pi`. Using the id would fail on both.
           const path = relative(REPO_ROOT, file);
-          expect(`${path} is covered by ${lane.project}:test`).toBe(
-            `${path} is covered by ${lane.project}:test`,
-          );
-          expect(covers(globs, path)).toBe(true);
+          // The path goes in the *message*, not in its own assertion. Comparing it
+          // to itself was a tautology that could never fail — and a failure here has
+          // to name the file, or the reader has to go and diff the glob lists by
+          // hand to find out which test went uncovered.
+          expect(covers(globs, path), `${path} is not covered by ${lane.project}:test`).toBe(true);
         }
       }
     });
@@ -236,12 +237,16 @@ describe('tasks that assert against a running process are not cached', () => {
     ];
 
     for (const id of mustNotCache) {
-      const [project, target] = id.split(':');
+      const [project, target] = id.split(':') as [string, string];
       const task = graph[project]?.[target];
-      if (task === undefined) {
-        continue;
-      }
-      expect(`${id} cache=${task.options.cache}`).toBe(`${id} cache=false`);
+
+      // Asserted, not skipped past. A `continue` on a missing task means renaming or
+      // deleting one turns this list into a shorter list, silently — the rule would
+      // keep reporting green with fewer subjects, and the one thing it is for is
+      // catching a task that became cacheable.
+      expect(task, `${id} does not exist in the resolved graph`).toBeDefined();
+
+      expect(`${id} cache=${task?.options.cache}`).toBe(`${id} cache=false`);
     }
   });
 

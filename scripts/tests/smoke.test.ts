@@ -22,23 +22,41 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { REPO_ROOT } from '../src/shared/paths.ts';
 import {
+  committedFiles,
   copyTemplateTree,
   findIdentityReferences,
+  InvalidStepLimit,
   PROJECT_NAME,
   runTemplateSmoke,
 } from '../src/smoke/template_smoke.ts';
 
 /**
- * A miniature repository.
+ * A miniature repository whose **first step genuinely cannot succeed**.
  *
  * Real enough that the copy logic and the identity scan both have something to
- * chew on, small enough that `bun install --frozen-lockfile` is not needed — the
- * first step is expected to *fail* here, and that is the assertion: a step that
- * cannot succeed must stop the run, not be skipped.
+ * chew on. `bun install --frozen-lockfile` fails here because the manifest names a
+ * dependency that does not exist and there is no lockfile to satisfy it from — a
+ * deterministic failure, reached without inventing a broken fixture.
+ *
+ * That matters because an earlier version depended on a bare manifest failing to
+ * install, and it no longer does: `bun install --frozen-lockfile` on a package with
+ * no dependencies succeeds and writes a lockfile. The suite went green for the wrong
+ * reason, and a test that asserts "the first step failed" must not be satisfied by a
+ * step that was never in doubt.
  */
 const writeMiniRepo = (root: string): void => {
   mkdirSync(join(root, 'src'), { recursive: true });
-  writeFileSync(join(root, 'package.json'), `{ "name": "${PROJECT_NAME}" }\n`);
+  // A package name no registry has, so resolution cannot succeed and
+  // `--frozen-lockfile` cannot invent one.
+  writeFileSync(
+    join(root, 'package.json'),
+    `{
+  "name": "${PROJECT_NAME}",
+  "type": "module",
+  "dependencies": { "@starter/starter-smoke-absent-dependency": "1.0.0" }
+}
+`,
+  );
   writeFileSync(join(root, 'src', 'index.ts'), `export const name = '${PROJECT_NAME}';\n`);
   mkdirSync(join(root, 'node_modules'), { recursive: true });
   writeFileSync(join(root, 'node_modules', 'stale.txt'), 'a warm cache that must not be copied\n');
@@ -92,10 +110,14 @@ describe('the rehearsal cannot inherit this machine', () => {
 
     const report = runTemplateSmoke({ root, keep: true });
     try {
-      // Nothing can resolve out of a real home directory: `~/.cache/ms-playwright`
-      // and `~/.bun` are both out of reach, so a browser lane would fail rather
-      // than quietly using this machine's download.
-      expect(existsSync(join(report.dir, '.smoke-home'))).toBe(true);
+      // The *reported* HOME, not the existence of the directory. `runTemplateSmoke`
+      // creates `.smoke-home` itself before running any step, so the directory being
+      // there proves only that the rehearsal made a directory — not that the child
+      // process was pointed at it. A run whose env block lost `HOME` would still
+      // pass the old assertion while inheriting the maintainer's home directory,
+      // which is the entire risk.
+      expect(report.reportedHome).toBe(join(report.dir, '.smoke-home'));
+      expect(report.reportedHome?.startsWith('/')).toBe(true);
     } finally {
       rmSync(report.dir, { recursive: true, force: true });
     }
@@ -116,14 +138,18 @@ describe('the rehearsal cannot inherit this machine', () => {
     expect(report.ok).toBe(false);
   });
 
-  test('a step that cannot succeed reports nonzero, not a signal read as success', () => {
+  test('a step that cannot succeed is recorded as failed, not merely as noisy', () => {
     const root = join(dir, 'mini');
     writeMiniRepo(root);
 
     const report = runTemplateSmoke({ root });
 
     expect(report.steps[0]?.step).toBe('install --frozen-lockfile');
-    expect(report.steps[0]?.detail.length).toBeGreaterThan(0);
+    // The outcome, not the presence of output. A step that printed something and
+    // exited 0 would satisfy a `detail.length` check while the rehearsal reported
+    // success against a checkout that never installed.
+    expect(report.steps[0]?.ok).toBe(false);
+    expect(report.ok).toBe(false);
   });
 
   test('maxSteps bounds the rehearsal', () => {
@@ -167,14 +193,74 @@ describe('the rename is reported, never performed', () => {
     }
   });
 
-  test('this repository’s own identity references are limited to the files that document them', () => {
+  test('this repository’s own identity references are exactly the permitted ones', () => {
     const references = findIdentityReferences(REPO_ROOT);
 
-    // Not "empty": `snorreks/starter` legitimately appears in provenance. What must
-    // not appear is the kind of reference that makes a consumer hunt.
-    expect(references.length).toBeGreaterThanOrEqual(0);
-    for (const reference of references) {
-      expect(reference.startsWith('docs/rename-checklist.md:')).toBe(false);
+    // A real, closed set. The previous assertion was `toBeGreaterThanOrEqual(0)`,
+    // which every array satisfies — it cannot fail — and the loop beneath it
+    // re-checked a path `findIdentityReferences` already filters, so a genuinely
+    // unexpected reference anywhere in the repository went unreported.
+    //
+    // Declared here rather than imported, so widening the module's `IDENTITY_ALLOWED`
+    // cannot silently widen what this test accepts. That decision is made in two
+    // places on purpose: the module says what it does, this says what is acceptable.
+    //
+    // Today the answer is empty. `package.json` and `bun.lock` name the identity and
+    // are the identity; the rename checklist, the provenance note and the checker
+    // itself are exempt by name. A new reference anywhere else — a source file, a
+    // doc, a config — lands here and fails.
+    const permitted = new Set<string>([
+      'LICENSE',
+      'docs/starter-extraction.md',
+      'package.json',
+      'bun.lock',
+    ]);
+
+    const unexpected = references
+      .map((reference) => (reference.split(':')[0] ?? '').split('\\').join('/'))
+      .filter((file) => !permitted.has(file));
+
+    expect(unexpected).toEqual([]);
+  });
+});
+
+describe('the copy models a clone, not the developer’s working directory', () => {
+  test('a gitignored local file is not copied', () => {
+    // `.env` is gitignored, so a clone does not contain one — and `setup` creates it
+    // with `writeIfAbsent`. Copying the maintainer's would mean the rehearsal
+    // exercised the *existing* file and never tested that step, and it would carry
+    // real local configuration into a temporary directory.
+    //
+    // This checkout has a populated `.env` from `bun run setup`, so the assertion is
+    // about a file that is really there rather than a hypothetical.
+    expect(existsSync(join(REPO_ROOT, '.env'))).toBe(true);
+
+    const target = mkdtempSync(join(tmpdir(), 'starter-env-'));
+    try {
+      expect(copyTemplateTree(REPO_ROOT, target)).not.toContain('.env');
+      expect(existsSync(join(target, '.env'))).toBe(false);
+    } finally {
+      rmSync(target, { recursive: true, force: true });
+    }
+  });
+
+  test('a tracked file that a prefix rule would also match is still copied', () => {
+    // The mirror image, and the reason `git check-ignore` is used rather than a
+    // hand-rolled deny-list: `.envrc` is tracked while `.env` is not, and a rule
+    // keyed on the `.env` prefix would drop both — taking the direnv configuration
+    // with it.
+    expect(committedFiles(REPO_ROOT)).toContain('.envrc');
+  });
+
+  test('a step limit of zero is refused rather than running nothing and reporting ok', () => {
+    // `--steps=0` used to slice an empty plan, satisfy "every step passed" over an
+    // empty array, and print `ok` — a successful rehearsal that executed no step.
+    const root = mkdtempSync(join(tmpdir(), 'starter-smoke-zero-'));
+    try {
+      writeMiniRepo(root);
+      expect(() => runTemplateSmoke({ root, maxSteps: 0 })).toThrow(InvalidStepLimit);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
     }
   });
 });

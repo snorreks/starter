@@ -30,14 +30,54 @@ const run = async (args: readonly string[]): Promise<number> => {
     return fail(`unknown option(s): ${unknown.join(', ')}\n\n${USAGE}`, EXIT.usage);
   }
 
-  const stepsArg = args.find((arg) => arg.startsWith('--steps='))?.slice('--steps='.length);
+  // `--steps` takes a positive integer, in three spellings. Every one of them is
+  // validated before the rehearsal starts, because the failure mode is the whole
+  // point of the command:
+  //
+  //   `--steps=0`     ran `plan.slice(0, 0)`, executed nothing, and printed `ok`
+  //   `--steps`       value undefined -> NaN -> treated as "no limit": the whole run
+  //   `--steps=-1`    rejected as an unknown option, by accident of the filter
+  //
+  // A rehearsal that reports success without executing a step is exactly the failure
+  // this command exists to catch in the template, so it must not be possible here.
+  const stepsArg = args.find((arg) => arg.startsWith('--steps='));
+  const bareSteps = args.includes('--steps');
   const positional = args.find((arg) => /^\d+$/.test(arg));
-  const maxSteps = Number(stepsArg ?? positional ?? NaN);
+
+  let maxSteps: number | undefined;
+  const stepsSource = stepsArg ?? (bareSteps ? '--steps' : (positional ?? undefined));
+
+  if (stepsSource !== undefined) {
+    let raw: string;
+    if (stepsSource.startsWith('--steps=')) {
+      raw = stepsSource.slice('--steps='.length);
+    } else if (stepsSource === '--steps') {
+      // The flag with no value. Under a `??` fallback this read as "no limit",
+      // which is the opposite of what it looks like it means.
+      raw = '';
+    } else {
+      raw = stepsSource;
+    }
+
+    const parsed = Number(raw);
+
+    if (!Number.isInteger(parsed) || parsed < 1) {
+      return fail(
+        `${stepsSource} needs a positive integer; ${JSON.stringify(raw)} is not one.\n` +
+          '  `--steps=0` would run no step and then report ok, which is the failure\n' +
+          '  this command exists to catch.\n\n' +
+          USAGE,
+        EXIT.usage,
+      );
+    }
+
+    maxSteps = parsed;
+  }
 
   const keep = args.includes('--keep');
   const report = runTemplateSmoke({
     keep,
-    ...(Number.isFinite(maxSteps) ? { maxSteps } : {}),
+    ...(maxSteps === undefined ? {} : { maxSteps }),
   });
 
   for (const step of report.steps) {

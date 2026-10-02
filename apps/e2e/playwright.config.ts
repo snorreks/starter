@@ -58,20 +58,31 @@ const launchOptions = playwrightLaunchOptions();
 /**
  * Port.
  *
- * One, because there is one server. Derived from *this checkout's path* by
- * `runScope.worktreePort`, so two worktrees — a Herdr worktree, a second clone, a
- * CI matrix leg — do not fight over one port, and the same checkout always gets
- * the same one. A fixed 4183 was shared by every checkout on the machine, and the
- * failure that produced is silent: the second run starts nothing, connects to the
- * first one's server, and every spec passes against a stale D1.
+ * One, because there is one server. Derived from the **repository root** by
+ * `worktreePort`, so two worktrees — a Herdr worktree, a second clone, a CI matrix
+ * leg — do not fight over one port, and the same checkout always gets the same one.
+ * A fixed 4183 was shared by every checkout on the machine, and the failure that
+ * produced is silent: the second run starts nothing, connects to the first one's
+ * server, and every spec passes against a stale D1.
  *
- * `E2E_APP_PORT` still wins, for a deliberate port choice.
+ * The key is the repository root, deliberately, not this file's directory.
+ * `apps/e2e` has the same path suffix in every checkout, so keying on
+ * `import.meta.dirname` derives the *same* port for two checkouts — which is the
+ * collision this exists to remove. The default argument is the repository root, so
+ * passing nothing is what keeps the two apart.
+ *
+ * `E2E_APP_PORT` still wins, for a deliberate port choice — but only when it is
+ * non-empty. `Number('')` is `0`, which asks the OS for an arbitrary port that the
+ * preflight then cannot find, and `E2E_APP_PORT=` is exactly the shape a CI variable
+ * takes when it is declared and left unset.
  *
  * The port is still only *chosen* here; `preflight.ts` proves the server answering
  * on it is this run's, by run id. Allocation and identity are separate checks on
  * purpose: the port says where to look, the run id says who answered.
  */
-export const APP_PORT = Number(process.env.E2E_APP_PORT ?? worktreePort(4183, import.meta.dirname));
+const explicitPort = process.env.E2E_APP_PORT;
+export const APP_PORT =
+  explicitPort === undefined || explicitPort === '' ? worktreePort(4183) : Number(explicitPort);
 
 const appBaseUrl = `http://127.0.0.1:${APP_PORT}`;
 

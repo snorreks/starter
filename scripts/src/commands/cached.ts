@@ -15,7 +15,7 @@
 // `--cache off` and every task re-runs.
 
 import { spawnSync } from 'node:child_process';
-import { resolveCacheMode, writeStamp } from '../ci/cache_scope.ts';
+import { purgeMoonCache, resolveCacheMode, writeStamp } from '../ci/cache_scope.ts';
 import type { Command } from '../shared/command.ts';
 import { EXIT, fail, wantsHelp } from '../shared/command.ts';
 import { REPO_ROOT } from '../shared/paths.ts';
@@ -54,6 +54,25 @@ const run = async (args: readonly string[]): Promise<number> => {
   }
 
   const scope = resolveCacheMode();
+
+  // A changed fingerprint means Moon holds entries computed against a tree that no
+  // longer exists. `--cache off` for this run does not remove them, so the *next*
+  // run — which sees a matching stamp — would restore them. Measured before this
+  // was added: warm at F1, edit `bun.lock`, run (`off`, re-runs), run again
+  // (`read-write`, restores the F1 result). The entries go before the stamp
+  // advances, so there is no window in which the gate agrees with itself while the
+  // cache holds a result it has already disowned.
+  //
+  // Keyed on the reason rather than on `mode === 'off'`, because a cold cache is
+  // also `off` and there is nothing stored to discard.
+  if (scope.mode === 'off' && scope.reason.includes('changed')) {
+    const { purged } = purgeMoonCache(REPO_ROOT);
+    if (purged.length > 0) {
+      process.stderr.write(
+        `discarded Moon's ${purged.join(' and ')} cache: computed against a tree that no longer exists\n`,
+      );
+    }
+  }
 
   // The stamp is written whatever the mode. Writing it only on a hit would make
   // the second consecutive cold run look like a hit, and writing it only on a

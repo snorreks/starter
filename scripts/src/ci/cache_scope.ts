@@ -30,7 +30,7 @@
 
 import { createHash } from 'node:crypto';
 import type { Dirent } from 'node:fs';
-import { mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { REPO_ROOT } from '../shared/paths.ts';
 
@@ -55,6 +55,13 @@ export const SHARED_INPUTS = [
   'config/tsconfig/tsconfig.backend.json',
   'config/tsconfig/tsconfig.frontend.json',
   'config/tsconfig/tsconfig.svelte-kit.json',
+  // The browser resolver. It decides which Chromium `client:test-browser` and
+  // `e2e:e2e` launch, and it lives in `scripts/`, so Moon cannot name it in either
+  // project's inputs. Without it here, editing it left both lanes' cached results
+  // eligible — the exact failure this module exists to prevent, one file further
+  // out. `scripts/moon.yml` also cannot reference it: that is the `..` restriction
+  // documented in `.moon/workspace.yml`.
+  'scripts/src/shared/browser_path.ts',
 ] as const;
 
 /** Directories whose sources feed the build of other projects. */
@@ -124,23 +131,42 @@ export const filesInScope = (root: string = REPO_ROOT): string[] => {
   return [...shared, ...packages].sort();
 };
 
-/** sha256 over the path and content of every file in scope. */
+/**
+ * sha256 over the path and content of every file in scope.
+ *
+ * Each file is hashed **separately**, and the per-file digests are then hashed
+ * into a sorted manifest. Hashing path and content into one running digest is
+ * ambiguous: `hash.update(path); hash.update(content)` lets a byte moved across
+ * the boundary between one file's content and the next file's path produce the
+ * same stream. Per-file digests plus a length-prefixed manifest have no such
+ * seam, and the intermediate value is cheap.
+ */
 export const fingerprintScope = (
   root: string = REPO_ROOT,
 ): { fingerprint: string; filesRead: number } => {
-  const hash = createHash('sha256');
+  const manifest: string[] = [];
   let filesRead = 0;
 
   for (const path of filesInScope(root)) {
-    hash.update(path.slice(root.length));
+    const relative = path.slice(root.length);
+    let digest: string;
     try {
-      hash.update(readFileSync(path));
+      digest = createHash('sha256').update(readFileSync(path)).digest('hex');
     } catch {
       // A file that vanished between listing and reading is a changed tree, not
       // a reason to report a hash of half of it.
-      hash.update('<unreadable>');
+      digest = 'unreadable';
     }
+    // The path is length-prefixed so a rename that moves characters between the
+    // name and the digest column cannot reproduce another file's entry.
+    manifest.push(`${relative.length}:${relative}:${digest}`);
     filesRead += 1;
+  }
+
+  const hash = createHash('sha256');
+  for (const entry of manifest.sort()) {
+    hash.update(entry);
+    hash.update('\n');
   }
 
   return { fingerprint: hash.digest('hex'), filesRead };
@@ -215,6 +241,62 @@ export const readStamp = (root: string = REPO_ROOT): string | null => {
   } catch {
     return null;
   }
+};
+
+/** Moon's cache directories this gate has to be able to empty. */
+const PURGED_DIRS = ['hashes', 'outputs'] as const;
+
+/**
+ * Empty Moon's cache so a stale entry cannot become eligible again.
+ *
+ * `--cache off` for one run is not enough, and the reason is specific. Moon's own
+ * key does not contain `bun.lock` or a dependency project's sources, so a result
+ * stored before those changed keeps exactly the key it had. Measured on this
+ * workspace:
+ *
+ *   1. run under fingerprint F1          -> gate `off`, nothing stored
+ *   2. run under F1                      -> gate `read-write`, stores H
+ *   3. run under F1                      -> `cached, 0a00b1e9`
+ *   4. edit bun.lock                     -> fingerprint F2, Moon's key unchanged
+ *   5. run                               -> gate `off`, re-runs — but does NOT
+ *                                           overwrite H, because `off` neither
+ *                                           reads nor writes
+ *   6. run again                         -> gate sees F2 unchanged, says
+ *                                           `read-write`, and Moon restores H
+ *
+ * Step 6 is the defect: the gate had correctly detected the change, and the
+ * result it then certified was computed against F1. Disabling the cache for a run
+ * does not disable it for the *next* one.
+ *
+ * So on a mismatch the entries themselves go. `hashes/` holds the keys Moon would
+ * match, `outputs/` holds the artifacts it would restore — including
+ * `client:build`'s `.svelte-kit/cloudflare`, which is the only restorable output in
+ * this workspace and the most expensive thing to certify wrongly. `states/` is
+ * deliberately left alone: it holds Moon's version check and workspace graph,
+ * which describe the tool rather than the tree, and rebuilding the graph costs
+ * seconds on every run.
+ *
+ * Only ever called when the fingerprint has *changed*, so a warm run pays nothing.
+ */
+export const purgeMoonCache = (root: string = REPO_ROOT): { purged: string[] } => {
+  const purged: string[] = [];
+
+  for (const dir of PURGED_DIRS) {
+    const path = join(root, '.moon', 'cache', dir);
+    try {
+      const entries = readdirSync(path);
+      if (entries.length === 0) {
+        continue;
+      }
+      rmSync(path, { recursive: true, force: true });
+      purged.push(dir);
+    } catch {
+      // Absent or unreadable: there was nothing to purge, and saying so would be
+      // noise. The caller already knows the tree changed.
+    }
+  }
+
+  return { purged };
 };
 
 export const writeStamp = (root: string, fingerprint: string): void => {

@@ -220,7 +220,19 @@ export const performSetup = (options: { force?: boolean; quiet?: boolean } = {})
   if (resolved.executable !== null) {
     log(`  using ${resolved.executable} (${resolved.source})`);
     log(`    ${resolved.reason}`);
-  } else if (playwright !== null && !options.quiet) {
+  } else if (playwright === null) {
+    process.stderr.write(
+      'playwright is not in this workspace, so no browser can be installed.\n' +
+        '  Run `bun install`, then `bun run setup`.\n' +
+        `  ${resolved.reason}\n`,
+    );
+    performed.push('playwright (not installed)');
+  } else {
+    // `quiet` suppresses *output*, never the work. It used to gate this branch as
+    // well, so `setup --quiet` with no browser reached no branch at all: no install,
+    // no message, and then the readiness stamp was written as if the browser were
+    // there. `.envrc` runs `bun run setup` on every directory entry, so the quiet
+    // path is not hypothetical.
     const pins = readPins();
     const browsers = 'error' in pins ? ['chromium'] : [...pins.playwright.browsers];
 
@@ -228,9 +240,12 @@ export const performSetup = (options: { force?: boolean; quiet?: boolean } = {})
       log(`  installing playwright ${declaredPlaywrightVersion() ?? '?'} browser: ${browser}`);
       const installed = spawnSync(playwright, ['install', browser], {
         cwd: REPO_ROOT,
-        stdio: 'inherit',
-        // The download is a network operation with no bound. A hang here blocks
-        // shell activation, because `.envrc` runs `setup` on every directory entry.
+        // The download is the point of the command; `--quiet` means do not narrate
+        // it, not skip it. Its output is only suppressed so it cannot interleave
+        // with whatever the caller is printing.
+        stdio: options.quiet ? 'ignore' : 'inherit',
+        // A network operation with no bound. A hang here blocks shell activation,
+        // because `.envrc` runs `setup` on every directory entry.
         timeout: 600_000,
       });
       if (installed.status !== 0) {
@@ -244,11 +259,18 @@ export const performSetup = (options: { force?: boolean; quiet?: boolean } = {})
       }
       performed.push(`playwright install ${browser}`);
     }
-  } else if (playwright === null) {
-    process.stderr.write(
-      'playwright is not in this workspace, so no browser can be installed.\n' +
-        '  Run `bun install`, then `bun run setup`.\n',
-    );
+
+    // Re-read the resolver rather than trusting the install's exit status: a
+    // successful `playwright install` on an unsupported OS produces a browser that
+    // cannot launch, and the stamp below must not record that as ready.
+    if (resolveBrowser().executable === null) {
+      process.stderr.write(
+        'A browser was requested but none resolves, so `setup` is not recording the\n' +
+          'checkout as ready. The browser lane and E2E will not run.\n' +
+          `  ${resolved.reason}\n`,
+      );
+      performed.push('browser (still unresolved)');
+    }
   }
 
   mkdirSync(STATE_DIR, { recursive: true });

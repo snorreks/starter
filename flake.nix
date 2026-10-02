@@ -107,32 +107,34 @@
                   #                              the one that selects the browser.
                   #
                   #   PLAYWRIGHT_BROWSERS_PATH   a *directory* Playwright treats as its
-                  #                              download root. It exists here for one
-                  #                              reason: `bun run setup` skips
-                  #                              `playwright install` when this path
-                  #                              starts with /nix/store, because that
-                  #                              download cannot work on NixOS.
+                  #                              download root. It must not be pointed at
+                  #                              `${browser}/bin`, which is not a
+                  #                              Playwright browser layout. With
+                  #                              `headless: true` and no `executablePath`,
+                  #                              Playwright resolves
+                  #                              `chromium_headless_shell-<build>/…`
+                  #                              relative to it and reports:
                   #
-                  # It is NOT a way to select a browser, and it must not point at
-                  # `${browser}/bin`. With `headless: true` and no `executablePath`,
-                  # Playwright resolves `chromium_headless_shell-<build>/…` relative
-                  # to this directory — a file the store does not contain — and
-                  # reports:
+                  #     Executable doesn't exist at …/bin/chromium_headless_shell-1243/
+                  #       chrome-headless-shell-linux64/chrome-headless-shell
                   #
-                  #   Executable doesn't exist at …/bin/chromium_headless_shell-1243/
-                  #     chrome-headless-shell-linux64/chrome-headless-shell
+                  #                              That error names a headless shell, so the
+                  #                              obvious reading is "install a headless
+                  #                              shell" or "switch channel". Neither can
+                  #                              help, because the path is computed from a
+                  #                              directory that holds no browser. The fix
+                  #                              is the variable above it, applied through
+                  #                              the documented provider option:
+                  #                              `playwright({ launchOptions: {
+                  #                              executablePath } })`.
                   #
-                  # That error names a headless shell, so the obvious reading is
-                  # "install a headless shell" or "switch channel". Both were tried
-                  # and neither can help, because the path is computed from a
-                  # directory that is not a Playwright browser layout. The fix is
-                  # the variable above it, and it is the documented provider option:
-                  # `playwright({ launchOptions: { executablePath } })`.
-                  #
-                  # The directory is therefore a scratch location that merely looks
-                  # like a store path, so the `setup` skip still applies and no
-                  # download is attempted.
-                  export PLAYWRIGHT_BROWSERS_PATH="''${XDG_CACHE_HOME:-\$HOME/.cache}/ms-playwright-nix"
+                  # A plain cache directory, which is what it always was. `bun run
+                  # setup` decides whether to download by asking
+                  # `resolveBrowser()` whether a browser already resolves — not by
+                  # inspecting this path — so it skips the download here because
+                  # `CHROMIUM_PATH` names a real executable, and would equally skip
+                  # it if this value pointed anywhere else.
+                  export PLAYWRIGHT_BROWSERS_PATH="''${XDG_CACHE_HOME:-\$HOME/.cache}/ms-playwright"
                   export CHROMIUM_PATH="${browser}/bin/chromium"
 
                   # `bun run test:browser` and `bun run e2e` are the two lanes that

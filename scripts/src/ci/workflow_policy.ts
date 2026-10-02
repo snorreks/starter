@@ -46,8 +46,18 @@ export interface WorkflowReport {
 /** `#` followed by 40 hex digits: the only unambiguous pin. */
 const SHA_PIN = /^[\w.-]+\/[\w.-]+@[0-9a-f]{40}$/;
 
-/** `uses:` values that need no pin because they are not third-party code. */
-const PIN_EXEMPT = /^\.\//;
+/**
+ * `uses:` values that need no pin.
+ *
+ * Three forms, and the reason each is exempt is different:
+ *
+ *   `./…`  an action in this repository. There is no ref to pin, and the code it
+ *          resolves to is the code being reviewed on the pull request.
+ *   `$\/…` a self-repository reference with no `@ref`. Same argument.
+ *   `docker://…` a published image, which carries its own digest and is not a
+ *          commit in this repository's dependency graph.
+ */
+const PIN_EXEMPT = /^(?:\.\/|\$\/)|^(?:docker:\/\/)/;
 
 const workflowFiles = (dir: string): string[] => {
   try {
@@ -129,7 +139,17 @@ const runLabels = (job: Record<string, unknown>): string[] => {
     : [];
 };
 
-const SECRET_REFERENCE = /\$\{\{\s*secrets\./;
+/**
+ * A reference to the `secrets` context, in either syntax GitHub accepts:
+ *
+ *     ${{ secrets.NAME }}
+ *     ${{ secrets['NAME'] }}
+ *
+ * Only the dot form was matched, so a bracket-form reference passed the rule and
+ * the workflow using it went unchecked. Both are equally valid expressions, and a
+ * rule that one spelling walks past is a rule that has been told the wrong answer.
+ */
+const SECRET_REFERENCE = /\$\{\{\s*secrets(?:\.|\[)/;
 
 export const readWorkflow = (path: string): unknown => parse(readFileSync(path, 'utf8'));
 
@@ -188,8 +208,17 @@ export const auditWorkflow = (name: string, source: string): Finding[] => {
   }
 
   for (const [id, job] of Object.entries(jobs)) {
-    const timeout = job['timeout-minutes'];
-    if (typeof timeout !== 'number') {
+    // A job with `uses:` calls a reusable workflow rather than running steps, and
+    // GitHub does not accept `timeout-minutes` on one — the schema for such a job is
+    // `name`, `uses`, `with`, `secrets`, `if`, `needs`, `permissions`,
+    // `strategy`, `concurrency` and `timeout-minutes` is not among the values it
+    // honours there. Requiring it would make this rule unsatisfiable for the only
+    // kind of job it cannot apply to, which is a rule people learn to disable.
+    //
+    // The bound still has to exist somewhere: it belongs on the called workflow's
+    // own executable jobs, and those are audited by this same function when that
+    // workflow is a file in `.github/workflows/`.
+    if (job.uses === undefined && typeof job['timeout-minutes'] !== 'number') {
       add(
         `job-bounded:${id}`,
         'no `timeout-minutes`, so a hang occupies a runner until the platform gives up',

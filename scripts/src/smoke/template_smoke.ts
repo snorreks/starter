@@ -33,12 +33,12 @@
 import { spawnSync } from 'node:child_process';
 import {
   cpSync,
+  lstatSync,
   mkdirSync,
   mkdtempSync,
   readdirSync,
   readFileSync,
   rmSync,
-  statSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, relative, sep } from 'node:path';
@@ -91,9 +91,18 @@ export interface SmokeReport {
   ok: boolean;
   /** Committed references to the old identity, as `path:line`. */
   identityReferences: string[];
+  /**
+   * The `HOME` a step's child process actually saw, or null when no step ran.
+   *
+   * Reported rather than assumed. `.smoke-home` is created by this module before
+   * any step runs, so the directory's existence says nothing about the environment
+   * the children were given — and inheriting the maintainer's real home directory
+   * is precisely the failure this rehearsal exists to rule out.
+   */
+  reportedHome: string | null;
 }
 
-/** Every committed file, as repository-relative paths. */
+/** Every file a clone of this repository would contain, as relative paths. */
 export const committedFiles = (root: string = REPO_ROOT): string[] => {
   const out: string[] = [];
   const walk = (dir: string): void => {
@@ -102,15 +111,19 @@ export const committedFiles = (root: string = REPO_ROOT): string[] => {
         continue;
       }
       const path = join(dir, entry);
-      if (statSync(path).isDirectory()) {
-        walk(path);
-      } else if (statSync(path).isFile()) {
+      // `lstat`, so a symlinked directory is listed as the symlink it is and is
+      // never walked into. `stat` would follow it and enumerate a tree that no
+      // clone of this repository would contain.
+      const stats = lstatSync(path);
+      if (stats.isSymbolicLink() || stats.isFile()) {
         out.push(relative(root, path));
+      } else if (stats.isDirectory()) {
+        walk(path);
       }
     }
   };
   walk(root);
-  return out.sort();
+  return out.filter((file) => !isGitIgnored(root, file)).sort();
 };
 
 /**
@@ -191,17 +204,63 @@ export const copyTemplateTree = (from: string, to: string): string[] => {
       }
       const sourcePath = join(source, entry);
       const targetPath = join(target, entry);
-      if (statSync(sourcePath).isDirectory()) {
+
+      // `lstat`, not `stat`: `stat` follows a symlink, so a symlinked *directory*
+      // is reported as a directory and `walk` recurses into the tree behind it. That
+      // can copy a maintainer's home directory, or `node_modules`, or `/`. A symlink
+      // is copied as a symlink — which is what a checkout does — and never entered.
+      const stats = lstatSync(sourcePath);
+      if (stats.isSymbolicLink() || stats.isFile()) {
+        // Decided *before* copying, not after. Filtering the returned list would
+        // report a clean copy while the gitignored file sat on disk in the temporary
+        // checkout, which is the thing being ruled out: a rehearsal that finds the
+        // maintainer's `.env` present cannot distinguish "setup created it" from
+        // "it was already there".
+        //
+        // `from` is the tree being copied, because `git check-ignore` is
+        // repository-relative — a relative path from anywhere else names a file that
+        // does not exist.
+        const relativePath = relative(from, sourcePath);
+        if (!isGitIgnored(from, relativePath)) {
+          cpSync(sourcePath, targetPath);
+          copied.push(relativePath);
+        }
+      } else if (stats.isDirectory()) {
         walk(sourcePath, targetPath);
-      } else if (statSync(sourcePath).isFile()) {
-        cpSync(sourcePath, targetPath);
-        copied.push(relative(from, sourcePath));
       }
     }
   };
   walk(from, to);
 
   return copied;
+};
+
+/**
+ * Is this path ignored by the repository's own `.gitignore`?
+ *
+ * Delegates to `git check-ignore` rather than reimplementing the pattern language.
+ * The point of the rehearsal is to model a fresh clone, and a clone contains
+ * exactly the files git tracks — so that is the question to ask. A hand-rolled
+ * deny-list cannot know that `.env.example` is committed while `.env` is not, and
+ * getting that backwards in either direction is the whole bug.
+ *
+ * `EXCLUDED` above is still doing work: it is a cheap filter for the large
+ * directories that would otherwise be walked in full, and it is what keeps
+ * `node_modules` out of the walk rather than out of the result.
+ *
+ * A repository without git — a fixture directory in a test — has nothing ignored,
+ * so this returns false and the caller's `EXCLUDED` list remains authoritative.
+ */
+const isGitIgnored = (root: string, file: string): boolean => {
+  const result = spawnSync('git', ['check-ignore', '--quiet', '--', file], {
+    cwd: root,
+    // Output is not wanted; only the status. `check-ignore` exits 0 for ignored,
+    // 1 for not, and 128 when the path is outside the repository.
+    stdio: 'ignore',
+    timeout: 30_000,
+  });
+
+  return result.status === 0;
 };
 
 /** Run one step, bounded in time, and record what it cost and what it printed. */
@@ -214,12 +273,7 @@ const runStep = (step: string, cwd: string, args: string[]): StepResult => {
     // A rehearsal that inherits the maintainer's environment is not a rehearsal.
     // `HOME` goes to a directory inside the temporary checkout, so anything that
     // reaches for `~/.cache/ms-playwright` or `~/.bun` finds nothing.
-    env: {
-      PATH: process.env.PATH ?? '',
-      HOME: join(cwd, '.smoke-home'),
-      STARTER_SKIP_SETUP: '1',
-      CI: '1',
-    },
+    env: stepEnv(cwd),
   });
 
   const output = `${result.stdout ?? ''}${result.stderr ?? ''}`;
@@ -235,13 +289,60 @@ const runStep = (step: string, cwd: string, args: string[]): StepResult => {
   };
 };
 
+/**
+ * The environment every step's child receives.
+ *
+ * One function, so the probe below and the real steps cannot disagree about what
+ * was passed — which is the failure the probe exists to rule out.
+ */
+const stepEnv = (cwd: string): NodeJS.ProcessEnv => ({
+  PATH: process.env.PATH ?? '',
+  HOME: join(cwd, '.smoke-home'),
+  STARTER_SKIP_SETUP: '1',
+  CI: '1',
+});
+
+/** The `HOME` a child in `cwd` actually resolves. */
+const probeHome = (cwd: string): string | null => {
+  const result = spawnSync('bun', ['-e', 'process.stdout.write(process.env.HOME ?? "")'], {
+    cwd,
+    encoding: 'utf8',
+    timeout: STEP_TIMEOUT_MS,
+    env: stepEnv(cwd),
+  });
+
+  const home = (result.stdout ?? '').trim();
+  return result.status === 0 && home !== '' ? home : null;
+};
+
 export interface SmokeOptions {
   /** The tree to rehearse. Defaults to this checkout. */
   root?: string;
   /** Keep the temporary checkout after the run. */
   keep?: boolean;
-  /** Stop after this many steps. Used by the tests to keep them quick. */
+  /**
+   * Stop after this many steps. Used by the tests to keep them quick.
+   *
+   * Must be a positive integer. Zero and negatives are rejected rather than
+   * clamped: `plan.slice(0, 0)` returns nothing, `steps.length` then equals
+   * `Math.min(0, 7)`, and `ok` is computed as "every step passed" over an empty
+   * array — `true`. So `--steps=0` reported a successful rehearsal having executed
+   * no step at all, which is the precise shape of failure this module exists to
+   * detect in a template. Validated here as well as in the command, because the
+   * library is exported and the command is only one of its callers.
+   */
   maxSteps?: number;
+}
+
+/** Thrown when `maxSteps` is present but is not a positive integer. */
+export class InvalidStepLimit extends Error {
+  constructor(readonly value: unknown) {
+    super(
+      `maxSteps must be a positive integer, got ${JSON.stringify(value)}. ` +
+        'Zero would run no step and then report ok.',
+    );
+    this.name = 'InvalidStepLimit';
+  }
 }
 
 export const runTemplateSmoke = (options: SmokeOptions = {}): SmokeReport => {
@@ -254,6 +355,11 @@ export const runTemplateSmoke = (options: SmokeOptions = {}): SmokeReport => {
     copyTemplateTree(root, checkout);
     // `setup` writes into `$HOME`; give it one that exists and is disposable.
     mkdirSync(join(checkout, '.smoke-home'), { recursive: true });
+
+    // Ask a child what `HOME` it sees, rather than trusting that the directory was
+    // created and the env block was correct. Both halves of that are checked by the
+    // same `stepEnv` the real steps use.
+    const reportedHome = probeHome(checkout);
 
     // The documented order. `install` before everything because nothing resolves
     // without it; `build` before the entrypoints because the Worker lane serves
@@ -269,6 +375,10 @@ export const runTemplateSmoke = (options: SmokeOptions = {}): SmokeReport => {
     ];
 
     const limit = options.maxSteps ?? plan.length;
+    if (!Number.isInteger(limit) || limit < 1) {
+      throw new InvalidStepLimit(options.maxSteps);
+    }
+
     for (const args of plan.slice(0, limit)) {
       const step = runStep(args.join(' '), checkout, args);
       steps.push(step);
@@ -284,6 +394,7 @@ export const runTemplateSmoke = (options: SmokeOptions = {}): SmokeReport => {
       steps,
       ok: steps.length === Math.min(limit, plan.length) && steps.every((step) => step.ok),
       identityReferences: findIdentityReferences(root),
+      reportedHome,
     };
   } finally {
     if (options.keep !== true) {

@@ -45,15 +45,23 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { join } from 'node:path';
+// `fileURLToPath`, not `URL.pathname`. The latter percent-encodes, so a checkout
+// under a directory containing a space — `/home/o/My Projects/starter` — resolves to
+// a path that does not exist, and the failure reads as a missing Chromium rather
+// than as a missing directory. This repository has been bitten by exactly that and
+// says so in `apps/e2e/playwright.config.ts`.
+import { fileURLToPath } from 'node:url';
 import {
   playwrightLaunchOptions,
   resolveBrowser,
   vitestProviderOptions,
 } from '../src/shared/browser_path.ts';
 
-const CLIENT_DIR = new URL('../../apps/frontend/client/', import.meta.url).pathname;
-const E2E_CONFIG = new URL('../../apps/e2e/playwright.config.ts', import.meta.url).pathname;
-const BROWSER_PATH_MODULE = new URL('../src/shared/browser_path.ts', import.meta.url).pathname;
+const CLIENT_DIR = fileURLToPath(new URL('../../apps/frontend/client/', import.meta.url));
+const E2E_CONFIG = fileURLToPath(new URL('../../apps/e2e/playwright.config.ts', import.meta.url));
+const BROWSER_PATH_MODULE = fileURLToPath(
+  new URL('../src/shared/browser_path.ts', import.meta.url),
+);
 
 /**
  * A throwaway Vitest browser project.
@@ -185,17 +193,31 @@ describe('the browser lane launches the executable the resolver selected', () =>
   // has a downloaded Chromium and the negative test launches it before failing.
   const HARNESS_TIMEOUT_MS = 240_000;
 
-  test(
+  /**
+   * Whether this host has a browser the resolver can name.
+   *
+   * Read once, here, so `skipIf` can decide before the test body runs. Returning
+   * early from inside the body reported the test **green** having launched nothing,
+   * which is the exact shape of failure this file exists to detect — the same class
+   * as a lane whose runner matches nothing. A skip is reported as a skip, and the
+   * count is visibly short of the total.
+   *
+   * `doctor` and `browser_path.test.ts` still cover the resolver's behaviour on a
+   * host with no browser, so nothing is lost by not running these.
+   */
+  const browser = resolveBrowser();
+  const skipWithoutBrowser = browser.executable === null;
+  const withoutBrowserMessage = `no browser resolves on this host. ${browser.reason}`;
+
+  test.skipIf(skipWithoutBrowser)(
     'the selected executable is the process Playwright started',
     () => {
-      const real = resolveBrowser();
+      const real = browser;
 
       if (real.executable === null) {
-        // A host with no browser is a legitimate state, already covered by
-        // `doctor` and `browser_path.test.ts`. Assert the refusal is explicit
-        // rather than pretending the lane could have passed.
-        expect(real.reason).toContain('chromium');
-        return;
+        // `skipIf` already handled it; reaching here would mean the two disagree,
+        // which is worth an explicit message rather than a `TypeError` further down.
+        throw new Error(withoutBrowserMessage);
       }
 
       const selected = writeInstrumentedBrowser(dir, 'selected-browser', marker, real.executable);

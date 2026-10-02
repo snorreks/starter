@@ -22,17 +22,22 @@ const run = async (args: readonly string[]): Promise<number> => {
   const json = args.includes('--json');
   const report = auditWorkflows();
 
-  if (json) {
-    process.stdout.write(`${JSON.stringify(report, null, 2)}\n`);
-    return report.findings.length === 0 ? EXIT.ok : EXIT.failed;
-  }
-
+  // Before the output mode, not inside it. Checked only on the human path, the
+  // empty case exited 0 under `--json`: a machine consumer parsing `{"checked":[],
+  // "findings":[]}` read it as "clean", which is the opposite of "nothing was
+  // examined". An empty report is a failure in both modes; only the *shape* of the
+  // failure differs.
   if (report.checked.length === 0) {
     return fail(
       'no workflow files were found, so nothing was checked.\n' +
         '  A repository with no CI reports success on every push.',
       EXIT.failed,
     );
+  }
+
+  if (json) {
+    process.stdout.write(`${JSON.stringify(report, null, 2)}\n`);
+    return report.findings.length === 0 ? EXIT.ok : EXIT.failed;
   }
 
   for (const name of report.checked) {

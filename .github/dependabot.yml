@@ -5,6 +5,12 @@
 # only acceptable behaviour for a repository where a version bump can change what
 # `bun run setup:doctor` and `check:bundle` report.
 #
+# There is deliberately no `permissions:` key here. Dependabot's schema accepts
+# only `version`, `updates` and `registries` at the top level; a `permissions`
+# block is an Actions-workflow key that this file is not, so it was an unknown key
+# that no reader could act on. Dependabot's own credential is read-only by
+# construction, and the token scope of the workflows is narrowed in ci.yml.
+#
 # It is here instead of Renovate, Codecov's dependabot variants, or a
 # `npx npm-check-updates` step, because each of those is a second thing to keep
 # current, a second credential, and a second opinion about the same manifest. See
@@ -14,9 +20,6 @@
 # `bun.lock` is validated with `--frozen-lockfile` on every CI run, so a group PR
 # that resolved to something the lockfile cannot express fails before review.
 version: 2
-
-permissions:
-  contents: read
 
 updates:
   # The lockfile is the thing that is actually installed. Updating `package.json`
