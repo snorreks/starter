@@ -98,7 +98,7 @@ export const reportEvidence = (result: EvidenceResult): void => {
     // mode this whole file is written around.
     process.stdout.write(
       `\n  SKIPPED: visual inspection did not run — ${result.inspectionSkipped}.\n` +
-        '          Screenshots were captured and are on disk for a human to review.\n',
+        `          ${result.captured.length > 0 ? 'Screenshots were captured and are on disk for a human to review.' : 'Nothing was captured; see the error above.'}\n`,
     );
   }
 };

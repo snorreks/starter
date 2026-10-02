@@ -175,6 +175,21 @@ async function main(): Promise<number> {
   }
 
   reportEvidence(result);
+
+  // Zero captures is not a run that captured nothing and succeeded. Every screen
+  // failing is nearly always one cause — the app is not running on this origin —
+  // and reporting that as "screenshots are on disk for a human" is the specific
+  // lie this command must not tell. Per-screen failures are still tolerated:
+  // losing one screen is not losing the run.
+  if (result.captured.length === 0) {
+    process.stderr.write(
+      `\nNo screen was captured from ${appBaseUrl}, and the evidence directory is empty.\n` +
+        '  Nothing is running on that origin, or every screen failed to load.\n' +
+        '  Start the app first: bun run dev:worker   (or let `bun run e2e` start it)\n',
+    );
+    return 1;
+  }
+
   return 0;
 }
 
