@@ -4,10 +4,17 @@ import { main as guardsMain } from '../guards/run_guards.ts';
 import { type Command, EXIT, fail, wantsHelp } from '../shared/command.ts';
 
 const USAGE = [
-  'Usage: guard [--only <guard-id>] [--json]',
+  'Usage: guard [--only <guard-id>] [--root <dir>] [--json]',
   '',
   'Whole-repository invariants with an empty baseline. No waiver file: a guard that',
   'fails is a defect to fix, not debt to record.',
+  '',
+  '  --only <guard-id>   Run one guard instead of all of them.',
+  "  --root <dir>        Scan <dir> instead of this repository. The guard's own",
+  '                     tests use this to run the real command against a',
+  '                     disposable fixture tree, so the command and the exit',
+  '                     status are under test and not just the rule.',
+  '  --json              Machine-readable output.',
 ].join('\n');
 
 export const guardCommand: Command = {
@@ -25,26 +32,28 @@ export const guardCommand: Command = {
     // flag used to run the *default* guards and exit 0 or 1 as if it had been
     // understood. A typo in a guard invocation then reads as "the guards ran" —
     // which is the one thing a guard command must never imply when it did not.
-    // `--whole-repo` is accepted here rather than passed through silently.
     const onlyIndex = argv.indexOf('--only');
-    const operand = onlyIndex === -1 ? undefined : argv[onlyIndex + 1];
-    const known = new Set(['--only', '--json', '--whole-repo', '--help', '-h']);
-    // Skip `--only`'s operand: it is a guard id, not a flag, so checking it would
-    // report every valid `--only workspace-boundary` as an unknown flag. `-1` when
-    // there is no `--only`, so no real index is skipped.
-    const operandIndex = onlyIndex === -1 ? -1 : onlyIndex + 1;
+    const rootIndex = argv.indexOf('--root');
+    const known = new Set(['--only', '--root', '--json', '--whole-repo', '--help', '-h']);
 
-    const unknown = argv.filter((arg, index) => !known.has(arg) && index !== operandIndex);
+    // `--only`'s and `--root`'s operands are values, not flags. Checking them would
+    // report every valid `--only architecture` as an unknown flag. `-1` when the flag
+    // is absent, so no real index is skipped.
+    const operandIndexes = [onlyIndex + 1, rootIndex + 1].filter((index) => index > 0);
+    const unknown = argv.filter((arg, index) => !known.has(arg) && !operandIndexes.includes(index));
 
     if (unknown.length > 0) {
       return fail(`Unknown flag "${unknown[0]}".\n\n${USAGE}`, EXIT.usage);
     }
-    if (onlyIndex !== -1 && (operand === undefined || operand.startsWith('-'))) {
+    if (onlyIndex !== -1 && startsWithDash(argv[onlyIndex + 1])) {
       return fail(`--only needs a guard id.\n\n${USAGE}`, EXIT.usage);
     }
+    if (rootIndex !== -1 && startsWithDash(argv[rootIndex + 1])) {
+      return fail(`--root needs a directory.\n\n${USAGE}`, EXIT.usage);
+    }
 
-    // Accepted by this command rather than forwarded: `guardsMain` has no such
-    // mode, so it was being ignored while the caller believed the scope changed.
+    // `--whole-repo` is accepted here rather than passed through silently: it was the
+    // old narrower scope, and `guard` already runs every guard over every project.
     const forwarded = argv.filter((arg) => arg !== '--whole-repo');
 
     if (argv.includes('--whole-repo')) {
@@ -57,3 +66,6 @@ export const guardCommand: Command = {
     return guardsMain(forwarded);
   },
 };
+
+const startsWithDash = (value: string | undefined): boolean =>
+  value === undefined || value.startsWith('-');

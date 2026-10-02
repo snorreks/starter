@@ -58,9 +58,19 @@ applies overrides in order and the last match wins; without the exclusions the
 browser rules would re-deny `@starter/database` in `notes_service.ts` one file after
 the server override allowed it.
 
-`bun run guard` enforces the same boundary from the *other* side, by recognising
-the same five path shapes. Two independent mechanisms on one rule is deliberate — see
-[architecture.md](architecture.md).
+`bun run guard` enforces the same boundary from the *other* side, and the two are not
+redundant. Biome reads an import statement as written: it is fast, it runs in the
+editor, and it knows why a given specifier is banned in a given directory. The guard
+resolves the graph — every specifier through the owning project's `tsconfig.json` and
+each package's `exports` map — and checks reachability, so it sees through re-exports,
+relative traversal and aliases that Biome reads as an ordinary local import. See
+[architecture.md](architecture.md) for the three files and the sixteen rules, including
+the cases the guard deliberately does not claim.
+
+Biome's `noRestrictedImports` denies `node:*`/`bun:*` in the browser half. The guard
+checks the same fact by capability, which additionally covers a Node-only helper reached
+through a portable package's declared subpath — a statement Biome cannot see and
+`node:*` matching would miss, because the specifier is not a Node built-in.
 
 ## Scoped exemptions
 
@@ -69,7 +79,7 @@ Each is a file whose purpose is to violate the rule it would trip.
 | File | Rule | Why |
 |---|---|---|
 | `packages/shared/logger/src/lib/console_logger.ts` | `noConsole` | This is the logger's console backend. The rule exists to stop ad-hoc console calls in favour of the logger. |
-| `scripts/src/guards/**/*.ts` | `useBlockStatements`, `useConsistentTypeDefinitions` | The guards contain the literal patterns they search for. A guard that failed on its own source would never report anything. `guardNoLeftovers` already exempts them for the same reason. |
+| `scripts/src/guards/**/*.ts` | `useBlockStatements`, `useConsistentTypeDefinitions` | The guards contain the literal patterns they search for, and a table of the specifiers they resolve. A guard that failed on its own source would never report anything. `guardNoLeftovers` already exempts them for the same reason. |
 | `apps/frontend/client/src/lib/test_setup.ts` | `noConsole`, `noRestrictedImports` | The Bun unit lane's preload. It mocks `bun:test` and silences the logger — both are the file's job. |
 | `apps/frontend/client/src/lib/server/container.ts` | `useConsistentTypeDefinitions` | `DrizzleD1Database<T>` constrains `T` to `Record<string, unknown>`, and an interface has no implicit index signature. This one is a type error, not a preference. |
 | `**/*.svelte` | `noUnusedVariables`, `noUnusedImports` | Biome does not resolve Svelte 5's `$props()` destructuring, so every prop and every component import reads as unused. Running its autofix over these files **deletes live imports**. |
@@ -94,11 +104,11 @@ The overrides that remain carry the architectural weight:
 - **`noExplicitAny`**, **`noNonNullAssertion`**, **`noParameterAssign`**,
   **`noConsole`** outside the exemptions.
 
-`bun run guard` enforces the same boundaries at runtime and additionally covers
-things a linter cannot see: module-level request state, gitignored source, and
-registry self-consistency. The linter and the guards are not redundant — Biome
-cannot parse import graphs for a Worker, and the guards cannot see a `// TODO`
-sitting in a comment.
+`bun run guard` adds what a linter cannot see: module-level request state, gitignored
+source, registry self-consistency, and the resolved module graph. The two are not
+redundant — Biome cannot resolve a `@starter/utils/process` import to discover that it
+opens a subprocess, and the guard does not know that a component's markup mentions
+`window`.
 
 ## Migrating from Biome 1.x
 

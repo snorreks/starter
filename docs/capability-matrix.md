@@ -145,14 +145,26 @@ has been reported for API-token queries the dashboard answers, so the CLI report
 The registry lists Logpush for staging and production. No Logpush job is created,
 no filter is registered, and nothing reads the bucket. Treat it as absent.
 
-### The `client-server` layer rule is a path list, not a resolved-dependency check
+### The build does not catch every server import in the browser
 
-`isClientServerModule` in `scripts/src/guards/boundary.ts` recognises five concrete
-path shapes as server-only. It is deliberately narrow — a broad rule would be
-indistinguishable from the sweeping exemption it replaced — but a path list cannot
-see through a re-export. PR C replaces it with a resolved-dependency check. Until
-then the acceptance it buys is proven on the built artifact by
-`bun run check:bundle`.
+**Verified, and it is why the graph guard exists.** Injecting
+`import { env } from 'cloudflare:workers'` into `src/routes/+page.svelte`, using it in
+the template, and running the real `vite build` **succeeds** — and the specifier lands in
+the client chunk's sourcemap. Injecting `import { getContainer } from
+'#lib/server/container.ts'` instead fails the build with SvelteKit's
+`server_only_import`.
+
+So the framework's gate is real and worth having, and it is not complete.
+`scripts/tests/build_enforces_the_boundary.test.ts` asserts both directions: the build
+rejects a server-module import, and the guard rejects it with no build at all.
+
+### `guardRequestState` matches declarations, not behaviour
+
+It flags a module-level `let env`, `let currentUser`, or a
+`setEnvForRequest`-shaped helper by shape. That is a check on a pattern, not a proof
+that no request state is shared across requests, and it should not be read as one.
+`apps/frontend/client/tests/worker_integration.test.ts` and the E2E lane's two-session
+assertions own that claim.
 
 ### The `@starter/*` package scope is unrenamed
 

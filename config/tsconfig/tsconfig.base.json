@@ -1,6 +1,16 @@
 {
   "$schema": "https://json.schemastore.org/tsconfig",
   "display": "Strict Base",
+  "//paths": [
+    "Deliberately no `paths` block. Every workspace package declares `exports`, and",
+    "every `@starter/x` import in this repository goes through one of those entries.",
+    "A wildcard `paths` entry like `\"@starter/x/*\": [\"../x/src/*\"]` resolves",
+    "perfectly well, works in every tool, and still routes around the map — which is",
+    "how `@starter/utils/lib/process/index.ts` became reachable beside the deliberate",
+    "`@starter/utils/process`, whose whole meaning is that the caller is not a browser.",
+    "`bun run guard` reports such an import as `package-exports`. See",
+    "docs/architecture.md, 'Package resolution is the exports map, not a paths alias'."
+  ],
   "compilerOptions": {
     "target": "ES2023",
     "module": "ESNext",

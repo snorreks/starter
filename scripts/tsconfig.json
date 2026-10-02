@@ -1,15 +1,7 @@
 {
   "extends": "../config/tsconfig/tsconfig.backend.json",
   "compilerOptions": {
-    "types": ["bun"],
-    "paths": {
-      "@starter/logger": ["../../packages/shared/logger/src/index.ts"],
-      "@starter/logger/*": ["../../packages/shared/logger/src/*"],
-      "@starter/schemas": ["../../packages/shared/schemas/src/index.ts"],
-      "@starter/schemas/*": ["../../packages/shared/schemas/src/*"],
-      "@starter/utils": ["../../packages/shared/utils/src/index.ts"],
-      "@starter/utils/*": ["../../packages/shared/utils/src/*"]
-    }
+    "types": ["bun"]
   },
   "include": ["src/**/*", "tests/**/*"]
 }
