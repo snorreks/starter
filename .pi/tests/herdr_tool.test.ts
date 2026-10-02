@@ -18,9 +18,27 @@
 //      teardown — asserted on the argv the fake actually received.
 
 import { afterEach, describe, expect, test } from 'bun:test';
+import { mkdirSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
 import type { ExtensionAPI } from '@earendil-works/pi-coding-agent';
 import herdrExtension from '../extensions/herdr.ts';
+import { scratchDir } from './fake_bin.ts';
 import { fakeHerdr, WORKTREE_CREATED, WORKTREE_LIST } from './fake_herdr.ts';
+
+/**
+ * A `cwd` that really is a repository.
+ *
+ * The tool refuses a path with no `.git` in it, because Herdr resolves the target
+ * from that path and a wrong one acts on a different checkout. So the fixture has
+ * to be a repository rather than an arbitrary string: `.git` is a **file** in a
+ * linked worktree and a **directory** in an ordinary checkout, and it is created
+ * as a directory because that is what an ordinary clone looks like.
+ */
+const REPO = ((): string => {
+  const dir = scratchDir('herdr-repo');
+  mkdirSync(join(dir, '.git'), { recursive: true });
+  return dir;
+})();
 
 interface RegisteredTool {
   name: string;
@@ -110,7 +128,7 @@ const text = (result: Awaited<ReturnType<RegisteredTool['execute']>>): string =>
   result.content.map((part) => part.text).join('\n');
 
 const CREATE_ARGS = {
-  cwd: '/repo',
+  cwd: REPO,
   branch: 'pr-f',
   base: 'main',
 } as const;
@@ -167,7 +185,7 @@ describe('availability', () => {
     });
     const { call } = withTool(fake);
 
-    const result = await call({ action: 'worktree_list', params: { cwd: '/repo' } });
+    const result = await call({ action: 'worktree_list', params: { cwd: REPO } });
 
     expect(result.isError).toBe(true);
     expect(text(result)).toContain('exited 1');
@@ -180,7 +198,7 @@ describe('availability', () => {
     const fake = fakeHerdr({});
     const { call } = withTool(fake, { inside: false });
 
-    const result = await call({ action: 'worktree_list' });
+    const result = await call({ action: 'worktree_list', params: { cwd: REPO } });
 
     expect(result.isError).toBe(true);
     expect(text(result)).toContain('not running inside a Herdr-managed pane');
@@ -191,11 +209,11 @@ describe('availability', () => {
 describe('reading worktrees', () => {
   test('reports ids and paths exactly as the CLI returned them', async () => {
     const fake = fakeHerdr({
-      responses: { 'worktree list --cwd /repo --no-focus': JSON.stringify(WORKTREE_LIST) },
+      responses: { [`worktree list --cwd ${REPO} --no-focus`]: JSON.stringify(WORKTREE_LIST) },
     });
     const { call } = withTool(fake);
 
-    const result = await call({ action: 'worktree_list', params: { cwd: '/repo' } });
+    const result = await call({ action: 'worktree_list', params: { cwd: REPO } });
 
     expect(result.isError).toBeFalsy();
     // The ids, verbatim. A predicted id is how an agent operates on the wrong
@@ -211,8 +229,7 @@ describe('reading worktrees', () => {
   test('an empty list is stated, not rendered as a blank table', async () => {
     const fake = fakeHerdr({
       responses: {
-        // No `cwd` supplied, so the argv carries no `--cwd`.
-        'worktree list --no-focus': JSON.stringify({
+        [`worktree list --cwd ${REPO} --no-focus`]: JSON.stringify({
           id: 'cli:worktree:list',
           result: { type: 'worktree_list', worktrees: [] },
         }),
@@ -220,7 +237,7 @@ describe('reading worktrees', () => {
     });
     const { call } = withTool(fake);
 
-    const result = await call({ action: 'worktree_list' });
+    const result = await call({ action: 'worktree_list', params: { cwd: REPO } });
     expect(text(result)).toContain('no worktree workspaces');
   }, 30_000);
 
@@ -228,11 +245,11 @@ describe('reading worktrees', () => {
     // The distinction that matters: "there are none" and "the command failed" must
     // not look the same, or a broken Herdr reads as a clean repository.
     const fake = fakeHerdr({
-      responses: { 'worktree list --cwd /repo --no-focus': 'error: socket gone' },
+      responses: { [`worktree list --cwd ${REPO} --no-focus`]: 'error: socket gone' },
     });
     const { call } = withTool(fake);
 
-    const result = await call({ action: 'worktree_list', params: { cwd: '/repo' } });
+    const result = await call({ action: 'worktree_list', params: { cwd: REPO } });
 
     expect(result.isError).toBe(true);
     expect(text(result)).toContain('non-JSON');
@@ -244,7 +261,7 @@ describe('creating a worktree', () => {
   test('returns the checkout path and workspace id from the response', async () => {
     const fake = fakeHerdr({
       responses: {
-        'worktree create --cwd /repo --branch pr-f --base main --no-focus':
+        [`worktree create --cwd ${REPO} --branch pr-f --base main --no-focus`]:
           JSON.stringify(WORKTREE_CREATED),
       },
     });
@@ -263,7 +280,7 @@ describe('creating a worktree', () => {
   test('does not steal the user focus', async () => {
     const fake = fakeHerdr({
       responses: {
-        'worktree create --cwd /repo --branch pr-f --base main --no-focus':
+        [`worktree create --cwd ${REPO} --branch pr-f --base main --no-focus`]:
           JSON.stringify(WORKTREE_CREATED),
       },
     });
@@ -274,7 +291,7 @@ describe('creating a worktree', () => {
     // Asserted on the argv the CLI received, not on the tool's own flags.
     expect(fake.calls()).toEqual([
       '--version',
-      'worktree create --cwd /repo --branch pr-f --base main --no-focus',
+      `worktree create --cwd ${REPO} --branch pr-f --base main --no-focus`,
     ]);
     expect(fake.calls().join(' ')).toContain('--no-focus');
   }, 30_000);
@@ -282,7 +299,7 @@ describe('creating a worktree', () => {
   test('focus is passed only when explicitly requested', async () => {
     const fake = fakeHerdr({
       responses: {
-        'worktree create --cwd /repo --branch pr-f --base main --focus':
+        [`worktree create --cwd ${REPO} --branch pr-f --base main --focus`]:
           JSON.stringify(WORKTREE_CREATED),
       },
     });
@@ -345,11 +362,113 @@ describe('refusals that protect the user', () => {
     const fake = fakeHerdr({});
     const { call } = withTool(fake);
 
-    const result = await call({ action: 'worktree_create', params: { cwd: '/repo' } });
+    const result = await call({ action: 'worktree_create', params: { cwd: REPO } });
 
     expect(result.isError).toBe(true);
     expect(text(result)).toContain('branch or an explicit path');
     expect(fake.calls().join(' ')).not.toContain('worktree create');
+  }, 30_000);
+});
+
+describe('the repository is named, never guessed', () => {
+  test('create without a cwd is refused before spawning anything', async () => {
+    // The regression. With no `cwd`, Herdr resolves a repository itself, and the one
+    // it picked was an unrelated dotfiles project: `worktree_create` returned its
+    // real path and a real workspace id and reported success, so nothing looked
+    // wrong until every later command ran against the wrong repository.
+    const fake = fakeHerdr({});
+    const { call } = withTool(fake);
+
+    const result = await call({ action: 'worktree_create', params: { branch: 'pr-g' } });
+
+    expect(result.isError).toBe(true);
+    expect(text(result)).toContain('needs `cwd`');
+    // The remedy names what to pass, because "add cwd" alone leaves a model
+    // guessing what counts as a repository root.
+    expect(text(result)).toContain('contains `.git`');
+    // Nothing spawned: not the create, and not the version probe that would
+    // otherwise have succeeded and made this look like a working call.
+    expect(fake.calls().join(' ')).not.toContain('worktree create');
+  }, 30_000);
+
+  test('list without a cwd is refused too, though it only reads', async () => {
+    // An inventory of the wrong repository's worktrees is a wrong answer that
+    // looks like a right one, and the id it reports is then used to remove one.
+    const fake = fakeHerdr({});
+    const { call } = withTool(fake);
+
+    const result = await call({ action: 'worktree_list' });
+
+    expect(result.isError).toBe(true);
+    expect(text(result)).toContain('needs `cwd`');
+    expect(fake.calls().join(' ')).not.toContain('worktree list');
+  }, 30_000);
+
+  test('open without a cwd is refused before spawning anything', async () => {
+    const fake = fakeHerdr({});
+    const { call } = withTool(fake);
+
+    const result = await call({ action: 'worktree_open', params: { branch: 'main' } });
+
+    expect(result.isError).toBe(true);
+    expect(text(result)).toContain('needs `cwd`');
+    expect(fake.calls().join(' ')).not.toContain('worktree open');
+  }, 30_000);
+
+  test('a cwd that is not a git repository is refused, naming the path', async () => {
+    // Presence is not validity: every other check passes a typo'd path through,
+    // and Herdr resolves the target from it.
+    const fake = fakeHerdr({});
+    const { call } = withTool(fake);
+
+    const result = await call({
+      action: 'worktree_create',
+      params: { cwd: '/tmp', branch: 'pr-g' },
+    });
+
+    expect(result.isError).toBe(true);
+    expect(text(result)).toContain('is not a git repository');
+    expect(text(result)).toContain('/tmp');
+    expect(fake.calls().join(' ')).not.toContain('worktree create');
+  }, 30_000);
+
+  test('remove needs no cwd: a workspace id already names its checkout', async () => {
+    // Requiring one here would be wrong in the other direction. It is exempt from
+    // the check and still reaches the fake, which is what proves the exemption is
+    // deliberate rather than an oversight.
+    const fake = fakeHerdr({
+      responses: {
+        'worktree remove --workspace wPK --no-focus': JSON.stringify({
+          id: 'cli:worktree:remove',
+          result: { type: 'worktree_removed', workspace_id: 'wPK' },
+        }),
+      },
+    });
+    const { call } = withTool(fake);
+
+    const result = await call({ action: 'worktree_remove', params: { workspace: 'wPK' } });
+
+    expect(result.isError).toBeFalsy();
+    expect(fake.calls().join('\n')).toContain('worktree remove --workspace wPK');
+  }, 30_000);
+
+  test('a linked worktree is a valid cwd: .git is a file there, not a directory', async () => {
+    // The stricter `isDirectory()` check refuses every worktree, which is the one
+    // place this runs from.
+    const linked = scratchDir('herdr-linked');
+    writeFileSync(join(linked, '.git'), 'gitdir: /elsewhere/.git/worktrees/x\n');
+
+    const fake = fakeHerdr({
+      responses: {
+        [`worktree list --cwd ${linked} --no-focus`]: JSON.stringify(WORKTREE_LIST),
+      },
+    });
+    const { call } = withTool(fake);
+
+    const result = await call({ action: 'worktree_list', params: { cwd: linked } });
+
+    expect(result.isError).toBeFalsy();
+    expect(fake.calls().join('\n')).toContain('worktree list');
   }, 30_000);
 });
 
