@@ -57,12 +57,27 @@ const SCREENS: readonly { name: string; path: string; prepare?: (page: Page) => 
 
 async function signIn(page: Page): Promise<void> {
   const email = `visual-${crypto.randomUUID()}@example.test`;
+  const password = 'correct horse battery staple';
+
   await page.goto(`${appBaseUrl}/login`);
+  // The form starts in sign-in mode; sign-up is behind the toggle.
   await page.getByTestId('auth-toggle-mode').click();
+  // The name field too. Sign-up without one is a validation error, and an account
+  // that was never created sends no mail — which the confirmation step below then
+  // reports as an empty inbox rather than as the missing name it actually is.
+  await page.getByTestId('auth-name-input').fill('Visual Reviewer');
   await page.getByTestId('auth-email-input').fill(email);
-  await page.getByTestId('auth-password-input').fill('correct horse battery staple');
+  await page.getByTestId('auth-password-input').fill(password);
   await page.getByTestId('auth-submit').click();
+
   await confirmAddress(page, email);
+
+  // Confirming an address is not a credential, so the real sign-in is a second step.
+  await page.goto(`${appBaseUrl}/login`);
+  await page.getByTestId('auth-email-input').fill(email);
+  await page.getByTestId('auth-password-input').fill(password);
+  await page.getByTestId('auth-submit').click();
+
   await page.goto(`${appBaseUrl}/notes`);
   await page.getByRole('heading', { name: 'Your notes' }).waitFor();
 }
