@@ -152,13 +152,13 @@ describe('contract command', () => {
   test('the descriptor lists only the subcommands main handles', () => {
     // `list` and `cancel` were advertised and not implemented. `contract cancel`
     // did fall through to the usage error, so it refused — but the usage line
-    // claimed otherwise.
+    // claimed otherwise. The same was true of `run` until the runner was removed.
     const usage = contractCommand.usage;
     expect(usage).toContain('new');
-    expect(usage).toContain('run');
     expect(usage).toContain('status');
     expect(usage).not.toContain('list');
     expect(usage).not.toContain('cancel');
+    expect(usage).not.toContain('run');
   });
 
   test('an unimplemented subcommand is a usage error', async () => {

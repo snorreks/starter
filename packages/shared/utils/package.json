@@ -7,7 +7,6 @@
   "main": "./src/index.ts",
   "exports": {
     ".": "./src/index.ts",
-    "./base": "./src/lib/common/base_class.ts",
     "./process": "./src/lib/process/index.ts"
   },
   "scripts": {

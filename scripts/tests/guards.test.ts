@@ -396,6 +396,45 @@ describe('documented-paths', () => {
     expect(guardDocumentedPaths(root).violations).toEqual([]);
   });
 
+  test('does not demand a generated directory exist in a fresh checkout', () => {
+    // `.moon/cache` is created by the first cached task, not by the clone. On a
+    // pristine worktree the documentation that names it as the output directory
+    // pointed at nothing, and `bun run guard` failed with six violations before
+    // anything had been built — a false "this was never implemented" for a path
+    // that git ignores by definition.
+    const root = makeTree({
+      '.gitignore': '.moon/cache/\nnode_modules/\n',
+      'docs/testing.md': 'Cached task outputs are restored into `.moon/cache/hash`.\n',
+    });
+
+    expect(guardDocumentedPaths(root).violations).toEqual([]);
+  });
+
+  test('still reports a missing source path next to the exempt one', () => {
+    // The exemption is per path, not per document and not per file. If it were
+    // broader it would silence exactly the rot this guard exists to catch.
+    const root = makeTree({
+      '.gitignore': '.moon/cache/\n',
+      'docs/testing.md':
+        'Outputs land in `.moon/cache/hash`, and the adapter is `scripts/src/logs/gone.ts`.\n',
+    });
+
+    const violations = guardDocumentedPaths(root).violations;
+    expect(violations).toHaveLength(1);
+    expect(violations[0].message).toContain('scripts/src/logs/gone.ts');
+  });
+
+  test('reports a gitignored path that is re-included by a negation', () => {
+    // `!` in .gitignore means the path is tracked again, so it is a source path
+    // and its absence is real.
+    const root = makeTree({
+      '.gitignore': '.moon/cache/\n!.moon/tracked\n',
+      'docs/testing.md': 'A marker lives at `.moon/tracked/marker.txt`.\n',
+    });
+
+    expect(guardDocumentedPaths(root).violations).toHaveLength(1);
+  });
+
   test('the live documentation agrees with the live tree', () => {
     // A missing document must fail before the guard's absent-file handling.
     for (const doc of [

@@ -35,7 +35,7 @@ Notes is a demo, small on purpose. See
 [adding-a-feature.md](adding-a-feature.md) for the order that works:
 
 ```bash
-bun run contract new "Replace notes with <entity>" --mode standard
+bun run contract new "Replace notes with <entity>"
 ```
 
 The pieces to remove, in dependency order:

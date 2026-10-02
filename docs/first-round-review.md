@@ -148,6 +148,10 @@ there is no tauri invocation left to route.)
 
 ### Contract resume skipped failed stages
 
+`contract run` and its resume protocol are gone — see the entry below. This finding
+is kept because the defect class is the reason: completion was inferred from a
+counter rather than from a status.
+
 Completion was inferred from "the stage has an attempt count", and a failed stage
 has one. Recorded reproduction: a run whose `implement` failed reached `accepted` on
 the next invocation.
@@ -168,6 +172,15 @@ and exited 0.
 **Fixed:** a non-dry run reports that no execution adapter is available and exits 3.
 The CLI derives the contract's real id and mode from its content, persists state
 atomically, implements `status`, and wires `--resume`.
+
+**Later removed, in the final integration.** The adapter that would have made a
+real run possible was never written, so the whole surface stayed a claim the
+repository could not keep: a stage machine, a resume protocol, a run manifest and
+two CLI subcommands that produced no work. Rather than leave it dormant, the
+runner, its manifest format and its tests are gone; what remains is the written
+brief (`bun run contract new`) and a documented human workflow. `docs/contracts/`
+now holds one template and that workflow, and `contract run` answers with what
+happened instead of a stage list.
 
 ### `.pi/extensions/logs.test.ts` was loaded as an extension
 

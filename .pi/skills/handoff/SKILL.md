@@ -7,10 +7,11 @@ description: Use when a piece of work is too big for one session, when picking u
 
 A handoff is a short written brief plus a state check. It is not a pipeline.
 
-The repository has a dormant autonomous contract runner under `docs/contracts/`.
-This skill is the maintained answer, and it is deliberately the smaller thing: a
-note a person can read in a conversation, and a command that tells you whether to
-believe it.
+The repository has `bun run contract new`, which scaffolds a written brief under
+`docs/contracts/` — problem, checkable acceptance criteria, and named verification
+commands. Nothing executes it. This skill is the maintained answer for resumption,
+and it is deliberately the smaller thing: a note a person can read in a
+conversation, and a command that tells you whether to believe it.
 
 ## Starting: write the brief first
 
@@ -27,10 +28,10 @@ Not doing    what you are deliberately leaving out
 Verify       the commands whose success means done
 ```
 
-`bun run contract new` produces a longer document with a written design and a
-written critique. Use that when a decision genuinely has more than one reasonable
-answer. For a change with one obvious implementation, it is paperwork somebody
-rubber-stamps.
+`bun run contract new` produces that document in `docs/contracts/`. Use it when a
+decision genuinely has more than one reasonable answer and the criteria should be
+agreed before the work. For a change with one obvious implementation, it is
+paperwork somebody rubber-stamps.
 
 ## The note
 

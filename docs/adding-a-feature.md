@@ -235,12 +235,12 @@ bun run e2e
 `bun run guard` is five invariants with no baselines and no waivers. A failure is
 a real violation, not a ratchet to accept.
 
-For a change that changes what "done" means, write a contract first:
+For a change that changes what "done" means, write a brief first:
 
 ```bash
-bun run contract new "Add thing export as NDJSON" --mode standard
+bun run contract new "Add thing export as NDJSON"
 ```
 
-See `docs/contracts/THIN_TEMPLATE.md` for the shape, and
+See `docs/contracts/README.md` for the workflow and
 [architecture.md](architecture.md) for why the boundaries it mentions are where
 they are.

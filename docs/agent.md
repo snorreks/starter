@@ -342,19 +342,21 @@ stops at `.pi/` and is recorded in `.pi/tsconfig.json`.
 `lib/tool_namespace.ts`, so `params` are checked against each action's own schema
 even though the tool registers one `{ action, params }` envelope.
 
-## Contracts
+## Briefs
 
-`docs/contracts/` and `bun run contract` are **not wired to any of the tools here**
-and are dormant. Nothing in `.pi/` invokes the runner, and no extension polls it.
+`bun run contract` creates and lists written briefs under `docs/contracts/`. It
+is not wired to any of the tools here, and it is not supposed to be: it writes a
+document, and the work happens through the repository's own commands.
 
 For work that spans sessions, the maintained answer is the `handoff` skill and the
 `handoff` tool: a short written brief, plus a state check on resume. That is
 deliberately the smaller thing — a note a person can read in a conversation, and a
 command that says whether to believe it.
 
-The contract runner remains documented for when it is finished. Until then, a
-"contract-driven" workflow would be a second, unexercised path beside the one that
-works.
+The runner that used to sit behind `contract run` has been removed rather than
+left dormant. A command that cannot execute is not a runner with a missing
+adapter, and `docs/contracts/README.md` documents the human workflow that replaced
+it.
 
 ## Removing it
 
