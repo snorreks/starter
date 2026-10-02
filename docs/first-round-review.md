@@ -7,15 +7,9 @@ because the ones that are *not* fixed should not have to be rediscovered.
 
 Two statuses only: **fixed** with the change that fixed it, or **open** with why.
 
-Entries describe the state of the repository **at the time of the round**. Where a
-later round (PR A native removal, PR B single-Worker merge) has since changed the
-shape underneath a finding, the entry says so rather than being silently rewritten —
-a finding whose wording no longer matches the tree is worse than no finding, because
-it cannot be checked.
-
 ---
 
-## Fixed in round one
+## Fixed in this round
 
 ### The E2E command was an echo
 
@@ -39,13 +33,11 @@ browser lane and root `test:all` ran it again explicitly.
 ### `client:build` printed a message
 
 Root `build` ran `moon run :build`, and the client's `build` was
-`echo "nothing to build (TypeScript source)"`. A SvelteKit app produces a build,
+`echo "nothing to build (TypeScript source)"`. A SvelteKit SPA produces `build/`,
 which both the E2E lane and any deploy need.
 
-**Fixed:** real `vite build`, plus `check:bundle` that inspects the artifact and
-verifies the build *mode*. **PR B** changed what "the artifact" means: the output is
-now `.svelte-kit/cloudflare/` — a Worker plus its assets — rather than a `build/`
-directory of static files, and `check:bundle` asserts `_worker.js` is there.
+**Fixed:** real `vite build`, with `outputs: ['build']`, plus `check:bundle` that
+inspects the artifact and verifies the build *mode*.
 
 ### `database:db-generate` printed a message
 
@@ -65,16 +57,15 @@ It pointed at a Moon task whose command was `echo`.
 
 Both named `scripts/*.ts` files that did not exist.
 
-**Fixed:** both implemented, both with tests. `check:bundle` survives; the Tauri
-half was removed with the native shell in **PR A**, and `check:bundle`'s
-`native_import` rule now fails the build if a `@tauri-apps/*` import ever returns.
+**Fixed:** both implemented, both with tests. See
+[native.md](../native.md).
 
 ### `client:dev` did not exist
 
 Root `dev` ran `moon run client:dev`, and the client's Moon file had no `dev` task.
 Verified against the pinned Moon rather than assumed.
 
-**Fixed:** a `dev` task using Moon\u0027s `server` preset.
+**Fixed:** a `dev` task using Moon's `server` preset.
 
 ### Two dev ports that disagreed
 
@@ -83,9 +74,7 @@ Verified against the pinned Moon rather than assumed.
 nothing was listening on.
 
 **Fixed:** one authority (`apps/frontend/client/dev_ports.ts`, default 5173) and a
-test asserting `tauri.conf.json` agrees. The second authority is gone with
-`src-tauri/`; the assertion the entry describes no longer has a second value to
-compare against.
+test asserting `tauri.conf.json` agrees.
 
 ### Environment detection could enable development auth remotely
 
@@ -117,7 +106,7 @@ boundary, counting `wrangler` tokens in the rendered command.
 It marked a step non-remote — skipping consent — while still building
 `wrangler deploy`. Removing the duplicate token alone would have exposed this.
 
-**Fixed:** rejected, with the message pointing at `bun run dev` and explaining
+**Fixed:** rejected, with the message pointing at `bun run dev:api` and explaining
 that a local *invocation* and the local *runtime* are different things.
 
 ### A typo deployed both apps
@@ -137,14 +126,13 @@ a developer at a prompt got a silent remote deploy.
 
 ### `bunx` ran an unpinned wrangler
 
-`wrangler` is declared by one workspace package, so its binary is not in the root
+`wrangler` is declared by `apps/backend/api`, so its binary is not in the root
 `node_modules/.bin` and `bunx wrangler` from the repository root falls through to
 the network. Lockfile: 4.142.0. `bunx wrangler --version`: 4.144.0.
 
-**Fixed:** `scripts/src/shared/tools.ts` resolves the pinned copy, and every wrangler,
-drizzle-kit, playwright and vite invocation goes through it. The deploy process
-boundary test asserts the resolved path. (The native shell is gone as of PR A, so
-there is no tauri invocation left to route.)
+**Fixed:** `scripts/src/lib/tools.ts` resolves the pinned copy, and every wrangler,
+drizzle-kit, playwright and tauri invocation goes through it. The deploy process
+boundary test asserts the resolved path.
 
 ### Contract resume skipped failed stages
 
@@ -236,10 +224,9 @@ client-side filters; where filtering happens should be stated rather than assert
 - the registry has one set of names and ids, not distinct staging/production targets
 - Worker names are validated but are not consistently the source of the actual
   Wrangler destination
-- provisioning uses a fixed database name with no environment model (renamed to
-  `starter-web` in PR B, but the fixed name is still the gap)
-- ~~no client Wrangler config exists for the advertised client deployment~~ closed in PR B: one `wrangler.jsonc`, one Worker, one `main`
-- ~~the static frontend's local Vite API proxy has no production routing equivalent~~ closed in PR B: the frontend and the API are one origin, so there is no proxy to reproduce
+- provisioning uses a fixed `starter-api` database name with no environment model
+- no client Wrangler config exists for the advertised client deployment
+- the static frontend's local Vite API proxy has no production routing equivalent
 - no no-op decision reconciles a fingerprint against the active Cloudflare
   deployment; a local cache hit cannot prove a deployment is active
 
@@ -252,15 +239,8 @@ their intended scope.
 
 ### Boundary guards
 
-`scripts/src/guards/boundary.ts` uses regexes and hardcoded package names, so
+`scripts/src/lib/guards/boundary.ts` uses regexes and hardcoded package names, so
 relative imports crossing workspace boundaries and some import syntaxes evade it.
-The regex half was fixed in round one (the scanner now blanks comments and strings
-while preserving specifiers, and matches `require()` and template-literal
-specifiers). **PR B** added a new half: `apps/frontend/client` now holds both a
-browser runtime and a Worker, so the guard distinguishes them by five path shapes
-rather than by directory. That list is narrow on purpose but it is a list, and a
-list cannot see through a re-export; PR C replaces it with a
-resolved-dependency check.
 Registry validation is textual, and its ban on literal configured resources
 conflicts with instantiating the template.
 

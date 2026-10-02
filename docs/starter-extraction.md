@@ -47,8 +47,7 @@ Everything specific to the source project, by category:
 - **Guard baselines and waivers.** Replaced with five invariants that have no
   baseline and no waiver mechanism.
 - **Inherited identifiers.** D1 ids, R2 buckets, custom domains, OAuth clients,
-  SOPS recipients and age identities. (Tauri updater signing keys went with the
-  native shell in PR A.) All of these
+  Tauri updater signing keys, SOPS recipients and age identities. All of these
   identify the source project, not the template.
 
 ## What was kept and rebuilt
@@ -60,7 +59,7 @@ the implementations mostly were not.
 |---|---|
 | The layered architecture | Boundaries made explicit and enforced by a guard and the linter |
 | Structured logging | Redaction moved into the package so `utils` no longer depends on a cycle |
-| Schema-per-domain | One TypeBox, `@sinclair/typebox`, validated identically by the browser and the Worker |
+| Schema-per-domain | One TypeBox, `@sinclair/typebox`, matching Elysia 1.4 |
 | Ownership in the query | Kept as the rule, with a test that a cross-account read is refused |
 | A ViewModel/service/page split | Kept; `status` became a tagged union |
 | The log CLI family | Rebuilt; ~60 tests, capability declarations made explicit |
@@ -81,10 +80,9 @@ the implementations mostly were not.
 ## Phase 5–12
 
 - [x] Tauri shell (capabilities, CSP, no sidecars, mobile path documented)
-      — `cargo check` passed against real GTK/WebKitGTK at the time. **Superseded:
-      PR A removed the native shell entirely**; `check:bundle` now fails the build if
-      a `@tauri-apps/*` import survives. The record of what was verified is kept
-      because it explains why the removal was safe to do as one change.
+      — `cargo check` passes against real GTK/WebKitGTK. Mobile *builds* need the
+      Android NDK and Xcode, neither present here, so the desktop path is the one
+      verified. `cargo clippy` is not installed.
 - [x] Scripts: setup, db, logs family, deploy dry-run, guards, contract runner
       — 130 unit tests. Note the log CLI was silently gitignored until Rule 4
       existed; see the guard's docstring.

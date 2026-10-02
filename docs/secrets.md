@@ -21,16 +21,14 @@ covering a source file.
 ## Local development
 
 ```bash
-cp apps/frontend/client/.env.example apps/frontend/client/.env
+cp .env.example .env
+# or, per app:
+cp apps/backend/api/.env.example apps/backend/api/.env
 ```
 
-That is the only `.env` there is. Before PR B there were two applications and two
-of these files; there is now one application, one origin, and a second copy would
-be a second place to edit and a second place to forget.
-
-`bun run setup` writes it for you and tells you which values are still
-placeholders. `.env` is read automatically by Vite for `PUBLIC_*` values; Worker
-vars come from `wrangler.jsonc` or from `--var`, not from a dotenv file.
+`.env` is read automatically by Bun and by Wrangler (as `.dev.vars` for the
+Worker). `bun run setup` writes these for you and tells you which values are still
+placeholders.
 
 Nothing above needs a secret. The local Worker runs on local D1, and
 `--mode local` log queries read a file.
