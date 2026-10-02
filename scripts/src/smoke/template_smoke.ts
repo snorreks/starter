@@ -70,6 +70,14 @@ const EXCLUDED = new Set([
   '.cache',
   '.direnv',
   'artifacts',
+  // Cargo's build directory. It is gitignored, it holds hundreds of megabytes
+  // after one `cargo build`, and no clone of this repository contains it. Leaving
+  // it in this set made `findIdentityReferences` walk a tree no template consumer
+  // has: the smoke test then timed out at 5 s instead of finishing, and it timed
+  // out for a developer's local build directory rather than for anything about
+  // the template. `apps/backend/media` is the first first-party Cargo crate, so
+  // this is the first time this set had to know what Cargo writes.
+  'target',
 ]);
 
 /** The one identity string a template consumer replaces. */

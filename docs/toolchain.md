@@ -163,6 +163,35 @@ One dependency-update configuration exists, `.github/dependabot.yml`. Not
 Renovate, not a second scanner: each of those is a second credential, a second
 thing to keep current, and a second opinion about the same manifest.
 
+## Rust
+
+Two first-party crates exist as of PR G (`apps/backend/media` now, the native
+shell when PR D restores it). They share **one toolchain policy** and keep
+**separate dependency sets**: `rust-toolchain.toml` beside each crate pins the
+compiler and its components, and each crate's own `Cargo.toml` and `Cargo.lock`
+pin its dependencies.
+
+| Decision | Value | Why |
+|---|---|---|
+| Compiler | `1.98.1`, in each crate's `rust-toolchain.toml` | A template whose verification depends on whichever patch release the day shipped is not reproducible. |
+| Components | `clippy`, `rustfmt`, explicitly | Both are in the task list, so neither may be silently absent on a contributor's machine. |
+| `targets` | none | Mobile and desktop triples are added by the native crate, which knows what it builds. A global list would force the container builder image to install mobile SDKs. |
+| Dependencies | exact versions (`=1.0.229`) plus a committed `Cargo.lock` | Matches the Bun rule already in this file: one authority, no resolver surprises. |
+| Cargo tasks | `cargo test/lint/format/build/image` in `moon.yml`, **not** `test`/`lint`/`format` | The root scripts select tasks by name. A task named `test` would put Cargo into `bun run test`, and the credential-free web lanes are documented to need no Rust toolchain. See `apps/backend/media/moon.yml`. |
+| Moon caching | disabled for this project | Same reason as every other project here, plus: the rustup channel is not a file Moon can hash, so a cached result could report `ok` after a toolchain bump. |
+| Formatting | `rustfmt.toml`, `max_width = 100` | The same 100 columns Biome enforces on the TypeScript half. |
+
+Rust is **not** in `config/toolchain.json`. That file is the authority for
+versions the *Nix flake* and the web tooling read; Rust is not supplied by the
+flake yet, and adding a key nothing reads would create a second place to update.
+When `flake.nix` grows a Rust package set, the flake reads this section's number
+from `toolchain.json` and the `version-mirrors` guard starts checking it, exactly
+as it does for Bun.
+
+FFmpeg is not a Rust dependency at all. It is a system binary, pinned by Debian
+package version inside the image and documented in
+`apps/backend/media/THIRD_PARTY.md`.
+
 ## Workflow and dependency checks
 
 `bun run workflows` parses `.github/workflows/*.yml` and asserts four properties,

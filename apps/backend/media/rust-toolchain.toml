@@ -1,0 +1,24 @@
+# apps/backend/media/rust-toolchain.toml
+#
+# One Rust policy for every first-party crate in this repository, shared with the
+# native (Tauri) crate that PR D adds. Two crates, one toolchain: they keep
+# separate Cargo.toml dependency sets, but they compile with the same compiler
+# and the same rustfmt/clippy, so a formatting or lint difference between a
+# desktop build and a container image is not a toolchain artefact.
+#
+# `components` is explicit rather than implied: CI and a contributor both get
+# clippy and rustfmt, and `cargo fmt --check` / `cargo clippy` in the task list
+# cannot pass on a toolchain that silently lacks them.
+#
+# `targets` is empty on purpose. The native crate adds its own targets (a
+# triple, not a platform name); adding mobile triples here would force the
+# container builder image to install them too. The native crate documents its
+# own targets and its own `rustup target add` step.
+#
+# The channel is a number, not "stable": a template whose verification result
+# depends on which patch release the day happened to be is not reproducible. See
+# docs/toolchain.md.
+[toolchain]
+channel = "1.98.1"
+components = ["clippy", "rustfmt"]
+profile = "minimal"

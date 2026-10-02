@@ -239,6 +239,50 @@ discarded — and the unit suite wrote its fixture's D1 id into the committed
 `database_id` at all, `CLIENT_DIR_RELATIVE` exists so the mistake is a type error,
 and `deployment_values.test.ts` asserts against the real repository file.
 
+## The media processor lane (PR G, 2026-10-03)
+
+A separate dated section, because this file records one round per run and PR G
+added a lane rather than re-running the web one. Nothing above this line changed;
+the web rows describe PR #17 and are still what they were.
+
+Executed in an isolated worktree on this branch. Counts are what the lane printed.
+
+| Capability | How it was verified | Command | Result |
+|---|---|---|---|
+| Crate builds | release build, locked, offline in the image | `cargo build --release --locked` | ok |
+| Format and lint | rustfmt check, clippy over every target with warnings denied | `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings` | clean, 0 warnings |
+| Unit and integration tests | real `ffmpeg`/`ffprobe` binaries; **no test skips** when they are missing, it fails naming the prerequisite | `cargo test --locked` | **73 pass, 0 fail** across 5 targets (44 lib, 14 encode, 10 HTTP, 4 protocol goldens, 1 example binary) |
+| Protocol goldens | the six documents in `fixtures/protocol/` asserted against the types *and* against this build's serialization, both directions | `cargo test --locked --test protocol_golden` | 4 pass |
+| Real encode | fixture → validated 320x180 H.264 MP4, output hash recomputed by the test, temp directory asserted gone | `cargo test --locked --test encode_real` | 14 pass |
+| HTTP surface | real sockets against a real server: health, encode whose body a *second* `ffprobe` accepts, refusals, chunked refusal, disconnect cancellation, `429` while busy | `cargo test --locked --test http_server` | 10 pass |
+| SIGTERM | the built binary as its own process, a hanging child, a real signal, temp root asserted empty afterwards | same | pass |
+| Image build and run | `docker build` on digest-pinned bases, then health + encode + refusals + SIGTERM against the running container | `bun run --cwd apps/backend/media scripts/measure.sh` | **every assertion matched** |
+| Measurements | image 546,176,849 bytes; binary 789,512; cold start 125–153 ms; fixture encode 0.21–0.44 s; peak 61 MB | same, printed | recorded in the crate README |
+
+Negative controls, all against real processes, all in this round's run:
+
+| Control | Result |
+|---|---|
+| 6 MB body (over the 5 MiB ceiling) | `400 payload_too_large`, refused on the header, no FFmpeg spawned |
+| 16 bytes of non-media | `400 invalid_media`, terminal, zero temp files left |
+| Missing `x-preset`, wrong `x-protocol`, unknown route | `400 unsupported_preset`, `400 protocol_mismatch`, `404 not_found` |
+| Second request while one is in flight | `429 busy`, `retryable: true` |
+| Client hangs up mid-encode | FFmpeg killed and reaped, temp directory removed, server still healthy |
+| `SIGTERM` mid-encode | in-flight encode cancelled, temp root empty, exit status 0 |
+| Error bodies | no `ffmpeg`, no path, no caller data — asserted against the serialized body |
+| Chunked framing | refused, not buffered |
+
+### Not run for the media processor
+
+| Not run | Why |
+|---|---|
+| **Cloudflare Containers** | No container was deployed. No account, no token, no Durable Object, no Workflow. The image, the port (8080), `/health` and the `429`/`503` statuses are what PR H binds to; nothing here was exercised on Cloudflare's runtime. |
+| **The `basic` instance profile under real contention** | The profile is chosen from measurements on this host (32 CPUs available to the container). Quarter-vCPU behaviour is an extrapolation from that, and PR H must confirm the chosen profile on a real instance before the demo depends on it. |
+| **A second concurrent encode** | `MAX_CONCURRENT_ENCODES = 1`, so the second request is refused by design rather than served. The refusal is verified; the concurrency is deliberately absent. |
+| **Other architectures** | Base image digests and every measurement are `linux/amd64`. |
+| **Cloud Run Job** | Documented in the crate README, implemented nowhere. No GCP account, no storage adapter, no IAM. |
+| **`cargo audit` / `cargo deny`** | Not configured. `Cargo.lock` and `cargo tree` are the dependency record. |
+
 ## Host prerequisites the lanes need
 
 Not part of the repository, but a missing one presents as a confusing failure.

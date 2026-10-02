@@ -1,0 +1,104 @@
+$schema: 'https://moonrepo.dev/schemas/project.json'
+
+# apps/backend/media/moon.yml
+#
+# The first first-party Cargo crate in this workspace. Its tasks are named
+# `cargo:*` rather than `test`/`lint`/`format`, and that is a deliberate choice,
+# not a naming inconsistency:
+#
+# The root scripts run Moon by *task name* (`bun run test` is `:test`,
+# `bun run lint` is `:lint`, `bun run typecheck` is `:typecheck`). A project
+# whose task were named `test` would join every one of those selectors — so
+# `bun run test` would start requiring a Rust toolchain and an FFmpeg, on the
+# web lanes that are documented to need neither. The compute lane is named
+# separately and names its prerequisites instead of being quietly folded into
+# the credential-free core.
+#
+# `options.cache: false` for the same reason every other project sets it: see
+# .moon/workspace.yml. Cargo would additionally need `Cargo.lock` and the
+# toolchain channel in the key, and Moon cannot hash files outside the project
+# — `Cargo.lock` is inside it, but the rustup channel is not, so a cached
+# `cargo:test` would report `ok` after a toolchain bump.
+
+layer: 'application'
+
+fileGroups:
+  sources:
+    - 'src/**/*'
+    - 'examples/**/*'
+  configs:
+    - 'Cargo.toml'
+    - 'Cargo.lock'
+    - 'rust-toolchain.toml'
+    - 'rustfmt.toml'
+    - 'moon.yml'
+    - 'Dockerfile'
+  tests:
+    - 'tests/**/*'
+    - 'fixtures/protocol/**/*'
+  fixtures:
+    - 'fixtures/media/**/*'
+
+# No `toolchains: rust:` block. Moon delegates toolchain installation to proto,
+# and an explicit version there makes every task in the project fail with
+# `missing_tool` unless that exact patch is installed locally. The Rust policy is
+# `rust-toolchain.toml` (channel 1.98.1, clippy + rustfmt), which rustup honours
+# and which CI installs explicitly. A contributor is told what to install by the
+# failure message from `cargo` itself, not by a Moon error about a proto shim.
+
+tasks:
+  cargo-build:
+    command: 'cargo'
+    args: ['build', '--release', '--locked']
+    inputs:
+      - '@group(sources)'
+      - '@group(configs)'
+      - '@group(tests)'
+    outputs:
+      - 'target/release/starter-media'
+
+  cargo-test:
+    command: 'cargo'
+    args: ['test', '--locked']
+    inputs:
+      - '@group(sources)'
+      - '@group(tests)'
+      - '@group(configs)'
+      - '@group(fixtures)'
+    # Fails when FFmpeg is absent rather than skipping: `starter_media::harness`
+    # panics with the prerequisite named. A silently passing compute lane is
+    # worse than a loud failure.
+
+  cargo-lint:
+    command: 'cargo'
+    args: ['clippy', '--all-targets', '--', '-D', 'warnings']
+    inputs:
+      - '@group(sources)'
+      - '@group(tests)'
+
+  cargo-format:
+    command: 'cargo'
+    args: ['fmt', '--check']
+    inputs:
+      - '@group(sources)'
+      - '@group(tests)'
+      - '@group(configs)'
+
+  cargo-fix:
+    command: 'cargo'
+    args: ['fmt']
+    inputs:
+      - '@group(sources)'
+      - '@group(tests)'
+
+  # The container lane. Separate from the Cargo lanes above because it needs a
+  # Docker-compatible engine, and a missing engine is a named failure, not a
+  # skip. `scripts/measure.sh` builds the image, measures it, and asserts the
+  # numbers in the crate README.
+  cargo-image:
+    command: 'bash'
+    args: ['scripts/measure.sh']
+    inputs:
+      - '@group(sources)'
+      - '@group(configs)'
+      - '@group(fixtures)'

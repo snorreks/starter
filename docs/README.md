@@ -28,7 +28,11 @@ Start here. Nothing below is required reading before running a command — the
 - [logs.md](logs.md) — the `bun run logs` family and what each refusal means
 - [secrets.md](secrets.md) — SOPS: the operations, and what each one refuses
 - [lint.md](lint.md) — Biome, the whole-repository guards, and what each refuses
-- [toolchain.md](toolchain.md) — which versions are pinned, and where
+- [toolchain.md](toolchain.md) — which versions are pinned, and where, including
+  the Rust policy every first-party crate shares
+- [../apps/backend/media/README.md](../apps/backend/media/README.md) — the bounded
+  FFmpeg processor: protocol, preset, limits, measured image, and its container
+  and CLI entrypoints
 - [rename-checklist.md](rename-checklist.md) — before your first release
 - [adding-a-feature.md](adding-a-feature.md) — the shape of a change here
 - [agent.md](agent.md) — Pi extensions, project trust, and the discovery rules

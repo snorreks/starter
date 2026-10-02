@@ -1,0 +1,7 @@
+{
+  "error": {
+    "code": "invalid_media",
+    "message": "input media could not be decoded",
+    "retryable": false
+  }
+}

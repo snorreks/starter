@@ -1,0 +1,6 @@
+# apps/backend/media/.gitignore
+#
+# Cargo build output. Excluded here so a build inside the crate directory is
+# ignored without depending on the repository root, and so `bun run smoke`'s
+# template copy never carries a developer's build directory into a rehearsal.
+target/

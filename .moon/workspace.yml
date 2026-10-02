@@ -56,6 +56,13 @@ projects:
   database: 'packages/backend/database'
   auth: 'packages/backend/auth'
 
+  # Compute. A Rust/FFmpeg processor that runs in a container, not on the
+  # Worker's plane: it has no D1, no R2, no bindings and no credentials, and the
+  # jobs Worker reaches it over an internal port. Its Moon tasks are named
+  # `cargo:*` on purpose — see apps/backend/media/moon.yml for why they do not
+  # join the `:test`/`:lint` selectors the web lanes run without a Rust toolchain.
+  media: 'apps/backend/media'
+
 vcs:
   # `manager` was renamed to `client` in Moon 2.x.
   client: 'git'
