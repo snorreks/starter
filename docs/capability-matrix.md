@@ -139,6 +139,30 @@ is not a prerequisite of anything now. What `test:browser` actually needs is tha
 
 Named so nobody discovers them as a surprise.
 
+### What this round added, and what it did not
+
+This round (request logging, telemetry ingestion, release verification) added a
+**local** evidence section rather than re-running the matrix above, because the rows
+above are dated by the round that produced them. Measured on the branch below,
+against a real built Worker in real workerd:
+
+| Capability | How it was verified | Command | Result |
+|---|---|---|---|
+| Built Worker emits request records | Real `wrangler dev` on the built `_worker.js`; records read out of wrangler's captured console output and counted as a before/after delta | `bun run test:worker` | **61 pass, 0 fail** (8 new) |
+| Forwarded browser event stored once | Same lane: a real `POST /api/telemetry`, asserting the stored record's source, release, redacted payload and `clientReported` | `bun run test:worker` | 1 record, forged `userId` never trusted |
+| Two concurrent sessions isolated | Same lane: two real sign-ups, two concurrent submissions, each record mapped to its own session | `bun run test:worker` | distinct user ids per session |
+| Local NDJSON record | Real Node 22.23.3 process writing through `createNdjsonStdoutEmitter`, then read back by the log CLI | `node --experimental-strip-types` + `bun run logs web --mode local` | one line per record; CLI rendered both |
+| Verification asks readiness | `apply` driven with a recording `fetch` that answers 200 liveness and 503 readiness | `cd scripts && bun test tests/deployment_pipeline.test.ts` | **32 pass, 0 fail** (7 new); verify fails and still records |
+
+**NOT RUN, with the reason:**
+
+| Not run | Why |
+|---|---|
+| Remote log history (`bun run logs --mode staging\|production`) | Needs a deployed Worker and a Cloudflare account with Workers Observability access. No deployment was performed in this round. The local lane above proves emission; it says nothing about provider retention. |
+| `wrangler tail` against a live Worker | Same. `wrangler dev` output is the same console stream, but it is not the provider's index. |
+| `bun run deploy apply` / a live verification | This round writes no remote state by instruction. The verification logic is proven against a recording `fetch`, and a live run is the remaining step. |
+| `bun run dev` (Node dev server) | **Broken on `main` too, independently of this branch.** Node 22.23.3 strips types without transforming, and `packages/shared/utils/src/lib/common/base_class.ts:142` uses a TypeScript parameter property (`constructor(protected readonly options: Options)`), which strip-only mode refuses. The Node record was therefore proven with a real Node process driving the emitter directly, and the app-level Node lane remains broken until that line is rewritten. |
+
 ### A historical log query has never been sent
 
 `queryCloudflareHistory` builds a real Workers Observability request and parses a

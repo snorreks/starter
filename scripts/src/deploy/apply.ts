@@ -37,6 +37,7 @@ import { wranglerDatabaseId } from './configure.ts';
 import {
   type ArtifactCheck,
   inspectArtifact,
+  type ReadinessSmoke,
   type ReleaseRecord,
   type SmokeResult,
   sourceRevision,
@@ -49,6 +50,17 @@ export const BUILD_DIR = join(CLIENT_DIR, '.svelte-kit', 'cloudflare');
 
 /** The endpoint that proves release identity. Public, and safe to fetch. */
 export const HEALTH_PATH = '/health';
+
+/**
+ * The endpoint that proves the release can actually serve.
+ *
+ * Also public and also safe to fetch, and also asked on every verification — the
+ * two are different questions. `/health` reads configuration, so nothing in it can
+ * fail on its own: a Worker whose D1 binding points at a deleted database answers
+ * `200 ok` with the right release id forever. Recording that as a verified release
+ * is how a deploy reports success while every real request 500s.
+ */
+export const READINESS_PATH = '/health/ready';
 
 export type Phase = 'build' | 'validate' | 'migrate' | 'deploy' | 'verify' | 'record';
 
@@ -200,22 +212,22 @@ const migrate = (
 };
 
 /**
- * Fetch `/health` and report what the release says it is.
+ * Ask one probe a question, and return its status. Never throws.
  *
- * The response body is *not* retained. `/health` is public by design, but a
- * release record outlives the deployment, and a record that can contain whatever
- * an origin chose to return is a record that eventually contains something
- * sensitive. Only the status and the reported release id are kept.
+ * The body is read for the fields this function is explicitly asking about and for
+ * nothing else: `/health` for `release`, `/health/ready` for `ok`. See the note on
+ * `smoke` about why a response body is never retained.
  */
-export const smoke = async (
-  target: ResolvedTarget,
-  doFetch: typeof globalThis.fetch = globalThis.fetch,
-  options: { expectedRelease?: string; timeoutMs?: number } = {},
-): Promise<SmokeResult> => {
-  const url = `${target.origin}${HEALTH_PATH}`;
-  const expected = options.expectedRelease;
-  const timeoutMs = options.timeoutMs ?? VERIFY_TIMEOUT_MS;
-
+const probe = async (
+  url: string,
+  path: string,
+  doFetch: typeof globalThis.fetch,
+  timeoutMs: number,
+): Promise<{
+  status: number | null;
+  body: Record<string, unknown> | null;
+  problem: string | null;
+}> => {
   let response: Response;
   try {
     // Bounded. An origin that accepts the connection and never answers would
@@ -227,36 +239,73 @@ export const smoke = async (
     });
   } catch (error) {
     return {
-      ok: false,
-      path: HEALTH_PATH,
       status: null,
-      reportedRelease: null,
-      problem: `Could not reach ${HEALTH_PATH}: ${error instanceof Error ? error.message : 'network error'}`,
+      body: null,
+      problem: `Could not reach ${path}: ${error instanceof Error ? error.message : 'network error'}`,
     };
   }
 
-  let reportedRelease: string | null = null;
+  let body: Record<string, unknown> | null = null;
   try {
-    const body: unknown = await response.json();
-    if (body !== null && typeof body === 'object' && 'release' in body) {
-      const value = (body as { release: unknown }).release;
-      if (typeof value === 'string') {
-        reportedRelease = value;
-      }
+    const parsed: unknown = await response.json();
+    if (parsed !== null && typeof parsed === 'object' && !Array.isArray(parsed)) {
+      body = parsed as Record<string, unknown>;
     }
   } catch {
     // A non-JSON body is a failed verification, not a crash: an HTML error page
     // from a misconfigured origin is precisely the failure worth reporting.
-    reportedRelease = null;
+    body = null;
   }
 
-  if (!response.ok) {
+  return { status: response.status, body, problem: null };
+};
+
+/**
+ * Fetch `/health` and `/health/ready`, and report whether this release is live and
+ * able to serve.
+ *
+ * Liveness first, and it is not enough on its own. A 200 from `/health` proves the
+ * isolate is serving and that it identifies itself as the release this run
+ * published; it cannot prove the bindings work, because it does not use them.
+ * Readiness is asked separately and a failure there fails the verification, so the
+ * recorded release says "deployed and unable to serve" rather than "verified".
+ *
+ * The response body is *not* retained. Both endpoints are public by design, but a
+ * release record outlives the deployment, and a record that can contain whatever an
+ * origin chose to return is a record that eventually contains something sensitive.
+ * Only the status and the release id are kept.
+ */
+export const smoke = async (
+  target: ResolvedTarget,
+  doFetch: typeof globalThis.fetch = globalThis.fetch,
+  options: { expectedRelease?: string; timeoutMs?: number } = {},
+): Promise<SmokeResult> => {
+  const expected = options.expectedRelease;
+  const timeoutMs = options.timeoutMs ?? VERIFY_TIMEOUT_MS;
+
+  const live = await probe(`${target.origin}${HEALTH_PATH}`, HEALTH_PATH, doFetch, timeoutMs);
+
+  if (live.problem !== null) {
     return {
       ok: false,
       path: HEALTH_PATH,
-      status: response.status,
+      status: live.status,
+      reportedRelease: null,
+      readiness: null,
+      problem: live.problem,
+    };
+  }
+
+  const reportedRelease = readString(live.body, 'release');
+
+  if (live.status === null || live.status >= 400) {
+    return {
+      ok: false,
+      path: HEALTH_PATH,
+      status: live.status,
       reportedRelease,
-      problem: `${HEALTH_PATH} answered ${response.status}`,
+      readiness: null,
+      problem: `${HEALTH_PATH} answered ${String(live.status)}`,
     };
   }
 
@@ -273,10 +322,11 @@ export const smoke = async (
     return {
       ok: false,
       path: HEALTH_PATH,
-      status: response.status,
+      status: live.status,
       reportedRelease: null,
+      readiness: null,
       problem:
-        `${HEALTH_PATH} answered ${response.status} without identifying a release. ` +
+        `${HEALTH_PATH} answered ${String(live.status)} without identifying a release. ` +
         "The response is not this application's health endpoint — a shell, a proxy or " +
         'an SPA fallback is serving this origin.',
     };
@@ -290,15 +340,65 @@ export const smoke = async (
     return {
       ok: false,
       path: HEALTH_PATH,
-      status: response.status,
+      status: live.status,
       reportedRelease,
+      readiness: null,
       problem:
-        `/health reports release "${reportedRelease ?? 'none'}" but this deploy published ` +
+        `${HEALTH_PATH} reports release "${reportedRelease}" but this deploy published ` +
         `"${expected}".`,
     };
   }
 
-  return { ok: true, path: HEALTH_PATH, status: response.status, reportedRelease, problem: null };
+  // Liveness is established. Now the question that decides whether this release can
+  // take traffic. Asked with its own bounded request rather than sharing the
+  // liveness budget: a slow readiness probe is exactly the condition being
+  // detected, and it must not be able to consume the liveness timeout as well.
+  const ready = await probe(
+    `${target.origin}${READINESS_PATH}`,
+    READINESS_PATH,
+    doFetch,
+    timeoutMs,
+  );
+
+  const readiness: ReadinessSmoke = {
+    path: READINESS_PATH,
+    ok: false,
+    status: ready.status,
+    problem: ready.problem,
+  };
+
+  if (ready.problem === null) {
+    if (ready.status === null || ready.status >= 400) {
+      readiness.problem = `${READINESS_PATH} answered ${String(ready.status)}. The release is live but cannot serve: a database-backed request fails right now.`;
+    } else if (readBoolean(ready.body, 'ok') !== true) {
+      // A 200 whose payload says `ok: false` is a failure too. The contract is the
+      // report, not the status line.
+      readiness.problem = `${READINESS_PATH} reported that this release is not ready.`;
+    } else {
+      readiness.ok = true;
+      readiness.problem = null;
+    }
+  }
+
+  return {
+    ok: readiness.ok,
+    path: readiness.ok ? HEALTH_PATH : READINESS_PATH,
+    status: live.status,
+    reportedRelease,
+    readiness,
+    problem: readiness.problem,
+  };
+};
+
+/** A string field, or null. A non-string is treated as absent, not coerced. */
+const readString = (body: Record<string, unknown> | null, key: string): string | null => {
+  const value = body?.[key];
+  return typeof value === 'string' ? value : null;
+};
+
+const readBoolean = (body: Record<string, unknown> | null, key: string): boolean | null => {
+  const value = body?.[key];
+  return typeof value === 'boolean' ? value : null;
 };
 
 /**
@@ -482,7 +582,8 @@ export const apply = async (options: ApplyOptions): Promise<ApplyResult> => {
   outcomes.push(
     ok(
       'verify',
-      `${smokeResult.path} -> ${smokeResult.status}, release ${smokeResult.reportedRelease ?? 'unreported'}`,
+      `${smokeResult.path} -> ${smokeResult.status}, release ${smokeResult.reportedRelease ?? 'unreported'}; ` +
+        `${READINESS_PATH} -> ${smokeResult.readiness?.status ?? 'not run'} (ready)`,
     ),
   );
 

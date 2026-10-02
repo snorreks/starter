@@ -30,6 +30,15 @@ export {
   redactValue,
 } from './lib/redaction.ts';
 export {
+  type ConsoleTarget,
+  createNdjsonStdoutEmitter,
+  createStructuredConsoleEmitter,
+  type LineWriter,
+  type NdjsonEmitterOptions,
+  type StructuredEmitter,
+  type StructuredEmitterOptions,
+} from './lib/structured_output.ts';
+export {
   createHttpTelemetryTransport,
   type HttpTelemetryTransportOptions,
   type TelemetryPayload,

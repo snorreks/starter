@@ -14,7 +14,8 @@
 //   `Request` in hand and the framework discards it when the response is sent.
 //   That is why nothing request-scoped may live in a module variable.
 
-import type { Container, RequestUser } from '#lib/server/container.ts';
+import type { Container } from '#lib/server/container.ts';
+import type { RequestContext, RequestUser } from '#lib/server/request_context.ts';
 
 declare global {
   /**
@@ -79,8 +80,20 @@ declare global {
       /**
        * The verified caller, or null. Resolved from the session on every request
        * and never cached beyond it.
+       *
+       * A convenience alias of `context.user`. A route reads `context` for the
+       * trace id and the record destination, so it has no reason to reach for a
+       * second field that can only ever disagree.
        */
       user: RequestUser | null;
+      /**
+       * The request context, built once by the composition root.
+       *
+       * This is the *only* per-request identity a route should read: the session
+       * was resolved once, in `handle`, and a route that resolved it again would be
+       * a second differently authenticated path to the same user.
+       */
+      context: RequestContext;
     }
   }
 }

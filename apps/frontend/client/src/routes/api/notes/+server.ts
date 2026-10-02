@@ -15,7 +15,6 @@
 import { NoteCreateSchema, type NoteList } from '@starter/schemas/notes';
 import { json, jsonError, readJsonBody, unauthorized } from '#lib/server/http.ts';
 import { createNotesService } from '#lib/server/notes_service.ts';
-import { buildRequestContext } from '#lib/server/request_context.ts';
 import type { RequestHandler } from './$types';
 
 /**
@@ -33,10 +32,9 @@ export const GET: RequestHandler = async ({ locals }) => {
     return unauthorized();
   }
 
-  // No `buildRequestContext` call here, and that asymmetry is the point. `locals.user`
-  // was already resolved from this request by the composition root, so building a
-  // second context would resolve the same session twice. The read path does not log
-  // per request — the write paths below do, because a write is the event worth
+  // No context call here either, and that asymmetry is the point: the composition
+  // root already published `locals.context` for this request. The read path does not
+  // log per event — the write path does, because a write is the event worth
   // correlating.
   const notes = await createNotesService(locals.container.db).list(user.id);
   const body: NoteList = { notes, serverTime: Date.now() };
@@ -44,8 +42,10 @@ export const GET: RequestHandler = async ({ locals }) => {
 };
 
 export const POST: RequestHandler = async ({ locals, request }) => {
-  const context = await buildRequestContext(request, locals.container);
-  const user = locals.user;
+  // `locals.context`, not a fresh context: the hook already resolved this request's
+  // session and trace, and a second resolution is a second identity to keep in step.
+  const context = locals.context;
+  const user = context.user;
   if (user === null) {
     return unauthorized();
   }
@@ -58,7 +58,12 @@ export const POST: RequestHandler = async ({ locals, request }) => {
   const service = createNotesService(locals.container.db);
   const note = await service.create(user.id, parsed.value as { title: string; body: string });
 
-  context.logger.info('notes.create', { noteId: note.id, traceId: context.traceId });
+  context.logger.write({
+    logLevel: 'INFO',
+    logType: 'info',
+    event: 'notes.create',
+    data: { noteId: note.id },
+  });
   return json(200, note);
 };
 

@@ -635,8 +635,11 @@ export const main = async (argv: readonly string[]): Promise<number> => {
       );
     }
 
+    // Both probes are named on success, because a verification that only mentioned
+    // liveness reads as though readiness was never asked.
     process.stdout.write(
       `ok  ${result.path} -> ${result.status}, release ${result.reportedRelease ?? 'unreported'}\n` +
+        `ok  ${result.readiness?.path ?? '/health/ready'} -> ${result.readiness?.status ?? 'unknown'} (ready)\n` +
         `    ${resolved.target.workerName} at ${resolved.target.origin}\n`,
     );
     return EXIT.ok;

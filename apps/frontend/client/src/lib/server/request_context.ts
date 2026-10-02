@@ -1,19 +1,27 @@
 // apps/frontend/client/src/lib/server/request_context.ts
 //
-// Per-request identity.
+// Per-request identity, and the one destination its records go to.
 //
-// This is the half that genuinely varies per request, and it is therefore the
-// half that must never be shared. Everything here is built fresh from the
-// `Request` in hand and returned; nothing is stored.
+// This is the half that genuinely varies per request, and it is therefore the half
+// that must never be shared. Everything here is built fresh from the `Request` in
+// hand and returned; nothing is stored.
 //
 // The contrast with `container.ts` is the point: bindings are isolate-stable and
 // live in a container; the caller's identity is not, and does not. `event.locals`
-// is the only place a request's identity lives, and `locals` is discarded when
-// the request ends.
+// is the only place a request's identity lives, and `locals` is discarded when the
+// request ends. A route that needs a trace id reads `locals.context`, which the
+// hook already built — it does not resolve the session a second time.
 
 import { sessions } from '@starter/database';
-import { type ConsoleLogger, createLogger, type LogContext, toLogEvent } from '@starter/logger';
-import type { LogEntry, LogSink } from '@starter/schemas/logging';
+import {
+  type ConsoleLogger,
+  createLogger,
+  createNdjsonStdoutEmitter,
+  createStructuredConsoleEmitter,
+  type LogContext,
+  type StructuredEmitter,
+} from '@starter/logger';
+import { type DeploymentEnvironment, isDeploymentEnvironment } from '@starter/schemas/logging';
 import { createId } from '@starter/utils';
 import { lt } from 'drizzle-orm';
 import type { Container } from './container.ts';
@@ -48,49 +56,147 @@ export interface RequestUser {
 export interface RequestContext {
   /** The verified caller, or null. Never a client-asserted value. */
   user: RequestUser | null;
+  /**
+   * This server's trace id for this request. Generated here, never taken from a
+   * header — see `resolveClientTraceId`.
+   */
   traceId: string;
+  /**
+   * The provider's id for this request, when the runtime gives us one and it is
+   * well formed. This is what ties the record to the provider's own logs.
+   */
+  requestId: string | null;
+  /**
+   * A correlation label the *client* chose, bounded and validated, or null.
+   *
+   * Kept because it is genuinely useful in a support conversation, and kept out of
+   * `traceId` because it is forgeable: a caller that could choose the trace id
+   * could place its records inside another request's history.
+   */
+  clientTraceId: string | null;
   logger: ConsoleLogger;
+  /** The single structured destination this request's records are written to. */
+  emitter: StructuredEmitter;
   container: Container;
 }
 
 /**
- * True when this request is being served by the Node dev/preview server.
+ * Which runtime is serving, because the two have different destinations.
  *
- * `vite dev` and `vite preview` run the same SvelteKit server code in Node rather
- * than in workerd, and Node has no platform console capture: whatever the logger
- * writes *is* the whole record. Read through `globalThis` so the check is safe to
- * evaluate in the Worker bundle, where `process` does not exist.
+ *   * `workerd` — one JSON object per record through `console`, which is what
+ *     `wrangler tail`, Workers Logs and Logpush index. There is no stdout here and
+ *     nothing else to redirect, which is exactly why this was broken: the old code
+ *     built a silent logger with no sink and dropped every record.
+ *   * `node` — one NDJSON line on stdout, which `bun run dev` redirects into
+ *     `.wrangler/logs/app.ndjson` and `bun run logs web --mode local` reads.
  */
-const IS_NODE_RUNTIME =
-  typeof (globalThis as { process?: { versions?: { node?: string } } }).process?.versions?.node ===
-  'string';
+export type LogRuntime = 'node' | 'workerd';
 
 /**
- * A sink that writes one NDJSON line per event on stdout.
+ * The runtime this bundle is executing in.
  *
- * Needed because in Node there is no platform log capture, and because
- * `ConsoleLogger`'s own output is `%c`-formatted for a human. The dev launcher
- * (`bun run dev`) redirects stdout into `.wrangler/logs/app.ndjson`, which is
- * what `bun run logs --mode local` reads; without this the file would contain
- * banners and nothing parseable, and a working log CLI would report no events.
- *
- * It is a sink rather than a direct write so it reuses the logger's own
- * redaction and normalization instead of serializing a raw entry.
- *
- * It is a factory rather than a constant because `toLogEvent` needs the log
- * context, and a sink only receives the entry. Capturing the context here is what
- * makes the emitted line carry `app`/`environment`/`release` — which is how
- * `bun run logs web --mode local` filters a stream where browser-forwarded and
- * server-originated records are told apart by exactly those fields.
+ * Read through `globalThis` so evaluating it inside the Worker bundle is safe: in
+ * workerd `process` does not exist, and a bare `process` reference would throw at
+ * import time rather than being false.
  */
-const ndjsonStdoutSink = (context: LogContext): LogSink => ({
-  name: 'ndjson-stdout',
-  write(entry: LogEntry) {
-    const stdout = (globalThis as { process?: { stdout?: { write?: (chunk: string) => unknown } } })
-      .process?.stdout;
-    stdout?.write?.(`${JSON.stringify(toLogEvent(entry, context))}\n`);
-  },
+export const detectLogRuntime = (): LogRuntime =>
+  typeof (globalThis as { process?: { versions?: { node?: string } } }).process?.versions?.node ===
+  'string'
+    ? 'node'
+    : 'workerd';
+
+/**
+ * The container's validated environment, as the log vocabulary spells it.
+ *
+ * `AppEnv.DEPLOYMENT_ENV` admits one internal name the log schema does not, so this
+ * is the single place that mapping happens. A log field that reported a name no log
+ * query can filter on would be worse than one that reported the container's.
+ */
+export const toLogEnvironment = (container: Container): DeploymentEnvironment => {
+  const environment = container.environment;
+  if (isDeploymentEnvironment(environment)) {
+    return environment;
+  }
+  // Unreachable through `getContainer`, which validates before it returns a
+  // container. Reachable only if a caller constructs one by hand — and a record
+  // that named an unknown environment would be a lie an operator could not correct
+  // by filtering, so it falls back to the coarse truth.
+  return container.isLocal ? 'local' : 'production';
+};
+
+/**
+ * The structured destination for server records in one runtime.
+ *
+ * Exported separately from the context so a server log created outside a request —
+ * the startup logger, the auth-failure logger — reaches the same place instead of
+ * inventing a third convention.
+ */
+export const serverEmitter = (
+  context: LogContext,
+  runtime: LogRuntime = detectLogRuntime(),
+  options: { traceId?: string } = {},
+): StructuredEmitter =>
+  runtime === 'node'
+    ? createNdjsonStdoutEmitter(context, options)
+    : createStructuredConsoleEmitter(context, options);
+
+/**
+ * A logger that renders nothing itself and emits exactly one structured record
+ * through one emitter.
+ *
+ * `silent: true` plus a sink, deliberately. Two renders would mean two records for
+ * one event — a duplicate in the platform's log index and a double count in a
+ * local NDJSON file — and `createLogger` now refuses the silent-with-no-sink
+ * combination outright, because that is the shape that lost every record in workerd.
+ */
+export const createServerRecordLogger = (
+  context: LogContext,
+  runtime: LogRuntime = detectLogRuntime(),
+  options: { traceId?: string } = {},
+): { logger: ConsoleLogger; emitter: StructuredEmitter } => {
+  const emitter = serverEmitter(context, runtime, options);
+  return {
+    emitter,
+    logger: createLogger({ ...context, logLevel: 'INFO', silent: true, sinks: [emitter] }),
+  };
+};
+
+/**
+ * The server's own view of where it is running.
+ *
+ * `container.environment`, which `getContainer` has already validated. The previous
+ * `isLocal ? 'local' : 'production'` labelled staging as production, so a staging
+ * incident could not be found by filtering on the field whose whole purpose is to
+ * name the environment.
+ */
+export const resolveLogContext = (container: Container): LogContext => ({
+  app: 'web',
+  environment: toLogEnvironment(container),
+  source: 'worker',
+  release: container.env.RELEASE ?? 'dev',
 });
+
+/** Long enough for a provider id, short enough that a header cannot be a payload. */
+const MAX_LABEL_LENGTH = 200;
+
+/**
+ * Bound an incoming correlation label, or refuse it.
+ *
+ * Two bounds, both needed. Length is the obvious one. The character set is the one
+ * that matters for a log: an unfiltered header value copied into a structured field
+ * is how a caller gets newlines and terminal escapes into an operator's log viewer,
+ * and how a five kilobyte header becomes a five kilobyte record.
+ */
+export const boundCorrelationLabel = (raw: string | null): string | null => {
+  if (raw === null) {
+    return null;
+  }
+  const trimmed = raw.trim();
+  if (trimmed.length === 0 || trimmed.length > MAX_LABEL_LENGTH) {
+    return null;
+  }
+  return /^[A-Za-z0-9._:-]+$/.test(trimmed) ? trimmed : null;
+};
 
 /**
  * Resolve the caller from the session cookie or the bearer token.
@@ -119,35 +225,37 @@ export const resolveUser = async (
   };
 };
 
+/**
+ * Build the context for one request.
+ *
+ * `container` comes first because it is the authority: the environment, the
+ * release and the session verifier all come from it, and passing the request last
+ * keeps "what is this request running against" reading in the same order.
+ *
+ * `options.runtime` exists so a unit test can exercise both destinations. Detection
+ * itself is proved against the built Worker in `tests/worker_integration.test.ts`,
+ * where nothing is injected.
+ */
 export const buildRequestContext = async (
-  request: Request,
   container: Container,
+  request: Request,
+  options: { runtime?: LogRuntime } = {},
 ): Promise<RequestContext> => {
-  // One context object, used for both the logger and the sink. Two literals would
-  // be two places to forget `release`, and a line with the wrong release is a log
-  // that cannot be tied to a revision — which is the question the field exists to
-  // answer.
-  const context: LogContext = {
-    app: 'web',
-    environment: container.isLocal ? 'local' : 'production',
-    source: 'worker',
-    release: container.env.RELEASE ?? 'dev',
-  };
-
-  const logger = createLogger({
-    ...context,
-    logLevel: 'INFO',
-    // The platform captures console output in a deployed Worker, so a second
-    // write there would only double-count every line.
-    silent: !IS_NODE_RUNTIME,
-    ...(IS_NODE_RUNTIME ? { sinks: [ndjsonStdoutSink(context)] } : {}),
-  });
+  const context = resolveLogContext(container);
+  const traceId = createId('tr', 16);
+  // The trace id is generated before the logger is built and handed to it, so every
+  // record this context emits is correlated by construction rather than by a call
+  // site remembering to pass it.
+  const { logger, emitter } = createServerRecordLogger(context, options.runtime, { traceId });
 
   return {
     user: await resolveUser(container, request.headers),
-    traceId: request.headers.get('x-trace-id') ?? createId('tr', 16),
+    traceId,
+    requestId: boundCorrelationLabel(request.headers.get('cf-ray')),
+    clientTraceId: boundCorrelationLabel(request.headers.get('x-trace-id')),
     container,
     logger,
+    emitter,
   };
 };
 

@@ -25,6 +25,15 @@ import type { ArtifactCheck } from '../src/deploy/release.ts';
 import type { ResolvedTarget } from '../src/deploy/target.ts';
 
 /**
+ * The readiness URL, as a literal.
+ *
+ * The contract is the endpoint the deployed Worker answers, not whatever constant
+ * the pipeline happens to use — so this is spelled here, and the test fails if the
+ * pipeline stops asking for it rather than if it stops exporting a name.
+ */
+const READINESS_PATH = '/health/ready';
+
+/**
  * The SHA the pipeline will build and publish.
  *
  * Pinned through the environment because verification now compares the release
@@ -84,9 +93,16 @@ const recorder = (exitFor: (args: string[]) => number = () => 0): Spawns => {
   };
 };
 
+/** What a scripted origin answers with: a status, a body, or a transport failure. */
+interface ScriptedResponse {
+  status?: number;
+  body?: unknown;
+  throws?: Error;
+}
+
 /** A `fetch` that records the URLs requested and answers with a fixed response. */
 const httpRecorder = (
-  respond: (url: string) => { status?: number; body?: unknown; throws?: Error } = () => ({}),
+  respond: (url: string) => ScriptedResponse = () => ({}),
 ): {
   requests: string[];
   fetch: typeof globalThis.fetch;
@@ -111,11 +127,43 @@ const httpRecorder = (
   return { requests, fetch: impl };
 };
 
-/** `/health` answering correctly, which is the success case for verification. */
-const healthy = (url: string) =>
-  url.endsWith(HEALTH_PATH)
-    ? { body: { status: 'ok', release: SOURCE_SHA, environment: 'staging', deployed: true } }
-    : { status: 404, body: { error: 'not_found', message: 'No such route.' } };
+/**
+ * A release answering both probes correctly — the success case for verification.
+ *
+ * `/health/ready` is here because a Worker that is alive but whose D1 binding is
+ * unusable is the exact release this pipeline exists to catch, and the fixture has
+ * to model it for the success case to mean anything.
+ */
+const healthy = (url: string): ScriptedResponse => {
+  if (url.endsWith(HEALTH_PATH)) {
+    return {
+      body: { status: 'ok', release: SOURCE_SHA, environment: 'staging', deployed: true },
+    };
+  }
+  if (url.endsWith(READINESS_PATH)) {
+    return {
+      body: {
+        ok: true,
+        release: { status: 'ok', release: SOURCE_SHA, environment: 'staging', deployed: true },
+        checks: [{ binding: 'DB', ok: true, detail: 'answered a trivial query' }],
+      },
+    };
+  }
+  return { status: 404, body: { error: 'not_found', message: 'No such route.' } };
+};
+
+/** Alive and correctly identified, but the database binding does not work. */
+const aliveButNotReady = (url: string): ScriptedResponse =>
+  url.endsWith(READINESS_PATH)
+    ? {
+        status: 503,
+        body: {
+          ok: false,
+          release: { status: 'ok', release: SOURCE_SHA, environment: 'staging', deployed: true },
+          checks: [{ binding: 'DB', ok: false, detail: 'no such table: notes' }],
+        },
+      }
+    : healthy(url);
 
 describe('the apply pipeline spawns exactly the commands it prints', () => {
   test('migrations are applied to the named database before the deploy', async () => {
@@ -186,7 +234,12 @@ describe('the apply pipeline spawns exactly the commands it prints', () => {
       root: fixtureRoot('db-staging'),
     });
 
-    expect(http.requests).toEqual(['https://starter-production.example/health']);
+    // Both probes, against the resolved target. Readiness is the one that decides
+    // whether the release can actually serve.
+    expect(http.requests).toEqual([
+      'https://starter-production.example/health',
+      'https://starter-production.example/health/ready',
+    ]);
   });
 
   test('staging and production spawn different deployments', async () => {
@@ -639,3 +692,135 @@ function mkTempRoot(): string {
   const { join } = require('node:path') as typeof import('node:path');
   return mkdtempSync(join(tmpdir(), 'starter-release-'));
 }
+
+// ── readiness ────────────────────────────────────────────────────────────────
+//
+// Liveness and readiness are different questions, and only one of them was being
+// asked. `/health` reads configuration: nothing in it can fail on its own, so a
+// release whose D1 binding points at a deleted database answered 200 with the right
+// release id and was recorded as verified. These controls fix that case: 200 +
+// 503 is a failed release record, not a warning.
+
+describe('verification asks whether the release can serve, not only whether it is up', () => {
+  test('readiness is fetched with its own bounded request', async () => {
+    const result = await smoke(target(), httpRecorder(healthy).fetch);
+
+    expect(result.ok).toBe(true);
+    expect(result.readiness?.ok).toBe(true);
+    expect(result.readiness?.status).toBe(200);
+  });
+
+  test('a healthy liveness with an unready database is a failed verification', async () => {
+    const result = await smoke(target(), httpRecorder(aliveButNotReady).fetch);
+
+    expect(result.ok).toBe(false);
+    expect(result.status).toBe(200);
+    expect(result.reportedRelease).toBe(SOURCE_SHA);
+    expect(result.readiness?.ok).toBe(false);
+    expect(result.readiness?.status).toBe(503);
+    expect(result.path).toBe(READINESS_PATH);
+    expect(result.problem).toContain(READINESS_PATH);
+  });
+
+  test('a readiness body that says ok:false is a failure even at 200', async () => {
+    // A proxy or a future refactor that returns 200 with a failing report must not
+    // be read as healthy: the payload is the contract, not just the status.
+    const http = httpRecorder((url) =>
+      url.endsWith(READINESS_PATH)
+        ? { status: 200, body: { ok: false, checks: [{ binding: 'DB', ok: false }] } }
+        : healthy(url),
+    );
+
+    const result = await smoke(target(), http.fetch);
+    expect(result.ok).toBe(false);
+    expect(result.readiness?.ok).toBe(false);
+  });
+
+  test('an unreachable readiness probe is reported rather than assumed healthy', async () => {
+    const http = httpRecorder((url) =>
+      url.endsWith(READINESS_PATH) ? { throws: new Error('socket hang up') } : healthy(url),
+    );
+
+    const result = await smoke(target(), http.fetch);
+    expect(result.ok).toBe(false);
+    expect(result.readiness?.ok).toBe(false);
+    expect(result.problem).toContain(READINESS_PATH);
+  });
+
+  test('a probe that never answers is abandoned at the injected budget', async () => {
+    // Injected, not slept through: an origin that accepts the connection and never
+    // replies must not hold the deploy job open for the runner's own timeout.
+    let observed: AbortSignal | undefined;
+    const hanging = (async (_input: unknown, init?: { signal?: AbortSignal }) => {
+      observed = init?.signal;
+      return await new Promise<Response>((_resolve, reject) => {
+        init?.signal?.addEventListener('abort', () => {
+          reject(new Error('The operation was aborted.'));
+        });
+      });
+    }) as unknown as typeof globalThis.fetch;
+
+    const startedAt = Date.now();
+    const result = await smoke(target(), hanging, { timeoutMs: 50 });
+    const elapsed = Date.now() - startedAt;
+
+    expect(result.ok).toBe(false);
+    expect(observed).toBeDefined();
+    // Generous upper bound, still an order of magnitude below the real timeout:
+    // this asserts the budget is applied, not that the clock is fast.
+    expect(elapsed).toBeLessThan(5_000);
+  });
+
+  test('apply records a release whose readiness failed, and does not claim success', async () => {
+    const spawns = recorder();
+    const http = httpRecorder(aliveButNotReady);
+
+    const result = await apply({
+      target: target(),
+      consented: true,
+      inspect: () => artifact(),
+      run: spawns.run,
+      fetch: http.fetch,
+      capture: () => ({ ok: true, stdout: '{"id":"dep-3","version_id":"v3"}', stderr: '' }),
+      now: () => '2026-01-01T00:00:00.000Z',
+      root: fixtureRoot('db-staging'),
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.stoppedAt).toBe('verify');
+    expect(result.record).not.toBeNull();
+    expect(result.record?.smoke?.ok).toBe(false);
+    expect(result.record?.smoke?.readiness?.ok).toBe(false);
+    // The deployment id is exactly what a rollback needs, so it is kept.
+    expect(result.record?.deploymentId).toBe('dep-3');
+    expect(renderApply(result)).toContain(READINESS_PATH);
+  });
+
+  test('the readiness body never reaches the release record', async () => {
+    const http = httpRecorder((url) =>
+      url.endsWith(READINESS_PATH)
+        ? {
+            status: 503,
+            body: {
+              ok: false,
+              detail: 'connection string postgres://user:hunter2@db',
+              checks: [{ binding: 'DB', ok: false, detail: 'secretish' }],
+            },
+          }
+        : healthy(url),
+    );
+
+    const result = await apply({
+      target: target(),
+      consented: true,
+      inspect: () => artifact(),
+      run: recorder().run,
+      fetch: http.fetch,
+      capture: () => ({ ok: false, stdout: '', stderr: '' }),
+      root: fixtureRoot('db-staging'),
+    });
+
+    expect(JSON.stringify(result.record)).not.toContain('hunter2');
+    expect(JSON.stringify(result.record)).not.toContain('postgres://');
+  });
+});

@@ -181,12 +181,40 @@ export const sourceRevision = (
 /** What a smoke check found, with no response body retained. */
 export interface SmokeResult {
   ok: boolean;
-  /** The path that was fetched, e.g. `/health`. */
+  /**
+   * The path that decided the outcome.
+   *
+   * `/health` when liveness and readiness both passed — because liveness is what
+   * carries the release identity this record is about — and whichever probe failed
+   * otherwise, so an operator reading the record sees *which* question the release
+   * could not answer.
+   */
   path: string;
   status: number | null;
   /** The release id the endpoint reported, when it reported one. */
   reportedRelease: string | null;
+  /**
+   * The readiness answer.
+   *
+   * `null` when liveness failed first and readiness was therefore never asked: a
+   * record that claimed readiness was checked would be a claim nobody made.
+   */
+  readiness: ReadinessSmoke | null;
   /** A failure description. Never a response body: it may contain user data. */
+  problem: string | null;
+}
+
+/**
+ * One readiness answer, with no body retained.
+ *
+ * A release record outlives the deployment and gets pasted into tickets, so what is
+ * kept is the status and whether the release said it was ready — never the report,
+ * whose `detail` fields name database internals.
+ */
+export interface ReadinessSmoke {
+  path: string;
+  ok: boolean;
+  status: number | null;
   problem: string | null;
 }
 

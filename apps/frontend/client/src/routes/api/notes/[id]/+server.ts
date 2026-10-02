@@ -12,7 +12,6 @@
 import { NoteUpdateSchema } from '@starter/schemas/notes';
 import { json, jsonError, noteNotFound, readJsonBody, unauthorized } from '#lib/server/http.ts';
 import { createNotesService } from '#lib/server/notes_service.ts';
-import { buildRequestContext } from '#lib/server/request_context.ts';
 import type { RequestHandler } from './$types';
 
 const MAX_BODY_BYTES = 64 * 1024;
@@ -28,7 +27,8 @@ export const PATCH: RequestHandler = async ({ locals, params, request }) => {
     return parsed.response;
   }
 
-  const context = await buildRequestContext(request, locals.container);
+  // The hook's context, reused: see `#lib/server/request_context.ts`.
+  const context = locals.context;
   const note = await createNotesService(locals.container.db).update(
     user.id,
     params.id,
@@ -39,23 +39,34 @@ export const PATCH: RequestHandler = async ({ locals, params, request }) => {
     return noteNotFound();
   }
 
-  context.logger.info('notes.update', { noteId: note.id, traceId: context.traceId });
+  context.logger.write({
+    logLevel: 'INFO',
+    logType: 'info',
+    event: 'notes.update',
+    data: { noteId: note.id },
+  });
   return json(200, note);
 };
 
-export const DELETE: RequestHandler = async ({ locals, params, request }) => {
+export const DELETE: RequestHandler = async ({ locals, params }) => {
   const user = locals.user;
   if (user === null) {
     return unauthorized();
   }
 
-  const context = await buildRequestContext(request, locals.container);
+  // The hook's context, reused: see `#lib/server/request_context.ts`.
+  const context = locals.context;
   const removed = await createNotesService(locals.container.db).remove(user.id, params.id);
   if (!removed) {
     return noteNotFound();
   }
 
-  context.logger.info('notes.delete', { noteId: params.id, traceId: context.traceId });
+  context.logger.write({
+    logLevel: 'INFO',
+    logType: 'info',
+    event: 'notes.delete',
+    data: { noteId: params.id },
+  });
   // 204 with no body, which is what the previous API returned and what
   // `NotesService.remove` already treats as success.
   return new Response(null, { status: 204 });

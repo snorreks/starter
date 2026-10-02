@@ -18,7 +18,6 @@
 // to support. `trustedOrigins` still comes from the binding and Better Auth still
 // enforces it, which is what protects a request arriving with a forged `Origin`.
 
-import { createLogger } from '@starter/logger';
 import { jsonError } from '#lib/server/http.ts';
 import type { RequestHandler } from './$types';
 
@@ -29,15 +28,11 @@ const handle: RequestHandler = async ({ request, locals }) => {
     // Same answer as the previous API gave: a 503 naming the condition, with the
     // detail in the log rather than in the body. A stack trace or an internal
     // message in a response is a disclosure bug.
-    createLogger({
-      app: 'web',
-      environment: locals.container.isLocal ? 'local' : 'production',
-      source: 'worker',
-      release: locals.container.env.RELEASE ?? 'dev',
-      logLevel: 'INFO',
-      // The platform captures console output in a deployed Worker.
-      silent: locals.container.environment !== 'local',
-    }).error('auth.unavailable', {
+    // The hook's own logger: the same destination every other record in this request
+    // goes to. The previous code built a *second* logger here, silent in every
+    // deployed environment and therefore writing nowhere — an auth outage that could
+    // not be diagnosed from the logs, which is the one outage that most needs them.
+    locals.context.logger.error('auth.unavailable', {
       message: error instanceof Error ? error.message : String(error),
     });
     return jsonError(503, 'auth_unconfigured', 'Authentication is not configured.');

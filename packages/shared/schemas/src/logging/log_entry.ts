@@ -23,6 +23,18 @@ export interface LogEntry {
   sessionId?: string;
   /** Field names that must be redacted before this entry leaves the process. */
   redactedKeys?: readonly string[];
+  /**
+   * Structured payload for this record, as distinct from the interpolated message.
+   *
+   * A separate field rather than another `write(entry, payload)` argument, because an
+   * argument is appended to the message *and* nested under `data.args`. A record
+   * whose fields are fields — `status`, `durationMs`, a note id — is queryable; one
+   * whose fields are a stringified JSON fragment inside a sentence is not.
+   *
+   * Redacted again on the way out, like every other payload: naming a field as
+   * "already redacted" is a claim about a value this type cannot check.
+   */
+  data?: Record<string, unknown>;
 }
 
 /** A destination for log entries. Implementations must never throw. */
