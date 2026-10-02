@@ -63,6 +63,25 @@ env:
   # GitHub Actions cannot read a file into `env:` at the workflow level.
   BUN_VERSION: '1.4.2'
 
+  # Every lane's "this many tests passed" check, in one place.
+  #
+  # The pattern is deliberately *not* anchored to the start of the line. Moon
+  # prefixes every line it forwards with `<project>:<task> | `, so a runner's own
+  # summary arrives as:
+  #
+  #   client:test-worker |  19 pass
+  #   client:test-browser |       Tests  15 passed (15)
+  #
+  # An anchored `^[0-9]+ pass` matched none of them, and this job failed on a lane
+  # that had passed 19 of 19 — the assertion doing exactly its job by refusing to
+  # certify a count it could not read. `[1-9]` rather than `[0-9]` so a lane that
+  # printed "0 passed" is still a failure.
+  #
+  # Four projects — ui, database, auth, frontend-services — declare
+  # `bun test --pass-with-no-tests`, and they print no count at all. So the count
+  # has to be an aggregate over the lane, not a per-project check.
+  TESTS_PASSED_PATTERN: '(^|[[:space:]])[1-9][0-9]* (pass|passed)'
+
 jobs:
   static:
     name: Typecheck, lint, guards
@@ -155,7 +174,7 @@ jobs:
         # them discovered anything, the runner matched nothing and the job is a
         # green no-op.
         run: |
-          if ! grep -qE '^[[:space:]]*[0-9]+ pass' "$RUNNER_TEMP/unit.log"; then
+          if ! grep -qE "$TESTS_PASSED_PATTERN" "$RUNNER_TEMP/unit.log"; then
             echo "::error::The unit lane reported no passing tests. See the log above."
             exit 1
           fi
@@ -168,7 +187,7 @@ jobs:
         # It passes trivially when the runner discovers nothing, so the count is
         # asserted rather than inferred from the exit code.
         run: |
-          if ! grep -qE '^[[:space:]]*[0-9]+ passed' "$RUNNER_TEMP/browser.log"; then
+          if ! grep -qE "$TESTS_PASSED_PATTERN" "$RUNNER_TEMP/browser.log"; then
             echo "::error::The browser lane reported no passing tests. See the log above."
             exit 1
           fi
@@ -200,7 +219,7 @@ jobs:
 
       - name: Assert the Worker lane discovered and passed tests
         run: |
-          if ! grep -qE '^[[:space:]]*[0-9]+ pass' "$RUNNER_TEMP/worker.log"; then
+          if ! grep -qE "$TESTS_PASSED_PATTERN" "$RUNNER_TEMP/worker.log"; then
             echo "::error::The Worker lane reported no passing tests. See the log above."
             exit 1
           fi
@@ -249,7 +268,7 @@ jobs:
         # exit 0. That is a green job that ran nothing — the same shape of problem
         # as the `echo` this job used to run.
         run: |
-          if ! grep -qE '^[[:space:]]+[0-9]+ passed' "$RUNNER_TEMP/e2e.log"; then
+          if ! grep -qE "$TESTS_PASSED_PATTERN" "$RUNNER_TEMP/e2e.log"; then
             echo "::error::The E2E run reported no passing tests. See the log above."
             exit 1
           fi
