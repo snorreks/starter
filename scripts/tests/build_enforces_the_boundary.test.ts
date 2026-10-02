@@ -28,7 +28,7 @@
 // `BUILD_TIMEOUT_MS` and the note on `build`.
 
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
-import { closeSync, openSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { closeSync, existsSync, openSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { guardArchitecture } from '../src/guards/guard_architecture.ts';
@@ -121,6 +121,11 @@ const build = (): BuildResult => {
 };
 
 beforeAll(() => {
+  if (!existsSync(path)) {
+    throw new Error(
+      `LANDING_PAGE (${LANDING_PAGE}) does not exist; update LANDING_PAGE when the file moves.`,
+    );
+  }
   original = readFileSync(path, 'utf8');
 });
 

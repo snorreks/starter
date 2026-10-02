@@ -234,12 +234,13 @@ export interface ModuleGraph {
 /**
  * Whether an import/export declaration contributes a runtime dependency.
  *
- * `import type`, `export type`, and a clause whose every named binding is
- * individually `type` are erased by the compiler. Everything else — including a
- * bare `import 'side-effect'` — is a real module edge.
+ * Clause-level `import type` and `export type` are erased. With
+ * `verbatimModuleSyntax`, inline type bindings leave an empty import/export that
+ * still loads the module. Otherwise, all-type binding lists are erased.
  */
 const contributesRuntimeDependency = (
   node: ts.ImportDeclaration | ts.ExportDeclaration,
+  verbatimModuleSyntax: boolean,
 ): boolean => {
   if (ts.isExportDeclaration(node)) {
     if (node.isTypeOnly) {
@@ -247,7 +248,7 @@ const contributesRuntimeDependency = (
     }
     const clause = node.exportClause;
     if (clause && ts.isNamedExports(clause)) {
-      return clause.elements.some((element) => !element.isTypeOnly);
+      return verbatimModuleSyntax || clause.elements.some((element) => !element.isTypeOnly);
     }
     return true;
   }
@@ -269,7 +270,7 @@ const contributesRuntimeDependency = (
   if (ts.isNamespaceImport(bindings)) {
     return true;
   }
-  return bindings.elements.some((element) => !element.isTypeOnly);
+  return verbatimModuleSyntax || bindings.elements.some((element) => !element.isTypeOnly);
 };
 
 interface RawImport {
@@ -279,7 +280,11 @@ interface RawImport {
   readonly kind: EdgeKind;
 }
 
-const collectFromSourceFile = (sourceFile: ts.SourceFile, lineOffset: number): RawImport[] => {
+const collectFromSourceFile = (
+  sourceFile: ts.SourceFile,
+  lineOffset: number,
+  verbatimModuleSyntax: boolean,
+): RawImport[] => {
   const imports: RawImport[] = [];
 
   const lineOf = (node: ts.Node): number =>
@@ -292,7 +297,7 @@ const collectFromSourceFile = (sourceFile: ts.SourceFile, lineOffset: number): R
         imports.push({
           specifier: specifier.text,
           line: lineOf(node),
-          typeOnly: !contributesRuntimeDependency(node),
+          typeOnly: !contributesRuntimeDependency(node, verbatimModuleSyntax),
           kind: 'static',
         });
       }
@@ -424,7 +429,11 @@ interface ParsedModule {
  * and the line offset comes from the block's own position — which is why a violation
  * in a component is reported at the component's line 7 and not at line 1.
  */
-const parseSvelteModule = (text: string, file: string): ParsedModule => {
+const parseSvelteModule = (
+  text: string,
+  file: string,
+  verbatimModuleSyntax: boolean,
+): ParsedModule => {
   let ast: ReturnType<typeof parseSvelte>;
   try {
     ast = parseSvelte(text, { filename: file });
@@ -465,26 +474,36 @@ const parseSvelteModule = (text: string, file: string): ParsedModule => {
     const lineOffset = text.slice(0, block.content.start).split('\n').length - 1;
 
     errors.push(...parseDiagnosticsOf(scriptText, `${file}.${block.type}.ts`));
-    imports.push(...collectFromSourceFile(sourceFile, lineOffset));
+    imports.push(...collectFromSourceFile(sourceFile, lineOffset, verbatimModuleSyntax));
     usesBunGlobal = usesBunGlobal || referencesBunGlobal(sourceFile);
   }
 
   return { imports, errors, usesBunGlobal };
 };
 
-const parseTypeScriptModule = (text: string, file: string): ParsedModule => {
+const parseTypeScriptModule = (
+  text: string,
+  file: string,
+  verbatimModuleSyntax: boolean,
+): ParsedModule => {
   const scriptKind = file.endsWith('.tsx') ? ts.ScriptKind.TSX : ts.ScriptKind.TS;
   const sourceFile = ts.createSourceFile(file, text, ts.ScriptTarget.Latest, true, scriptKind);
 
   return {
-    imports: collectFromSourceFile(sourceFile, 0),
+    imports: collectFromSourceFile(sourceFile, 0, verbatimModuleSyntax),
     errors: parseDiagnosticsOf(text, file),
     usesBunGlobal: referencesBunGlobal(sourceFile),
   };
 };
 
-export const parseModule = (file: string, text: string): ParsedModule =>
-  file.endsWith('.svelte') ? parseSvelteModule(text, file) : parseTypeScriptModule(text, file);
+export const parseModule = (
+  file: string,
+  text: string,
+  options: ts.CompilerOptions = {},
+): ParsedModule =>
+  file.endsWith('.svelte')
+    ? parseSvelteModule(text, file, options.verbatimModuleSyntax === true)
+    : parseTypeScriptModule(text, file, options.verbatimModuleSyntax === true);
 
 // ── workspace packages ──────────────────────────────────────────────────────
 
@@ -587,7 +606,7 @@ const lookupExport = (exportsField: unknown, subpath: string): string | null => 
     if (target === null) {
       return null;
     }
-    return target.replace(/\*$/, subpath.slice(prefix.length));
+    return target.replaceAll('*', subpath.slice(prefix.length));
   }
 
   return null;
@@ -788,18 +807,27 @@ export class ProjectRegistry {
       directory = dirname(directory);
     }
 
+    const cached = this.#cache.get('.');
+    if (cached !== undefined) {
+      return cached;
+    }
+    const configFile = join(this.#root, 'tsconfig.json');
+    if (existsSync(configFile)) {
+      const project = this.#read('.', configFile, 'tsconfig.json');
+      this.#cache.set('.', project);
+      return project;
+    }
+
     const fallback: Project = {
       dir: '.',
       configFile: join(this.#root, 'tsconfig.json'),
       configRelative: 'tsconfig.json',
       options: FALLBACK_OPTIONS,
       pathsBase: this.#root,
-      errors: existsSync(join(this.#root, 'tsconfig.json'))
-        ? []
-        : [
-            "No tsconfig.json above this file; module resolution used the guard's " +
-              'defaults, so a misconfigured project would look resolved.',
-          ],
+      errors: [
+        "No tsconfig.json above this file; module resolution used the guard's " +
+          'defaults, so a misconfigured project would look resolved.',
+      ],
     };
     this.#cache.set('.', fallback);
     return fallback;
@@ -1189,9 +1217,13 @@ const resolveSpecifier = (
     const manifest = readManifestOrEmpty(context.root, workspacePackage.dir);
     const target = lookupExport(exportsOf(manifest), split.subpath);
     if (target !== null) {
+      const absolute = resolvePath(context.root, workspacePackage.dir, target);
+      if (!existsSync(absolute) || !statSync(absolute).isFile()) {
+        return { kind: 'unresolved', specifier, capabilities, unresolvedReason: 'first-party' };
+      }
       return {
         kind: 'first-party',
-        file: toRelative(context.root, resolvePath(context.root, workspacePackage.dir, target)),
+        file: toRelative(context.root, absolute),
         specifier,
         capabilities,
       };
@@ -1294,7 +1326,7 @@ export const buildModuleGraph = (root: string): ModuleGraph => {
       continue;
     }
 
-    const parsed = parseModule(file, text);
+    const parsed = parseModule(file, text, project.options);
     const edges: Edge[] = parsed.imports.map((entry) => {
       if (entry.specifier === undefined) {
         return {
@@ -1351,6 +1383,9 @@ const ownCapabilitiesOf = (edges: readonly Edge[], usesBunGlobal: boolean): Set<
     own.add('bun-runtime');
   }
   for (const edge of edges) {
+    if (edge.typeOnly) {
+      continue;
+    }
     for (const capability of edge.resolution.capabilities) {
       own.add(capability);
     }
@@ -1377,6 +1412,9 @@ const propagateCapabilities = (modules: Map<string, ModuleNode>): void => {
         next.add(capability);
       }
       for (const edge of module.edges) {
+        if (edge.typeOnly) {
+          continue;
+        }
         const target = edge.resolution.file;
         if (target === undefined) {
           continue;

@@ -27,7 +27,13 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { Violation } from '../src/guards/boundary.ts';
 import { guardArchitecture } from '../src/guards/guard_architecture.ts';
-import { buildModuleGraph, listSourceFiles } from '../src/guards/module_graph.ts';
+import {
+  buildModuleGraph,
+  listSourceFiles,
+  ProjectRegistry,
+  runtimeTargets,
+} from '../src/guards/module_graph.ts';
+import { readSelection } from '../src/guards/run_guards.ts';
 import { REPO_ROOT } from '../src/shared/paths.ts';
 import { BASE_PROJECT, type Member, type Project, writeProject } from './fixtures/architecture.ts';
 
@@ -484,10 +490,19 @@ describe('architecture: failure is reported, never swallowed', () => {
   test('accepts a non-literal dynamic import in a test, which ships nothing', () => {
     const root = makeProject(
       withClientFiles({
-        'apps/frontend/client/tests/probe.test.ts': nonLiteralImport(),
+        'tests/probe.test.ts': nonLiteralImport(),
       }),
     );
 
+    const probe = buildModuleGraph(root).modules.get('apps/frontend/client/tests/probe.test.ts');
+    expect(probe?.role).toBe('test');
+    expect(
+      probe?.edges.some(
+        (edge) =>
+          edge.resolution.kind === 'unresolved' &&
+          edge.resolution.unresolvedReason === 'nonliteral',
+      ),
+    ).toBe(true);
     expect(rulesOf(run(root))).not.toContain('nonliteral-dynamic-import');
   });
 
@@ -612,6 +627,251 @@ describe('architecture: failure is reported, never swallowed', () => {
     expect(violation?.message).toContain('@starter/utils');
     expect(violation?.message).toContain('./process');
   });
+});
+
+describe('architecture: runtime edges follow the effective project configuration', () => {
+  for (const verbatimModuleSyntax of [false, true]) {
+    for (const extension of ['ts', 'svelte']) {
+      test(`inline types retain runtime edges with verbatimModuleSyntax=${verbatimModuleSyntax} in ${extension}`, () => {
+        const source = [
+          "import { type killTree } from '@starter/utils/process';",
+          "export { type Note } from '@starter/schemas/notes';",
+          "import type { Note } from '@starter/schemas/notes';",
+          "export type { Note as DTO } from '@starter/schemas/notes';",
+        ].join('\n');
+        const file = `src/lib/probe.${extension}`;
+        const root = makeProject(
+          withClientFiles({
+            'inherited.json': JSON.stringify({ compilerOptions: { verbatimModuleSyntax } }),
+            'tsconfig.json': JSON.stringify({ extends: './inherited.json' }),
+            [file]: extension === 'svelte' ? `<script lang="ts">\n${source}\n</script>` : source,
+          }),
+        );
+        const probe = buildModuleGraph(root).modules.get(`apps/frontend/client/${file}`);
+        expect(probe).toBeDefined();
+        if (probe === undefined) {
+          throw new Error('Probe was not discovered');
+        }
+        expect(probe.errors).toEqual([]);
+        expect(probe.edges.map((edge) => edge.typeOnly)).toEqual([
+          !verbatimModuleSyntax,
+          !verbatimModuleSyntax,
+          true,
+          true,
+        ]);
+        expect(runtimeTargets(probe).map((target) => target.via)).toEqual(
+          verbatimModuleSyntax ? ['@starter/utils/process', '@starter/schemas/notes'] : [],
+        );
+        expect(probe.capabilities.has('node-runtime')).toBe(verbatimModuleSyntax);
+      });
+    }
+  }
+
+  test('reads and caches the root config after searching ancestors', () => {
+    const root = makeProject({
+      members: [],
+      rootFiles: {
+        'base.json': JSON.stringify({
+          compilerOptions: {
+            module: 'esnext',
+            moduleResolution: 'bundler',
+            verbatimModuleSyntax: true,
+            paths: { '#root/*': ['./scripts/src/*'] },
+          },
+        }),
+        'tsconfig.json': JSON.stringify({ extends: './base.json' }),
+        'scripts/src/probe.ts': "import { type Value } from '#root/value';\n",
+        'scripts/src/value.ts': 'export type Value = string;\n',
+      },
+    });
+    const registry = new ProjectRegistry(root);
+    const project = registry.projectFor('scripts/src/probe.ts');
+    expect(project.configRelative).toBe('tsconfig.json');
+    expect(project.options.verbatimModuleSyntax).toBe(true);
+    expect(registry.projectFor('root.ts')).toBe(project);
+    const graph = buildModuleGraph(root);
+    expect(graph.configErrors).toEqual([]);
+    expect(graph.modules.get('scripts/src/probe.ts')?.edges[0]).toMatchObject({
+      typeOnly: false,
+      resolution: { kind: 'first-party', file: 'scripts/src/value.ts' },
+    });
+  });
+
+  test('uses the nearest config and reports a missing config', () => {
+    const root = makeProject(
+      withClientFiles({}, [], {
+        'tsconfig.json': JSON.stringify({ compilerOptions: { verbatimModuleSyntax: true } }),
+      }),
+    );
+    const registry = new ProjectRegistry(root);
+    expect(registry.projectFor('apps/frontend/client/src/lib/probe.ts').configRelative).toBe(
+      'apps/frontend/client/tsconfig.json',
+    );
+    const unconfigured = makeProject({ members: [] });
+    expect(
+      new ProjectRegistry(unconfigured).projectFor('scripts/probe.ts').errors.join(' '),
+    ).toContain('No tsconfig.json');
+  });
+
+  test('erased edges neither introduce nor inherit runtime capabilities', () => {
+    const root = makeProject(
+      withClientFiles({
+        'src/lib/probe.ts': [
+          "import type { Stats } from 'node:fs';",
+          "export type { killTree } from '@starter/utils/process';",
+          "import type { value } from './bridge.ts';",
+        ].join('\n'),
+        'src/lib/bridge.ts': "export { killTree as value } from '@starter/utils/process';\n",
+      }),
+    );
+    const graph = buildModuleGraph(root);
+    const probe = graph.modules.get('apps/frontend/client/src/lib/probe.ts');
+    expect(probe?.edges).toHaveLength(3);
+    expect(probe?.ownCapabilities.size).toBe(0);
+    expect(probe?.capabilities.size).toBe(0);
+    expect(
+      graph.modules.get('apps/frontend/client/src/lib/bridge.ts')?.capabilities.has('node-runtime'),
+    ).toBe(true);
+    expect(
+      forFile(run(root), 'runtime-capability', 'apps/frontend/client/src/lib/probe.ts'),
+    ).toBeUndefined();
+  });
+
+  for (const specifier of ['node:fs', './bridge.ts']) {
+    test(`capability diagnostics select the runtime edge for ${specifier}`, () => {
+      const root = makeProject(
+        withClientFiles({
+          'src/lib/probe.ts': `import type { value } from '${specifier}';\nimport { value } from '${specifier}';\n`,
+          'src/lib/bridge.ts': "export { readFileSync as value } from 'node:fs';\n",
+        }),
+      );
+      const violation = forFile(
+        run(root),
+        'runtime-capability',
+        'apps/frontend/client/src/lib/probe.ts',
+      );
+      expect(violation?.line).toBe(2);
+      if (specifier === 'node:fs') {
+        expect(violation?.message).toContain("probe.ts:2 imports 'node:fs'");
+      } else {
+        expect(violation?.message).toContain('bridge.ts');
+      }
+    });
+  }
+});
+
+describe('architecture: exports must name existing files', () => {
+  for (const target of ['./src/missing.ts', './src']) {
+    test(`reports an unresolved first-party edge for ${target}`, () => {
+      const root = makeProject(
+        withClientFiles(
+          {
+            'src/lib/probe.ts': "import { value } from '@starter/fixture';\n",
+          },
+          [{ name: '@starter/fixture', dir: 'packages/shared/fixture', exports: { '.': target } }],
+        ),
+      );
+      const probe = buildModuleGraph(root).modules.get('apps/frontend/client/src/lib/probe.ts');
+      expect(probe?.edges[0]?.resolution).toMatchObject({
+        kind: 'unresolved',
+        unresolvedReason: 'first-party',
+      });
+      expect(
+        forFile(run(root), 'unresolved-first-party', 'apps/frontend/client/src/lib/probe.ts'),
+      ).toBeDefined();
+    });
+  }
+
+  test('substitutes every wildcard, including those inside the target', () => {
+    const root = makeProject(
+      withClientFiles(
+        {
+          'src/lib/probe.ts': "import { value } from '@starter/fixture/notes';\n",
+        },
+        [
+          {
+            name: '@starter/fixture',
+            dir: 'packages/shared/fixture',
+            exports: { './*': './src/*/entry_*.ts' },
+            files: { 'src/notes/entry_notes.ts': 'export const value = 1;\n' },
+          },
+        ],
+      ),
+    );
+    expect(
+      buildModuleGraph(root).modules.get('apps/frontend/client/src/lib/probe.ts')?.edges[0]
+        ?.resolution,
+    ).toMatchObject({
+      kind: 'first-party',
+      file: 'packages/shared/fixture/src/notes/entry_notes.ts',
+    });
+  });
+});
+
+describe('architecture: route adapters and harness locations', () => {
+  for (const directory of ['', 'nested/']) {
+    for (const name of ['+server.ts', '+page.server.ts', '+layout.server.ts']) {
+      test(`classifies ${directory}${name} as a Worker route adapter`, () => {
+        const file = `src/routes/${directory}${name}`;
+        const root = makeProject(
+          withClientFiles({
+            [file]: "import { save } from '#lib/server/service.ts';\nexport const load = save;\n",
+          }),
+        );
+        const graph = buildModuleGraph(root);
+        expect(graph.modules.get(`apps/frontend/client/${file}`)).toMatchObject({
+          plane: 'worker',
+          role: 'route-server',
+        });
+        expect(
+          run(root).filter((violation) => violation.file === `apps/frontend/client/${file}`),
+        ).toEqual([]);
+      });
+    }
+  }
+
+  for (const name of ['setup', 'preflight', 'test_setup', 'global-setup']) {
+    test(`keeps runtime checks on a shipped ${name}.ts`, () => {
+      const file = `src/lib/${name === 'test_setup' ? 'feature/' : ''}${name}.ts`;
+      const root = makeProject(withClientFiles({ [file]: nonLiteralImport() }));
+      expect(buildModuleGraph(root).modules.get(`apps/frontend/client/${file}`)?.role).toBe(
+        'module',
+      );
+      expect(
+        forFile(run(root), 'nonliteral-dynamic-import', `apps/frontend/client/${file}`),
+      ).toBeDefined();
+    });
+  }
+
+  test('recognizes the actual test harness locations', () => {
+    const files = [
+      'apps/frontend/client/src/lib/test_setup.ts',
+      'apps/frontend/client/src/browser_tests/setup.ts',
+      'apps/e2e/global-setup.ts',
+      'apps/e2e/preflight.ts',
+    ];
+    const root = makeProject(
+      withClientFiles({}, [], Object.fromEntries(files.map((file) => [file, nonLiteralImport()]))),
+    );
+    const graph = buildModuleGraph(root);
+    for (const file of files) {
+      expect(graph.modules.get(file)?.role).toBe('test');
+      expect(forFile(run(root), 'nonliteral-dynamic-import', file)).toBeUndefined();
+    }
+  });
+});
+
+describe('architecture: standalone guard selection', () => {
+  test('defaults only when --root is absent', () => {
+    expect(readSelection([]).root).toBe(REPO_ROOT);
+    expect(readSelection(['--root', '/tmp/guard-fixture']).root).toBe('/tmp/guard-fixture');
+  });
+
+  for (const args of [['--root'], ['--root', '--json'], ['--root', '-x']]) {
+    test(`rejects ${args.join(' ')}`, () => {
+      expect(() => readSelection(args)).toThrow('--root needs a directory');
+    });
+  }
 });
 
 // ── the real command, not only the function ──────────────────────────────────

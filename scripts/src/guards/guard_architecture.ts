@@ -512,7 +512,9 @@ const describeCapabilitySource = (
   capability: Capability,
   graph: ModuleGraph,
 ): string => {
-  const own = module.edges.find((edge) => edge.resolution.capabilities.includes(capability));
+  const own = module.edges.find(
+    (edge) => !edge.typeOnly && edge.resolution.capabilities.includes(capability),
+  );
   if (own !== undefined) {
     return `${module.file}:${own.line} imports '${own.specifier}'`;
   }
@@ -533,7 +535,9 @@ const lineOfCapability = (
   capability: Capability,
   graph: ModuleGraph,
 ): number => {
-  const own = module.edges.find((edge) => edge.resolution.capabilities.includes(capability));
+  const own = module.edges.find(
+    (edge) => !edge.typeOnly && edge.resolution.capabilities.includes(capability),
+  );
   if (own !== undefined) {
     return own.line;
   }
@@ -543,7 +547,7 @@ const lineOfCapability = (
       const first = chain[1];
       return first === undefined
         ? 1
-        : (module.edges.find((e) => e.specifier === first.via)?.line ?? 1);
+        : (module.edges.find((e) => !e.typeOnly && e.specifier === first.via)?.line ?? 1);
     }
   }
   return 1;

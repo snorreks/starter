@@ -40,7 +40,11 @@ export interface GuardSelection {
  */
 export const readSelection = (args: readonly string[]): GuardSelection => {
   const rootIndex = args.indexOf('--root');
-  const root = rootIndex === -1 ? REPO_ROOT : resolvePath(args[rootIndex + 1] ?? REPO_ROOT);
+  const operand = args[rootIndex + 1];
+  if (rootIndex !== -1 && (operand === undefined || operand.startsWith('-'))) {
+    throw new Error('--root needs a directory.');
+  }
+  const root = rootIndex === -1 ? REPO_ROOT : resolvePath(operand as string);
   const onlyIndex = args.indexOf('--only');
   const only = onlyIndex === -1 ? undefined : args[onlyIndex + 1];
   return only === undefined ? { root } : { only, root };

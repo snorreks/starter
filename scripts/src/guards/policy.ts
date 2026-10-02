@@ -359,7 +359,7 @@ export const PLANE_PLACEMENTS: readonly { readonly test: RegExp; readonly plane:
   { test: /^apps\/frontend\/client\/src\/lib\/server\//, plane: 'worker' },
   { test: /^apps\/frontend\/client\/src\/hooks\.server\.ts$/, plane: 'worker' },
   {
-    test: /^apps\/frontend\/client\/src\/routes\/.+\+(?:server|page\.server|layout\.server)\.ts$/,
+    test: /^apps\/frontend\/client\/src\/routes\/(?:.*\/)?\+(?:server|page\.server|layout\.server)\.ts$/,
     plane: 'worker',
   },
   // The browser half of the same package. A `+page.svelte` is deliberately *not*
@@ -412,7 +412,8 @@ export const ROLE_PLACEMENTS: readonly { readonly test: RegExp; readonly role: R
   { test: /(?:^|\/)(?:tests|__tests__|browser_tests)\//, role: 'test' },
   // Test harnesses that are not named like tests: the Bun preload, the Playwright
   // global setup, the per-lane setup module.
-  { test: /(?:^|\/)(?:test_setup|global-setup|setup|preflight)\.tsx?$/, role: 'test' },
+  { test: /^apps\/frontend\/client\/src\/lib\/test_setup\.ts$/, role: 'test' },
+  { test: /^apps\/e2e\/global-setup\.ts$/, role: 'test' },
   // Bundler, test-runner and build configuration.
   { test: /(?:^|\/)[\w.-]+\.config\.tsx?$/, role: 'config' },
 
@@ -420,7 +421,7 @@ export const ROLE_PLACEMENTS: readonly { readonly test: RegExp; readonly role: R
   // compiles into the Worker, which is why they are `worker` rather than `browser`.
   { test: /^apps\/frontend\/client\/src\/hooks\.server\.ts$/, role: 'route-server' },
   {
-    test: /^apps\/frontend\/client\/src\/routes\/.+\+(?:server|page\.server|layout\.server)\.ts$/,
+    test: /^apps\/frontend\/client\/src\/routes\/(?:.*\/)?\+(?:server|page\.server|layout\.server)\.ts$/,
     role: 'route-server',
   },
   { test: /^apps\/frontend\/client\/src\/routes\/.+\.svelte$/, role: 'route-view' },

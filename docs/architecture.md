@@ -90,9 +90,10 @@ The properties worth knowing:
 - **Not a substitute for the build.** `scripts/tests/build_enforces_the_boundary.test.ts`
   injects a component importing `#lib/server/container.ts` and asserts that the real
   `vite build` fails with SvelteKit's `server_only_import`. Both gates are needed,
-  because they do not overlap completely: the same file shows that importing
+  because they do not overlap completely: a manual observation found that importing
   `cloudflare:workers` into a component **passes** the production build and lands in the
-  client chunk. The graph guard catches that; the bundler does not.
+  client chunk. That behavior is not covered by this test. The graph guard catches that
+  import; the bundler does not.
 - **Not a rule about relative paths between tooling packages.** `apps/e2e` reaches
   `scripts/src/shared/paths.ts` by relative path. That is a real smell and the
   undeclared-dependency rule does not cover it; the failure mode that rule exists for — a
