@@ -16,10 +16,10 @@
 // passing" from three hours ago, the code underneath has changed since, and it
 // reports a pass it never observed.
 //
-// This is a written brief on purpose. The repository has a dormant autonomous
-// contract runner under `docs/contracts/`; the maintained answer to "how does an
-// agent pick work up where another left off" is a short note plus a state check,
-// not a second pipeline.
+// This is a written brief on purpose. The repository also has a lightweight
+// written-brief command (`bun run contract new`) and nothing that executes a
+// brief; the maintained answer to "how does an agent pick work up where another
+// left off" is a short note plus a state check, not a second pipeline.
 
 import {
   existsSync,

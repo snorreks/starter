@@ -88,7 +88,7 @@ provider itself is unverified.
 | Cloudflare deploy planning and refusal | injected `ProcessRunner`, no network; argv observed at the process boundary | same |
 | Cloudflare credential detection | `CLOUDFLARE_API_TOKEN` presence only | same |
 | D1 migration planning | plan-only, local D1 applied for real | `bun run db:migrate -- --dry-run` |
-| Contract lifecycle | scripted adapter, no model provider | `bun run --cwd scripts test` |
+| Written-brief scaffold and listing | real templates, temporary directories | `bun run --cwd scripts test` |
 | Historical log query | recorded response fixture | `bun run --cwd scripts test` |
 
 `/health` and `/health/ready` are real routes driven through real workerd by
@@ -106,7 +106,6 @@ Not meaningful until someone supplies the prerequisite.
 | Cloudflare historical logs | the above, plus an account id | `bun run logs web --mode staging` |
 | SOPS encrypt/decrypt | `sops` and `age` on PATH, plus your own recipient | `bun run secrets:encrypt -- <gitignored-path>` |
 | Visual inspection | a vision-capable provider and an adapter | `bun run e2e:visual` |
-| Contract execution | **not implemented** — exits 3 | `bun run contract run <path>` |
 
 ## Not configured in the template
 

@@ -17,7 +17,6 @@ explanation** rather than printing advice and exiting 0:
 | Command | Exit | Why |
 |---|---|---|
 | `bun run secrets:edit` | 4 | Refused on purpose. `sops <file>` already edits in place; a wrapper would be a second code path to the same file. |
-| `bun run contract run <path>` (without `--dry-run`) | 3 | No execution adapter yet. `--dry-run` works. |
 
 The secrets operations that used to sit in that table now work. `encrypt`,
 `decrypt`, `init`, `doctor`, `exec` and `update-recipients` run the real `sops`
@@ -76,9 +75,8 @@ bun run deploy verify --env staging
 bun run logs web --mode local --follow
 bun run logs web --mode local --source browser
 
-# Contracts
-bun run contract new "title" [--mode standard|full]
-bun run contract run <path> [--dry-run] [--resume]
+# Briefs — a written statement of what "done" means
+bun run contract new "title"
 bun run contract status
 ```
 
@@ -175,8 +173,9 @@ bun run --cwd packages/backend/database db:generate
   `not_found_handling: "404-page"` answered a navigation request with 404 while the
   same URL answered 200 from `curl` — one header's difference, found by 10 failing
   E2E specs and zero failing API specs.
-- **Inject, do not sleep, for anything time-bounded.** The contract runner's
-  per-stage deadline is proven by injecting a 50 ms budget.
+- **Inject, do not sleep, for anything time-bounded.** A timeout is proven by
+  injecting a 300 ms budget at a real process (`.pi/tests/process.test.ts`), not
+  by waiting longer than the real one.
 - **Zero discovered tests is a failure.** Assert the count where it matters.
 
 ## Conventions worth knowing

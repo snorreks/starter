@@ -5,7 +5,8 @@
 //   bun run e2e:visual
 //
 // It captures the same built Worker the E2E suite validates. It does not start
-// one: run `bun run dev:worker` first, or let `bun run e2e` start it. What it
+// one: start the built Worker on this command's port first, or let `bun run e2e`
+// start it. What it
 // captures is therefore the compiled Worker rather than whatever happens to be
 // listening on the port.
 //
@@ -22,7 +23,8 @@
 // a decision nobody made.
 
 import { type Browser, chromium, type Page } from '@playwright/test';
-import { appBaseUrl } from './preflight.ts';
+import { playwrightLaunchOptions } from '../../scripts/src/shared/browser_path.ts';
+import { APP_PORT, appBaseUrl } from './preflight.ts';
 import {
   type EvidenceResult,
   ensureEvidenceDir,
@@ -54,12 +56,62 @@ const SCREENS: readonly { name: string; path: string; prepare?: (page: Page) => 
   ];
 
 async function signIn(page: Page): Promise<void> {
+  const email = `visual-${crypto.randomUUID()}@example.test`;
+  const password = 'correct horse battery staple';
+
   await page.goto(`${appBaseUrl}/login`);
+  // The form starts in sign-in mode; sign-up is behind the toggle.
   await page.getByTestId('auth-toggle-mode').click();
-  await page.getByTestId('auth-email-input').fill(`visual-${crypto.randomUUID()}@example.test`);
-  await page.getByTestId('auth-password-input').fill('correct horse battery staple');
+  // The name field too. Sign-up without one is a validation error, and an account
+  // that was never created sends no mail — which the confirmation step below then
+  // reports as an empty inbox rather than as the missing name it actually is.
+  await page.getByTestId('auth-name-input').fill('Visual Reviewer');
+  await page.getByTestId('auth-email-input').fill(email);
+  await page.getByTestId('auth-password-input').fill(password);
   await page.getByTestId('auth-submit').click();
+
+  await confirmAddress(page, email);
+
+  // Confirming an address is not a credential, so the real sign-in is a second step.
+  await page.goto(`${appBaseUrl}/login`);
+  await page.getByTestId('auth-email-input').fill(email);
+  await page.getByTestId('auth-password-input').fill(password);
+  await page.getByTestId('auth-submit').click();
+
+  await page.goto(`${appBaseUrl}/notes`);
   await page.getByRole('heading', { name: 'Your notes' }).waitFor();
+}
+
+/**
+ * Confirm the address through the local mail capture.
+ *
+ * Without this the two `/notes` screens could never be captured, and the failure
+ * looked like a broken screenshot rather than a broken fixture: a brand-new account
+ * has no session, `/notes` redirects to `/login`, and the wait above timed out after
+ * 30s per screen — 60s of a run that had already reported its other three captures
+ * as fine. Nothing in this file can sign in as a verified user otherwise.
+ *
+ * `/api/dev/mail` is the same local, per-run capture the E2E suite reads. It is
+ * namespaced to this run and does not exist outside a local D1, which is why this
+ * is a fixture helper and not part of the product.
+ */
+async function confirmAddress(page: Page, email: string): Promise<void> {
+  const response = await page.request.get(
+    `${appBaseUrl}/api/dev/mail?to=${encodeURIComponent(email)}`,
+  );
+  if (!response.ok()) {
+    throw new Error(`mail inbox unavailable: ${response.status()} ${await response.text()}`);
+  }
+  const body = (await response.json()) as { messages: Array<{ subject: string; text: string }> };
+  const message = body.messages.find((entry) => /Verify/i.test(entry.subject));
+  const link = message?.text.split('\n').find((entry) => entry.startsWith('http'));
+  if (link === undefined) {
+    throw new Error(
+      `no verification link captured for ${email}; captured: ` +
+        JSON.stringify(body.messages.map((entry) => entry.subject)),
+    );
+  }
+  await page.goto(link.trim());
 }
 
 async function submitBadCredentials(page: Page): Promise<void> {
@@ -149,7 +201,17 @@ const visionRound = (): { available: boolean; reason?: string } => {
 async function main(): Promise<number> {
   process.stdout.write(`capturing visual evidence from ${appBaseUrl}\n`);
 
-  const browser = await chromium.launch();
+  // Through the shared resolver, exactly as `playwright.config.ts` does it. A bare
+  // `chromium.launch()` uses Playwright's own resolution, which finds the cached
+  // download and launches it — on a Nix host that binary cannot load its shared
+  // libraries, so this command failed with
+  //
+  //   error while loading shared libraries: libglib-2.0.so.0
+  //
+  // while the E2E suite beside it passed, because the suite was given the Nix
+  // Chromium. One browser-resolution path, shared by both callers, is the whole
+  // fix; re-deciding it here is what let the two disagree.
+  const browser = await chromium.launch(playwrightLaunchOptions());
   let result: EvidenceResult;
 
   try {
@@ -164,6 +226,23 @@ async function main(): Promise<number> {
   }
 
   reportEvidence(result);
+
+  // Zero captures is not a run that captured nothing and succeeded. Every screen
+  // failing is nearly always one cause — the app is not running on this origin —
+  // and reporting that as "screenshots are on disk for a human" is the specific
+  // lie this command must not tell. Per-screen failures are still tolerated:
+  // losing one screen is not losing the run.
+  if (result.captured.length === 0) {
+    process.stderr.write(
+      `\nNo screen was captured from ${appBaseUrl}, and the evidence directory is empty.\n` +
+        '  Nothing is listening on that port. The dev server default is 5173,\n' +
+        '  which is a different port from this one — so start it here explicitly:\n\n' +
+        `    PORT=${APP_PORT} bun run dev:worker\n\n` +
+        '  (or let `bun run e2e` start a server for you)\n',
+    );
+    return 1;
+  }
+
   return 0;
 }
 

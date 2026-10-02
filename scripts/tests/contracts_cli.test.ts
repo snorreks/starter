@@ -1,127 +1,56 @@
 // scripts/tests/contracts_cli.test.ts
 //
-// The contract command's resume path, driven through `main`.
+// The contract command, after the runner was removed.
 //
-// Two defects in this area shared one shape: a path that reached `runContract`
-// without checking what it was about to run. Both are proven here against real
-// persisted manifests, not against a hand-built call.
+// What is worth proving here is that the surface no longer advertises work it
+// cannot do. The command once accepted `run` and `resume`, printed a stage
+// machine, and persisted a run manifest that recorded `succeeded` stages nothing
+// had performed. A brief is now a document, so the assertions are about the
+// document: the template is substituted into a real file, the listing reads that
+// file's own status line, and the removed subcommands say what happened instead
+// of falling through to a bare usage error.
 //
-//   1. `run` without `--dry-run` refused only when *no* manifest existed. So
-//      `--resume` on a real run walked straight past the check and handed the
-//      **dry adapter** a real manifest: every un-succeeded stage was saved as
-//      `succeeded` having executed nothing. The run then blocked on missing
-//      verification evidence and exited 1 rather than 3 — and the persisted
-//      `succeeded` statuses meant a future real adapter would skip those stages as
-//      proven, which is the original defect of this whole area.
-//   2. `sourceRevision` was written only when a manifest was created, so a resumed
-//      run kept the revision it was born at. Acceptance compares verification
-//      evidence against `sourceRevision`, so evidence gathered from an older tree
-//      was accepted for a newer one.
-//
-// Fixtures are manifests written into the local runs directory and removed again.
-// That directory is gitignored runtime state, and writing there is the only way to
-// reach the resume path — `main` has no runs-directory seam. The contract document
-// itself is a temp file, so nothing is asserted against the repository.
-//
-// Exit codes come from the shared `EXIT`: the command's local codes are the same
-// numbers (`blocked` is the command's name for `failed`, `adapterUnavailable` for
-// `unavailable`), so the shared table is the honest thing to assert against.
+// Every fixture is written to a temporary directory. Nothing is asserted against
+// the repository: proving a scaffolder works by writing into `docs/contracts/`
+// would make the working tree the test's evidence.
 
 import { afterEach, describe, expect, test } from 'bun:test';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  copyFileSync,
+  existsSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { listRuns, loadManifest, main, RUNS_DIR, saveManifest } from '../src/commands/contracts.ts';
-import { createManifest, type RunManifest, type StageEvidence } from '../src/contracts/runner.ts';
+import {
+  CONTRACTS_DIR,
+  contractCommand,
+  main,
+  nextContractId,
+  scaffold,
+} from '../src/commands/contracts.ts';
+import { readContracts } from '../src/contracts/status.ts';
 import { EXIT } from '../src/shared/command.ts';
 
-const CONTRACT_ID = 'C-900';
-// A run's deadline is `startedAt + maxRunMs`, so a fixture stamped in the past is
-// already out of budget and every resume of it blocks before doing anything. A real
-// manifest was created moments ago; so is this one.
-const T0 = Date.now();
-
-const runsBefore = listRuns().length;
 const cleanups: string[] = [];
-const writtenRunIds: string[] = [];
 
-afterEach(() => {
-  for (const dir of cleanups.splice(0)) {
-    rmSync(dir, { recursive: true, force: true });
+/** A temporary briefs directory holding the real template. */
+const briefDir = (): string => {
+  const templatePath = join(CONTRACTS_DIR, 'TEMPLATE.md');
+  if (!existsSync(templatePath)) {
+    throw new Error(`Expected contracts template is missing: ${templatePath}`);
   }
-  // Always, rather than at the end of each test: a failed assertion must not leave
-  // a fixture behind for `contract status` to report as a real run.
-  for (const runId of writtenRunIds.splice(0)) {
-    rmSync(join(RUNS_DIR, `${runId}.json`), { force: true });
-  }
-});
-
-/** A contract document `parseContract` can read, in a temp directory. */
-const contractFile = (): string => {
-  const dir = mkdtempSync(join(tmpdir(), 'contract-cli-'));
+  const dir = mkdtempSync(join(tmpdir(), 'contracts-'));
   cleanups.push(dir);
-  const path = join(dir, 'C-900-fixture.md');
-  writeFileSync(path, `# ${CONTRACT_ID} — Fixture\n\n**Type:** standard\n`);
-  return path;
-};
-
-const revision = (): string => {
-  const head = Bun.spawnSync(['git', 'rev-parse', 'HEAD'], { cwd: process.cwd() });
-  return head.stdout.toString().trim();
-};
-
-const evidenceFor = (sourceRevision: string): StageEvidence => ({
-  kind: 'verification',
-  command: 'bun run test:all',
-  exitCode: 0,
-  sourceRevision,
-  recordedAt: T0,
-});
-
-const fixtureRunId = (): string => `run-fixture-${Math.random().toString(36).slice(2, 10)}`;
-
-/** Persist a manifest the resume path will find. */
-const persist = (manifest: RunManifest): string => {
-  writtenRunIds.push(manifest.runId);
-  saveManifest(manifest);
-  return manifest.runId;
-};
-
-/**
- * A manifest as a previous invocation left it: `implement` failed, and the run is
- * blocked.
- *
- * `verify` is marked succeeded with evidence, which no blocked run would really
- * carry. That is the point: if a resume lets it survive a revision change, the run
- * can be accepted on evidence from a tree it never ran against.
- */
-const blockedRun = (sourceRevision: string, dryRun: boolean): RunManifest => {
-  const base = createManifest(CONTRACT_ID, 'standard', T0, {
-    runId: fixtureRunId(),
-    dryRun,
-    sourceRevision,
-  });
-  return {
-    ...base,
-    state: 'blocked',
-    invocations: 1,
-    stages: {
-      ...base.stages,
-      implement: { stage: 'implement', status: 'failed', attempts: 2, error: 'broken' },
-      verify: {
-        stage: 'verify',
-        status: 'succeeded',
-        attempts: 1,
-        evidence: evidenceFor(sourceRevision),
-      },
-    },
-  };
+  copyFileSync(templatePath, join(dir, 'TEMPLATE.md'));
+  return dir;
 };
 
 const quiet = async (body: () => Promise<number>): Promise<number> => {
   const original = { out: process.stdout.write, err: process.stderr.write };
-  // The command prints the manifest it is about to run. Useful to a human, noise
-  // here, and suppressing it must not suppress what it returns.
   process.stdout.write = () => true;
   process.stderr.write = () => true;
   try {
@@ -132,82 +61,125 @@ const quiet = async (body: () => Promise<number>): Promise<number> => {
   }
 };
 
-describe('a real run has no adapter, whether it is new or resumed', () => {
-  test('a new non-dry run refuses and writes no manifest', async () => {
-    const code = await quiet(() => main(['run', contractFile()]));
+afterEach(() => {
+  for (const dir of cleanups.splice(0)) {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
 
-    expect(code).toBe(EXIT.unavailable);
-    // The refusal leaves no run behind: a manifest nobody executed is exactly the
-    // kind of state that reads as progress later.
-    expect(listRuns()).toHaveLength(runsBefore);
+describe('scaffolding a brief', () => {
+  test('every placeholder is substituted, so no {{…}} survives into the file', () => {
+    const dir = briefDir();
+    const path = scaffold('Add thing export as NDJSON', dir);
+    const body = readFileSync(path, 'utf8');
+
+    expect(body).not.toContain('{{');
+    expect(body).toContain('# C-001 — Add thing export as NDJSON');
+    expect(body).toContain('**Status:** draft');
   });
 
-  test('a resumed real run refuses instead of running the dry adapter', async () => {
-    // THE DEFECT. This used to return `accepted` having executed nothing.
-    const runId = persist(blockedRun(revision(), false));
-    const before = loadManifest(runId);
+  test('dollar-sign replacement sequences in a title are preserved literally', () => {
+    const dir = briefDir();
+    const title = "Keep $$, $&, $`, $' and $1 literal";
+    const path = scaffold(title, dir);
 
-    const code = await quiet(() => main(['run', contractFile(), '--resume', runId]));
+    expect(readFileSync(path, 'utf8')).toContain(`# C-001 — ${title}`);
+  });
 
-    expect(code).toBe(EXIT.unavailable);
-    // Untouched: no stage status was rewritten by an adapter that does no work, and
-    // the invocation count did not move either.
-    expect(loadManifest(runId)).toEqual(before);
-    expect(loadManifest(runId)?.stages.implement?.status).toBe('failed');
+  test('the id follows the highest one already present', () => {
+    const dir = briefDir();
+    writeFileSync(join(dir, 'C-007-existing.md'), '# C-007 — Existing\n\n**Status:** done\n');
+    writeFileSync(join(dir, 'notes.md'), '# not a brief\n');
+
+    expect(nextContractId(dir)).toBe('C-008');
+    expect(readContracts(dir).map((row) => row.id)).toEqual(['C-007']);
+  });
+
+  test('a title with no slug-safe characters still names a readable file', () => {
+    const dir = briefDir();
+    const path = scaffold('!!! ???', dir);
+
+    // The id still orders the file even when the slug is empty. A crash here would
+    // be worse than an ugly name.
+    expect(path).toEndWith('C-001-.md');
+  });
+
+  test('a missing template is an error, not an empty brief', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'contracts-empty-'));
+    cleanups.push(dir);
+
+    expect(() => scaffold('Anything', dir)).toThrow(/No template/);
   });
 });
 
-describe('resume mode must match the manifest', () => {
-  test('a real run resumed with --dry-run is refused', async () => {
-    // The other direction of the same defect: the dry adapter over a real manifest
-    // records its stages as succeeded without performing them.
-    const runId = persist(blockedRun(revision(), false));
-    const before = loadManifest(runId);
+describe('the surface describes the real capability', () => {
+  test('the usage line names only the subcommands that exist', async () => {
+    const usage = contractCommand.usage;
 
-    const code = await quiet(() => main(['run', contractFile(), '--dry-run', '--resume', runId]));
-
-    expect(code).toBe(EXIT.usage);
-    expect(loadManifest(runId)).toEqual(before);
+    expect(usage).toContain('new');
+    expect(usage).toContain('status');
+    // `run` was advertised for the lifetime of a runner that could not run.
+    expect(usage).not.toContain('run');
+    expect(usage).not.toContain('resume');
+    expect(usage).not.toContain('cancel');
   });
 
-  test('a dry run resumed without --dry-run is refused', async () => {
-    const runId = persist(blockedRun(revision(), true));
-    const before = loadManifest(runId);
+  test('`run` is refused with an explanation instead of a bare usage error', async () => {
+    let message = '';
+    const original = process.stderr.write;
+    process.stderr.write = ((chunk: string | Uint8Array) => {
+      message += String(chunk);
+      return true;
+    }) as typeof process.stderr.write;
 
-    const code = await quiet(() => main(['run', contractFile(), '--resume', runId]));
+    try {
+      const code = await main(['run', 'docs/contracts/TEMPLATE.md']);
+      expect(code).toBe(EXIT.usage);
+    } finally {
+      process.stderr.write = original;
+    }
 
-    expect(code).toBe(EXIT.usage);
-    expect(loadManifest(runId)).toEqual(before);
+    // Someone who remembers the old command learns what to do instead. Silence
+    // here reads as "that flag was never valid", which sends them looking for a
+    // typo rather than for a removal.
+    expect(message).toContain('removed');
+    expect(message).toContain('docs/contracts/README.md');
+  });
+
+  test('`new` without a title is a usage error', async () => {
+    expect(await quiet(() => main(['new']))).toBe(EXIT.usage);
+    expect(await quiet(() => main(['new', '--quiet']))).toBe(EXIT.usage);
+  });
+
+  test('an unknown subcommand is a usage error', async () => {
+    expect(await quiet(() => main(['cancel', 'C-001']))).toBe(EXIT.usage);
   });
 });
 
-describe('a resumed run binds to the current source revision', () => {
-  test('a moved revision invalidates the previous verification', async () => {
-    const stale = revision().replace(/^./, (first) => (first === '0' ? '1' : '0'));
-    expect(stale).not.toBe(revision());
-    const runId = persist(blockedRun(stale, true));
+describe('status lists documents', () => {
+  test('an unknown id is blocked, not silently empty', async () => {
+    // `status C-404` printing nothing and exiting 0 is indistinguishable from a
+    // brief that exists and was filtered out.
+    const code = await quiet(() => main(['status', 'C-404']));
 
-    const code = await quiet(() => main(['run', contractFile(), '--dry-run', '--resume', runId]));
-    expect(code).toBe(EXIT.ok);
-
-    const after = loadManifest(runId);
-    expect(after?.sourceRevision).toBe(revision());
-    // Verification evidence gathered on the old tree says nothing about this one,
-    // so it is dropped rather than carried forward and accepted.
-    expect(after?.stages.verify?.evidence).toBeUndefined();
+    expect(code).toBe(EXIT.failed);
   });
 
-  test('an unchanged revision keeps the verification it has', async () => {
-    // The other half: a resume that threw away a passing verification would make
-    // every resume re-verify, which is how evidence stops meaning anything.
-    const runId = persist(blockedRun(revision(), true));
+  test('a brief is found by the id its own heading declares', () => {
+    const dir = briefDir();
+    // The filename says one id and the heading another. The document is what a
+    // reader sees, so the heading wins — and `status C-009` must find it.
+    writeFileSync(join(dir, 'C-100-old-name.md'), '# C-009 — Renamed\n\n**Status:** done\n');
 
-    const code = await quiet(() => main(['run', contractFile(), '--dry-run', '--resume', runId]));
-    expect(code).toBe(EXIT.ok);
+    expect(readContracts(dir).map((row) => ({ ...row }))).toEqual([
+      { id: 'C-009', file: 'C-100-old-name.md', status: 'done' },
+    ]);
+  });
 
-    const after = loadManifest(runId);
-    expect(after?.sourceRevision).toBe(revision());
-    expect(after?.stages.verify?.evidence?.sourceRevision).toBe(revision());
-    expect(after?.stages.verify?.attempts).toBe(1);
+  test('a brief with no status line is reported as unknown, not as fine', () => {
+    const dir = briefDir();
+    writeFileSync(join(dir, 'C-101-no-status.md'), '# C-101 — No status line\n');
+
+    expect(readContracts(dir)[0]?.status).toBe('unknown');
   });
 });

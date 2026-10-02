@@ -500,6 +500,33 @@ export const guardDocumentedPaths = (root = REPO_ROOT): GuardResult => {
       .map((entry) => join('docs', entry)),
   ];
 
+  const ignoreRules = readIgnoreRules(root);
+
+  /**
+   * Is this documented path a generated location rather than a source file?
+   *
+   * `.moon/cache` is the reason this exists. Moon creates it on the first cached
+   * task, so in a fresh checkout — before anything has been built — the
+   * documentation that names it as the output directory pointed at nothing, and
+   * `bun run guard` failed with six violations on a pristine clone. That is the
+   * same false positive in reverse: the reader learns nothing true from a guard
+   * that demands a build artifact be committed.
+   *
+   * A gitignored path is absent from a fresh checkout *by definition*, so its
+   * absence is evidence about the ignore rule and not about the documentation.
+   * Checking existence for it is meaningless in both directions: it can never
+   * prove the tool still exists, and in CI it only reports whether someone
+   * happened to run a cached task first.
+   *
+   * This does not weaken the rule where it has value. A link to a source file
+   * that was deleted still fails, because source files are not gitignored — and
+   * the neighbouring `source-is-tracked` guard is what keeps that true.
+   */
+  const isGeneratedPath = (path: string): boolean =>
+    // `firstMatchingRule` already returns null for a rule that was negated back
+    // out, so a non-null answer means "excluded and not re-included".
+    firstMatchingRule(path, ignoreRules) !== null;
+
   for (const relativePath of files) {
     // The incident records are history, not instructions.
     if (relativePath === 'docs/first-round-review.md') {
@@ -564,7 +591,12 @@ export const guardDocumentedPaths = (root = REPO_ROOT): GuardResult => {
 
     for (const match of text.matchAll(PATH_PATTERN)) {
       const path = match[1].replace(/[.,;:]$/, '');
-      if (path.includes('*') || path.includes('<') || existsSync(join(root, path))) {
+      if (
+        path.includes('*') ||
+        path.includes('<') ||
+        isGeneratedPath(path) ||
+        existsSync(join(root, path))
+      ) {
         continue;
       }
 

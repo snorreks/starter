@@ -7,7 +7,6 @@
   "main": "./src/index.ts",
   "exports": {
     ".": "./src/index.ts",
-    "./browser": "./src/lib/browser_logger.ts",
     "./file": "./src/lib/file_sink.ts"
   },
   "scripts": {

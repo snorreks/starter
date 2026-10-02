@@ -37,8 +37,8 @@ Start here. Nothing below is required reading before running a command — the
 
 - [guides/sveltekit-3-subpaths.md](guides/sveltekit-3-subpaths.md) — why `#lib` and
   the workspace packages are aliased where they are
-- [contracts/TEMPLATE.md](contracts/TEMPLATE.md) — full-mode contract
-- [contracts/THIN_TEMPLATE.md](contracts/THIN_TEMPLATE.md) — standard-mode contract
+- [contracts/README.md](contracts/README.md) — the written-brief workflow, and why
+  nothing executes a brief automatically
 
 ## Conventions in these documents
 

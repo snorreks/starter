@@ -362,9 +362,9 @@ export const AUTH_RATE_LIMIT_MAX = '500';
 
 **No test depends on wall-clock time.** `Timer` is tested by asserting that `end()`
 freezes the value and that `reset()` restarts it, not by sleeping. Where a budget
-must be *proved* — the contract runner's per-stage deadline — it is injected rather
-than waited out, so the test asserts the mechanism instead of sleeping for ten
-minutes.
+must be *proved* — a subprocess that never exits — a 300 ms budget is injected
+rather than waited out, so the test asserts the mechanism instead of sleeping for
+ten minutes (`.pi/tests/process.test.ts`).
 
 ## Writing a test that is not vacuous
 
