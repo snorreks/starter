@@ -1,0 +1,26 @@
+{
+  "//": [
+    "Extends SvelteKit's generated base, which supplies `$app/*` and `$app/types`.",
+    "Do NOT add a `paths` or `types` block here: TypeScript overrides rather than",
+    "merges those, so doing so silently removes the generated entries.",
+    "",
+    "This app is prerendered, so it has no `App.Platform` and no `App.Locals`:",
+    "there is no server runtime in this package to receive either."
+  ],
+  "extends": "$app/tsconfig",
+  "compilerOptions": {
+    // `$app/types` supplies `App.PageData` and brings `src/app.d.ts` into the
+    // program. `bun` covers the unit lane (`src/**/*.test.ts` and its preload).
+    "types": ["$app/types", "bun"],
+    "target": "ES2023",
+    "lib": ["ES2023", "DOM", "DOM.Iterable"],
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "noImplicitOverride": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "verbatimModuleSyntax": true
+  },
+  "include": ["src", "scripts", "dev_ports.ts", "vite.config.ts"],
+  "exclude": ["src-tauri", "build"]
+}

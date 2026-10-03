@@ -108,3 +108,113 @@ export const submitAuthAction = async (
 
   return applied;
 };
+
+// ── Device authorization ─────────────────────────────────────────────────────
+//
+// The web half of the native client's sign-in: a page where a signed-in user
+// approves or denies a short code. It re-issues through `auth.handler` for exactly
+// the reason the header describes — an `auth.api` call here would skip the origin
+// check and the rate limiter, and this page is reachable without JavaScript.
+//
+// Two facts about the pinned plugin shape this file, because both are easy to get
+// wrong and neither is discoverable from the route names:
+//
+//   1. `GET /api/auth/device?user_code=…` **claims** the code. It sets the record's
+//      user id from the current session. Without that call, `device/approve`
+//      answers 403 — "not claimed by a verifying session" — and the page looks
+//      broken rather than wrong.
+//   2. `POST /api/auth/device/approve` and `/deny` take `{ userCode }`, camelCase,
+//      while the `GET` query is `user_code`. Same word, two spellings, from the
+//      same plugin.
+
+/** The two device endpoints a form action may reach. Both are POST. */
+export type DeviceActionPath = 'device/approve' | 'device/deny';
+
+/**
+ * Ask Better Auth what state a user code is in.
+ *
+ * A `GET`, through the handler, because the claim above is what makes a later
+ * approval possible and skipping it produces a 403 the user cannot act on.
+ *
+ * Returns the provider's answer, or `null` when the code is unknown or already
+ * spent. `null` rather than a throw: "that code is not valid" is a state this page
+ * renders, and an exception would arrive in the error boundary as a 500.
+ */
+export const readDeviceAuthorization = async (
+  container: Container,
+  request: Request,
+  userCode: string,
+): Promise<DeviceAuthorizationState | null> => {
+  const url = new URL('/api/auth/device', container.baseUrl);
+  url.searchParams.set('user_code', userCode);
+
+  const response = await container.auth.handler(
+    new Request(url, { method: 'GET', headers: new Headers(request.headers) }),
+  );
+
+  if (!response.ok) {
+    return null;
+  }
+
+  const body: unknown = await response.json().catch(() => undefined);
+  if (typeof body !== 'object' || body === null) {
+    return null;
+  }
+  const candidate = body as { user_code?: unknown; status?: unknown; client_id?: unknown };
+  if (typeof candidate.user_code !== 'string' || typeof candidate.status !== 'string') {
+    return null;
+  }
+
+  return {
+    userCode: candidate.user_code,
+    status: candidate.status,
+    clientId: typeof candidate.client_id === 'string' ? candidate.client_id : null,
+  };
+};
+
+/** What the provider says about one code, projected onto three fields. */
+export interface DeviceAuthorizationState {
+  readonly userCode: string;
+  /** `pending` before a decision; the plugin's own vocabulary, not invented here. */
+  readonly status: string;
+  readonly clientId: string | null;
+}
+
+/**
+ * Approve or deny a code this signed-in user claimed.
+ *
+ * The body is built here rather than passed in, so the plugin's camelCase field
+ * name appears exactly once and a caller cannot send the snake_case one that the
+ * endpoint ignores.
+ */
+export const submitDeviceAction = async (
+  container: Container,
+  request: Request,
+  cookies: Cookies,
+  path: DeviceActionPath,
+  userCode: string,
+): Promise<number> => {
+  const headers = new Headers(request.headers);
+  headers.set('content-type', 'application/json');
+  headers.delete('content-length');
+
+  const response = await container.auth.handler(
+    new Request(new URL(`/api/auth/${path}`, container.baseUrl), {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ userCode }),
+    }),
+  );
+
+  applySetCookies(cookies, response.headers);
+
+  if (!response.ok) {
+    const cause: unknown = await response.json().catch(() => undefined);
+    throw new AppError(errorTypeForStatus(response.status), 'Could not complete that request.', {
+      status: response.status,
+      cause,
+    });
+  }
+
+  return response.status;
+};

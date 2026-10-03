@@ -119,6 +119,17 @@ export interface Container {
  */
 export const VERIFICATION_CALLBACK_PATH = '/verify-email';
 
+/**
+ * Where a user approves a native client.
+ *
+ * Named here, and handed to `@starter/auth`, because the alternative is a plugin
+ * default of `/device` that happens to match a route nobody promised to keep. When
+ * the route and the advertised URL drift apart, a native client opens a 404 and
+ * reports "sign-in failed" with nothing to act on. `worker_integration.test.ts`
+ * asserts this route renders, which is what keeps the two in step.
+ */
+export const DEVICE_VERIFICATION_PATH = '/device';
+
 const containers = new WeakMap<AppEnv, Map<string, Container>>();
 
 /**
@@ -209,6 +220,8 @@ export const getContainer = (rawEnv: unknown, requestOrigin?: string): Container
       // cannot drift apart. Better Auth would otherwise default `callbackURL` to `/`
       // and drop a confirmed user on the public landing page.
       verificationCallbackPath: VERIFICATION_CALLBACK_PATH,
+      // The URL a native client hands to the system browser. See above.
+      deviceVerificationPath: DEVICE_VERIFICATION_PATH,
     }),
   };
 

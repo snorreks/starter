@@ -59,8 +59,8 @@ wrangler.generated.jsonc
 !.dev.vars.example
 
 # Native build output
-apps/frontend/client/src-tauri/target/
-apps/frontend/client/src-tauri/gen/
+apps/frontend/native/src-tauri/target/
+apps/frontend/native/src-tauri/gen/
 
 # =============================================================================
 # 4. Environment and secrets
@@ -163,10 +163,11 @@ desktop.ini
 .direnv/
 .envrc.local
 
-# Rust build output. `apps/backend/media/.gitignore` covers the media crate's own
-# directory; these are the belt-and-braces entries for anyone building from the
-# repository root, and for the native shell's `src-tauri` directory when a
-# contributor restores it.
+# Rust build output. `apps/backend/media/.gitignore` and
+# `apps/frontend/native/src-tauri/.gitignore` each cover their own crate directory;
+# these are the belt-and-braces entries for anyone building from the repository
+# root. The path was `apps/frontend/client/src-tauri` until the shell moved to its
+# own application, where a stale entry silently stops matching.
 apps/backend/media/target/
-apps/frontend/client/src-tauri/target/
+apps/frontend/native/src-tauri/target/
 target/

@@ -21,9 +21,15 @@ There is no separate backend to deploy and no dev proxy to keep honest. The brow
 half and the Worker half are the same package, separated by a path the linter and
 `bun run guard` both check.
 
-The application is a web app. There is still no native shell: no desktop or mobile
-bundle and no `@tauri-apps/*` dependency to upgrade. A product that needs one
-should add a client and an authenticated API boundary deliberately.
+There is also a **native client**: [`apps/frontend/native`](apps/frontend/native/README.md)
+is a static SvelteKit app plus a Tauri shell. It bundles the same notes screen
+against the same API, signs in by asking the user's *own browser* to approve a short
+code (RFC 8628), and keeps the session in an opt-in Stronghold vault whose passphrase
+the user types. It adds no second server: the desktop client is an authenticated
+client of the Worker above, and `@starter/features` is the one copy of the screen
+both hosts render. Its lanes are separate on purpose — `bun run native:doctor`
+reports what a machine can build, and none of it is part of `bun run build`,
+`bun run test` or `bun run lint`. See [docs/native.md](docs/native.md).
 
 One Rust crate sits outside both planes:
 [`apps/backend/media`](apps/backend/media/README.md) is a bounded FFmpeg encode
@@ -78,6 +84,7 @@ names what is missing rather than failing obscurely:
 | `bun run dev:worker` | The **built** Worker in real workerd. Requires `bun run build` first. |
 | `bun run test:all` | The four test lanes, no duplicates. |
 | `bun run guard` | Eight whole-repository invariants. |
+| `bun run native:doctor` | What this host can build for the desktop client. |
 | `bun run deploy:check --env staging` | The offline deployment plan. No credential, no network. |
 
 ## Tests
@@ -124,6 +131,8 @@ fixture-verified, and what has not been run at all.
 ```
 apps/
   frontend/client    ONE SvelteKit app — browser half and Worker half
+  frontend/native    a static SvelteKit app + Tauri shell; the same features, a
+                     bearer transport, an opt-in Stronghold vault
   e2e                Playwright
 packages/
   shared/            schemas, logger, utils — portable, no dependencies

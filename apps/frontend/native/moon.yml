@@ -1,0 +1,115 @@
+$schema: 'https://moonrepo.dev/schemas/project.json'
+
+# apps/frontend/native/moon.yml
+#
+# The static native client. Tasks are delegations to this project's own
+# package.json scripts, like every other application in this workspace.
+#
+# Two of them are named the way they are on purpose:
+#
+#   * `test` IS named `test`, unlike the Rust crate's `cargo-*` tasks. This
+#     project's unit lane needs nothing the web lanes do not — no Rust, no
+#     Android SDK, no Xcode — so it belongs in `bun run test` and its failures
+#     belong in the lane a contributor already runs.
+#   * `build` here produces static files, not a deployable Worker, so it is
+#     reached as `bun run native:build` and not through the root `build` script.
+#     Nobody deploying the web app should be paying for a desktop bundle.
+#
+# The Tauri tasks are NOT here. `tauri dev`/`tauri build` are long-running,
+# credential-free only on a machine with a Rust toolchain and platform webview
+# libraries, and a Moon task that fails with a Rust error is worse than a
+# command that names its prerequisites: see `bun run native:doctor`.
+layer: 'application'
+
+fileGroups:
+  sources:
+    - 'src/**/*'
+  configs:
+    - 'package.json'
+    - 'tsconfig*.json'
+    - 'moon.yml'
+    - 'vite.config.ts'
+    - 'dev_ports.ts'
+  tests:
+    - 'src/**/*.test.ts'
+    - 'src/**/*.spec.ts'
+    - 'scripts/**/*.test.ts'
+
+toolchains:
+  bun:
+  javascript:
+
+dependsOn:
+  - features
+  - platform
+  - schemas
+  - ui
+
+tasks:
+  typecheck:
+    command: 'bun'
+    args: ['run', 'typecheck']
+    inputs:
+      - '@group(sources)'
+      - '@group(configs)'
+      - '@group(tests)'
+  lint:
+    command: 'bun'
+    args: ['run', 'lint']
+    inputs:
+      - '@group(sources)'
+      - '@group(configs)'
+      - '@group(tests)'
+  format:
+    command: 'bun'
+    args: ['run', 'format']
+    inputs:
+      - '@group(sources)'
+      - '@group(configs)'
+      - '@group(tests)'
+  fix:
+    command: 'bun'
+    args: ['run', 'fix']
+    inputs:
+      - '@group(sources)'
+      - '@group(configs)'
+      - '@group(tests)'
+
+  test:
+    command: 'bun'
+    args: ['run', 'test']
+    inputs:
+      - '@group(sources)'
+      - '@group(configs)'
+      - '@group(tests)'
+
+  build:
+    command: 'bun'
+    args: ['run', 'build']
+    inputs:
+      - '@group(sources)'
+      - '@group(configs)'
+      - '@group(tests)'
+    # `.svelte-kit/output` is a complete artifact, and `check-bundle` consumes
+    # it. `cache_scope.ts` additionally watches `bun.lock` and the shared
+    # `@starter/*` sources, which live outside this project and cannot be named
+    # in a task input.
+    outputs:
+      - 'build'
+      - '.svelte-kit/output'
+
+  check-bundle:
+    command: 'bun'
+    args: ['run', 'check:bundle']
+    deps:
+      - 'build'
+    # Never cached: it inspects `build/`, and a restored result would be a claim
+    # about an artifact this run did not produce.
+    options:
+      cache: false
+
+  validate:
+    deps:
+      - '~:lint'
+      - '~:format'
+      - '~:typecheck'

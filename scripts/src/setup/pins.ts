@@ -109,18 +109,18 @@ export const checkMirrors = (root = REPO_ROOT): MirrorDrift[] => {
     });
   }
 
-  // `.github/workflows/ci.yml` — GitHub Actions cannot read a file into a
-  // workflow-level `env:`, so the Bun version is a literal there. That makes it a
-  // second source of truth, and a second source of truth drifts. This is the
-  // mirror that actually disagreed when the pin was 1.4.0.
-  const workflowFile = join(root, '.github/workflows/ci.yml');
-  if (existsSync(workflowFile)) {
+  // Workflow-level env values are literal mirrors of the toolchain pin.
+  for (const mirror of ['.github/workflows/ci.yml', '.github/workflows/native.yml']) {
+    const workflowFile = join(root, mirror);
+    if (!existsSync(workflowFile)) {
+      continue;
+    }
     const workflow = readFileSync(workflowFile, 'utf8');
     const literal = /^\s*BUN_VERSION:\s*['"]?([^'"\s#]+)['"]?\s*$/m.exec(workflow);
 
     if (literal === null) {
       drifts.push({
-        mirror: '.github/workflows/ci.yml',
+        mirror,
         expected: `BUN_VERSION: '${pins.bun}'`,
         found: null,
         reason:
@@ -129,7 +129,7 @@ export const checkMirrors = (root = REPO_ROOT): MirrorDrift[] => {
       });
     } else if (literal[1] !== pins.bun) {
       drifts.push({
-        mirror: '.github/workflows/ci.yml',
+        mirror,
         expected: pins.bun,
         found: literal[1],
         reason:

@@ -338,6 +338,15 @@
       }
     },
     {
+      "includes": ["apps/frontend/native/src/lib/test_setup.ts"],
+      "linter": {
+        "rules": {
+          "suspicious": { "noConsole": "off" },
+          "style": { "noRestrictedImports": "off" }
+        }
+      }
+    },
+    {
       "includes": ["apps/frontend/client/src/lib/test_setup.ts"],
       "linter": {
         "rules": {
@@ -372,6 +381,30 @@
         "packages/frontend/ui/src/screen_container.svelte"
       ],
       "linter": { "rules": { "suspicious": { "noConsole": "off" } } }
+    },
+    {
+      "includes": [
+        "apps/frontend/**/*.ts",
+        "apps/frontend/**/*.svelte",
+        "!apps/frontend/native/src/lib/platform/**"
+      ],
+      "linter": {
+        "rules": {
+          "style": {
+            "noRestrictedImports": {
+              "level": "error",
+              "options": {
+                "patterns": [
+                  {
+                    "group": ["@tauri-apps", "@tauri-apps/**"],
+                    "message": "Only apps/frontend/native/src/lib/platform/** may name the Tauri API: it is injected by the native shell and does not exist in a browser. Everything else takes an ApiTransport, a SessionStore or an ExternalBrowser by constructor argument."
+                  }
+                ]
+              }
+            }
+          }
+        }
+      }
     }
   ]
 }

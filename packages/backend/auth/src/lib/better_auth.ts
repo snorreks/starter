@@ -5,9 +5,9 @@
 // Scope, stated so nothing is implied that is not implemented:
 //   - email + password: ENABLED, with verification and recovery
 //   - OAuth (any provider): NOT CONFIGURED
-//   - a second identity path (bearer tokens, device authorization): REMOVED
+//   - device authorization + bearer sessions: ENABLED, for the native client only
 //
-// Two properties of this file are load-bearing and easy to undo by accident.
+// Three properties of this file are load-bearing and easy to undo by accident.
 //
 // 1. Verification and recovery are awaited, never deferred
 // --------------------------------------------------------
@@ -37,13 +37,43 @@
 // implements the interface Better Auth actually asks for (`customStorage`) with a
 // single upsert, so the decision is atomic across isolates. See that module for
 // the full account.
+//
+// 3. Two plugins, for exactly one consumer
+// -----------------------------------------
+// `deviceAuthorization` and `bearer` exist because `apps/frontend/native` signs in
+// through the user's own browser and then presents a session token on every
+// request. They are not a second account system:
+//
+//   * The token the flow returns is an ordinary Better Auth **session token**. The
+//     `bearer` plugin turns it into the same session a cookie would produce, and
+//     the same `getSession` call verifies it, against the same table. No JWT is
+//     minted here, no signing key is added, and there is no client secret: the
+//     device `client_id` is public by construction, because it is compiled into a
+//     binary anybody can unpack.
+//   * Cookies, verification and recovery are untouched. `HttpOnly`, `SameSite` and
+//     the secure-cookie rules still apply to the browser path, and the device flow
+//     replaces none of it. A session from either path is revoked by the same call.
 
 import { betterAuthSchema, type RateLimitStorage } from '@starter/database';
 import { betterAuth } from 'better-auth';
 import { drizzleAdapter } from 'better-auth/adapters/drizzle';
+import { bearer, deviceAuthorization } from 'better-auth/plugins';
 
 /** One hour. Long enough to survive a password manager prompt, short enough to matter. */
 const VERIFICATION_TOKEN_TTL_SECONDS = 60 * 60;
+
+/**
+ * How long a device code stays redeemable, and how often a client may poll.
+ *
+ * RFC 8628's defaults for a client that has no preference. Thirty minutes is long
+ * enough for a user to find their phone; five seconds is slow enough that a stuck
+ * client cannot spend the server's device rate limit (five per window, from the
+ * plugin). Both are the *server's* answer: the client in
+ * `@starter/features` obeys whatever interval it is given, and treats the response
+ * to a too-fast poll as a back-off rather than as a failure.
+ */
+const DEVICE_CODE_TTL_SECONDS = 30 * 60;
+const DEVICE_POLL_INTERVAL_SECONDS = 5;
 
 /**
  * How this application delivers mail.
@@ -95,6 +125,15 @@ export interface BetterAuthEnv {
    * the link cannot drift apart: `@starter/auth` must not know a route table.
    */
   verificationCallbackPath: string;
+  /**
+   * Where the user approves a device-authorization request.
+   *
+   * A path on this application, passed in for the same reason as the verification
+   * callback above: `@starter/auth` must not know this application's route table,
+   * and a plugin default of `/device` would be a URL a client was told to open
+   * with no route behind it.
+   */
+  deviceVerificationPath: string;
   /**
    * Request headers to read a client IP from, in order.
    *
@@ -319,6 +358,26 @@ export const createBetterAuth = (db: Parameters<typeof drizzleAdapter>[0], env: 
       // which is per-isolate and therefore not a limit at all on Workers.
       customStorage: env.rateLimitStorage,
     },
+
+    // Both plugins are additive: neither changes how a browser signs in.
+    plugins: [
+      // RFC 8628. `verificationUri` is this application's own approval page, passed
+      // in rather than defaulted, so the URL a native client opens is a route that
+      // exists. `validateClient` is NOT configured: the client id is public, there
+      // is exactly one consumer in this repository, and a validator that accepted
+      // everything would be a check that cannot fail.
+      deviceAuthorization({
+        verificationUri: env.deviceVerificationPath,
+        expiresIn: `${DEVICE_CODE_TTL_SECONDS}s`,
+        interval: `${DEVICE_POLL_INTERVAL_SECONDS}s`,
+      }),
+      // Accepts `Authorization: Bearer <session token>` on Better Auth's own
+      // endpoints. `requireSignature` is deliberately off: the token handed out by
+      // `/device/token` is an unsigned session token, and requiring a signed
+      // variant would mean this application minting one — the custom JWT this
+      // template refuses to ship.
+      bearer(),
+    ],
   });
 };
 

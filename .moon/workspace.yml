@@ -35,6 +35,10 @@ projects:
   # SvelteKit project, so there is one project here and its two runtimes are a
   # property of the source layout, not of the build graph.
   client: 'apps/frontend/client'
+  # Root :test includes the native Bun tests in src/ and scripts/; :lint and
+  # :format cover src/, and :typecheck runs svelte-check. This project defines no
+  # Cargo tasks: Rust formatting, clippy and tests run in the native CI workflow.
+  native: 'apps/frontend/native'
   e2e: 'apps/e2e'
 
   # Shared packages: portable, no project dependencies at all.

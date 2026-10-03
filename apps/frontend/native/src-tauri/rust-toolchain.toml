@@ -1,0 +1,24 @@
+# apps/frontend/native/src-tauri/rust-toolchain.toml
+#
+# One Rust policy for every first-party crate in this repository, matching
+# `apps/backend/media/rust-toolchain.toml`: the same compiler, the same rustfmt
+# and the same clippy, so a formatting or lint difference between a desktop build
+# and a container image is never a toolchain artefact.
+#
+# `components` is explicit rather than implied: `cargo fmt --check` and
+# `cargo clippy` in this project's task list cannot pass on a toolchain that
+# silently lacks them.
+#
+# `targets` is empty. A Rust target is a *triple*, not a platform name, and the
+# mobile triples are added per host by the mobile lane that owns them
+# (`rustup target add aarch64-linux-android`, and so on). Listing them here would
+# force every desktop contributor's `rustup` to fetch toolchains they do not use,
+# and a target listed in the wrong file is a target nobody installs.
+#
+# The channel is a number, not "stable": a template whose verification result
+# depends on which patch release the day happened to be is not reproducible. See
+# docs/toolchain.md.
+[toolchain]
+channel = "1.98.1"
+components = ["clippy", "rustfmt"]
+profile = "minimal"

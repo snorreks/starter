@@ -29,6 +29,7 @@ const COMMANDS: Record<string, CommandLoader> = {
   doctor: async () => (await import('./commands/setup.ts')).doctorCommand,
   guard: async () => (await import('./commands/guard.ts')).guardCommand,
   logs: async () => (await import('./commands/logs.ts')).logsCommand,
+  native: async () => (await import('./commands/native.ts')).nativeCommand,
   secrets: async () => (await import('./commands/secrets.ts')).secretsCommand,
   setup: async () => (await import('./commands/setup.ts')).setupCommand,
   smoke: async () => (await import('./commands/smoke.ts')).smokeCommand,
