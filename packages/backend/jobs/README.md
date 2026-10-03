@@ -117,7 +117,8 @@ the admission and then the Workflow call failed.** The job row therefore carries
 `workflow_id` (derived from the job id, so a retry addresses the same instance),
 `dispatch_state`, `dispatch_attempts` and a frozen `dispatch_error`. A job in
 `dispatch_failed` is admitted, visible through the API, and listed by
-`listPendingDispatches` for recovery.
+`listPendingDispatches` for recovery when its error code is retryable and fewer
+than `MAX_DISPATCH_ATTEMPTS` (3) dispatch calls have failed.
 
 **The live compute profile is disabled.** Until PR H lands, the wired dispatcher is
 `createDisabledDispatchPort()`, which refuses every dispatch with
@@ -137,7 +138,7 @@ Every service takes a **fixed cutoff** and a batch size, and reports D1's own
 * `purgeExpiredSessions` — `DELETE … WHERE id IN (SELECT id … LIMIT n)`. The
   subquery form, not `DELETE … LIMIT n`, because the latter needs a SQLite build
   compiled with `SQLITE_ENABLE_UPDATE_DELETE_LIMIT`, which D1 is not.
-* `purgeIdleRateLimits` — same shape over the auth limiter's windows.
+* `purgeIdleRateLimits` — same shape over the auth limiter's millisecond windows.
 * `purgeExpiredArtifacts` — queues expired artifacts, then closes out only those
   whose bytes `JobArtifactStorage.isRemoved` confirms are gone. **It does not
   delete bytes**, and `retired` is the only figure here that may claim a deletion.
@@ -151,7 +152,10 @@ than rows deleted. `maintenance.test.ts` fails for that implementation.
 
 `runMaintenance` takes one `cutoffAt` from the injected clock and derives every
 window from it, so a run straddling a second boundary cannot delete with one
-instant and report another.
+instant and report another. It also terminalizes exhausted attempts after their
+lease expires, and failed dispatches that are non-retryable, have exhausted
+retries, or have been idle for one hour (`dispatchRetentionMs` is configurable).
+Live attempt leases are preserved; terminalization releases the owner's active slot.
 
 **Not implemented here:** the schedule. PR H owns `17 * * * *` UTC, the durable
 run key per scheduled slot, and the Worker that executes it.

@@ -35,13 +35,7 @@ import type { Brand } from '../common/ids.ts';
 export const literalUnion = <const T extends readonly string[]>(
   values: T,
 ): TUnion<TLiteral<T[number]>[]> =>
-  // `Type.Union` accepts `TSchema[]`, so a mapped literal tuple is not
-  // assignable to it directly. The `unknown` hop is the price of keeping
-  // `Static<>` narrowed to `T[number]`; a bare `Type.Union([...])` would widen to
-  // `string` and defeat every closed schema in this file.
-  Type.Union(values.map((value) => Type.Literal(value))) as unknown as TUnion<
-    TLiteral<T[number]>[]
-  >;
+  Type.Union(values.map((value: T[number]) => Type.Literal(value)));
 
 export const JobIdSchema = Type.String({ minLength: 1, maxLength: 64 });
 export type JobId = Static<typeof JobIdSchema> & Brand<string, 'JobId'>;

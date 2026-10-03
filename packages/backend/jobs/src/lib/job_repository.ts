@@ -68,6 +68,8 @@ import type {
 } from '@starter/schemas/jobs';
 import {
   IDEMPOTENCY_KEY_MAX_LENGTH,
+  JOB_FIXTURE_IDS,
+  JOB_PRESET_IDS,
   MAX_ACTIVE_JOBS_PER_USER,
   MAX_JOB_ATTEMPTS,
   MAX_JOBS_PER_ENVIRONMENT_UTC_DAY,
@@ -75,6 +77,18 @@ import {
   MAX_LISTED_JOBS,
   WORKFLOW_ID_PREFIX,
 } from '@starter/schemas/jobs';
+
+import {
+  DISPATCH_ERROR_CODES,
+  DISPATCH_ERROR_MEANINGS,
+  type DispatchErrorCode,
+  MAX_DISPATCH_ATTEMPTS,
+} from './dispatch_port.ts';
+
+const RETRYABLE_DISPATCH_CODES = DISPATCH_ERROR_CODES.filter(
+  (code) => DISPATCH_ERROR_MEANINGS[code].retryable,
+);
+const RETRYABLE_DISPATCH_SQL = RETRYABLE_DISPATCH_CODES.map(() => '?').join(', ');
 
 // -----------------------------------------------------------------------------
 // Database surface
@@ -210,6 +224,11 @@ export interface JobRecord {
 const ms = (seconds: number | null): number | null => (seconds === null ? null : seconds * 1000);
 
 const toRecord = (row: JobRow): JobRecord => {
+  const fixture = JOB_FIXTURE_IDS.find((value) => value === row.fixture);
+  const preset = JOB_PRESET_IDS.find((value) => value === row.preset);
+  if (fixture === undefined || preset === undefined) {
+    throw new Error('Job has an unknown fixture or preset.');
+  }
   const hasOutput =
     row.output_key !== null &&
     row.output_bytes !== null &&
@@ -224,12 +243,11 @@ const toRecord = (row: JobRow): JobRecord => {
   return {
     id: row.id,
     ownerId: row.owner_id,
-    // The four CHECK constraints on the table make these casts sound; a value
-    // outside the union cannot reach a row.
+    // CHECK constraints protect kind and status; fixture and preset are validated above.
     kind: row.kind as JobKind,
     status: row.status as JobStatus,
-    fixture: row.fixture as JobFixture,
-    preset: row.preset as JobPreset,
+    fixture,
+    preset,
     idempotencyKey: row.idempotency_key,
     requestFingerprint: row.request_fingerprint,
     workflowId: row.workflow_id,
@@ -461,8 +479,8 @@ export interface JobRepository {
   /** Record that the Workflow call succeeded. Idempotent. */
   markDispatched(jobId: string): Promise<boolean>;
 
-  /** Record a failed dispatch, leaving the job admitted and recoverable. */
-  markDispatchFailed(jobId: string, code: string): Promise<boolean>;
+  /** Persist the frozen error code, which determines retryability during recovery. */
+  markDispatchFailed(jobId: string, code: DispatchErrorCode): Promise<boolean>;
 
   /** Admitted jobs whose Workflow was never started. Bounded. */
   listPendingDispatches(limit: number): Promise<JobRecord[]>;
@@ -473,7 +491,12 @@ export interface JobRepository {
   /** Queue a job's artifact for byte deletion by the storage owner. Idempotent. */
   enqueueArtifactRetirement(jobId: string, cutoffMs: number): Promise<boolean>;
 
-  /** The queued retirements, oldest cutoff first. Bounded. */
+  /** Terminalize abandoned active jobs without disturbing a live lease. */
+  failStaleJobs(cutoffMs: number, limit: number): Promise<number>;
+
+  recordArtifactRetirementRetry(jobId: string): Promise<boolean>;
+
+  /** The queued retirements, fewest runs then oldest cutoff first. Bounded. */
   listArtifactRetirements(
     limit: number,
   ): Promise<Array<{ jobId: string; outputKey: string; runs: number; cutoffAt: number }>>;
@@ -602,13 +625,13 @@ export const createJobRepository = (
   clock: Clock,
   bounds: JobAdmissionBounds = DEFAULT_ADMISSION_BOUNDS,
 ): JobRepository => {
-  const findByKey = async (ownerId: string, idempotencyKey: string): Promise<JobRecord | null> => {
+  const findByKey = async (ownerId: string, idempotencyKey: string): Promise<JobRow | null> => {
     const { results } = await db
       .prepare(`SELECT ${JOB_COLUMNS} FROM jobs WHERE owner_id = ? AND idempotency_key = ?`)
       .bind(ownerId, idempotencyKey)
       .all<JobRow>();
     const row = results[0];
-    return row === undefined ? null : toRecord(row);
+    return row ?? null;
   };
 
   /**
@@ -676,8 +699,8 @@ export const createJobRepository = (
       // so a racing first request cannot slip past it.
       const existing = await findByKey(ownerId, idempotencyKey);
       if (existing !== null) {
-        return existing.requestFingerprint === fingerprint
-          ? { ok: true, job: existing, replayed: true }
+        return existing.request_fingerprint === fingerprint
+          ? { ok: true, job: toRecord(existing), replayed: true }
           : { ok: false, reason: 'idempotency_conflict', budget: null };
       }
 
@@ -711,7 +734,7 @@ export const createJobRepository = (
             `Job ${jobId} was admitted by the inserting statement but could not be read back.`,
           );
         }
-        return { ok: true, job: admitted, replayed: false };
+        return { ok: true, job: toRecord(admitted), replayed: false };
       }
 
       // Refused. A same-key row means this is a replay or a conflict; no row means
@@ -719,8 +742,8 @@ export const createJobRepository = (
       // asking it is not a second opinion about the decision — it is the label.
       const after = await findByKey(ownerId, idempotencyKey);
       if (after !== null) {
-        return after.requestFingerprint === fingerprint
-          ? { ok: true, job: after, replayed: true }
+        return after.request_fingerprint === fingerprint
+          ? { ok: true, job: toRecord(after), replayed: true }
           : { ok: false, reason: 'idempotency_conflict', budget: null };
       }
 
@@ -814,9 +837,6 @@ export const createJobRepository = (
       if (current === null) {
         return { ok: false, reason: 'not_found' };
       }
-      if (current.attempt_count >= MAX_JOB_ATTEMPTS) {
-        return { ok: false, reason: 'attempts_exhausted' };
-      }
       if (current.status !== 'pending' && current.status !== 'running') {
         return { ok: false, reason: 'not_claimable' };
       }
@@ -826,6 +846,16 @@ export const createJobRepository = (
         current.lease_expires_at > nowSec
       ) {
         return { ok: false, reason: 'lease_held' };
+      }
+      if (current.attempt_count >= MAX_JOB_ATTEMPTS) {
+        await db
+          .prepare(`UPDATE jobs SET status = 'failed', error_code = 'attempts_exhausted',
+          active_attempt_id = NULL, lease_expires_at = NULL, completed_at = ?, updated_at = ?
+          WHERE id = ? AND status IN ('pending', 'running') AND attempt_count >= ?
+            AND (active_attempt_id IS NULL OR lease_expires_at IS NULL OR lease_expires_at <= ?)`)
+          .bind(nowSec, nowSec, jobId, MAX_JOB_ATTEMPTS, nowSec)
+          .run();
+        return { ok: false, reason: 'attempts_exhausted' };
       }
       // The lease is free and the job is claimable, so the statement refused for a
       // reason this process cannot see. Said plainly rather than guessed at.
@@ -895,8 +925,8 @@ export const createJobRepository = (
              dispatch_attempts = dispatch_attempts + 1, updated_at = ?
            WHERE id = ?`,
         )
-        // `code` is a frozen dispatch code, bounded by the schema on the service
-        // side. Nothing a provider returned is stored here.
+        // Persist the code whose retryability is defined in DISPATCH_ERROR_MEANINGS.
+        // Nothing a provider returned is stored here.
         .bind(code.slice(0, 64), nowSec, jobId)
         .run();
       return meta.changes === 1;
@@ -906,13 +936,52 @@ export const createJobRepository = (
       const { results } = await db
         .prepare(
           `SELECT ${JOB_COLUMNS} FROM jobs
-           WHERE dispatch_state = 'pending' OR dispatch_state = 'dispatch_failed'
+           WHERE error_code IS NULL
+             AND (dispatch_state = 'pending' OR (dispatch_state = 'dispatch_failed'
+               AND dispatch_attempts < ? AND dispatch_error IN (${RETRYABLE_DISPATCH_SQL})))
            ORDER BY created_at ASC, id ASC
            LIMIT ?`,
         )
-        .bind(clampLimit(limit))
+        .bind(MAX_DISPATCH_ATTEMPTS, ...RETRYABLE_DISPATCH_CODES, clampLimit(limit))
         .all<JobRow>();
       return results.map(toRecord);
+    },
+
+    async failStaleJobs(cutoffMs, limit) {
+      const nowSec = toEpochSeconds(clock.now());
+      const { meta } = await db
+        .prepare(`UPDATE jobs
+        SET status = 'failed',
+            error_code = CASE WHEN attempt_count >= ? THEN 'attempts_exhausted' ELSE 'internal_error' END,
+            active_attempt_id = NULL, lease_expires_at = NULL, completed_at = ?, updated_at = ?
+        WHERE id IN (SELECT id FROM jobs
+          WHERE status IN ('pending', 'running')
+            AND (active_attempt_id IS NULL OR lease_expires_at IS NULL OR lease_expires_at <= ?)
+            AND (attempt_count >= ? OR (dispatch_state = 'dispatch_failed'
+              AND (updated_at <= ? OR dispatch_attempts >= ?
+                OR dispatch_error IS NULL OR dispatch_error NOT IN (${RETRYABLE_DISPATCH_SQL}))))
+          ORDER BY updated_at ASC, id ASC LIMIT ?)`)
+        .bind(
+          MAX_JOB_ATTEMPTS,
+          nowSec,
+          nowSec,
+          nowSec,
+          MAX_JOB_ATTEMPTS,
+          toEpochSeconds(cutoffMs),
+          MAX_DISPATCH_ATTEMPTS,
+          ...RETRYABLE_DISPATCH_CODES,
+          clampLimit(limit),
+        )
+        .run();
+      return meta.changes;
+    },
+
+    async recordArtifactRetirementRetry(jobId) {
+      const { meta } = await db
+        .prepare('UPDATE job_artifact_retirements SET runs = runs + 1 WHERE job_id = ?')
+        .bind(jobId)
+        .run();
+      return meta.changes === 1;
     },
 
     async listExpiredArtifacts(cutoffMs, limit) {
@@ -920,6 +989,7 @@ export const createJobRepository = (
         .prepare(
           `SELECT ${JOB_COLUMNS} FROM jobs
            WHERE output_expires_at IS NOT NULL AND output_expires_at <= ?
+             AND NOT EXISTS (SELECT 1 FROM job_artifact_retirements WHERE job_id = jobs.id)
            ORDER BY output_expires_at ASC, id ASC
            LIMIT ?`,
         )
@@ -929,14 +999,11 @@ export const createJobRepository = (
     },
 
     async enqueueArtifactRetirement(jobId, cutoffMs) {
-      // `ON CONFLICT DO UPDATE`, not `DO NOTHING`: a re-queued artifact must move
-      // its cutoff forward, otherwise a job enqueued against an early cutoff and
-      // re-enqueued after the cutoff advanced would keep reporting the old one.
       const { meta } = await db
         .prepare(
           `INSERT INTO job_artifact_retirements (job_id, output_key, runs, cutoff_at)
            SELECT id, output_key, 0, ? FROM jobs WHERE id = ? AND output_key IS NOT NULL
-           ON CONFLICT(job_id) DO UPDATE SET cutoff_at = excluded.cutoff_at`,
+           ON CONFLICT(job_id) DO NOTHING`,
         )
         .bind(toEpochSeconds(cutoffMs), jobId)
         .run();
@@ -947,7 +1014,7 @@ export const createJobRepository = (
       const { results } = await db
         .prepare(
           `SELECT job_id, output_key, runs, cutoff_at FROM job_artifact_retirements
-           ORDER BY cutoff_at ASC, job_id ASC LIMIT ?`,
+           ORDER BY runs ASC, cutoff_at ASC, job_id ASC LIMIT ?`,
         )
         .bind(clampLimit(limit))
         .all<{ job_id: string; output_key: string; runs: number; cutoff_at: number }>();

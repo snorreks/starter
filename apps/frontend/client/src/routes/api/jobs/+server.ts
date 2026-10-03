@@ -98,7 +98,10 @@ export const GET: RequestHandler = async ({ locals, url }) => {
     // usual amount" should not have to say so.
     ...(Number.isSafeInteger(limit) && limit > 0 ? { limit } : {}),
   });
-  return json(200, page);
+  if (!page.ok) {
+    return jsonError(400, page.code, page.detail);
+  }
+  return json(200, page.page);
 };
 
 export const POST: RequestHandler = async ({ locals, request }) => {

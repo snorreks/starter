@@ -2208,15 +2208,13 @@ describe('the jobs API with the compute profile enabled', () => {
     const first = await jobsApi(account, '/api/jobs?limit=1');
     expect(first.status).toBe(200);
     const page = (await first.json()) as { jobs: unknown[]; nextCursor: string | null };
-    expect(Array.isArray(page.jobs)).toBe(true);
-    expect(page.jobs.length).toBeLessThanOrEqual(1);
+    expect(page.jobs).toHaveLength(1);
+    expect(page.nextCursor).toBeNull();
 
-    // A cursor the server cannot parse must be an empty page, never an error that
-    // looks like a database problem.
+    // Malformed cursors are client errors, not successful empty pages.
     const garbage = await jobsApi(account, '/api/jobs?cursor=not-a-cursor');
-    expect(garbage.status).toBe(200);
-    const empty = (await garbage.json()) as { jobs: unknown[] };
-    expect(empty.jobs).toEqual([]);
+    expect(garbage.status).toBe(400);
+    expect(((await garbage.json()) as { error: string }).error).toBe('invalid_cursor');
   }, 90_000);
 
   test('a job whose dispatch failed is still visible, and is still recoverable', async () => {

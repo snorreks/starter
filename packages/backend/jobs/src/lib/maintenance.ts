@@ -136,7 +136,7 @@ export const purgeIdleRateLimits = async (
          SELECT key FROM rate_limits WHERE last_request < ? ORDER BY last_request ASC LIMIT ?
        )`,
     )
-    .bind(toEpochSeconds(options.cutoffMs), clampBatch(options.batch))
+    .bind(options.cutoffMs, clampBatch(options.batch))
     .run();
   return meta.changes;
 };
@@ -171,6 +171,7 @@ export interface ArtifactSweepRepository {
   enqueueArtifactRetirement(jobId: string, cutoffMs: number): Promise<boolean>;
   listArtifactRetirements(limit: number): Promise<Array<{ jobId: string; outputKey: string }>>;
   completeArtifactRetirement(jobId: string): Promise<boolean>;
+  recordArtifactRetirementRetry(jobId: string): Promise<boolean>;
   clearJobOutput(jobId: string): Promise<boolean>;
 }
 
@@ -231,6 +232,7 @@ export const purgeExpiredArtifacts = async (
   let retired = 0;
   for (const retirement of retirements) {
     if (!(await storage.isRemoved(retirement.outputKey))) {
+      await repository.recordArtifactRetirementRetry(retirement.jobId);
       continue;
     }
     // Both steps, and both reported: closing the retirement without clearing the
@@ -250,6 +252,7 @@ export const purgeExpiredArtifacts = async (
 /** How many admitted jobs are still owed a Workflow dispatch. */
 export interface PendingDispatchRepository {
   listPendingDispatches(limit: number): Promise<unknown[]>;
+  failStaleJobs(cutoffMs: number, limit: number): Promise<number>;
 }
 
 export interface MaintenanceOptions {
@@ -258,6 +261,8 @@ export interface MaintenanceOptions {
   batch?: number;
   sessionRetentionMs?: number;
   rateLimitRetentionMs?: number;
+  /** Maximum age since a failed dispatch; defaults to one hour. */
+  dispatchRetentionMs?: number;
 }
 
 /**
@@ -290,6 +295,7 @@ export const runMaintenance = async (
     batch,
   });
   const artifacts = await purgeExpiredArtifacts(repository, storage, { cutoffMs: cutoffAt, batch });
+  await repository.failStaleJobs(cutoffAt - (options.dispatchRetentionMs ?? 60 * 60 * 1000), batch);
   const pendingDispatches = (await repository.listPendingDispatches(batch)).length;
 
   return {

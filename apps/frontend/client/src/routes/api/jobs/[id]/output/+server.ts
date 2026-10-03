@@ -65,6 +65,11 @@ export const GET: RequestHandler = async ({ locals, params, request }) => {
           'output_expired',
           'That result has passed its 24-hour retention window.',
         );
+      case 'range_not_satisfiable': {
+        const response = jsonError(416, outcome.code, outcome.detail);
+        response.headers.set('content-range', `bytes */${outcome.totalBytes}`);
+        return response;
+      }
       default:
         return jsonError(503, 'output_unavailable', outcome.detail);
     }

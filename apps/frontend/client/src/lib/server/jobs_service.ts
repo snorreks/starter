@@ -152,6 +152,10 @@ export type CreateJobOutcome =
       detail: string;
     };
 
+export type ListJobsOutcome =
+  | { ok: true; page: JobList }
+  | { ok: false; code: 'invalid_cursor'; detail: string };
+
 /** How an output read ended. */
 export type OutputReadOutcome =
   | {
@@ -166,7 +170,8 @@ export type OutputReadOutcome =
       ok: false;
       code: 'not_found' | 'output_not_ready' | 'output_expired' | 'output_unavailable';
       detail: string;
-    };
+    }
+  | { ok: false; code: 'range_not_satisfiable'; detail: string; totalBytes: number };
 
 export interface JobsService {
   readonly profile: JobsProfile;
@@ -175,7 +180,10 @@ export interface JobsService {
     input: CreateEncodeJob,
     idempotencyKey: string,
   ): Promise<CreateJobOutcome>;
-  list(ownerId: string, options?: { cursor?: string | null; limit?: number }): Promise<JobList>;
+  list(
+    ownerId: string,
+    options?: { cursor?: string | null; limit?: number },
+  ): Promise<ListJobsOutcome>;
   get(ownerId: string, jobId: string): Promise<JobDto | null>;
   readOutput(
     ownerId: string,
@@ -281,9 +289,7 @@ export const createJobsService = (options: {
     async list(ownerId, listOptions = {}) {
       const parsed = parseJobCursor(listOptions.cursor ?? null);
       if (!parsed.ok) {
-        // A bad cursor is a 400 at the route. Here it is an empty first page,
-        // which is the only honest answer a service can give without a status.
-        return { jobs: [], nextCursor: null, serverTime: clock.now() };
+        return { ok: false, code: 'invalid_cursor', detail: parsed.problem };
       }
       const page = await repository.listJobsForOwner(ownerId, {
         ...(parsed.cursor === null ? {} : { cursor: parsed.cursor }),
@@ -291,9 +297,12 @@ export const createJobsService = (options: {
       });
       const nowMs = clock.now();
       return {
-        jobs: page.jobs.map((job) => toJobDto(job, nowMs)),
-        nextCursor: page.nextCursor,
-        serverTime: nowMs,
+        ok: true,
+        page: {
+          jobs: page.jobs.map((job) => toJobDto(job, nowMs)),
+          nextCursor: page.nextCursor,
+          serverTime: nowMs,
+        },
       };
     },
 
@@ -340,7 +349,12 @@ export const createJobsService = (options: {
 
       const parsed = parseByteRange(rangeHeader, job.output.bytes);
       if (!parsed.ok) {
-        return { ok: false, code: 'output_unavailable', detail: parsed.problem };
+        return {
+          ok: false,
+          code: 'range_not_satisfiable',
+          detail: parsed.problem,
+          totalBytes: job.output.bytes,
+        };
       }
 
       const stream = await options.reader.read(job.outputKey, parsed.range);

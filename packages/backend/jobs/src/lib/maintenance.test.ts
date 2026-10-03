@@ -17,6 +17,7 @@ import { beforeEach, describe, expect, test } from 'bun:test';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { createJobRepository, type JobsDatabase } from './job_repository.ts';
 import {
   type ArtifactSweepRepository,
   type Clock,
@@ -55,15 +56,19 @@ const changedRows = (db: Database): { changes: number } => ({
   changes: (db.query('SELECT changes() AS n').get() as { n: number }).n,
 });
 
-const asMaintenanceDb = (db: Database): MaintenanceDatabase => ({
+const asD1 = (db: Database): JobsDatabase => ({
   prepare(query: string) {
     const statement = db.query(query);
     return {
       bind(...values: unknown[]) {
         return {
+          all<T>() {
+            const rows = statement.all(...(values as never[])) as T[];
+            return Promise.resolve({ results: rows, meta: changedRows(db) });
+          },
           run() {
             statement.run(...(values as never[]));
-            return Promise.resolve({ meta: changedRows(db) });
+            return Promise.resolve({ results: [], meta: changedRows(db) });
           },
           first<T>(columnName?: string) {
             const row = statement.get(...(values as never[])) as Record<string, unknown> | null;
@@ -102,7 +107,7 @@ const addSession = (id: string, expiresAtMs: number): void => {
 const addRateLimit = (key: string, lastRequestMs: number): void => {
   sqlite
     .query('INSERT INTO rate_limits (key, count, last_request) VALUES (?, ?, ?)')
-    .run(key, 3, seconds(lastRequestMs));
+    .run(key, 3, lastRequestMs);
 };
 
 const sessionCount = (): number =>
@@ -114,7 +119,7 @@ const rateLimitCount = (): number =>
 beforeEach(() => {
   sqlite = new Database(':memory:');
   migrate(sqlite);
-  db = asMaintenanceDb(sqlite);
+  db = asD1(sqlite);
   const now = T0;
   clock = { now: () => now };
   sqlite.exec(
@@ -230,57 +235,22 @@ describe('purgeExpiredArtifacts', () => {
     const queued: Array<{ jobId: string; cutoffAt: number }> = [];
     const cleared: string[] = [];
 
+    const realRepository = createJobRepository(asD1(sqlite), clock);
     const repository: ArtifactSweepRepository = {
-      async listExpiredArtifacts(cutoffMs, limit) {
-        const rows = sqlite
-          .query(
-            `SELECT id, output_key FROM jobs
-             WHERE output_expires_at IS NOT NULL AND output_expires_at <= ?
-             ORDER BY output_expires_at ASC, id ASC LIMIT ?`,
-          )
-          .all(seconds(cutoffMs), limit) as Array<{ id: string; output_key: string | null }>;
-        return rows.map((row) => ({ id: row.id, outputKey: row.output_key }));
-      },
+      ...realRepository,
       async enqueueArtifactRetirement(jobId, cutoffMs) {
-        const result = sqlite
-          .query(
-            `INSERT INTO job_artifact_retirements (job_id, output_key, runs, cutoff_at)
-             SELECT id, output_key, 0, ? FROM jobs WHERE id = ? AND output_key IS NOT NULL
-             ON CONFLICT(job_id) DO UPDATE SET cutoff_at = excluded.cutoff_at`,
-          )
-          .run(seconds(cutoffMs), jobId);
-        if (result.changes === 1) {
+        const added = await realRepository.enqueueArtifactRetirement(jobId, cutoffMs);
+        if (added) {
           queued.push({ jobId, cutoffAt: cutoffMs });
-          return true;
         }
-        return false;
-      },
-      async listArtifactRetirements(limit) {
-        const rows = sqlite
-          .query(
-            'SELECT job_id, output_key FROM job_artifact_retirements ORDER BY cutoff_at ASC, job_id ASC LIMIT ?',
-          )
-          .all(limit) as Array<{ job_id: string; output_key: string }>;
-        return rows.map((row) => ({ jobId: row.job_id, outputKey: row.output_key }));
-      },
-      async completeArtifactRetirement(jobId) {
-        const result = sqlite
-          .query('DELETE FROM job_artifact_retirements WHERE job_id = ?')
-          .run(jobId);
-        return result.changes === 1;
+        return added;
       },
       async clearJobOutput(jobId) {
-        const result = sqlite
-          .query(
-            `UPDATE jobs SET output_key = NULL, output_bytes = NULL, output_sha256 = NULL,
-               output_expires_at = NULL WHERE id = ? AND output_key IS NOT NULL`,
-          )
-          .run(jobId);
-        if (result.changes === 1) {
+        const changed = await realRepository.clearJobOutput(jobId);
+        if (changed) {
           cleared.push(jobId);
-          return true;
         }
-        return false;
+        return changed;
       },
     };
 
@@ -336,6 +306,7 @@ describe('purgeExpiredArtifacts', () => {
     world.removed.add('jobs/job_a.mp4');
 
     const second = await purgeExpiredArtifacts(world.repository, world.storage, { cutoffMs: T0 });
+    expect(second.queued).toBe(0);
     expect(second.retired).toBe(1);
     expect(second.outstanding).toBe(0);
     expect(world.cleared).toEqual(['job_a']);
@@ -353,9 +324,23 @@ describe('purgeExpiredArtifacts', () => {
     await purgeExpiredArtifacts(world.repository, world.storage, { cutoffMs: T0 });
     const again = await purgeExpiredArtifacts(world.repository, world.storage, { cutoffMs: T0 });
 
+    expect(again.queued).toBe(0);
+    expect(sqlite.query('SELECT runs FROM job_artifact_retirements').get()).toEqual({ runs: 2 });
     expect(again.outstanding).toBe(1);
     expect(again.retired).toBe(0);
     expect(world.cleared).toEqual([]);
+  });
+
+  test('failed retirements do not starve later artifacts', async () => {
+    addJobWithArtifact('job_a', T0 - HOUR);
+    addJobWithArtifact('job_b', T0 - HOUR);
+    const world = fixture();
+    await purgeExpiredArtifacts(world.repository, world.storage, { cutoffMs: T0, batch: 1 });
+    world.removed.add('jobs/job_b.mp4');
+    expect(
+      await purgeExpiredArtifacts(world.repository, world.storage, { cutoffMs: T0, batch: 1 }),
+    ).toEqual({ queued: 1, retired: 1, outstanding: 1 });
+    expect(world.cleared).toEqual(['job_b']);
   });
 
   test('an artifact that is not yet due is neither queued nor retired', async () => {
@@ -382,6 +367,27 @@ describe('purgeExpiredArtifacts', () => {
 });
 
 describe('runMaintenance', () => {
+  test('stale dispatch failures release the owner slot while recent failures stay recoverable', async () => {
+    const repository = createJobRepository(asD1(sqlite), clock);
+    const input = { fixture: 'sample-v1', preset: 'demo-180p-v1' } as const;
+    expect((await repository.createEncodeJob('user_alice', input, 'key-a', 'job_a')).ok).toBe(true);
+    expect(await repository.markDispatchFailed('job_a', 'provider_unavailable')).toBe(true);
+    await runMaintenance(db, repository, { isRemoved: async () => false }, clock, {
+      runKey: 'recent',
+    });
+    expect((await repository.getJobForOwner('user_alice', 'job_a'))?.status).toBe('pending');
+    sqlite.query('UPDATE jobs SET updated_at = ? WHERE id = ?').run(seconds(T0 - HOUR), 'job_a');
+    const report = await runMaintenance(db, repository, { isRemoved: async () => false }, clock, {
+      runKey: 'stale',
+    });
+    expect(report.pendingDispatches).toBe(0);
+    expect(await repository.getJobForOwner('user_alice', 'job_a')).toMatchObject({
+      status: 'failed',
+      activeAttemptId: null,
+    });
+    expect((await repository.createEncodeJob('user_alice', input, 'key-b', 'job_b')).ok).toBe(true);
+  });
+
   test('one cutoff for the whole run, and every count is the rows affected', async () => {
     addSession('expired-1', T0 - 8 * DAY);
     addSession('expired-2', T0 - 9 * DAY);
@@ -389,14 +395,7 @@ describe('runMaintenance', () => {
     addRateLimit('idle|1', T0 - 30 * 60 * 60 * 1000);
     addRateLimit('busy|1', T0 - 1000);
 
-    const noJobs = {
-      listExpiredArtifacts: async () => [],
-      enqueueArtifactRetirement: async () => false,
-      listArtifactRetirements: async () => [],
-      completeArtifactRetirement: async () => false,
-      clearJobOutput: async () => false,
-      listPendingDispatches: async () => [],
-    };
+    const noJobs = createJobRepository(asD1(sqlite), clock);
 
     const report = await runMaintenance(db, noJobs, { isRemoved: async () => false }, clock, {
       runKey: '2026-10-05T12',
@@ -418,9 +417,7 @@ describe('runMaintenance', () => {
     // backlog of undispatched jobs is by definition a set of finished ones, and
     // writing them as pending would trip the partial unique index rather than
     // testing the sweep.
-    const ids: string[] = [];
     for (let index = 0; index < 3; index += 1) {
-      ids.push(`job_${index}`);
       sqlite
         .query(
           `INSERT INTO jobs (
@@ -435,14 +432,7 @@ describe('runMaintenance', () => {
 
     const report = await runMaintenance(
       db,
-      {
-        listExpiredArtifacts: async () => [],
-        enqueueArtifactRetirement: async () => false,
-        listArtifactRetirements: async () => [],
-        completeArtifactRetirement: async () => false,
-        clearJobOutput: async () => false,
-        listPendingDispatches: async (limit: number) => ids.slice(0, limit),
-      },
+      createJobRepository(asD1(sqlite), clock),
       { isRemoved: async () => false },
       clock,
       { runKey: 'slot-1' },

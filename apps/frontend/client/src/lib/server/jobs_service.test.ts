@@ -15,6 +15,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { WorkflowDispatchPort } from '@starter/jobs';
 import { databaseMigrationsDir } from '../../../tests/database_paths.ts';
+import { GET as outputRoute } from '../../routes/api/jobs/[id]/output/+server.ts';
 import {
   createJobsService,
   JOBS_PROFILE_DISABLED,
@@ -184,7 +185,11 @@ describe('resolveJobsProfile, through the service', () => {
 
     const serviceAfter = serviceWith();
     const listed = await serviceAfter.list(OWNER_A);
-    expect(listed.jobs.map((job) => job.id)).toEqual([outcome.job.id]);
+    expect(listed.ok).toBe(true);
+    if (!listed.ok) {
+      return;
+    }
+    expect(listed.page.jobs.map((job) => job.id)).toEqual([outcome.job.id]);
 
     // And it is owed a dispatch, which is what a recovery pass looks for.
     const repository = serviceAfter.repository();
@@ -208,6 +213,13 @@ describe('resolveJobsProfile, through the service', () => {
 });
 
 describe('ownership through the service', () => {
+  test('a malformed cursor is an explicit refusal', async () => {
+    expect(await serviceWith().list(OWNER_A, { cursor: 'not-a-cursor' })).toMatchObject({
+      ok: false,
+      code: 'invalid_cursor',
+    });
+  });
+
   test("one user cannot read another user's job by a guessed id", async () => {
     const service = serviceWith();
     const created = await service.create(OWNER_A, request(), 'key-1');
@@ -225,21 +237,34 @@ describe('ownership through the service', () => {
 
   test("a list never contains another user's job", async () => {
     const service = serviceWith();
-    await service.create(OWNER_A, request(), 'key-a');
-    // Terminalise so the active cap does not refuse the second owner.
-    sqlite.exec("UPDATE jobs SET status = 'failed' WHERE owner_id = 'user_alice'");
-    await service.create(OWNER_B, request(), 'key-b');
+    const alice = await service.create(OWNER_A, request(), 'key-a');
+    const bob = await service.create(OWNER_B, request(), 'key-b');
+    expect(alice.ok).toBe(true);
+    expect(bob.ok).toBe(true);
+    if (!alice.ok || !bob.ok) {
+      return;
+    }
 
-    const page = await service.list(OWNER_A);
+    const outcome = await service.list(OWNER_A);
+    expect(outcome.ok).toBe(true);
+    if (!outcome.ok) {
+      return;
+    }
+    const page = outcome.page;
     expect(page.jobs).toHaveLength(1);
-    expect(page.jobs.every((job) => job.id.startsWith('job_'))).toBe(true);
+    expect(page.jobs.map((job) => job.id)).toEqual([alice.job.id]);
     expect(page.serverTime).toBe(now);
   });
 
   test('a list exposes no owner id and no storage key', async () => {
     const service = serviceWith();
     await service.create(OWNER_A, request(), 'key-1');
-    const page = await service.list(OWNER_A);
+    const outcome = await service.list(OWNER_A);
+    expect(outcome.ok).toBe(true);
+    if (!outcome.ok) {
+      return;
+    }
+    const page = outcome.page;
     for (const job of page.jobs) {
       expect(Object.keys(job).sort()).toEqual([
         'createdAt',
@@ -327,6 +352,43 @@ describe('output reads', () => {
     expect(job?.status).toBe('succeeded');
     // …and it no longer claims an artifact.
     expect(job?.outputAvailable).toBe(false);
+  });
+
+  test('a rejected range returns 416 with the artifact length and never reads storage', async () => {
+    let reads = 0;
+    const service = createJobsService({
+      db: asJobsDatabase(sqlite),
+      profile: JOBS_PROFILE_ENCODE,
+      clock: { now: () => now },
+      reader: {
+        async read() {
+          reads += 1;
+          return null;
+        },
+      },
+    });
+    const created = await service.create(OWNER_A, request(), 'range-test');
+    expect(created.ok).toBe(true);
+    if (!created.ok) {
+      return;
+    }
+    await succeed(created.job.id, 'jobs/a.mp4', now + 24 * HOUR);
+    for (const range of ['bytes=4096-', 'garbage', 'bytes=0-1,3-4']) {
+      const response = await outputRoute({
+        locals: { user: { id: OWNER_A }, container: { jobsProfile: 'encode', jobs: service } },
+        params: { id: created.job.id },
+        request: new Request('http://localhost/api/jobs/output', { headers: { range } }),
+      } as Parameters<typeof outputRoute>[0]);
+      expect(response.status).toBe(416);
+      expect(response.headers.get('content-range')).toBe('bytes */4096');
+      expect(await response.json()).toMatchObject({ error: 'range_not_satisfiable' });
+    }
+    expect(reads).toBe(0);
+    expect(await service.readOutput(OWNER_A, created.job.id, null)).toMatchObject({
+      ok: false,
+      code: 'output_unavailable',
+    });
+    expect(reads).toBe(1);
   });
 
   test('with no artifact store bound, a readable job reports the capability, not a broken stream', async () => {

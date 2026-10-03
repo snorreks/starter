@@ -35,7 +35,6 @@ import {
   type JobRepository,
   type JobsDatabase,
   parseJobCursor,
-  requestFingerprint,
   startOfUtcDay,
   workflowIdFor,
 } from './job_repository.ts';
@@ -175,6 +174,24 @@ beforeEach(() => {
 const admit = async (owner: string, key = newJobId(), idempotencyKey = newJobId()) =>
   repository.createEncodeJob(owner, request(), idempotencyKey, key);
 
+const seedTerminalJobs = (count: number): void => {
+  for (let index = 0; index < count; index += 1) {
+    sqlite
+      .query(`INSERT INTO jobs (
+      id, owner_id, kind, status, fixture, preset, idempotency_key, request_fingerprint,
+      workflow_id, dispatch_state, created_at, updated_at
+    ) VALUES (?, ?, 'encode', 'failed', 'sample-v1', 'demo-180p-v1', ?, '{}', ?, 'pending', ?, ?)`)
+      .run(
+        `job_seed_${index}`,
+        OWNER_A,
+        `key_seed_${index}`,
+        `encode-seed-${index}`,
+        T0 / 1000,
+        T0 / 1000,
+      );
+  }
+};
+
 // ── Admission ────────────────────────────────────────────────────────────────
 
 describe('createEncodeJob', () => {
@@ -210,24 +227,6 @@ describe('createEncodeJob', () => {
 
     const rows = sqlite.query('SELECT count(*) AS n FROM jobs').get() as { n: number };
     expect(rows.n).toBe(1);
-  });
-
-  test('the same key with a different body is a conflict', async () => {
-    await repository.createEncodeJob(OWNER_A, request(), 'shared-key', newJobId());
-    const other = await repository.createEncodeJob(
-      OWNER_A,
-      { fixture: 'sample-v1', preset: 'demo-180p-v1' },
-      'shared-key',
-      newJobId(),
-    );
-    expect(other.ok).toBe(true);
-
-    // The only other frozen body differs in field order, which is the same body.
-    // A genuine difference needs a second valid body, and there is none by design:
-    // so the conflict case is exercised through the fingerprint directly.
-    expect(requestFingerprint(request())).toBe(
-      requestFingerprint(other.ok ? request() : request()),
-    );
   });
 
   test('a replay is refused while the first job is still active, and admitted once it is not', async () => {
@@ -311,6 +310,7 @@ describe('createEncodeJob', () => {
   test('the hourly window is rolling, so an hour-old job stops counting', async () => {
     for (let index = 0; index < 5; index += 1) {
       const outcome = await admit(OWNER_A, `job_h${index}`, `key-h${index}`);
+      expect(outcome.ok).toBe(true);
       if (outcome.ok) {
         sqlite.exec(`UPDATE jobs SET status = 'failed' WHERE id = '${outcome.job.id}'`);
       }
@@ -390,6 +390,18 @@ describe('createEncodeJob', () => {
 // ── Ownership ────────────────────────────────────────────────────────────────
 
 describe('ownership', () => {
+  test.each(['fixture', 'preset'])('an unknown stored %s is rejected', async (column) => {
+    const created = await admit(OWNER_A);
+    expect(created.ok).toBe(true);
+    if (!created.ok) {
+      return;
+    }
+    sqlite.query(`UPDATE jobs SET ${column} = ? WHERE id = ?`).run('unknown', created.job.id);
+    await expect(repository.getJobForOwner(OWNER_A, created.job.id)).rejects.toThrow(
+      'unknown fixture or preset',
+    );
+  });
+
   test("getJobForOwner answers null for another user's job", async () => {
     const created = await admit(OWNER_A);
     expect(created.ok).toBe(true);
@@ -404,6 +416,7 @@ describe('ownership', () => {
 
   test('a guessed job id from another owner is indistinguishable from a missing one', async () => {
     const created = await admit(OWNER_A);
+    expect(created.ok).toBe(true);
     if (!created.ok) {
       return;
     }
@@ -418,11 +431,13 @@ describe('ownership', () => {
 
   test("listJobsForOwner never lists another owner's jobs", async () => {
     const a = await admit(OWNER_A);
+    expect(a.ok).toBe(true);
     if (!a.ok) {
       return;
     }
     sqlite.exec(`UPDATE jobs SET status = 'failed' WHERE id = '${a.job.id}'`);
     const b = await admit(OWNER_B);
+    expect(b.ok).toBe(true);
     if (!b.ok) {
       return;
     }
@@ -434,9 +449,10 @@ describe('ownership', () => {
   });
 
   test('listJobsForOwner clamps an absurd limit to the frozen bound', async () => {
+    seedTerminalJobs(60);
     const bounded = createJobRepository(asD1(sqlite), clock);
     const page = await bounded.listJobsForOwner(OWNER_A, { limit: 100_000 });
-    expect(page.jobs.length).toBeLessThanOrEqual(50);
+    expect(page.jobs).toHaveLength(50);
   });
 
   test('a cursor pages without dropping a job created in the same millisecond', async () => {
@@ -450,6 +466,7 @@ describe('ownership', () => {
         `k${index}`,
         `job_p${index}`,
       );
+      expect(outcome.ok).toBe(true);
       if (outcome.ok) {
         sqlite.exec(`UPDATE jobs SET status = 'failed' WHERE id = '${outcome.job.id}'`);
       }
@@ -489,6 +506,7 @@ describe('attempt fencing', () => {
 
   test('a claim takes the lease and moves the job to running', async () => {
     const created = await admit(OWNER_A);
+    expect(created.ok).toBe(true);
     if (!created.ok) {
       return;
     }
@@ -505,6 +523,7 @@ describe('attempt fencing', () => {
 
   test('a second attempt cannot claim a job whose lease is live', async () => {
     const created = await admit(OWNER_A);
+    expect(created.ok).toBe(true);
     if (!created.ok) {
       return;
     }
@@ -522,6 +541,7 @@ describe('attempt fencing', () => {
 
   test('an expired lease may be taken over, and the old attempt is then fenced', async () => {
     const created = await admit(OWNER_A);
+    expect(created.ok).toBe(true);
     if (!created.ok) {
       return;
     }
@@ -549,6 +569,7 @@ describe('attempt fencing', () => {
 
   test('a stale failure cannot overwrite a committed success', async () => {
     const created = await admit(OWNER_A);
+    expect(created.ok).toBe(true);
     if (!created.ok) {
       return;
     }
@@ -582,6 +603,7 @@ describe('attempt fencing', () => {
 
   test('a terminal job cannot be reopened or re-claimed', async () => {
     const created = await admit(OWNER_A);
+    expect(created.ok).toBe(true);
     if (!created.ok) {
       return;
     }
@@ -596,8 +618,58 @@ describe('attempt fencing', () => {
     expect(reclaim.reason).toBe('not_claimable');
   });
 
+  test('the final live attempt can finish before exhaustion terminalizes it', async () => {
+    const created = await admit(OWNER_A);
+    expect(created.ok).toBe(true);
+    if (!created.ok) {
+      return;
+    }
+    for (let index = 1; index <= 3; index += 1) {
+      expect(
+        (await repository.claimAttempt(created.job.id, `attempt-${index}`, clock.now() + 1000)).ok,
+      ).toBe(true);
+      if (index < 3) {
+        clock.advance(2000);
+      }
+    }
+    expect(await repository.claimAttempt(created.job.id, 'attempt-4', clock.now() + 1000)).toEqual({
+      ok: false,
+      reason: 'lease_held',
+    });
+    expect(await repository.failStaleJobs(clock.now(), 10)).toBe(0);
+    expect((await repository.completeAttempt(created.job.id, 'attempt-3', commitOutput())).ok).toBe(
+      true,
+    );
+    expect(await repository.claimAttempt(created.job.id, 'attempt-4', clock.now() + 1000)).toEqual({
+      ok: false,
+      reason: 'not_claimable',
+    });
+  });
+
+  test('maintenance terminalizes an exhausted job after its final lease expires', async () => {
+    const created = await admit(OWNER_A);
+    expect(created.ok).toBe(true);
+    if (!created.ok) {
+      return;
+    }
+    for (let index = 1; index <= 3; index += 1) {
+      expect(
+        (await repository.claimAttempt(created.job.id, `attempt-${index}`, clock.now() + 1000)).ok,
+      ).toBe(true);
+      clock.advance(2000);
+    }
+    expect(await repository.failStaleJobs(T0, 10)).toBe(1);
+    expect(await repository.getJobForOwner(OWNER_A, created.job.id)).toMatchObject({
+      status: 'failed',
+      errorCode: 'attempts_exhausted',
+      activeAttemptId: null,
+    });
+    expect((await admit(OWNER_A)).ok).toBe(true);
+  });
+
   test('attempts are bounded', async () => {
     const created = await admit(OWNER_A);
+    expect(created.ok).toBe(true);
     if (!created.ok) {
       return;
     }
@@ -619,6 +691,16 @@ describe('attempt fencing', () => {
       return;
     }
     expect(fourth.reason).toBe('attempts_exhausted');
+    expect(await repository.getJobForOwner(OWNER_A, created.job.id)).toMatchObject({
+      status: 'failed',
+      errorCode: 'attempts_exhausted',
+      activeAttemptId: null,
+      completedAt: clock.now(),
+    });
+    expect(
+      sqlite.query('SELECT lease_expires_at FROM jobs WHERE id = ?').get(created.job.id),
+    ).toEqual({ lease_expires_at: null });
+    expect((await admit(OWNER_A)).ok).toBe(true);
   });
 
   test('a claim against a job that does not exist says so', async () => {
@@ -632,6 +714,7 @@ describe('attempt fencing', () => {
 
   test('completeAttempt records the measured output and clears the lease', async () => {
     const created = await admit(OWNER_A);
+    expect(created.ok).toBe(true);
     if (!created.ok) {
       return;
     }
@@ -662,6 +745,7 @@ describe('attempt fencing', () => {
 
   test('failAttempt writes the code and releases the lease', async () => {
     const created = await admit(OWNER_A);
+    expect(created.ok).toBe(true);
     if (!created.ok) {
       return;
     }
@@ -697,6 +781,7 @@ describe('dispatch bookkeeping', () => {
 
   test('markDispatched is idempotent', async () => {
     const created = await admit(OWNER_A);
+    expect(created.ok).toBe(true);
     if (!created.ok) {
       return;
     }
@@ -709,6 +794,7 @@ describe('dispatch bookkeeping', () => {
 
   test('a dispatch failure stays visible and recoverable', async () => {
     const created = await admit(OWNER_A);
+    expect(created.ok).toBe(true);
     if (!created.ok) {
       return;
     }
@@ -733,9 +819,30 @@ describe('dispatch bookkeeping', () => {
     expect(await repository.markDispatched(created.job.id)).toBe(true);
   });
 
+  test('non-retryable and exhausted dispatch failures are excluded from recovery', async () => {
+    const alice = await admit(OWNER_A);
+    const bob = await admit(OWNER_B);
+    expect(alice.ok && bob.ok).toBe(true);
+    if (!alice.ok || !bob.ok) {
+      return;
+    }
+    expect(await repository.markDispatchFailed(alice.job.id, 'protocol_rejected')).toBe(true);
+    for (let index = 0; index < 3; index += 1) {
+      expect(await repository.markDispatchFailed(bob.job.id, 'provider_unavailable')).toBe(true);
+      expect((await repository.listPendingDispatches(10)).map((job) => job.id)).toEqual(
+        index < 2 ? [bob.job.id] : [],
+      );
+    }
+    expect(await repository.failStaleJobs(T0 - HOUR, 1)).toBe(1);
+    expect(await repository.failStaleJobs(T0 - HOUR, 10)).toBe(1);
+    expect((await admit(OWNER_A)).ok).toBe(true);
+    expect((await admit(OWNER_B)).ok).toBe(true);
+  });
+
   test('listPendingDispatches is bounded', async () => {
-    expect((await repository.listPendingDispatches(0)).length).toBeLessThanOrEqual(1);
-    expect((await repository.listPendingDispatches(1_000)).length).toBeLessThanOrEqual(50);
+    seedTerminalJobs(60);
+    expect(await repository.listPendingDispatches(0)).toHaveLength(1);
+    expect(await repository.listPendingDispatches(1_000)).toHaveLength(50);
   });
 });
 
@@ -756,6 +863,7 @@ describe('artifact retention', () => {
 
   test('an artifact becomes listable only once it is past its cutoff', async () => {
     const created = await admit(OWNER_A);
+    expect(created.ok).toBe(true);
     if (!created.ok) {
       return;
     }
@@ -773,6 +881,7 @@ describe('artifact retention', () => {
 
   test('retirement is queued, confirmed and closed, and only then is the output cleared', async () => {
     const created = await admit(OWNER_A);
+    expect(created.ok).toBe(true);
     if (!created.ok) {
       return;
     }
@@ -782,6 +891,8 @@ describe('artifact retention', () => {
 
     expect(await repository.enqueueArtifactRetirement(created.job.id, clock.now())).toBe(true);
 
+    expect(await repository.enqueueArtifactRetirement(created.job.id, clock.now())).toBe(false);
+    expect(await repository.listExpiredArtifacts(clock.now(), 10)).toEqual([]);
     const queued = await repository.listArtifactRetirements(10);
     expect(queued.map((entry) => entry.jobId)).toEqual([created.job.id]);
     expect(queued[0]?.outputKey).toBe('jobs/a.mp4');
@@ -805,6 +916,7 @@ describe('artifact retention', () => {
 
   test('a job with no artifact cannot be queued for retirement', async () => {
     const created = await admit(OWNER_A);
+    expect(created.ok).toBe(true);
     if (!created.ok) {
       return;
     }

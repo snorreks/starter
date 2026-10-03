@@ -70,6 +70,9 @@ export const DISPATCH_ERROR_CODES = [
   'protocol_rejected',
 ] as const;
 
+/** Maximum failed dispatch calls before recovery stops retrying. */
+export const MAX_DISPATCH_ATTEMPTS = 3;
+
 export type DispatchErrorCode = (typeof DISPATCH_ERROR_CODES)[number];
 
 /**

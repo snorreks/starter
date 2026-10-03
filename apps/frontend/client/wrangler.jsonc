@@ -83,12 +83,12 @@
     // /api/jobs routes) ships and works in every environment. What is *not* wired
     // up is the compute behind it: no jobs Worker, no Workflow binding and no
     // private artifact store exist yet, so an enabled profile would answer `202`
-    // for a job nothing will ever run. `apps/backend/jobs` ships
+    // for a job nothing will ever run. `packages/backend/jobs` ships
     // `createDisabledDispatchPort()` for exactly that reason, and
     // `resolveJobsProfile` refuses an unrecognised value rather than guessing.
     //
     // Set `"JOBS_PROFILE": "encode"` only in a deployment that has the jobs Worker
-    // bound, which is PR H's work.
+    // bound. `apps/backend/jobs` is PR H's future scheduled Worker root.
   },
   "d1_databases": [
     {
