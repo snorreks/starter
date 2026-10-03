@@ -306,6 +306,9 @@ interface Account {
  */
 const originHeaders = (): Record<string, string> => ({ origin: base() });
 
+/** The same, for the second Worker this file starts with the jobs profile on. */
+const originHeadersFor = (origin: () => string): Record<string, string> => ({ origin: origin() });
+
 /**
  * Create a verified account and sign it in.
  *
@@ -1786,4 +1789,448 @@ describe('a forwarded browser event is stored once, and stays a browser event', 
     await sleep(500);
     expect(structuredRecords().filter((event) => event.event === marker)).toHaveLength(0);
   }, 60_000);
+});
+
+// ── Jobs ─────────────────────────────────────────────────────────────────────
+
+describe('the jobs API with the compute profile disabled', () => {
+  // This Worker above runs with no `JOBS_PROFILE` binding, which is the shipped
+  // default. Everything below is about the answer being *named*: a client that
+  // cannot tell "this deployment cannot do that" from "the URL is wrong" or "the
+  // server is broken" cannot do anything useful with the failure.
+
+  test('every jobs route answers 503 with a named capability', async () => {
+    const account = await signUp('integration-jobs-disabled');
+    const body = JSON.stringify({ fixture: 'sample-v1', preset: 'demo-180p-v1' });
+    const headers = {
+      'content-type': 'application/json',
+      ...originHeaders(),
+      'idempotency-key': createId('key', 12),
+    };
+
+    for (const path of ['/api/jobs', '/api/jobs/job_anything', '/api/jobs/job_anything/output']) {
+      const response = await api(account, path, { method: 'GET', headers });
+      expect(response.status).toBe(503);
+      const parsed = (await response.json()) as { error?: string };
+      expect(parsed.error).toBe('jobs_profile_disabled');
+    }
+
+    const created = await api(account, '/api/jobs', {
+      method: 'POST',
+      body,
+      headers,
+    });
+    expect(created.status).toBe(503);
+    expect(((await created.json()) as { error?: string }).error).toBe('jobs_profile_disabled');
+  }, 60_000);
+
+  test('an anonymous caller is refused before the capability is discussed', async () => {
+    // 401 rather than 503: the request is not answerable at all without a session,
+    // and telling an anonymous caller which capabilities this deployment has is
+    // information it has no right to yet.
+    const response = await fetch(`${base()}/api/jobs`, { headers: originHeaders() });
+    expect(response.status).toBe(401);
+  }, 30_000);
+
+  test('the disabled profile leaves notes and auth working', async () => {
+    // The negative control that matters: a jobs capability that is off must not
+    // cost a working application anything. If this failed, the gating had leaked
+    // into the shared composition root.
+    const account = await signUp('integration-jobs-disabled-regression');
+
+    const created = await api(account, '/api/notes', {
+      method: 'POST',
+      body: JSON.stringify({ title: 'Still works', body: 'The jobs profile is off.' }),
+    });
+    expect(created.status).toBe(200);
+
+    const listed = await api(account, '/api/notes');
+    expect(listed.status).toBe(200);
+    const page = (await listed.json()) as { notes: Array<{ title: string }> };
+    expect(page.notes.some((note) => note.title === 'Still works')).toBe(true);
+
+    const session = await api(account, '/api/auth/get-session');
+    expect(session.status).toBe(200);
+  }, 60_000);
+});
+
+/**
+ * A second Worker, on its own port and its own persisted D1, with
+ * `JOBS_PROFILE=encode`.
+ *
+ * A separate process rather than a second binding on the first one, because the
+ * point is to exercise the enabled path through real workerd and a real local D1 —
+ * migration 0003 applied, the partial unique index enforced by SQLite, the
+ * correlated budget subqueries executed — and a fake binding would prove none of
+ * that. The state directory is separate so this suite's jobs cannot collide with
+ * the suite above's notes.
+ */
+describe('the jobs API with the compute profile enabled', () => {
+  const JOBS_STATE = join(APP_DIR, '.wrangler-jobs-state');
+  const JOBS_LOG = process.env.JOBS_WORKER_LOG ?? '/tmp/starter-integration-jobs-worker.log';
+  const JOBS_RUN_ID = `jobs-${createId('it', 8)}`;
+
+  let jobsServer: ChildProcess | undefined;
+  let jobsPort = 0;
+
+  const jobsBase = (): string => `http://127.0.0.1:${jobsPort}`;
+
+  const jobsAuthFetch = (path: string, init: RequestInit = {}): Promise<Response> =>
+    fetch(`${jobsBase()}${path}`, {
+      ...init,
+      headers: {
+        'content-type': 'application/json',
+        origin: jobsBase(),
+        ...(init.headers ?? {}),
+      },
+    });
+
+  const jobsApi = (account: Account, path: string, init: RequestInit = {}): Promise<Response> =>
+    fetch(`${jobsBase()}${path}`, {
+      ...init,
+      headers: {
+        ...(init.body === undefined ? {} : { 'content-type': 'application/json' }),
+        origin: jobsBase(),
+        cookie: account.cookie,
+        ...(init.headers ?? {}),
+      },
+    });
+
+  /** A verified account on this Worker, through the real account lifecycle. */
+  const jobsSignUp = async (label: string): Promise<Account> => {
+    const email = `${label}-${createId('t', 8)}@example.invalid`;
+    const password = 'correct-horse-battery-staple';
+
+    const created = await jobsAuthFetch('/api/auth/sign-up/email', {
+      method: 'POST',
+      body: JSON.stringify({ email, password, name: label }),
+    });
+    if (!created.ok) {
+      throw new Error(`sign-up failed: ${created.status} ${await created.text()}`);
+    }
+
+    const inbox = await fetch(`${jobsBase()}/api/dev/mail?to=${encodeURIComponent(email)}`);
+    if (!inbox.ok) {
+      throw new Error(`mail inbox unavailable: ${inbox.status}`);
+    }
+    const { messages } = (await inbox.json()) as { messages: CapturedMessage[] };
+    const message = messages.find((entry) => entry.subject.includes('Verify'));
+    if (message === undefined) {
+      throw new Error(`No verification mail was captured for ${email}`);
+    }
+    const link = message.text.split('\n').find((entry) => entry.startsWith('http'));
+    if (link === undefined) {
+      throw new Error('No link in the verification mail');
+    }
+    await fetch(link, { redirect: 'manual' });
+
+    const signedIn = await jobsAuthFetch('/api/auth/sign-in/email', {
+      method: 'POST',
+      body: JSON.stringify({ email, password }),
+    });
+    if (!signedIn.ok) {
+      throw new Error(`sign-in failed: ${signedIn.status} ${await signedIn.text()}`);
+    }
+    const cookie = (signedIn.headers.get('set-cookie') ?? '').split(';')[0] ?? '';
+    if (!cookie.includes('better-auth')) {
+      throw new Error('sign-in set no session cookie');
+    }
+    return { email, password, cookie };
+  };
+
+  const jobBody = (): string => JSON.stringify({ fixture: 'sample-v1', preset: 'demo-180p-v1' });
+
+  const postJob = (account: Account, idempotencyKey: string | null, body = jobBody()) =>
+    jobsApi(account, '/api/jobs', {
+      method: 'POST',
+      body,
+      headers: {
+        ...originHeadersFor(jobsBase),
+        ...(idempotencyKey === null ? {} : { 'idempotency-key': idempotencyKey }),
+      },
+    });
+
+  beforeAll(async () => {
+    jobsPort = await findFreePort();
+    rmSync(JOBS_STATE, { recursive: true, force: true });
+
+    const migrate = spawnSync(
+      [
+        WRANGLER,
+        'd1',
+        'migrations',
+        'apply',
+        'DB',
+        '--local',
+        '--config',
+        APP_CONFIG,
+        '--persist-to',
+        JOBS_STATE,
+      ],
+      { cwd: REPO_ROOT, stdout: 'pipe', stderr: 'pipe' },
+    );
+    if (migrate.exitCode !== 0) {
+      throw new Error(`Jobs-profile migration failed:\n${migrate.stderr.toString()}`);
+    }
+
+    const logFd = openSync(JOBS_LOG, 'w');
+    jobsServer = spawn(
+      WRANGLER,
+      [
+        'dev',
+        WORKER_ENTRY,
+        '--port',
+        String(jobsPort),
+        '--local',
+        '--config',
+        APP_CONFIG,
+        '--persist-to',
+        JOBS_STATE,
+        '--var',
+        `TEST_RUN_ID:${JOBS_RUN_ID}`,
+        '--var',
+        'DEPLOYMENT_ENV:local',
+        '--var',
+        'BETTER_AUTH_SECRET:integration-test-secret-not-for-production-use',
+        '--var',
+        `AUTH_RATE_LIMIT_MAX:${AUTH_RATE_LIMIT_MAX}`,
+        // The whole point of this Worker: the capability this repository ships as
+        // off by default, turned on explicitly so the enabled path is exercised for
+        // real rather than described.
+        '--var',
+        'JOBS_PROFILE:encode',
+      ],
+      { cwd: APP_DIR, stdio: ['ignore', logFd, logFd] },
+    );
+
+    const deadline = Date.now() + 120_000;
+    for (;;) {
+      try {
+        const response = await fetch(`${jobsBase()}/api/health`);
+        if (response.ok) {
+          const health = (await response.json()) as { testRunId?: string };
+          if (health.testRunId === JOBS_RUN_ID) {
+            return;
+          }
+        }
+      } catch {
+        // Not listening yet.
+      }
+      if (Date.now() >= deadline) {
+        throw new Error(
+          `The jobs-profile Worker never became ready. Log: ${JOBS_LOG}. ` +
+            'Refusing to run the suite against a process this file did not start.',
+        );
+      }
+      await sleep(400);
+    }
+  }, 240_000);
+
+  afterAll(() => {
+    if (jobsServer?.pid !== undefined) {
+      killTree(jobsServer.pid, { graceMs: 200, attempts: 20 });
+    }
+    jobsServer = undefined;
+    rmSync(JOBS_STATE, { recursive: true, force: true });
+  });
+
+  test('a verified user creates a job and gets it back', async () => {
+    const account = await jobsSignUp('integration-jobs-create');
+    const response = await postJob(account, createId('key', 12));
+
+    expect(response.status).toBe(202);
+    const job = (await response.json()) as {
+      id: string;
+      kind: string;
+      status: string;
+      outputAvailable: boolean;
+      errorCode: string | null;
+    };
+    expect(job.kind).toBe('encode');
+    expect(job.status).toBe('pending');
+    expect(job.outputAvailable).toBe(false);
+    expect(job.errorCode).toBeNull();
+
+    // The DTO carries no owner id, no storage key and no dispatch diagnostics.
+    const readBack = await jobsApi(account, `/api/jobs/${job.id}`);
+    expect(readBack.status).toBe(200);
+    expect(Object.keys(((await readBack.json()) as object) ?? {}).sort()).toEqual([
+      'createdAt',
+      'errorCode',
+      'id',
+      'kind',
+      'outputAvailable',
+      'status',
+      'updatedAt',
+    ]);
+  }, 90_000);
+
+  test('the same idempotency key returns the same job and does not spend twice', async () => {
+    const account = await jobsSignUp('integration-jobs-idempotent');
+    const key = createId('key', 12);
+
+    const first = await postJob(account, key);
+    const second = await postJob(account, key);
+    expect(first.status).toBe(202);
+    expect(second.status).toBe(202);
+
+    const one = (await first.json()) as { id: string };
+    const two = (await second.json()) as { id: string };
+    expect(two.id).toBe(one.id);
+
+    const listed = await jobsApi(account, '/api/jobs');
+    const page = (await listed.json()) as { jobs: Array<{ id: string }> };
+    expect(page.jobs.filter((entry) => entry.id === one.id)).toHaveLength(1);
+  }, 90_000);
+
+  test('a missing or malformed idempotency key is refused by name', async () => {
+    const account = await jobsSignUp('integration-jobs-key');
+    const absent = await postJob(account, null);
+    expect(absent.status).toBe(400);
+    expect(((await absent.json()) as { error?: string }).error).toBe('invalid_idempotency_key');
+
+    const spaced = await postJob(account, 'has a space');
+    expect(spaced.status).toBe(400);
+  }, 90_000);
+
+  test('a body outside the frozen shapes is refused, and each field is refused for a reason', async () => {
+    const account = await jobsSignUp('integration-jobs-body');
+    const key = () => createId('key', 12);
+
+    const cases: Array<[string, string]> = [
+      ['a client that names its own owner', JSON.stringify({ fixture: 'sample-v1', preset: 'demo-180p-v1', ownerId: 'user_somebody_else' })],
+      ['a URL for the input media', JSON.stringify({ fixture: 'https://example.invalid/v.mp4', preset: 'demo-180p-v1' })],
+      ['an ffmpeg argument vector', JSON.stringify({ fixture: 'sample-v1', preset: 'demo-180p-v1', args: ['-f', 'lavfi'] })],
+      ['a preset outside the frozen set', JSON.stringify({ fixture: 'sample-v1', preset: 'uhd-2160p-v1' })],
+    ];
+
+    for (const [label, body] of cases) {
+      const response = await postJob(account, key(), body);
+      expect(response.status, `${label} should be refused`).toBe(400);
+    }
+  }, 90_000);
+
+  test('a second job while one is active is refused with the budget code', async () => {
+    const account = await jobsSignUp('integration-jobs-budget');
+    expect((await postJob(account, createId('key', 12))).status).toBe(202);
+
+    const second = await postJob(account, createId('key', 12));
+    expect(second.status).toBe(429);
+    expect(((await second.json()) as { error?: string }).error).toBe('budget_exceeded');
+  }, 90_000);
+
+  test('concurrent distinct keys admit exactly one job', async () => {
+    // The active-job cap decided by the partial unique index inside the inserting
+    // statement. A repository that counted first and then wrote would admit all
+    // three here.
+    const account = await jobsSignUp('integration-jobs-concurrent');
+    const responses = await Promise.all([
+      postJob(account, createId('key', 12)),
+      postJob(account, createId('key', 12)),
+      postJob(account, createId('key', 12)),
+    ]);
+
+    const statuses = responses.map((response) => response.status);
+    expect(statuses.filter((status) => status === 202)).toHaveLength(1);
+    expect(statuses.filter((status) => status === 429)).toHaveLength(2);
+  }, 90_000);
+
+  test('concurrent same-key requests produce one job and one 202 body', async () => {
+    const account = await jobsSignUp('integration-jobs-concurrent-key');
+    const key = createId('key', 12);
+    const responses = await Promise.all([
+      postJob(account, key),
+      postJob(account, key),
+      postJob(account, key),
+    ]);
+
+    expect(responses.every((response) => response.status === 202)).toBe(true);
+    const ids = new Set<string>();
+    for (const response of responses) {
+      const job = (await response.json()) as { id: string };
+      ids.add(job.id);
+    }
+    expect(ids.size).toBe(1);
+  }, 90_000);
+
+  test('one user cannot read another user\'s job, list it, or ask for its output', async () => {
+    const [alice, bob] = await Promise.all([
+      jobsSignUp('integration-jobs-alice'),
+      jobsSignUp('integration-jobs-bob'),
+    ]);
+
+    const created = await postJob(alice, createId('key', 12));
+    expect(created.status).toBe(202);
+    const job = (await created.json()) as { id: string };
+
+    // A guessed id answers exactly as a missing one does. A 403 or a 500 here
+    // would confirm the job exists and turn the endpoint into an existence oracle.
+    const guessed = await jobsApi(bob, `/api/jobs/${job.id}`);
+    const missing = await jobsApi(bob, '/api/jobs/job_does_not_exist');
+    expect(guessed.status).toBe(404);
+    expect(missing.status).toBe(404);
+
+    const output = await jobsApi(bob, `/api/jobs/${job.id}/output`);
+    expect(output.status).toBe(404);
+
+    const bobList = await jobsApi(bob, '/api/jobs');
+    const page = (await bobList.json()) as { jobs: Array<{ id: string }> };
+    expect(page.jobs.map((entry) => entry.id)).not.toContain(job.id);
+  }, 120_000);
+
+  test('the output of a job that has not succeeded says so, without leaking the id', async () => {
+    const account = await jobsSignUp('integration-jobs-output');
+    const created = await postJob(account, createId('key', 12));
+    const job = (await created.json()) as { id: string };
+
+    // 409, not 404: the job is the caller's and it exists; the *output* is not
+    // there yet. A client that cannot tell these apart retries forever.
+    const response = await jobsApi(account, `/api/jobs/${job.id}/output`);
+    expect(response.status).toBe(409);
+    expect(((await response.json()) as { error?: string }).error).toBe('output_not_ready');
+  }, 90_000);
+
+  test('a job has no mutating verb', async () => {
+    const account = await jobsSignUp('integration-jobs-verbs');
+    const created = await postJob(account, createId('key', 12));
+    const job = (await created.json()) as { id: string };
+
+    for (const method of ['PATCH', 'DELETE', 'PUT', 'POST']) {
+      const response = await jobsApi(account, `/api/jobs/${job.id}`, { method });
+      expect(response.status, `${method} should not be allowed`).toBe(405);
+    }
+  }, 90_000);
+
+  test('the list pages with an opaque cursor and a bad cursor is refused', async () => {
+    const account = await jobsSignUp('integration-jobs-list');
+    expect((await postJob(account, createId('key', 12))).status).toBe(202);
+
+    const first = await jobsApi(account, '/api/jobs?limit=1');
+    expect(first.status).toBe(200);
+    const page = (await first.json()) as { jobs: unknown[]; nextCursor: string | null };
+    expect(page.jobs).toHaveLength(1);
+    expect(page.nextCursor).toBeNull();
+
+    // Malformed cursors are client errors, not successful empty pages.
+    const garbage = await jobsApi(account, '/api/jobs?cursor=not-a-cursor');
+    expect(garbage.status).toBe(400);
+    expect(((await garbage.json()) as { error: string }).error).toBe('invalid_cursor');
+  }, 90_000);
+
+  test('a job whose dispatch failed is still visible, and is still recoverable', async () => {
+    // No Workflow binding exists in this PR, so the wired dispatcher refuses and
+    // the admission is committed anyway. That is the crash the design calls out —
+    // D1 committed, the Workflow call did not — and it must leave a job the owner
+    // can see rather than a 500 or a phantom success.
+    const account = await jobsSignUp('integration-jobs-dispatch-failed');
+    const created = await postJob(account, createId('key', 12));
+
+    expect(created.status).toBe(202);
+    const job = (await created.json()) as { id: string; status: string };
+    expect(job.status).toBe('pending');
+
+    const readBack = await jobsApi(account, `/api/jobs/${job.id}`);
+    expect(readBack.status).toBe(200);
+    expect(((await readBack.json()) as { status: string }).status).toBe('pending');
+  }, 90_000);
 });

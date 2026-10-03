@@ -10,7 +10,7 @@ a local command actually proves.
 
 ```
 packages/shared/*     schemas, logger, utils      no project dependencies
-packages/backend/*    database, auth              -> shared
+packages/backend/*    database, auth, jobs        -> shared
 packages/frontend/*   ui, platform, features      -> shared
 apps/frontend/client  ONE SvelteKit app           browser + Worker in one package
 apps/e2e              Playwright                  -> shared
@@ -56,6 +56,14 @@ this round adds them next:
 | `packages/frontend/platform/**` | browser | Contracts and injected transports. No component, no screen state, so no feature role is claimed — and no platform implementation leaks into `packages/shared` |
 | `apps/frontend/native/**` | browser under `src/`, Node elsewhere | A static SvelteKit bundle. Its `src/lib/platform/**` is the `native-bridge` role, the one place `@tauri-apps/*` may be named |
 | `apps/backend/jobs/**` | worker | A scheduled Worker reached through bindings, not through a route adapter |
+
+`packages/backend/jobs` (the D1 job state, its admission budgets, its attempt
+fencing, and bounded maintenance) is classified by the existing `^packages/backend/`
+row rather than a new one. It is a backend package rather than a folder inside the
+web application because the jobs Worker that will run the maintenance sweep — a
+project that does not exist yet — has to reach this code without importing
+SvelteKit, and the web app is the only thing that would drag it in. Its README
+states the state machine, the fencing rules, and which half is still missing.
 
 Two properties are deliberate. There is **no** blanket entry for an application
 directory, so an application nobody has heard of is reported as unclassified rather
@@ -148,7 +156,8 @@ The properties worth knowing:
   portable package, so a plane check alone sees a legal edge. The Node requirement
   travels through it to `node:child_process`, and the browser half does not have Node.
 - **Type-only edges are erased, and one exception is deliberate.** An `import type` is
-  not reachability — except `@starter/database` and `@starter/auth`, which a browser
+  not reachability — except `@starter/database`, `@starter/auth` and `@starter/jobs`,
+  which a browser
   module may not import even as a type. The Drizzle schema is a private server entity;
   a DTO belongs in `@starter/schemas`. `src/app.d.ts` is exempt because declaring
   `App.Locals` is the framework's own type channel and emits no code.

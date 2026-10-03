@@ -19,6 +19,8 @@
 // build-time code must not need live bindings — so nothing here has to guess
 // whether a binding exists.
 
+import { JOBS_PROFILE_DISABLED, JOBS_PROFILE_ENCODE } from './jobs_service.ts';
+
 /** The Worker bindings this application requires. */
 export interface AppEnv {
   /** D1 binding. Required: there is no in-memory store. */
@@ -94,6 +96,16 @@ export interface AppEnv {
   LOG_LEVEL?: string;
   /** Build identifier attached to every log event. Injected by the deploy step. */
   RELEASE?: string;
+  /**
+   * Which jobs capability this deployment has: `disabled` or `encode`.
+   *
+   * Absent means `disabled`. That default is the point: the round-2 design ships
+   * the jobs domain without a compute profile, and a deployment that quietly got
+   * an encode capability nobody configured would answer `202` for a job no Workflow
+   * will ever run. A missing binding must be a *named* unavailability, not an
+   * implicit enabling. See `resolveJobsProfile`.
+   */
+  JOBS_PROFILE?: string;
 }
 
 export const AUTH_SECRET_PLACEHOLDER = 'development-only-not-a-secret';
@@ -104,6 +116,10 @@ export const LOCAL_ENVIRONMENTS = new Set(['local', 'development']);
 /** Every value `DEPLOYMENT_ENV` is allowed to take. Anything else is a config error. */
 export const DEPLOYMENT_ENVIRONMENTS = ['local', 'development', 'staging', 'production'] as const;
 export type DeploymentEnvName = (typeof DEPLOYMENT_ENVIRONMENTS)[number];
+
+/** Which jobs capability this deployment has. Mirrors `JOBS_PROFILE`. */
+export const JOBS_PROFILE_NAMES = [JOBS_PROFILE_DISABLED, JOBS_PROFILE_ENCODE] as const;
+export type JobsProfileName = (typeof JOBS_PROFILE_NAMES)[number];
 
 /** Hostnames that are unambiguously this machine. */
 const LOOPBACK_HOSTS = new Set(['127.0.0.1', 'localhost', '::1', '[::1]']);
@@ -319,6 +335,34 @@ export const requireBindings = (raw: unknown): AppEnv => {
     );
   }
   return candidate;
+};
+
+/**
+ * Which jobs capability this deployment has.
+ *
+ * Fail-closed and explicit. `absent` is `disabled` — not `encode` — because the
+ * alternative is a deployment that grew a paid compute path because a binding was
+ * forgotten. An unrecognised value is a configuration error rather than a default,
+ * for the same reason `resolveDeploymentEnvironment` refuses to infer anything from
+ * a URL: a typo that silently disabled a feature reads as "the feature is broken",
+ * and a typo that silently enabled one reads as "the feature works".
+ */
+export const resolveJobsProfile = (env: { JOBS_PROFILE?: string }): JobsProfileName => {
+  const raw = env.JOBS_PROFILE?.trim();
+  if (raw === undefined || raw.length === 0) {
+    return JOBS_PROFILE_DISABLED;
+  }
+  if (raw === JOBS_PROFILE_DISABLED) {
+    return JOBS_PROFILE_DISABLED;
+  }
+  if (raw === JOBS_PROFILE_ENCODE) {
+    return JOBS_PROFILE_ENCODE;
+  }
+  throw new Error(
+    `JOBS_PROFILE is "${raw}", which is not a known jobs profile. ` +
+      `Valid values: ${JOBS_PROFILE_DISABLED}, ${JOBS_PROFILE_ENCODE}. ` +
+      'Refusing to start: an unrecognised profile must not be guessed at.',
+  );
 };
 
 export interface RateLimitBudget {

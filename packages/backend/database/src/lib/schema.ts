@@ -11,7 +11,7 @@
 // { mode: 'timestamp' })` gives epoch-millisecond Date columns.
 
 import { sql } from 'drizzle-orm';
-import { index, integer, sqliteTable, text, uniqueIndex } from 'drizzle-orm/sqlite-core';
+import { check, index, integer, sqliteTable, text, uniqueIndex } from 'drizzle-orm/sqlite-core';
 
 // -----------------------------------------------------------------------------
 // Better Auth tables
@@ -185,6 +185,187 @@ export const notes = sqliteTable(
 );
 
 // -----------------------------------------------------------------------------
+// Domain: jobs
+//
+// Four indexes, each of which is a rule rather than a performance hint. Read
+// them as claims: if one of them is wrong, the rule it enforces stops being
+// enforced by the database and starts being enforced by a read-then-write check
+// somewhere in application code, which is exactly the race this schema exists to
+// make impossible.
+//
+//   * `jobs_owner_idempotency_key_uq` — one idempotency key per owner. This is
+//     what makes "the same key returns the same job" true under concurrency: the
+//     second concurrent request loses the insert, and it does not lose it because
+//     it read first and decided so.
+//
+//   * `jobs_owner_active_uq` — a *partial* unique index over `owner_id` where the
+//     job is `pending` or `running`. It is how "at most one active job per user"
+//     is enforced atomically. A `SELECT count(*)` first would admit two jobs
+//     whenever two requests overlapped, which under load is precisely when the
+//     limit matters.
+//
+//   * `jobs_owner_created_idx` — the per-user hourly budget count and the owner's
+//     listing. Both are `WHERE owner_id = ? AND created_at >= ?` scans.
+//
+//   * `jobs_created_idx` — the environment's per-UTC-day budget count.
+//
+// The hourly and daily budgets are counted from this table rather than kept in a
+// counter row, because the count is read as a subquery *inside* the inserting
+// statement. That is the whole trick: `INSERT ... SELECT ... WHERE (SELECT
+// count(*) ...) < 5` is one statement, so SQLite decides it atomically and two
+// concurrent requests cannot both see four.
+// -----------------------------------------------------------------------------
+
+/**
+ * One encode job.
+ *
+ * Attempt fencing lives in `activeAttemptId`: a terminal write names the attempt
+ * that must currently hold the lease, so a slow attempt that wakes up after its
+ * lease was reclaimed and completed cannot overwrite the newer committed result.
+ */
+export const jobs = sqliteTable(
+  'jobs',
+  {
+    id: text('id').primaryKey(),
+    /** FK to `users.id`. Cascade: deleting an account deletes its jobs. */
+    ownerId: text('owner_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    /** Only `encode` exists. A second kind arrives with a migration, not a guess. */
+    kind: text('kind').notNull().default('encode'),
+    /** `pending` | `running` | `succeeded` | `failed`. Never a fifth value. */
+    status: text('status').notNull().default('pending'),
+    /** The frozen fixture identity, copied from the admitted request. */
+    fixture: text('fixture').notNull(),
+    /** The frozen preset identity, copied from the admitted request. */
+    preset: text('preset').notNull(),
+    /**
+     * Owner-scoped idempotency key.
+     *
+     * Scoped to the owner rather than global so two users who happen to choose the
+     * same key — a shared client-generated value, a test fixture — do not collide
+     * and cannot read each other's jobs by guessing a key.
+     */
+    idempotencyKey: text('idempotency_key').notNull(),
+    /**
+     * Hash of the canonical request body.
+     *
+     * The reason a replay can be told from a conflict: same key *and* same
+     * fingerprint returns the stored job, same key with a different fingerprint is
+     * a caller reusing a key for a different request and gets 409 rather than
+     * somebody else's job.
+     */
+    requestFingerprint: text('request_fingerprint').notNull(),
+    /**
+     * The Workflow instance this job runs in. Derived from the job id, so it is
+     * stable across a crash, a retry and a reconciliation pass.
+     */
+    workflowId: text('workflow_id').notNull(),
+    /**
+     * `pending` | `dispatched` | `dispatch_failed`.
+     *
+     * Persisted with the job rather than held in memory, because the interesting
+     * failure is exactly the one that loses memory: D1 committed the admission
+     * and the Workflow call then failed. `pending` is what recovery looks for.
+     */
+    dispatchState: text('dispatch_state').notNull().default('pending'),
+    /** How many times a dispatch was attempted. Bounds recovery's retries. */
+    dispatchAttempts: integer('dispatch_attempts').notNull().default(0),
+    /**
+     * A frozen code, never a provider message. Sized to a code because the
+     * unbounded alternative is a container's error text stored forever.
+     */
+    dispatchError: text('dispatch_error'),
+    dispatchedAt: integer('dispatched_at', { mode: 'timestamp' }),
+    /**
+     * The attempt currently holding the lease. Null when nothing is running.
+     *
+     * Both terminal writes filter on this value, which is the fence: an attempt
+     * that was superseded has a different id here and therefore matches no rows.
+     */
+    activeAttemptId: text('active_attempt_id'),
+    /** When the current attempt's lease expires. Another may claim it after. */
+    leaseExpiresAt: integer('lease_expires_at', { mode: 'timestamp' }),
+    /** How many attempts have ever claimed this job. Bounds `MAX_JOB_ATTEMPTS`. */
+    attemptCount: integer('attempt_count').notNull().default(0),
+    /**
+     * Private storage key for the artifact. Never leaves the server plane.
+     *
+     * Deliberately *not* on the wire DTO: a client that knows the key would need
+     * the bucket, and a bucket binding handed to a browser is a public bucket.
+     */
+    outputKey: text('output_key'),
+    outputBytes: integer('output_bytes'),
+    outputSha256: text('output_sha256'),
+    outputContainerFormat: text('output_container_format'),
+    outputVideoCodec: text('output_video_codec'),
+    outputWidth: integer('output_width'),
+    outputHeight: integer('output_height'),
+    outputDurationMs: integer('output_duration_ms'),
+    /** When retention removes the bytes. Null until an encode committed. */
+    outputExpiresAt: integer('output_expires_at', { mode: 'timestamp' }),
+    /** A code from `JOB_ERROR_CODES`. Null until the job fails. */
+    errorCode: text('error_code'),
+    createdAt: integer('created_at', { mode: 'timestamp' }).notNull().default(sql`(unixepoch())`),
+    updatedAt: integer('updated_at', { mode: 'timestamp' }).notNull().default(sql`(unixepoch())`),
+    completedAt: integer('completed_at', { mode: 'timestamp' }),
+  },
+  (table) => [
+    uniqueIndex('jobs_owner_idempotency_key_uq').on(table.ownerId, table.idempotencyKey),
+    index('jobs_owner_created_idx').on(table.ownerId, table.createdAt),
+    index('jobs_created_idx').on(table.createdAt),
+    // Bounded recovery: "which admissions never reached a Workflow?" is a scan of
+    // exactly this shape, and it must be able to answer it with a LIMIT.
+    index('jobs_dispatch_state_idx').on(table.dispatchState, table.createdAt),
+    // The retention sweep: terminal jobs whose artifact is past its cutoff.
+    index('jobs_output_expiry_idx').on(table.outputExpiresAt),
+    // The atomic active-job cap. Partial, so a user may hold any number of
+    // finished jobs and exactly one unfinished one. This is the index the whole
+    // admission design rests on: the inserting statement either wins this or
+    // affects no rows, and no read-then-write check exists anywhere to get it
+    // wrong.
+    uniqueIndex('jobs_owner_active_uq')
+      .on(table.ownerId)
+      .where(sql`${table.status} in ('pending', 'running')`),
+    // Four states, not "whatever was written". A typo in a status write is a
+    // constraint violation at the database rather than a job that is invisible to
+    // every query in the repository.
+    check(
+      'jobs_status_check',
+      sql`${table.status} in ('pending', 'running', 'succeeded', 'failed')`,
+    ),
+    check('jobs_kind_check', sql`${table.kind} in ('encode')`),
+    check(
+      'jobs_dispatch_state_check',
+      sql`${table.dispatchState} in ('pending', 'dispatched', 'dispatch_failed')`,
+    ),
+  ],
+);
+
+/**
+ * One row per artifact past its retention cutoff, awaiting deletion.
+ *
+ * Why a separate table rather than a `DELETE ... WHERE output_expires_at <= ?`:
+ * the bytes live in private R2 and D1 cannot delete them, so the sequence is
+ * "select the keys, delete the bytes, then delete the row". Doing that atomically in
+ * one statement would drop the record of work whose bytes were never removed, and
+ * the next run would have nothing to retry with. A row that survives a failed
+ * byte-deletion is therefore the recovery record, and `runs` bounds the attempts.
+ */
+export const jobArtifactRetirements = sqliteTable('job_artifact_retirements', {
+  /** The job whose artifact is due. */
+  jobId: text('job_id')
+    .primaryKey()
+    .references(() => jobs.id, { onDelete: 'cascade' }),
+  /** The private key the bytes are under, kept so a retry needs no second read. */
+  outputKey: text('output_key').notNull(),
+  /** How many deletion attempts have been made. */
+  runs: integer('runs').notNull().default(0),
+  /** Epoch ms the cutoff was taken at, so the sweep is deterministic. */
+  cutoffAt: integer('cutoff_at', { mode: 'timestamp' }).notNull(),
+});
+
+// -----------------------------------------------------------------------------
 // Row types
 //
 // Derived from the schema, never hand-written alongside it: a parallel
@@ -197,6 +378,9 @@ export type SessionRow = typeof sessions.$inferSelect;
 export type AccountRow = typeof accounts.$inferSelect;
 export type NoteRow = typeof notes.$inferSelect;
 export type NewNoteRow = typeof notes.$inferInsert;
+export type JobRow = typeof jobs.$inferSelect;
+export type NewJobRow = typeof jobs.$inferInsert;
+export type JobArtifactRetirementRow = typeof jobArtifactRetirements.$inferSelect;
 
 /**
  * Column->table map handed to Better Auth's Drizzle adapter. The adapter looks

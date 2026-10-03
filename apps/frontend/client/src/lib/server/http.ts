@@ -82,7 +82,7 @@ export type ReadBodyResult = { ok: true; value: unknown } | { ok: false; respons
 export const readJsonBody = async (
   request: Request,
   schema: TSchema,
-  options: { maxBytes: number },
+  options: { maxBytes: number; invalidStatus?: number },
 ): Promise<ReadBodyResult> => {
   const declared = request.headers.get('content-length');
   if (declared !== null && Number(declared) > options.maxBytes) {
@@ -101,24 +101,34 @@ export const readJsonBody = async (
   }
 
   if (text.trim().length === 0) {
-    return { ok: false, response: invalidBody('A JSON body is required.') };
+    return { ok: false, response: invalidBody('A JSON body is required.', options) };
   }
 
   let parsed: unknown;
   try {
     parsed = JSON.parse(text);
   } catch {
-    return { ok: false, response: invalidBody('The request body is not valid JSON.') };
+    return { ok: false, response: invalidBody('The request body is not valid JSON.', options) };
   }
 
   if (!Value.Check(schema, parsed)) {
-    return { ok: false, response: invalidBody('The request body is not valid.') };
+    return { ok: false, response: invalidBody('The request body is not valid.', options) };
   }
 
   return { ok: true, value: parsed };
 };
 
-const invalidBody = (message: string): Response => jsonError(422, 'validation', message);
+/**
+ * The answer to a body this endpoint's schema refuses.
+ *
+ * `status` exists because the jobs contract freezes 400 for an invalid create
+ * body while the rest of this API answers 422. Both are correct; what would not be
+ * is a second body reader written for the one endpoint that disagrees, because the
+ * byte ceiling and the closed-schema refusal are the two things most worth having
+ * exactly one implementation of.
+ */
+const invalidBody = (message: string, options: { invalidStatus?: number }): Response =>
+  jsonError(options.invalidStatus ?? 422, 'validation', message);
 
 /**
  * Read a request body as text, or `null` once it exceeds `maxBytes`.
