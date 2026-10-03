@@ -157,7 +157,16 @@ export type MaintenanceRunRequest =
       trigger: 'scheduled';
       /** `event.schedule.scheduledTime`. Required: a schedule with no time is not one. */
       scheduledTimeMs: number;
-      /** The cron expression the provider reported. Recorded, never trusted for arithmetic. */
+      /**
+       * The cron expression the provider reported.
+       *
+       * Accepted and **not used for arithmetic**: `describeRunRequest` derives the
+       * run key from `MAINTENANCE_CRON`, the constant this repository commits, so a
+       * provider that reported a different expression cannot rename a slot out from
+       * under the deduplication. It is also not persisted — the run row carries the
+       * slot label and the provider's `scheduledTime`, which are the two facts a reader
+       * needs. Stating that here is what stops the next reader assuming it is stored.
+       */
       cron?: string;
     }
   | {
