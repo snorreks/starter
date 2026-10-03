@@ -11,7 +11,7 @@ without a provenance update is a review finding, not an oversight.
 | | |
 |---|---|
 | Source | Debian bookworm's archive, installed by `apt-get install --no-install-recommends ffmpeg` |
-| Version in the built image | `5.1.9-0+deb12u1` (`dpkg -l ffmpeg`), for `amd64` |
+| Version in the built image | `7:5.1.9-0+deb12u1` (Debian epoch `7:`, upstream/package version `5.1.9-0+deb12u1`; `dpkg -l ffmpeg`), for `amd64` |
 | Upstream | <https://ffmpeg.org/> — FFmpeg is a trademark of the FFmpeg project; this crate uses the binaries, not the name as a brand |
 | Licence | **GPL-2.0-or-later** for the Debian build shipped here. Debian configures FFmpeg with `--enable-gpl` and links `libx264`, so the binary as built is GPL-2.0-or-later, not LGPL. It also contains GPL-2.0-or-later components (`libx264`, `libx265`, `libpostproc`) and LGPL-2.1-or-later components (`libvpx`, `libvorbis`, `libmp3lame` among others). |
 | Complete texts | installed at `/usr/share/doc/ffmpeg/copyright` and `/usr/share/common-licenses/GPL-2` inside the image |
@@ -40,8 +40,9 @@ with evidence rather than memory.
 
 ## Rust dependencies
 
-Six crates, pinned exactly in `Cargo.toml` and resolved in `Cargo.lock`
-(`cargo build --locked` is what CI and the Docker build run):
+Six direct crates (including the Unix dev-dependency `libc`), pinned exactly in `Cargo.toml` and resolved in `Cargo.lock`
+(`cargo build --locked` runs manually, through Moon, or in the Docker build;
+these commands are not run by CI):
 
 | Crate | Licence | Why it is here |
 |---|---|---|
@@ -50,6 +51,7 @@ Six crates, pinned exactly in `Cargo.toml` and resolved in `Cargo.lock`
 | `sha2` | MIT OR Apache-2.0 | SHA-256 of the output bytes |
 | `tempfile` | MIT OR Apache-2.0 | owned temp directories that are removed on every path |
 | `signal-hook` | Apache-2.0 OR MIT | SIGTERM/SIGINT; `std` has no signal API |
+| `libc` | MIT OR Apache-2.0 | Unix dev-dependency for sending real signals in integration tests |
 
 Deliberately absent: any HTTP framework. Two routes and a bounded body are
 `src/http.rs`, which keeps the read path and its limits visible instead of hidden

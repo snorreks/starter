@@ -36,12 +36,18 @@ fn golden(name: &str) -> String {
 
 /// Deserialize with a check that no field is unknown — a TypeScript client that
 /// sends an extra field, or a Rust field removed from the struct, both fail here.
-fn parse_strict<T: serde::de::DeserializeOwned>(name: &str) -> T {
+fn parse_strict<T: serde::de::DeserializeOwned + serde::Serialize>(name: &str) -> T {
     let text = golden(name);
     let value: serde_json::Value = serde_json::from_str(&text).expect("golden is valid JSON");
-    serde_json::from_value::<T>(value.clone()).unwrap_or_else(|error| {
+    let document = serde_json::from_value::<T>(value.clone()).unwrap_or_else(|error| {
         panic!("{name} does not match this crate's types: {error}; document: {value}")
-    })
+    });
+    assert_eq!(
+        serde_json::to_value(&document).expect("serialize document"),
+        value,
+        "{name} contains fields not preserved by this crate's types"
+    );
+    document
 }
 
 #[test]

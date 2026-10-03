@@ -96,7 +96,9 @@ impl RunningServer {
 
 impl Drop for RunningServer {
     fn drop(&mut self) {
-        self.shutdown.is_requested();
+        self.shutdown
+            .flag()
+            .store(true, std::sync::atomic::Ordering::SeqCst);
         // Ask the accept loop to stop, then clean the scratch root. The server
         // thread exits on its own; the test does not join it, because the test is
         // about the request, and this binary is about to exit anyway.
@@ -384,7 +386,7 @@ fn a_disconnect_during_an_encode_cancels_ffmpeg_and_the_server_stays_healthy() {
     std::fs::write(
         &fake,
         format!(
-            "#!/bin/sh\nprintf started > {}\nwhile : ; do sleep 0.2; done\n",
+            "#!/bin/sh\necho $$ > {}\nwhile : ; do sleep 0.2; done\n",
             started_marker.display()
         ),
     )
@@ -453,16 +455,19 @@ fn a_disconnect_during_an_encode_cancels_ffmpeg_and_the_server_stays_healthy() {
         "the cancelled encode left files behind: {:?}",
         temp_entries()
     );
-    // The fake tool's loop is gone: a cancelled encode killed and reaped it.
-    assert!(
-        harness::wait_until(
-            || harness::child_pids()
-                .into_iter()
-                .all(|pid| !harness::process_exists(pid) || pid == std::process::id()),
-            10_000
-        ),
-        "a subprocess outlived the cancelled request"
-    );
+    // The marker identifies the child spawned by the server's worker thread.
+    #[cfg(target_os = "linux")]
+    {
+        let pid = std::fs::read_to_string(&started_marker)
+            .expect("child pid")
+            .trim()
+            .parse()
+            .expect("numeric child pid");
+        assert!(
+            harness::wait_until(|| !harness::process_exists(pid), 10_000),
+            "a subprocess outlived the cancelled request"
+        );
+    }
     // And the server is still serving.
     let raw = harness::http_raw(
         &address,

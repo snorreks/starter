@@ -82,11 +82,10 @@ pub fn scratch_dir(name: &str) -> PathBuf {
 
 /// This process's live children, read from `/proc`.
 ///
-/// Linux only. Used to prove a real child was reaped rather than merely
-/// signalled: `kill` without `wait` leaves an entry here until the process dies,
-/// and a container that restarts an encode per request would accumulate them.
-/// Returns an empty vector where `/proc` does not exist, and the callers that
-/// depend on the answer are themselves Linux-only.
+/// Linux only: children of the calling thread, including unreaped children.
+/// This cannot prove reaping of children spawned by another thread. Callers
+/// observing a server worker must track the child's PID directly instead.
+/// Returns an empty vector if the calling thread's `/proc` entry is unreadable.
 #[cfg(target_os = "linux")]
 pub fn child_pids() -> Vec<u32> {
     // `/proc/thread-self` resolves for the *calling thread*, which is what makes

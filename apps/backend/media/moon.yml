@@ -3,7 +3,7 @@ $schema: 'https://moonrepo.dev/schemas/project.json'
 # apps/backend/media/moon.yml
 #
 # The first first-party Cargo crate in this workspace. Its tasks are named
-# `cargo:*` rather than `test`/`lint`/`format`, and that is a deliberate choice,
+# `cargo-*` rather than `test`/`lint`/`format`, and that is a deliberate choice,
 # not a naming inconsistency:
 #
 # The root scripts run Moon by *task name* (`bun run test` is `:test`,
@@ -14,11 +14,9 @@ $schema: 'https://moonrepo.dev/schemas/project.json'
 # separately and names its prerequisites instead of being quietly folded into
 # the credential-free core.
 #
-# `options.cache: false` for the same reason every other project sets it: see
-# .moon/workspace.yml. Cargo would additionally need `Cargo.lock` and the
-# toolchain channel in the key, and Moon cannot hash files outside the project
-# — `Cargo.lock` is inside it, but the rustup channel is not, so a cached
-# `cargo:test` would report `ok` after a toolchain bump.
+# Clippy caching is disabled because cargo-lint's inputs omit the configuration
+# group, including rust-toolchain.toml. The other tasks use Moon's default
+# caching policy and their declared inputs.
 
 layer: 'application'
 
@@ -72,6 +70,8 @@ tasks:
   cargo-lint:
     command: 'cargo'
     args: ['clippy', '--all-targets', '--', '-D', 'warnings']
+    options:
+      cache: false
     inputs:
       - '@group(sources)'
       - '@group(tests)'

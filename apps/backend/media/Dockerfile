@@ -74,7 +74,7 @@ FROM ${RUNTIME_IMAGE}
 # changes; an FFmpeg upgrade without a provenance update is a review finding.
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
-        ffmpeg \
+        ffmpeg=7:5.1.9-0+deb12u1 \
         ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 

@@ -54,6 +54,11 @@ impl CancelToken {
         self.cancelled.store(true, Ordering::SeqCst);
     }
 
+    /// Shared flag for signal-hook registration.
+    pub fn flag(&self) -> &Arc<AtomicBool> {
+        &self.cancelled
+    }
+
     pub fn is_cancelled(&self) -> bool {
         self.cancelled.load(Ordering::SeqCst)
     }
@@ -104,10 +109,7 @@ impl ProcessRequest {
 pub struct ProcessOutcome {
     /// Exit status, when the child exited normally.
     pub exit_code: Option<i32>,
-    /// Signal number, when the child was killed by one. `None` on Linux for a
-    /// child this process reaped after `kill()`, because `ExitStatus::signal()`
-    /// only reports a signal for a process it did not terminate; the
-    /// `terminated` field is the authoritative answer.
+    /// The terminating signal when available; `None` on non-Unix platforms.
     pub signal: Option<i32>,
     /// At most `stderr_keep_bytes` of the child's stderr.
     pub stderr_tail: String,
@@ -178,9 +180,13 @@ impl SystemProcessRunner {
                     Ok(0) => break,
                     Ok(read) => {
                         total += read as u64;
-                        if ring.len() < keep_bytes {
-                            let room = keep_bytes - ring.len();
-                            ring.extend_from_slice(&buffer[..read.min(room)]);
+                        if read >= keep_bytes {
+                            ring.clear();
+                            ring.extend_from_slice(&buffer[read - keep_bytes..read]);
+                        } else {
+                            let discard = (ring.len() + read).saturating_sub(keep_bytes);
+                            ring.drain(..discard);
+                            ring.extend_from_slice(&buffer[..read]);
                         }
                     }
                     Err(error) if error.kind() == std::io::ErrorKind::Interrupted => continue,
@@ -295,7 +301,10 @@ impl ProcessRunner for SystemProcessRunner {
         let elapsed_ms = self.clock.now_ms().saturating_sub(started);
         Ok(ProcessOutcome {
             exit_code: status.code(),
-            signal: status.code().is_none().then_some(-1),
+            #[cfg(unix)]
+            signal: std::os::unix::process::ExitStatusExt::signal(&status),
+            #[cfg(not(unix))]
+            signal: None,
             stderr_tail: stderr.text,
             stderr_total_bytes: stderr.total,
             stdout: stdout.text,
@@ -347,6 +356,33 @@ mod tests {
         .map(OsString::from)
         .collect();
         ProcessRequest::new(harness::require(&harness::ffmpeg()), args, deadline_ms)
+    }
+
+    #[test]
+    fn draining_keeps_the_latest_bytes_across_reads_and_counts_every_byte() {
+        let data = [vec![b'a'; 9000], vec![b'b'; 30], b"last failure".to_vec()].concat();
+        for keep in [0, 5, 64, 8192, 10000] {
+            let tail = SystemProcessRunner::drain(std::io::Cursor::new(data.clone()), keep)
+                .join()
+                .expect("drain");
+            assert_eq!(tail.total, data.len() as u64);
+            assert_eq!(
+                tail.text.as_bytes(),
+                &data[data.len().saturating_sub(keep)..]
+            );
+        }
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn a_signal_exit_reports_the_actual_signal_number() {
+        let request =
+            ProcessRequest::new("/bin/sh", vec!["-c".into(), "kill -TERM $$".into()], 5000);
+        let outcome = SystemProcessRunner::new(crate::clock::system_clock())
+            .run(&request)
+            .unwrap();
+        assert_eq!(outcome.exit_code, None);
+        assert_eq!(outcome.signal, Some(libc::SIGTERM));
     }
 
     #[test]

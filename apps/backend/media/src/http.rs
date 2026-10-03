@@ -37,8 +37,8 @@ use crate::error::{ErrorCode, ProcessorError, Result};
 use crate::preset::lookup;
 use crate::process::CancelToken;
 use crate::protocol::{
-    ErrorDocument, Limits, DRAIN_GRACE_MS, DRAIN_MAX_BYTES, MAX_ATTEMPT_ID_LEN,
-    MAX_CONCURRENT_ENCODES, MAX_CONNECTIONS, MAX_INPUT_BYTES, MAX_REQUEST_HEAD_BYTES,
+    Limits, DRAIN_GRACE_MS, DRAIN_MAX_BYTES, MAX_ATTEMPT_ID_LEN, MAX_CONCURRENT_ENCODES,
+    MAX_CONNECTIONS, MAX_INPUT_BYTES, MAX_REQUEST_HEAD_BYTES,
 };
 use crate::{error_document, health_document};
 
@@ -205,7 +205,7 @@ pub fn read_head(reader: &mut impl BufRead) -> Result<RequestHead> {
             request_line = Some((method, target));
             continue;
         }
-        // A duplicate header keeps the first value. Two `Content-Length`s or two
+        // Other duplicate headers keep the first value. Two `Content-Length`s or two
         // `Transfer-Encoding`s are a request-smuggling shape, not a preference,
         // and answering with a guess about which one the client meant is how a
         // proxy and a server start to disagree about a body's length.
@@ -217,6 +217,12 @@ pub fn read_head(reader: &mut impl BufRead) -> Result<RequestHead> {
         let name = name.trim().to_ascii_lowercase();
         if name.is_empty() {
             return Err(ProcessorError::new(ErrorCode::Internal).with_detail("empty header name"));
+        }
+        if matches!(name.as_str(), "content-length" | "transfer-encoding")
+            && headers.contains_key(&name)
+        {
+            return Err(ProcessorError::new(ErrorCode::UnsupportedTransferEncoding)
+                .with_detail(format!("repeated {name}")));
         }
         headers
             .entry(name)
@@ -411,7 +417,13 @@ fn handle_connection(
     shutdown: &ShutdownSignal,
     slot: Arc<Mutex<()>>,
 ) {
-    let _ = stream.set_read_timeout(Some(Duration::from_millis(30_000)));
+    if stream.set_nonblocking(false).is_err()
+        || stream
+            .set_read_timeout(Some(Duration::from_millis(30_000)))
+            .is_err()
+    {
+        return;
+    }
     let _ = stream.set_nodelay(true);
     let Ok(write_half) = stream.try_clone() else {
         return;
@@ -426,6 +438,8 @@ fn handle_connection(
         Ok(head) => head,
         Err(error) => {
             let _ = write_error(&mut writer, &error);
+            let _ = TcpStream::shutdown(&writer, std::net::Shutdown::Write);
+            let _ = drain_and_discard(&mut reader);
             return;
         }
     };
@@ -579,6 +593,9 @@ fn encode_response(
 
     let body = read_body(reader, content_length)?;
     let cancel = CancelToken::new();
+    // Register before checking the flag: either shutdown sees this token or
+    // this request sees shutdown. Keep the guard through the entire encode.
+    let _registration = shutdown.register(&cancel);
 
     if shutdown.is_requested() {
         return Err(ProcessorError::new(ErrorCode::Cancelled)
@@ -593,9 +610,6 @@ fn encode_response(
     })?;
 
     let watcher = DisconnectWatcher::spawn(watch_half, cancel.clone());
-    // Registering the token is what makes SIGTERM reach FFmpeg mid-encode: the
-    // registration is held for exactly as long as the encode can be cancelled.
-    let _registration = shutdown.register(&cancel);
     let result = encoder.encode_from_bytes(&body, preset, &attempt_id, cancel.clone());
     // Ending the watcher before releasing the slot: the encode is over, so the
     // socket is no longer interesting, and the watcher thread must not outlive
@@ -632,15 +646,18 @@ fn encode_response(
 /// wall-clock budget, and by total bytes. A client that keeps sending after the
 /// budget gets its socket closed, which is the correct outcome for a request
 /// this server has already refused.
-fn drain_and_discard(reader: &mut impl BufRead) -> Result<()> {
+fn drain_and_discard(reader: &mut BufReader<TcpStream>) -> Result<()> {
     let deadline = std::time::Instant::now() + Duration::from_millis(DRAIN_GRACE_MS);
     let mut discarded: u64 = 0;
     let mut buffer = [0_u8; 16 * 1024];
     loop {
-        if std::time::Instant::now() >= deadline || discarded >= DRAIN_MAX_BYTES {
+        let remaining = deadline.saturating_duration_since(std::time::Instant::now());
+        if remaining.is_zero() || discarded >= DRAIN_MAX_BYTES {
             return Ok(());
         }
-        match reader.read(&mut buffer) {
+        reader.get_ref().set_read_timeout(Some(remaining))?;
+        let limit = buffer.len().min((DRAIN_MAX_BYTES - discarded) as usize);
+        match reader.read(&mut buffer[..limit]) {
             Ok(0) => return Ok(()),
             Ok(read) => discarded += read as u64,
             Err(error)
@@ -721,20 +738,14 @@ impl DisconnectWatcher {
 /// Refuse a connection at the accept limit, so the client sees a status rather
 /// than a dropped socket.
 fn reject_connection(mut stream: TcpStream, reason_text: &str) -> std::io::Result<()> {
-    let document = ErrorDocument {
-        error: crate::protocol::ErrorDetail {
-            code: ErrorCode::Busy.wire().to_string(),
-            message: reason_text.to_string(),
-            retryable: true,
-        },
-    };
-    let payload = serde_json::to_vec(&document).unwrap_or_default();
-    write_response(
+    stream.set_nonblocking(false)?;
+    let result = write_error(
         &mut stream,
-        503,
-        &BTreeMap::from([("content-type".to_string(), "application/json".to_string())]),
-        &payload,
-    )
+        &ProcessorError::new(ErrorCode::Busy).with_detail(reason_text),
+    );
+    let _ = TcpStream::shutdown(&stream, std::net::Shutdown::Write);
+    let _ = drain_and_discard(&mut BufReader::new(stream));
+    result
 }
 
 /// Serialize an error into a response. Only [`error_document`] fields travel:
@@ -811,22 +822,75 @@ mod tests {
         Cursor::new(format!("{}\r\n", lines.join("\r\n")).into_bytes())
     }
 
+    fn socket_pair() -> (TcpStream, TcpStream) {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let client = TcpStream::connect(listener.local_addr().unwrap()).unwrap();
+        (client, listener.accept().unwrap().0)
+    }
+
     #[test]
-    fn a_head_is_parsed_case_insensitively_and_duplicates_keep_the_first() {
+    fn draining_an_idle_peer_ends_within_the_grace_period() {
+        let (_client, server) = socket_pair();
+        server
+            .set_read_timeout(Some(Duration::from_secs(30)))
+            .unwrap();
+        let started = std::time::Instant::now();
+        drain_and_discard(&mut BufReader::new(server)).unwrap();
+        assert!(started.elapsed() < Duration::from_millis(DRAIN_GRACE_MS + 1000));
+    }
+
+    #[test]
+    fn connection_limit_refusal_uses_the_canonical_busy_response() {
+        let (mut client, server) = socket_pair();
+        client
+            .write_all(b"POST /encode HTTP/1.1\r\ncontent-length: 4\r\n\r\ndata")
+            .unwrap();
+        client.shutdown(std::net::Shutdown::Write).unwrap();
+        reject_connection(server, "private connection limit detail").unwrap();
+        let mut response = Vec::new();
+        client.read_to_end(&mut response).unwrap();
+        let (status, headers, body) = crate::harness::parse_response(&response);
+        assert_eq!(status, ErrorCode::Busy.http_status());
+        assert_eq!(
+            crate::harness::header(&headers, "cache-control"),
+            Some("no-store")
+        );
+        assert_eq!(
+            serde_json::from_slice::<serde_json::Value>(&body).unwrap(),
+            serde_json::to_value(error_document(&ProcessorError::new(ErrorCode::Busy))).unwrap()
+        );
+    }
+
+    #[test]
+    fn a_head_is_parsed_case_insensitively_and_ordinary_duplicates_keep_the_first() {
         let mut reader = head_text(&[
             "POST /encode HTTP/1.1",
             "X-Preset: demo-180p-v1",
-            "content-length: 12",
-            "Content-Length: 99999",
+            "x-preset: ignored",
+            "Content-Length: 12",
             "",
         ]);
         let head = read_head(&mut reader).expect("head");
         assert_eq!(head.method, "POST");
         assert_eq!(head.target, "/encode");
         assert_eq!(head.header("x-preset"), Some("demo-180p-v1"));
-        // Taking the second value would raise this crate's body limit past its
-        // own ceiling, and would let two proxies disagree about the length.
         assert_eq!(head.header("content-length"), Some("12"));
+    }
+
+    #[test]
+    fn repeated_framing_headers_are_refused_even_when_values_agree() {
+        for (first, second) in [
+            ("content-length: 12", "Content-Length: 99999"),
+            ("Content-Length: 12", "content-length: 12"),
+            ("transfer-encoding: chunked", "Transfer-Encoding: identity"),
+            ("Transfer-Encoding: chunked", "transfer-encoding: chunked"),
+        ] {
+            let mut reader = head_text(&["POST /encode HTTP/1.1", first, second, ""]);
+            assert_eq!(
+                read_head(&mut reader).unwrap_err().code().http_status(),
+                400
+            );
+        }
     }
 
     #[test]

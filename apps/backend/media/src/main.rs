@@ -232,7 +232,20 @@ fn serve(argv: &[String]) -> Result<(), Failure> {
 fn encode(argv: &[String]) -> Result<(), Failure> {
     let args = cli::parse_encode_args(argv).map_err(Failure::usage)?;
     let encoder = Encoder::new(Tools::from_env());
-    match cli::run_encode(&args, &encoder) {
+    let cancel = starter_media::process::CancelToken::new();
+    let sigterm = flag::register(SIGTERM, cancel.flag().clone())
+        .map_err(|error| Failure::usage(format!("SIGTERM: {error}")))?;
+    let sigint = match flag::register(SIGINT, cancel.flag().clone()) {
+        Ok(id) => id,
+        Err(error) => {
+            signal_hook::low_level::unregister(sigterm);
+            return Err(Failure::usage(format!("SIGINT: {error}")));
+        }
+    };
+    let result = cli::run_encode(&args, &encoder, cancel);
+    signal_hook::low_level::unregister(sigterm);
+    signal_hook::low_level::unregister(sigint);
+    match result {
         Ok(encoded) => {
             cli::print_success(&encoded);
             Ok(())

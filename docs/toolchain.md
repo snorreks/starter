@@ -177,8 +177,8 @@ pin its dependencies.
 | Components | `clippy`, `rustfmt`, explicitly | Both are in the task list, so neither may be silently absent on a contributor's machine. |
 | `targets` | none | Mobile and desktop triples are added by the native crate, which knows what it builds. A global list would force the container builder image to install mobile SDKs. |
 | Dependencies | exact versions (`=1.0.229`) plus a committed `Cargo.lock` | Matches the Bun rule already in this file: one authority, no resolver surprises. |
-| Cargo tasks | `cargo test/lint/format/build/image` in `moon.yml`, **not** `test`/`lint`/`format` | The root scripts select tasks by name. A task named `test` would put Cargo into `bun run test`, and the credential-free web lanes are documented to need no Rust toolchain. See `apps/backend/media/moon.yml`. |
-| Moon caching | disabled for this project | Same reason as every other project here, plus: the rustup channel is not a file Moon can hash, so a cached result could report `ok` after a toolchain bump. |
+| Cargo tasks | `cargo-test`, `cargo-lint`, `cargo-format`, `cargo-build`, `cargo-image` in `moon.yml`, **not** `test`/`lint`/`format` | The root scripts select tasks by name. A task named `test` would put Cargo into `bun run test`, and the credential-free web lanes are documented to need no Rust toolchain. See `apps/backend/media/moon.yml`. |
+| Moon caching | disabled for `cargo-lint`; other tasks use Moon's default policy | Clippy's declared inputs omit the configuration group, including `rust-toolchain.toml`; see `apps/backend/media/moon.yml`. |
 | Formatting | `rustfmt.toml`, `max_width = 100` | The same 100 columns Biome enforces on the TypeScript half. |
 
 Rust is **not** in `config/toolchain.json`. That file is the authority for

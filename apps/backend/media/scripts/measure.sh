@@ -76,8 +76,8 @@ ffmpeg_bytes=$(docker run --rm --entrypoint /bin/sh "$IMAGE" -c 'stat -c %s /usr
 # The numbers in README.md, measured on 2026-10-03. Sizes move when a base image
 # or an FFmpeg package version moves; that is a change to record deliberately,
 # not a failure to silence, so a mismatch is reported as DRIFT.
-check "image bytes" 546177873 "$image_bytes" 8000000
-check "binary bytes" 790688 "$binary_bytes" 200000
+check "image bytes" 540099230 "$image_bytes" 8000000
+check "binary bytes" 791840 "$binary_bytes" 200000
 check "ffmpeg bytes" 293288 "$ffmpeg_bytes" 200000
 
 note "== the binary is the real program, not a stub =="
@@ -99,10 +99,20 @@ for _ in 1 2 3 4 5; do
   docker rm -f measure-cold >/dev/null 2>&1 || true
   start=$(date +%s%N)
   docker run -d --name measure-cold -p "$PORT:8080" "$IMAGE" >/dev/null
+  ready=0
   for _ in $(seq 1 400); do
-    [ "$(curl -s -o /dev/null -w '%{http_code}' --max-time 1 "http://127.0.0.1:$PORT/health" 2>/dev/null || true)" = "200" ] && break
+    if [ "$(curl -s -o /dev/null -w '%{http_code}' --max-time 1 "http://127.0.0.1:$PORT/health" 2>/dev/null || true)" = "200" ]; then
+      ready=1
+      break
+    fi
     sleep 0.02
   done
+  if [ "$ready" -eq 0 ]; then
+    note "  DRIFT cold start: no health probe returned 200"
+    failures=$((failures + 1))
+    docker rm -f measure-cold >/dev/null 2>&1 || true
+    continue
+  fi
   finish=$(date +%s%N)
   ms=$(( (finish - start) / 1000000 ))
   cold_total=$((cold_total + ms))
@@ -111,7 +121,9 @@ for _ in 1 2 3 4 5; do
   note "  run: ${ms} ms"
   docker rm -f measure-cold >/dev/null 2>&1 || true
 done
-note "  mean: $((cold_total / cold_runs)) ms, max: ${cold_max} ms"
+if [ "$cold_runs" -gt 0 ]; then
+  note "  mean: $((cold_total / cold_runs)) ms, max: ${cold_max} ms ($cold_runs successful starts)"
+fi
 
 note "== health =="
 docker run -d --name measure-serve -p "$PORT:8080" "$IMAGE" >/dev/null
@@ -139,15 +151,21 @@ for attempt in 1 2 3; do
   output_bytes=$(stat -c%s "$scratch/out.mp4")
   note "  wall: ${ms} ms, output: ${output_bytes} bytes"
 done
-check "output bytes (README)" 112717 "$output_bytes" 2000
+check "output bytes (README)" 112913 "$output_bytes" 2000
 
 note "== peak memory, fixture encode =="
 docker exec measure-serve sh -c 'echo 0 > /sys/fs/cgroup/memory.peak' 2>/dev/null || true
 curl -s -o /dev/null -X POST --data-binary @fixtures/media/sample-v1.mp4 \
   -H 'x-preset: demo-180p-v1' -H 'x-attempt-id: measure-peak' "http://127.0.0.1:$PORT/encode"
 peak=$(docker exec measure-serve cat /sys/fs/cgroup/memory.peak 2>/dev/null || echo 0)
-note "  cgroup memory.peak: ${peak} bytes ($((peak / 1000000)) MB)"
-note "  README records 61-62 MB; a large drift here is a reason to revisit the profile"
+if [ "$peak" -eq 0 ]; then
+  note "  DRIFT cgroup memory.peak: no nonzero measurement available"
+  failures=$((failures + 1))
+else
+  note "  cgroup memory.peak: ${peak} bytes ($((peak / 1000000)) MB)"
+  # README's 61-62 MB baseline, with 10 MB headroom for host/runtime variance.
+  check "peak memory bytes (README)" 61500000 "$peak" 10000000
+fi
 
 note "== negative controls against the running image =="
 head -c 6000000 /dev/zero > "$scratch/oversize.bin"
@@ -177,7 +195,7 @@ esac
 
 note "== no temp files survive the refusals =="
 leftovers=$(docker exec measure-serve sh -c 'ls -1 /var/tmp/media | wc -l')
-check "temp entries after 4 refusals" 0 "$leftovers"
+check "temp entries after 5 refusals" 0 "$leftovers"
 
 note "== the container stops on SIGTERM =="
 docker stop -t 20 measure-serve >/dev/null

@@ -208,7 +208,8 @@ fn the_cli_encodes_a_local_file_and_exits_zero() {
     ])
     .expect("arguments parse");
 
-    let encoded = cli::run_encode(&args, &encoder(&scratch)).expect("cli encode");
+    let encoded =
+        cli::run_encode(&args, &encoder(&scratch), CancelToken::new()).expect("cli encode");
     assert!(output.exists(), "the CLI wrote its output file");
     assert_eq!(encoded.success.attempt_id, "cli-attempt-1");
 
@@ -242,7 +243,8 @@ fn the_cli_reports_a_missing_input_rather_than_writing_an_empty_output() {
         output.display().to_string(),
     ])
     .expect("arguments parse");
-    let error = cli::run_encode(&args, &encoder(&scratch)).expect_err("missing input must fail");
+    let error = cli::run_encode(&args, &encoder(&scratch), CancelToken::new())
+        .expect_err("missing input must fail");
     // A missing input is an I/O failure, and the CLI must not invent an output.
     assert!(!output.exists());
     assert_ne!(cli::exit_code_for(error.code()), 0);
@@ -262,7 +264,8 @@ fn the_cli_refuses_undecodable_input_with_the_terminal_status() {
         output.display().to_string(),
     ])
     .expect("arguments parse");
-    let error = cli::run_encode(&args, &encoder(&scratch)).expect_err("must fail");
+    let error =
+        cli::run_encode(&args, &encoder(&scratch), CancelToken::new()).expect_err("must fail");
     assert_eq!(error.code(), ErrorCode::InvalidMedia);
     assert_eq!(cli::exit_code_for(error.code()), 5);
     assert!(!output.exists(), "no output file for a failed encode");
@@ -507,4 +510,75 @@ fn a_duration_outside_the_preset_window_is_refused_even_with_the_right_geometry(
     assert_eq!(error.code(), ErrorCode::InvalidOutput);
     assert!(error.detail().unwrap().contains("duration"), "{error}");
     std::fs::remove_dir_all(&scratch).ok();
+}
+
+#[test]
+#[cfg(unix)]
+fn cli_signals_cancel_the_child_and_remove_temporary_files() {
+    use std::os::unix::fs::PermissionsExt;
+    use std::process::{Command, Stdio};
+    for signal in [libc::SIGTERM, libc::SIGINT] {
+        let scratch = tempfile::tempdir().unwrap();
+        let marker = scratch.path().join("pid");
+        let fake = scratch.path().join("ffmpeg");
+        let temp_root = scratch.path().join("temp");
+        std::fs::create_dir(&temp_root).unwrap();
+        std::fs::write(
+            &fake,
+            format!(
+                "#!/bin/sh\necho $$ > '{}'\nexec sleep 60\n",
+                marker.display()
+            ),
+        )
+        .unwrap();
+        std::fs::set_permissions(&fake, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let output = scratch.path().join("out.mp4");
+        let mut child = Command::new(env!("CARGO_BIN_EXE_starter-media"))
+            .arg("encode")
+            .arg("--input")
+            .arg(harness::fixture())
+            .arg("--output")
+            .arg(&output)
+            .env("MEDIA_FFMPEG_PATH", &fake)
+            .env("TMPDIR", &temp_root)
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap();
+        let started = harness::wait_until(
+            || {
+                std::fs::read_to_string(&marker)
+                    .is_ok_and(|text| text.trim().parse::<u32>().is_ok())
+            },
+            5000,
+        );
+        if !started {
+            let _ = child.kill();
+            let _ = child.wait();
+            panic!("the fake encoder never started");
+        }
+        assert!(std::fs::read_dir(&temp_root).unwrap().count() > 0);
+        assert_eq!(unsafe { libc::kill(child.id() as libc::pid_t, signal) }, 0);
+        let exited = harness::wait_until(|| child.try_wait().unwrap().is_some(), 5000);
+        if !exited {
+            let _ = child.kill();
+        }
+        let status = child.wait().unwrap();
+        assert!(exited, "CLI ignored signal {signal}");
+        assert_eq!(status.code(), Some(8));
+        assert_eq!(std::fs::read_dir(&temp_root).unwrap().count(), 0);
+        assert!(!output.exists());
+        #[cfg(target_os = "linux")]
+        {
+            let pid = std::fs::read_to_string(&marker)
+                .unwrap()
+                .trim()
+                .parse()
+                .unwrap();
+            assert!(
+                !harness::process_exists(pid),
+                "encoder child remains after cancellation"
+            );
+        }
+    }
 }

@@ -21,10 +21,8 @@ use crate::protocol::{ProbeSummary, PROBE_DEADLINE_MS};
 
 /// FFprobe's JSON, as far as this crate reads it.
 ///
-/// Hand-parsed field by field rather than `serde_json::Value`-walked, so a
-/// missing field is a named error instead of an `Option` that silently becomes
-/// zero — a zero dimension that passes a `<=` check is how "validated" output
-/// turns out to be a text file.
+/// Missing fields receive serde defaults. Validation rejects missing required
+/// data and default values such as empty codec names and zero dimensions.
 #[derive(Debug, serde::Deserialize)]
 struct ProbeDocument {
     #[serde(default)]
@@ -187,7 +185,7 @@ fn check_video(streams: &[&ProbeStream], preset: &Preset) -> Result<()> {
 ///
 /// A container without a duration is rejected rather than treated as zero: an
 /// unbounded duration is a stream this process cannot claim to have encoded
-/// inside a three-second window.
+/// inside the preset's configured `min_duration_ms..=max_duration_ms` range.
 fn duration_of(document: &ProbeDocument) -> Result<u64> {
     let raw = document
         .format

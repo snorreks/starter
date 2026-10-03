@@ -245,19 +245,21 @@ A separate dated section, because this file records one round per run and PR G
 added a lane rather than re-running the web one. Nothing above this line changed;
 the web rows describe PR #17 and are still what they were.
 
-Executed in an isolated worktree on this branch. Counts are what the lane printed.
+Rechecked on this branch with Rust 1.98.1 and Debian FFmpeg 5.1.9 in a container.
+Counts below are the observed test output; image measurements come from the single
+script run recorded in the crate README.
 
 | Capability | How it was verified | Command | Result |
 |---|---|---|---|
 | Crate builds | release build, locked, offline in the image | `cargo build --release --locked` | ok |
 | Format and lint | rustfmt check, clippy over every target with warnings denied | `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings` | clean, 0 warnings |
-| Unit and integration tests | real `ffmpeg`/`ffprobe` binaries; **no test skips** when they are missing, it fails naming the prerequisite | `cargo test --locked` | **73 pass, 0 fail** across 5 targets (44 lib, 14 encode, 10 HTTP, 4 protocol goldens, 1 example binary) |
+| Unit and integration tests | real `ffmpeg`/`ffprobe` binaries; **no test skips** when they are missing, it fails naming the prerequisite | `cargo test --locked` | **79 pass, 0 fail** across 5 targets (49 lib, 15 encode, 10 HTTP, 4 protocol goldens, 1 main binary) |
 | Protocol goldens | the six documents in `fixtures/protocol/` asserted against the types *and* against this build's serialization, both directions | `cargo test --locked --test protocol_golden` | 4 pass |
-| Real encode | fixture → validated 320x180 H.264 MP4, output hash recomputed by the test, temp directory asserted gone | `cargo test --locked --test encode_real` | 14 pass |
+| Real encode | fixture → validated 320x180 H.264 MP4, output hash recomputed by the test, temp directory asserted gone | `cargo test --locked --test encode_real` | 15 pass |
 | HTTP surface | real sockets against a real server: health, encode whose body a *second* `ffprobe` accepts, refusals, chunked refusal, disconnect cancellation, `429` while busy | `cargo test --locked --test http_server` | 10 pass |
 | SIGTERM | the built binary as its own process, a hanging child, a real signal, temp root asserted empty afterwards | same | pass |
-| Image build and run | `docker build` on digest-pinned bases, then health + encode + refusals + SIGTERM against the running container | `bun run --cwd apps/backend/media scripts/measure.sh` | **every assertion matched** |
-| Measurements | image 546,176,849 bytes; binary 789,512; cold start 125–153 ms; fixture encode 0.21–0.44 s; peak 61 MB | same, printed | recorded in the crate README |
+| Image build and run | one run on 2026-10-03, Docker 25.0.16, digest-pinned bases and Debian FFmpeg 5.1.9; health, 3 timed encodes, 5 refusals, zero temp entries and SIGTERM exit 0 | `bash scripts/measure.sh` from `apps/backend/media` (Moon uses the same invocation) | exit 1: one DRIFT because cgroup `memory.peak` was unavailable; other checks passed |
+| Measurements | image 540,099,230 bytes; binary 791,840; FFmpeg 293,288; cold starts 193/178/185/179/187 ms (mean 184, max 193); encodes 424/420/417 ms, output 112,913 bytes each; peak memory unavailable | `bash scripts/measure.sh` from `apps/backend/media` | observations from that single run, matching the crate README; counts and timings are measured, not fixed assertions |
 
 Negative controls, all against real processes, all in this round's run:
 

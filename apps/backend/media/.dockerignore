@@ -10,9 +10,7 @@
 target/
 **/target/
 
-# Local scratch and fixture output. `fixtures/media/sample-v1.mp4` IS copied:
-# it is committed, and an image that cannot regenerate or verify its own fixture
-# is an image whose fixture is folklore.
+# Local scratch and fixture output. The Dockerfile does not copy media fixtures.
 **/*.tmp
 /tmp/
 

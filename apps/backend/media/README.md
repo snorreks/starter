@@ -154,7 +154,7 @@ a C toolchain for the `libc` dependency, and `ffmpeg`/`ffprobe` on `PATH`. Run
 every command from `apps/backend/media`.
 
 ```bash
-# build, format, lint, test — the four things CI runs
+# build, format, lint, test — run manually or through Moon
 cargo build --release --locked
 cargo fmt --check
 cargo clippy --all-targets -- -D warnings
@@ -249,26 +249,39 @@ tests assert the properties the protocol cares about.
 
 ## Measurements, and the profile they imply
 
-Measured on this checkout, `linux/amd64`, Podman 5.8.7, 32 host CPUs available to
-the container, FFmpeg 5.1.9 from Debian bookworm. Reproduce with the commands in
-[`scripts/measure.sh`](scripts/measure.sh), which asserts the results it prints.
+Recorded from one `bash scripts/measure.sh` run on 2026-10-03 in this checkout,
+`linux/amd64`, Docker 25.0.16, with Debian bookworm's FFmpeg 5.1.9. Run that
+command from `apps/backend/media` (also Moon's `media:cargo-image` invocation).
+The script checks size/output baselines with tolerances and reports observed
+counts and timings; these observations are not fixed performance guarantees.
 
-| Measurement | Value |
+The run exited **1 with one DRIFT**: cgroup `memory.peak` was unavailable. Image
+build, health, encodes, all five refusals, cleanup and SIGTERM checks passed.
+
+| Measurement | Value from this run |
 |---|---|
-| final image | 546,177,873 bytes (546 MB), of which `/usr/lib/x86_64-linux-gnu` is 478 MB |
-| `starter-media` binary | 790,688 bytes stripped |
-| `ffmpeg` / `ffprobe` in the image | 293,288 / 187,336 bytes |
-| cold start, `docker run` → first `200` on `/health` | 125–157 ms across 5-run batches |
-| fixture encode (3 s, 320x180) | 214–437 ms across runs; output 112,717 bytes every time |
-| worst in-ceiling encode (30 s, 720p, 3.8 MiB input) | 2049, 2051, 2048 ms; output 757,704 bytes |
+| final image | 540,099,230 bytes (540 MB) |
+| `starter-media` binary | 791,840 bytes stripped |
+| `ffmpeg` in the image | 293,288 bytes |
+| cold start, `docker run` → first `200` on `/health` | 193, 178, 185, 179, 187 ms; mean 184 ms, max 193 ms (5 successful starts) |
+| fixture encode (3 s, 320x180) | 424, 420, 417 ms; output 112,913 bytes on each of 3 attempts |
+| peak container memory, fixture encode | unavailable; zero fallback reported as DRIFT, not a memory measurement |
+| temp files after fixture encodes and 5 refusals | 0 |
+| container exit status after SIGTERM | 0 |
+
+The earlier profile study below is historical and was **not repeated by this
+script run**. In particular, the script still checks the prior 61–62 MB fixture
+memory baseline at 61.5 MB ±10 MB when a nonzero reading is available.
+
+| Historical measurement | Prior value |
+|---|---|
 | peak container memory, fixture encode | 61–62 MB (cgroup `memory.peak`) |
+| 30 s 720p encode (3.8 MiB input) | 2049, 2051, 2048 ms; output 757,704 bytes |
 | peak container memory, 30 s 720p encode | ~118 MB (cgroup `memory.peak`) |
 | thread scaling on that input | `-threads 1` 1253 ms, `2` 836 ms, `4` 660 ms |
-| temp files left after 6 encodes | 0 |
-| temp files left after 5 refusals | 0 |
 
 **Chosen profile: `basic` (1/4 vCPU, 1 GiB memory, 4 GB disk).** The reasoning,
-with the numbers it rests on:
+using the current timing/size results and the historical memory/thread study:
 
 * Memory: 1 GiB is 8.5× the worst peak measured inside the input ceiling
   (118 MB) and 17× the demo fixture's (60 MB). `lite` (256 MiB) is only 2.2× the
@@ -278,7 +291,7 @@ with the numbers it rests on:
   those two threads, so budget roughly 4× — about 1.7 s — which is 1.4 % of the
   120 s deadline. Paying for `standard-1` (1/2 vCPU, 4 GiB) to save a second on a
   job that runs a handful of times an hour is not a trade worth making.
-* Disk: 4 GB against a 546 MB image leaves room for the layer cache and the
+* Disk: 4 GB against a 540 MB image leaves room for the layer cache and the
   ~16 MB of temp a request at the input and output ceilings would need.
 * Threads: `-threads 2` is the measured knee — 1.5× faster than one thread, and
   the third thread buys 21 % more for memory this profile does not have to spare.
@@ -291,7 +304,7 @@ table has to be re-measured and the profile revisited — `standard-1` is the ne
 step, not a guess. The processor works on any of the six documented instance
 types; nothing in the code knows which one it is on.
 
-Image size was measured, not minimised. 546 MB is what "Debian's FFmpeg, from
+Image size was measured, not minimised. 540 MB is what "Debian's FFmpeg, from
 Debian's archive" costs, and it is paid once per cold instance. The obvious
 alternative — a static FFmpeg from a third-party release channel — would cut it to
 tens of megabytes and move the supply chain off a distribution archive onto a URL

@@ -104,15 +104,20 @@ pub fn parse_encode_args(argv: &[String]) -> std::result::Result<EncodeArgs, Str
     })
 }
 
-/// Run one encode. Returns the status to exit with.
-pub fn run_encode(args: &EncodeArgs, encoder: &Encoder) -> Result<crate::encode::EncodedOutput> {
+/// Run one encode, returning the validated `EncodedOutput` or a processor error.
+/// Failures are mapped to process exit statuses by [`exit_code_for`].
+pub fn run_encode(
+    args: &EncodeArgs,
+    encoder: &Encoder,
+    cancel: CancelToken,
+) -> Result<crate::encode::EncodedOutput> {
     let preset = lookup(&args.preset)?;
     encoder.encode_from_path(
         &args.input,
         Some(&args.output),
         preset,
         &args.attempt_id,
-        CancelToken::new(),
+        cancel,
     )
 }
 
