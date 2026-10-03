@@ -194,6 +194,12 @@ describe('roots: apps/frontend/native', () => {
           'apps/frontend/native/src-tauri/gen/android/build/generated.ts':
             "import { notes } from '@starter/database';\nexport const generated = notes;\n",
           'apps/frontend/native/src-tauri/src/lib.rs': 'pub fn run() {}\n',
+          // The narrowing of the generation policy, at the graph level: this is a
+          // source directory inside the same crate, and it has no manifest beside it
+          // declaring it build output. A bare-name pattern would drop it silently —
+          // from the graph and from discovery, with no violation either way.
+          'apps/frontend/native/src-tauri/src/vendor/adapter.ts':
+            "export const adapter = (): string => 'vendor';\n",
         },
       ),
     );
@@ -202,7 +208,34 @@ describe('roots: apps/frontend/native', () => {
     expect(graph.unclassified).toEqual([]);
     expect([...graph.modules.keys()].some((file) => file.includes('/gen/android/'))).toBe(false);
     expect(graph.modules.has('apps/frontend/native/src/lib/platform/bridge.ts')).toBe(true);
+    expect(graph.modules.has('apps/frontend/native/src-tauri/src/vendor/adapter.ts')).toBe(true);
     expect(run(root)).toEqual([]);
+  });
+
+  test('skips a Cargo target directory by the manifest beside it', () => {
+    // The other side of the same predicate: `target` beside a `Cargo.toml` is build
+    // output, and `src-tauri/target` is build output by its fixed layout. Both are
+    // skipped; a `target` elsewhere is not.
+    const root = makeProject(
+      withMembers(
+        [
+          {
+            name: '@starter/media',
+            dir: 'apps/backend/media',
+            files: { 'src/lib.rs': 'pub fn run() {}\n' },
+          },
+        ],
+        {
+          'apps/backend/media/Cargo.toml': '[package]\nname = "media"\n',
+          'apps/backend/media/target/debug/build/probe/out/main.ts':
+            "import { notes } from '@starter/database';\nexport const generated = notes;\n",
+        },
+      ),
+    );
+
+    const graph = buildModuleGraph(root);
+    expect([...graph.modules.keys()].some((file) => file.includes('/target/'))).toBe(false);
+    expect(graph.unclassified).toEqual([]);
   });
 });
 

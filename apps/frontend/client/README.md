@@ -79,6 +79,6 @@ reports that row if nothing uses it any more.
 
 ## Canonical docs
 
-[architecture](../docs/architecture.md) · [auth](../docs/auth.md) ·
-[cloudflare](../docs/cloudflare.md) · [logs](../docs/logs.md) ·
-[testing](../docs/testing.md) · [deployment](../docs/deployment.md)
+[architecture](../../../docs/architecture.md) · [auth](../../../docs/auth.md) ·
+[cloudflare](../../../docs/cloudflare.md) · [logs](../../../docs/logs.md) ·
+[testing](../../../docs/testing.md) · [deployment](../../../docs/deployment.md)

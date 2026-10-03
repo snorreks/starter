@@ -54,6 +54,6 @@ package's `exports` map. A deep import that skips the map resolves today and
 survives a file move it should not have survived, and `rulePackageExports`
 refuses it.
 
-- [docs/architecture.md](../../docs/architecture.md) — the portable core
-- [docs/adding-a-feature.md](../../docs/adding-a-feature.md) — where a new DTO and its schema belong
-- [docs/testing.md](../../docs/testing.md) — why the assertions here are negative
+- [docs/architecture.md](../../../docs/architecture.md) — the portable core
+- [docs/adding-a-feature.md](../../../docs/adding-a-feature.md) — where a new DTO and its schema belong
+- [docs/testing.md](../../../docs/testing.md) — why the assertions here are negative

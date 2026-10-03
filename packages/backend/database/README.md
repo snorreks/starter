@@ -62,8 +62,8 @@ guard reports it as `plane-reachability` or, for a type-only import, as
 
 Migrations are forward-only. There is no down migration and no automatic schema
 rollback; a bad release is recovered by deploying a new one — see
-[docs/deployment.md](../../docs/deployment.md).
+[docs/deployment.md](../../../docs/deployment.md).
 
-- [docs/cloudflare.md](../../docs/cloudflare.md) — D1, bindings, credentials
-- [docs/auth.md](../../docs/auth.md) — why the rate limiter's storage is custom
-- [docs/deployment.md](../../docs/deployment.md) — where migrations run in the pipeline
+- [docs/cloudflare.md](../../../docs/cloudflare.md) — D1, bindings, credentials
+- [docs/auth.md](../../../docs/auth.md) — why the rate limiter's storage is custom
+- [docs/deployment.md](../../../docs/deployment.md) — where migrations run in the pipeline

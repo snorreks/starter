@@ -39,6 +39,9 @@ import { guardProjectReadmes } from './guard_readmes.ts';
 // Discovery lives with the graph builder, because both need to agree about what counts
 // as source. Re-exported here so the guards below do not each pick their own walk.
 import { IGNORED_DIRS, listSourceFiles, SOURCE_EXTENSIONS } from './module_graph.ts';
+// The document list and the README-coverage guard have to agree about which
+// directories are projects, so the discovery is imported rather than re-walked.
+import { discoverProjects } from './project_discovery.ts';
 
 export { listSourceFiles, REPO_ROOT };
 
@@ -499,6 +502,20 @@ export const guardDocumentedPaths = (root = REPO_ROOT): GuardResult => {
     ...(existsSync(join(root, 'docs')) ? readdirSync(join(root, 'docs')) : [])
       .filter((entry) => entry.endsWith('.md'))
       .map((entry) => join('docs', entry)),
+    // Every project README, from the same discovery the README-coverage guard uses.
+    //
+    // These were the documents that rotted in exactly the way this guard exists to
+    // catch: nine links written one directory too shallow, in files no reviewer was
+    // reading because they had been added by a parallel branch and rendered in the
+    // project list rather than in a diff. A link from a package README is relative
+    // to *that package*, so the depth is one fact per project and it is wrong easily
+    // — which is an argument for checking it, not for not having written it.
+    //
+    // The root README is already listed above, so it is filtered out of the
+    // discovery rather than scanned twice.
+    ...discoverProjects(root)
+      .map((project) => (project.dir === '.' ? 'README.md' : join(project.dir, 'README.md')))
+      .filter((file) => file !== 'README.md' && existsSync(join(root, file))),
   ];
 
   const ignoreRules = readIgnoreRules(root);

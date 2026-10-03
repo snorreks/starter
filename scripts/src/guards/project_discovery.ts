@@ -30,7 +30,7 @@
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { parse } from 'yaml';
-import { IGNORED_DIRS, readWorkspacePackages } from './module_graph.ts';
+import { IGNORED_DIRS, isCargoBuildDirectory, readWorkspacePackages } from './module_graph.ts';
 import { isGeneratedPath } from './policy.ts';
 
 /**
@@ -73,30 +73,85 @@ const moonProjectDirs = (root: string): { id: string; dir: string }[] => {
     return [];
   }
 
-  const projects = (parsed as { projects?: unknown } | null)?.projects;
-  if (projects === null || typeof projects !== 'object' || Array.isArray(projects)) {
-    return [];
-  }
+  const workspace = parsed as { projects?: unknown; globs?: unknown } | null;
 
+  // Moon 2 writes a project's location in three shapes, and the discovery has to read
+  // all of them or a project silently stops owing a README when the workspace file is
+  // rewritten in a form this guard does not know:
+  //
+  //   projects: { client: 'apps/frontend/client' }          one project, one path
+  //   projects: { packages: { globs: ['packages/*'] } }    several, by glob
+  //   globs: ['packages/*'] + projects: { schemas: ... }   workspace-wide globs
   const found: { id: string; dir: string }[] = [];
-  for (const [id, value] of Object.entries(projects as Record<string, unknown>)) {
-    // Moon 2 writes either a single glob or a `{ globs: [...] }` block. An explicit
-    // list rather than a nested ternary, because which shape was read is the whole
-    // question here and a ternary makes the reader compare two conditions.
-    const block = value as { globs?: unknown } | null;
-    const patterns: unknown[] = [];
-    if (typeof value === 'string') {
-      patterns.push(value);
-    } else if (Array.isArray(block?.globs)) {
-      patterns.push(...block.globs);
+  const expand = (id: string, pattern: unknown): void => {
+    if (typeof pattern !== 'string') {
+      return;
     }
-    for (const pattern of patterns) {
-      if (typeof pattern === 'string') {
-        found.push({ id, dir: pattern.replace(/\/\*$/, '') });
+    for (const dir of expandPattern(root, pattern)) {
+      found.push({ id, dir });
+    }
+  };
+
+  const projects = workspace?.projects;
+  if (projects !== null && typeof projects === 'object' && !Array.isArray(projects)) {
+    for (const [id, value] of Object.entries(projects as Record<string, unknown>)) {
+      if (typeof value === 'string') {
+        expand(id, value);
+        continue;
+      }
+      const globs = (value as { globs?: unknown } | null)?.globs;
+      if (Array.isArray(globs)) {
+        for (const pattern of globs) {
+          expand(id, pattern);
+        }
       }
     }
   }
+
+  // The workspace-wide form. `id` is the directory itself, because a glob has no
+  // name to offer and the directory is what the diagnostic needs anyway.
+  if (Array.isArray(workspace?.globs)) {
+    for (const pattern of workspace.globs) {
+      expand('.', pattern);
+    }
+  }
+
   return found;
+};
+
+/**
+ * One Moon project pattern, expanded into the directories it names.
+ *
+ * `packages/*` names several projects, and treating it as the single directory
+ * `packages` is not a small inaccuracy: it would make the parent of every package a
+ * project that owes a README, and make the packages themselves invisible to the
+ * diagnostic that says which declaration found them. So a trailing `/*` expands to
+ * the directories that actually exist, and anything the generation policy rejects is
+ * dropped — a `node_modules/*` or a cache glob describes nothing a person maintains.
+ */
+const expandPattern = (root: string, pattern: string): string[] => {
+  const normalised = pattern.replace(/^\.\//, '').replace(/\/+$/, '');
+  if (!normalised.endsWith('/*')) {
+    return isGeneratedPath(normalised) ? [] : [normalised];
+  }
+
+  const base = normalised.slice(0, -2);
+  if (isGeneratedPath(base)) {
+    return [];
+  }
+  try {
+    return readdirSync(join(root, base))
+      .filter((entry) => {
+        const dir = `${base}/${entry}`;
+        return !isGeneratedPath(dir) && statSync(join(root, dir)).isDirectory();
+      })
+      .sort()
+      .map((entry) => `${base}/${entry}`);
+  } catch {
+    // A glob whose base does not exist declares nothing. `bun run moon` reports a
+    // project that is missing; this returns no projects rather than a guess.
+    return [];
+  }
 };
 
 /** Reading a file that is not there is an answer, not a crash. */
@@ -143,6 +198,11 @@ const cargoCrateDirs = (root: string): string[] => {
         continue;
       }
       if (isDirectory) {
+        // A Cargo target directory is confirmed against the manifest beside it, so a
+        // source directory that happens to be called `target` is still walked.
+        if (isCargoBuildDirectory(full)) {
+          continue;
+        }
         walk(full, relativePath);
         continue;
       }

@@ -37,21 +37,48 @@ import { describeSources, discoverProjects } from './project_discovery.ts';
 const readmePath = (dir: string): string => (dir === '.' ? 'README.md' : `${dir}/README.md`);
 
 /**
- * Every Markdown heading in a document, in order.
+ * Every Markdown heading in a document, in order, ignoring fenced code blocks.
  *
  * Headings and not prose, because a heading is a claim that a section exists and a
  * sentence is not. Requiring particular *wording* would be worse still: it would make
  * a reworded README fail a build, which teaches people to stop reading the message
  * and to copy the wording instead.
+ *
+ * Fence state is tracked because this document is about the failure being guarded
+ * against, and because a project README that shows a generated `## Usage` block is
+ * entirely ordinary: the example would otherwise be read as the project having a
+ * `Usage` section. Both fence forms are tracked, since CommonMark allows a tilde
+ * fence precisely so that a block can contain a backtick fence, and a closing fence
+ * must be at least as long as the one that opened it.
  */
 const headingsOf = (text: string): string[] => {
   const headings: string[] = [];
+  /** The fence character and length currently open, or `null` outside a block. */
+  let fence: { readonly char: string; readonly length: number } | null = null;
+
   for (const line of text.split('\n')) {
-    const match = /^#{1,6}\s+(.+?)\s*#*\s*$/.exec(line);
-    if (match?.[1] !== undefined) {
-      headings.push(match[1]);
+    const marker = /^ {0,3}(`{3,}|~{3,})/.exec(line)?.[1];
+
+    if (fence !== null) {
+      // Only a fence of the same character and at least the opening length closes it,
+      // so a ``` block can contain a line of tildes and vice versa.
+      if (marker !== undefined && marker[0] === fence.char && marker.length >= fence.length) {
+        fence = null;
+      }
+      continue;
+    }
+
+    if (marker !== undefined) {
+      fence = { char: marker[0], length: marker.length };
+      continue;
+    }
+
+    const heading = /^#{1,6}\s+(.+?)\s*#*\s*$/.exec(line);
+    if (heading?.[1] !== undefined) {
+      headings.push(heading[1]);
     }
   }
+
   return headings;
 };
 

@@ -34,11 +34,12 @@
 
 import { existsSync, readdirSync, readFileSync, realpathSync, statSync } from 'node:fs';
 import { builtinModules } from 'node:module';
-import { dirname, join, relative, resolve as resolvePath } from 'node:path';
+import { basename, dirname, join, relative, resolve as resolvePath } from 'node:path';
 import { parse as parseSvelte } from 'svelte/compiler';
 import ts from 'typescript';
 import {
   CAPABILITY_RULES,
+  CARGO_BUILD_DIRECTORY_NAMES,
   type Capability,
   isGeneratedPath,
   type Plane,
@@ -120,6 +121,11 @@ export const listSourceFiles = (root: string): string[] => {
       }
       const full = join(directory, entry);
       if (statSync(full).isDirectory()) {
+        // Confirmed against the manifest beside it, so a source directory named
+        // `target` is still walked.
+        if (isCargoBuildDirectory(full)) {
+          continue;
+        }
         walk(full, relativePath);
         continue;
       }
@@ -136,6 +142,23 @@ export const listSourceFiles = (root: string): string[] => {
 /** Repo-relative POSIX path. The canonical identity of a first-party module. */
 export const toRelative = (root: string, file: string): string =>
   relative(root, file).split('\\').join('/');
+
+/**
+ * Is `absoluteDirectory` a Cargo target directory?
+ *
+ * Cargo writes build output into a directory named `target` beside the `Cargo.toml`
+ * that produced it. Naming the directory alone is not enough: a package may own a
+ * directory called `target` or `vendor`, and a walker that skipped it would drop real
+ * source from the graph *and* from project discovery without saying anything — the
+ * failure mode the generation policy is supposed to prevent.
+ *
+ * So the name is the candidate and the manifest is the confirmation. The check costs
+ * one `existsSync` per candidate directory, and it is the only I/O either walker does
+ * beyond the walk itself.
+ */
+export const isCargoBuildDirectory = (absoluteDirectory: string): boolean =>
+  CARGO_BUILD_DIRECTORY_NAMES.includes(basename(absoluteDirectory)) &&
+  existsSync(join(dirname(absoluteDirectory), 'Cargo.toml'));
 
 /** How a specifier was resolved. Each kind answers a different question. */
 export type ResolutionKind =

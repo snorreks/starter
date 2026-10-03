@@ -992,7 +992,30 @@ describe('architecture: the guard command', () => {
     );
     for (const timing of report.timings) {
       expect(timing.ms).toBeGreaterThanOrEqual(0);
-      expect(result.stdout).toContain(timing.id);
+    }
+
+    // The rendered table, not merely the presence of an id somewhere in the output:
+    // every id in the JSON also appears in the `ok` lines above the table, so an
+    // assertion of `toContain(id)` would pass against a `--profile` that printed no
+    // timings at all.
+    expect(result.stdout).toContain('elapsed, per guard:');
+    const timingRows = result.stdout.match(/^\s+\d+ ms\s{2}\S+$/gm) ?? [];
+    // One row per guard, plus the total.
+    expect(timingRows).toHaveLength(report.timings.length + 1);
+    for (const timing of report.timings) {
+      expect(timingRows.some((row) => row.endsWith(`  ${timing.id}`))).toBe(true);
+    }
+    const total = report.timings.map((timing) => timing.ms);
+    expect(timingRows.at(-1)).toContain('total');
+    // The total is the sum of the rows, so it is at least the largest of them. The
+    // two CLI runs below are separate processes, so the printed number cannot be
+    // compared to the JSON one directly — the invariant that holds across processes is
+    // the ordering, and it is what catches a table that prints one guard's time for
+    // every row.
+    const totalMs = Number(timingRows.at(-1)?.trim().split(/\s+/)[0]);
+    expect(Number.isFinite(totalMs)).toBe(true);
+    for (const ms of total) {
+      expect(totalMs).toBeGreaterThanOrEqual(ms);
     }
   });
 

@@ -63,6 +63,6 @@ package from a `browser`-plane file, because the browser's compile-time surface
 tied to a private server entity is one value import away from a bundle leak. The
 wire shape belongs in `@starter/schemas`.
 
-- [docs/auth.md](../../docs/auth.md) — the account lifecycle, the D1 rate limiter, and mail
-- [docs/cloudflare.md](../../docs/cloudflare.md) — bindings and credentials
-- [docs/secrets.md](../../docs/secrets.md) — SOPS, and what never goes in the repository
+- [docs/auth.md](../../../docs/auth.md) — the account lifecycle, the D1 rate limiter, and mail
+- [docs/cloudflare.md](../../../docs/cloudflare.md) — bindings and credentials
+- [docs/secrets.md](../../../docs/secrets.md) — SOPS, and what never goes in the repository

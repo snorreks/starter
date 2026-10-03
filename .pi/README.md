@@ -72,6 +72,6 @@ import `scripts/` source by relative path: the two packages are built together
 and expose their shared code through `@starter/utils` and friends, so a relative
 path across that boundary is exactly what the guard now refuses.
 
-- [docs/agent.md](../../docs/agent.md) — the canonical write-up: trust, the tool surface, why `extensions/` is entrypoints only
-- [docs/logs.md](../../docs/logs.md) — the log CLI behind the `read_logs` tool, and its refusals
-- [docs/testing.md](../../docs/testing.md) — how the tests here avoid depending on a real agent
+- [docs/agent.md](../docs/agent.md) — the canonical write-up: trust, the tool surface, why `extensions/` is entrypoints only
+- [docs/logs.md](../docs/logs.md) — the log CLI behind the `read_logs` tool, and its refusals
+- [docs/testing.md](../docs/testing.md) — how the tests here avoid depending on a real agent

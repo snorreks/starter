@@ -87,7 +87,7 @@ Artifacts: none. The deliverable is the source; there is no build step.
 
 ## See also
 
-- [architecture.md](../../docs/architecture.md) — why the layer boundaries are
+- [architecture.md](../../../docs/architecture.md) — why the layer boundaries are
   where they are
-- [testing.md](../../docs/testing.md) — why `BaseClass`'s tracing is tested
+- [testing.md](../../../docs/testing.md) — why `BaseClass`'s tracing is tested
   against `#private` field access specifically

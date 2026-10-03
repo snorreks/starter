@@ -132,6 +132,55 @@ describe('readmes: which directories owe a README', () => {
     ]);
   });
 
+  test('reads every shape Moon writes a project location in', () => {
+    // Three forms, three answers. A discovery that understood one of them would let a
+    // project stop owing a README the moment the workspace file was rewritten in a
+    // shape it did not know — silently, which is the failure this guard exists for.
+    //
+    // The `globs` case is the one that is easy to get wrong in a way that still looks
+    // plausible: `packages/*` names several projects, and treating it as the single
+    // directory `packages` would make the parent of every package a project and the
+    // packages themselves invisible.
+    const root = makeTree({
+      ...CONFORMANT,
+      'packages/shared/second/package.json': JSON.stringify({ name: '@starter/second' }),
+      'packages/shared/second/README.md': CONFORMANT_README,
+      'packages/frontend/tooling/package.json': JSON.stringify({ name: '@starter/tooling' }),
+      'packages/frontend/tooling/README.md': CONFORMANT_README,
+      '.moon/workspace.yml': [
+        'globs:',
+        "  - 'packages/frontend/*'",
+        'projects:',
+        '  shared:',
+        '    globs:',
+        "      - 'packages/shared/*'",
+        "  tool: 'tools/thing'",
+      ].join('\n'),
+    });
+
+    const directories = discoverProjects(root).map((project) => project.dir);
+    expect(directories).toContain('packages/frontend/tooling');
+    expect(directories).toContain('packages/shared/thing');
+    expect(directories).toContain('packages/shared/second');
+    expect(directories).toContain('tools/thing');
+    // The parent of a globbed set is not itself a project.
+    expect(directories).not.toContain('packages');
+    expect(directories).not.toContain('packages/shared');
+    expect(guardProjectReadmes(root).violations).toEqual([]);
+  });
+
+  test('drops a glob that names nothing rather than inventing a project', () => {
+    // A pattern whose base does not exist declares nothing. Returning the base as a
+    // project would add a README obligation for a directory that is not there.
+    const root = makeTree({
+      ...CONFORMANT,
+      '.moon/workspace.yml': "projects:\n  gone: 'packages/absent/*'\n",
+    });
+
+    expect(discoverProjects(root).map((project) => project.dir)).not.toContain('packages/absent');
+    expect(guardProjectReadmes(root).violations).toEqual([]);
+  });
+
   test('merges the declarations that agree about one directory', () => {
     // A Moon project that is also a Bun workspace is one project, and it is a stronger
     // obligation than either alone. Two reports for one README would be noise.
@@ -250,7 +299,11 @@ describe('readmes: generated and vendored trees are not projects', () => {
     // The two generated trees that look most like projects: Tauri regenerates the
     // Android and Xcode projects, and Moon creates its cache directory on the first
     // cached task. Both are declared in `GENERATED_TREES` with a reason.
-    const violations = run({
+    //
+    // One tree, asserted both ways. Asserting discovery on a *second*, identical tree
+    // would pass against a discovery walk that never saw the generated manifest at
+    // all — which is the opposite of what this case is for.
+    const root = makeTree({
       ...CONFORMANT,
       'apps/frontend/native/src-tauri/gen/android/settings/package.json':
         '{"name":"android-settings"}\n',
@@ -258,10 +311,28 @@ describe('readmes: generated and vendored trees are not projects', () => {
       '.moon/cache/hash/task.json': '{}',
     });
 
-    expect(violations).toEqual([]);
-    expect(discoverProjects(makeTree(CONFORMANT)).map((project) => project.dir)).not.toContain(
+    expect(guardProjectReadmes(root).violations).toEqual([]);
+    expect(discoverProjects(root).map((project) => project.dir)).not.toContain(
       'apps/frontend/native/src-tauri/gen/android/settings',
     );
+  });
+
+  test('does not mistake a source directory named target or vendor for output', () => {
+    // The other side of the narrowing. A Cargo target directory is recognised by the
+    // `Cargo.toml` *beside* it, so a package that owns `src/vendor/` or a directory
+    // called `target/` keeps them. The graph-level control is in
+    // `new_roots_guards.test.ts`, where the source walk itself is observable; what is
+    // observable here is that discovery invents no project out of them and demands no
+    // README for them.
+    const root = makeTree({
+      ...CONFORMANT,
+      'packages/shared/thing/src/vendor/adapter.ts': 'export const adapter = 1;\n',
+      'packages/shared/thing/src/target/index.ts': 'export const target = 1;\n',
+    });
+
+    const discovered = discoverProjects(root).map((project) => project.dir);
+    expect(discovered).not.toContain('packages/shared/thing/src/target');
+    expect(guardProjectReadmes(root).violations).toEqual([]);
   });
 
   test('still demands a README for the crate that owns the generated tree', () => {
@@ -316,6 +387,46 @@ describe('readmes: the guard command and the live tree', () => {
 
   test('exits zero on a documented tree', () => {
     expect(cli(makeTree(CONFORMANT)).code).toBe(0);
+  });
+
+  test('does not count a heading inside a fenced code block', () => {
+    // A README that shows a generated `## Usage` block is entirely ordinary, and the
+    // example would otherwise be read as the project having a Usage section — which
+    // is how a document passes a check it has not actually answered. Both fence forms
+    // are covered, since a tilde fence is how a block is allowed to contain backticks.
+    const violations = run({
+      ...CONFORMANT,
+      'packages/shared/thing/README.md': `# @starter/thing
+
+## Purpose
+Runs in three runtimes.
+
+## Setup
+No variables.
+
+\`\`\`markdown
+## Commands
+## Validation
+## Boundaries
+\`\`\`
+
+~~~markdown
+## Commands
+~~~
+`,
+    });
+
+    const violation = firstOf(violations, 'project-readme-incomplete');
+    expect(violation, 'expected project-readme-incomplete').toBeDefined();
+    expect(violation?.message).toContain('commands, validation, boundaries');
+  });
+
+  test('still reads a heading that follows a closed fence', () => {
+    // The other side of the same fix: tracking fence state must not swallow the rest
+    // of the document. A guard that stopped counting headings after the first block
+    // would report every project as incomplete, which is loud — but the fix for that
+    // would be to remove the check, so it is worth pinning.
+    expect(run(CONFORMANT)).toEqual([]);
   });
 
   test('every first-party project in this repository is documented today', () => {

@@ -64,7 +64,7 @@ editor, and it knows why a given specifier is banned in a given directory. The g
 resolves the graph — every specifier through the owning project's `tsconfig.json` and
 each package's `exports` map — and checks reachability, so it sees through re-exports,
 relative traversal and aliases that Biome reads as an ordinary local import. See
-[architecture.md](architecture.md) for the three files and the sixteen rules, including
+[architecture.md](architecture.md) for the five files and the seventeen rules, including
 the cases the guard deliberately does not claim.
 
 Biome's `noRestrictedImports` denies `node:*`/`bun:*` in the browser half. The guard

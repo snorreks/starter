@@ -54,9 +54,21 @@ runtime failure in one.
 **And a workspace boundary is a declaration, not a folder.** A relative path that
 leaves its own package skips the `exports` map and the dependency list at once, so
 `../../scripts/src/shared/paths.ts` is refused: publish the subpath, declare the
-dependency, import by name. The two declared exemptions — the E2E harness and the
-Vitest config, both reaching the tooling they run inside — carry their reasons and are
-checked for staleness.
+dependency, import by name. The rule is stated over runtime edges, and the reason is
+written down rather than implied — TypeScript erases an `import type`, so a type-only
+edge cannot reach a bundle; the compile-time coupling it does create is owned by the
+server-type-only rule.
+
+Exactly two pairs are exempt, each declared with its reason in
+`CROSS_WORKSPACE_RELATIVE_EXEMPTIONS`, and each checked for staleness: `apps/e2e` ->
+`scripts`, because the Playwright harness and the tooling it configures are one Bun
+process and the harness should exercise the real path resolution rather than a copy;
+and `apps/frontend/client` -> `scripts`, because the Vitest config resolves the
+browser executable before any application module is loaded, in Node. Delete the last
+import that uses a row and the guard reports the row, the same way a Node-only
+declaration is reported when its subpath stops being published. The plane rules narrow
+both rows further — a shipped browser module reaching `scripts/` is already a
+`plane-reachability` violation — so nothing unsafe is granted by the exemption itself.
 
 ### Two runtimes in one package
 
@@ -76,13 +88,21 @@ and a `+page.svelte` is deliberately not on the list, so the components beside a
 
 ### How the guard enforces it
 
-Three files, one responsibility each:
+Five files, one responsibility each:
 
 | File | Owns |
 |---|---|
-| `scripts/src/guards/policy.ts` | The architecture as data: four planes, the 4×4 reachability matrix, runtime capabilities, roles, and the two declared Node-only subpaths. Every row carries the reason it exists. |
-| `scripts/src/guards/module_graph.ts` | The real graph. TypeScript parses `.ts`, Svelte locates the script blocks in `.svelte` and TypeScript reads those, and every specifier is resolved through the owning project's own `tsconfig.json` and through each workspace package's `exports` map. |
-| `scripts/src/guards/guard_architecture.ts` | Sixteen rules over that graph, each producing a diagnostic that names the source, the target, the dependency chain, the rule, and the ownership the code should move to. |
+| `scripts/src/guards/policy.ts` | The architecture as data: four planes, the 4×4 reachability matrix, runtime capabilities and the roles that may hold them, the declared exemptions, and the generation policy. Every row carries the reason it exists. |
+| `scripts/src/guards/module_graph.ts` | The real graph. TypeScript parses `.ts`, Svelte locates the script blocks in `.svelte` and TypeScript reads those, and every specifier is resolved through the owning project's own `tsconfig.json` and through each workspace package's `exports` map. Also the source walk, and the one predicate that needs I/O: a Cargo target directory, recognised by the manifest beside it rather than by its name. |
+| `scripts/src/guards/guard_architecture.ts` | Seventeen rules over that graph, each producing a diagnostic that names the source, the target, the dependency chain, the rule, and the ownership the code should move to. |
+| `scripts/src/guards/project_discovery.ts` | Which directories are projects: Bun workspace globs, Moon projects, and first-party `Cargo.toml` files. Imported by the README guard *and* by `guardDocumentedPaths`, so "a project" is one definition rather than two. |
+| `scripts/src/guards/guard_readmes.ts` | That each of them answers the five questions a README owes. |
+
+The rule added this round is the one the others were blind to. `ruleDeclaredDependencies` and `rulePackageExports` both read a package's
+declarations, and both are written against *package* specifiers — so a relative path
+out of a workspace skipped both of them simultaneously. It is a rule about the
+boundary rather than about relative paths: within one package a relative import is
+how modules are written, and every other rule still checks those edges.
 
 What this replaced, and why it mattered: the previous guard read import statements out
 of source text with a regular expression and matched the resulting specifiers against a

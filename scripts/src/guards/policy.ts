@@ -280,6 +280,16 @@ export const capabilityRoles = (capability: Capability): readonly Role[] | undef
  * *vendored* rather than generated (`node_modules`) is here for the same reason and
  * the same cost: neither is a place a person maintains code.
  *
+ * One build directory is deliberately **not** in this table, because a bare name is
+ * not enough to tell output from source: a package may legitimately keep code in
+ * `src/vendor/` or a directory called `target/`, and silently dropping it from the
+ * graph and from discovery is precisely the failure this table exists to prevent. A
+ * Cargo target directory is recognised by the `Cargo.toml` beside it instead, which
+ * is a fact about the filesystem rather than about the spelling — see
+ * `isCargoBuildDirectory` in `module_graph.ts`, the one predicate both walkers
+ * share. `src-tauri/target` is still named below, because that layout is fixed by
+ * the Tauri CLI and does not depend on inferring it.
+ *
  * Rust is absent by construction rather than by pattern. `SOURCE_EXTENSIONS` is
  * `.ts`, `.tsx` and `.svelte`, so no `.rs` file is ever parsed as TypeScript — Rust is
  * validated by `cargo check`/`cargo test` in its own lanes, and a guard that parsed it
@@ -307,16 +317,17 @@ export const GENERATED_TREES: readonly { readonly test: RegExp; readonly reason:
   { test: /(^|\/)state(\/|$)/, reason: 'Wrangler local state.' },
   { test: /(^|\/)\.direnv(\/|$)/, reason: 'direnv cache.' },
   {
-    test: /(^|\/)target(\/|$)/,
-    reason: 'Cargo build output. `src-tauri/target` is the largest directory in a native checkout.',
+    test: /(^|\/)src-tauri\/target(\/|$)/,
+    reason:
+      'Cargo build output for the Tauri shell, named by its fixed layout rather than ' +
+      'inferred from a neighbouring manifest.',
   },
-  { test: /(^|\/)vendor(\/|$)/, reason: 'Vendored third-party source.' },
   {
-    test: /(^|\/)src-tauri\/(?:gen|gen-schemas|target)(\/|$)/,
+    test: /(^|\/)src-tauri\/(?:gen|gen-schemas|vendor)(\/|$)/,
     reason:
       'Tauri regenerates the Android and Xcode projects from `tauri.conf.json` and ' +
-      '`Cargo.toml`. They are build products of the shell, and the shell owns their ' +
-      'documentation.',
+      '`Cargo.toml`, and `tauri vendor` writes the crates it embeds. They are build ' +
+      'products of the shell, and the shell owns their documentation.',
   },
 ];
 
@@ -325,6 +336,15 @@ const GENERATED_TREES_COMPILED: readonly RegExp[] = GENERATED_TREES.map((entry) 
 /** Is this repository-relative path inside a generated or vendored tree? */
 export const isGeneratedPath = (relativePath: string): boolean =>
   GENERATED_TREES_COMPILED.some((test) => test.test(relativePath));
+
+/**
+ * Directory names Cargo writes its build output into.
+ *
+ * A name, not a path, because the path is what this rule must *not* decide on: a
+ * package may own a directory called `target` or `vendor`, and those are source. The
+ * name alone identifies a candidate; the manifest beside it is what confirms it.
+ */
+export const CARGO_BUILD_DIRECTORY_NAMES: readonly string[] = ['target'];
 
 /** Capabilities each plane may hold. Absent entries are violations. */
 export const PLANE_CAPABILITIES: Record<Plane, readonly Capability[]> = {

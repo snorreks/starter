@@ -53,7 +53,7 @@ a sink that swallows a record is a logger that reports success while emitting no
 
 Artifacts: none. The two destinations write where the runtime puts them — workerd's
 platform console, or `.wrangler/logs/app.ndjson` under `bun run dev`. Where those are
-and what they contain is [docs/logs.md](../../docs/logs.md)'s subject.
+and what they contain is [docs/logs.md](../../../docs/logs.md)'s subject.
 
 ## Boundaries
 
@@ -64,5 +64,5 @@ depends only on `@starter/schemas`; it imports nothing from `apps/` or `scripts/
 
 ## Canonical docs
 
-[logs](../../docs/logs.md) · [architecture](../../docs/architecture.md) ·
-[testing](../../docs/testing.md)
+[logs](../../../docs/logs.md) · [architecture](../../../docs/architecture.md) ·
+[testing](../../../docs/testing.md)

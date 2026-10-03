@@ -59,6 +59,6 @@ reports that as `plane-reachability`, not as a lint warning.
 Published subpaths: `.` (the barrel), `./screen`, `./feedback`, `./tokens.css`.
 Import the subpath, not a deep path into `src/`.
 
-- [docs/architecture.md](../../docs/architecture.md) — the plane this package is on
-- [docs/lint.md](../../docs/lint.md) — the import rules Biome enforces here
-- [docs/adding-a-feature.md](../../docs/adding-a-feature.md) — where a new component belongs
+- [docs/architecture.md](../../../docs/architecture.md) — the plane this package is on
+- [docs/lint.md](../../../docs/lint.md) — the import rules Biome enforces here
+- [docs/adding-a-feature.md](../../../docs/adding-a-feature.md) — where a new component belongs

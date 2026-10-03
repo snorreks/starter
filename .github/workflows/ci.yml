@@ -225,15 +225,6 @@ jobs:
       - name: Install
         run: bun install --frozen-lockfile
 
-      - name: Install Playwright's Chromium
-        # Before the browser lane, not after.
-        #
-        # Through the workspace script, not `bunx`: `bunx playwright` from the
-        # repository root does not resolve the pinned copy and installs whatever
-        # version the registry serves, which does not match the `@playwright/test`
-        # these lanes run against.
-        run: bun run --cwd apps/e2e browsers:install
-
       - name: Restore Playwright's browser cache
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
@@ -242,6 +233,21 @@ jobs:
           # build. No restore-key on purpose; see the caching note at the top of this
           # file.
           key: playwright-${{ runner.os }}-${{ hashFiles('apps/e2e/package.json') }}
+
+      - name: Install Playwright's Chromium
+        # After the restore, and before the browser lane.
+        #
+        # Order matters and the wrong order is invisible: a restore *after* the
+        # download leaves the browser the install already fetched, so the cache step
+        # costs time and saves nothing. `browsers:install` is still the authority —
+        # it is the step that installs what is missing and is a no-op on a hit — so
+        # this is a fast path, not a replacement.
+        #
+        # Through the workspace script, not `bunx`: `bunx playwright` from the
+        # repository root does not resolve the pinned copy and installs whatever
+        # version the registry serves, which does not match the `@playwright/test`
+        # these lanes run against.
+        run: bun run --cwd apps/e2e browsers:install
 
       - name: Unit tests
         # `moon run :test` fans out to each project's own `test` script, so a new
@@ -362,15 +368,16 @@ jobs:
         # as a product bug rather than as a missing step.
         run: bun run db:migrate
 
-      - name: Install Playwright's Chromium
-        # Pinned copy, same reason as in the unit job.
-        run: bun run --cwd apps/e2e browsers:install
-
       - name: Restore Playwright's browser cache
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: ~/.cache/ms-playwright
           key: playwright-${{ runner.os }}-${{ hashFiles('apps/e2e/package.json') }}
+
+      - name: Install Playwright's Chromium
+        # After the restore, for the reason given in the unit job: a restore after
+        # the download is a cache step that helps nobody.
+        run: bun run --cwd apps/e2e browsers:install
 
       - name: End-to-end tests
         # `e2e:e2e` is the real Playwright suite. It builds the app, starts the
