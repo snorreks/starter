@@ -867,6 +867,18 @@ describe('architecture: standalone guard selection', () => {
     expect(readSelection(['--root', '/tmp/guard-fixture']).root).toBe('/tmp/guard-fixture');
   });
 
+  test('profiling is opt-in, and it is not a filter', () => {
+    // `--profile` changes what is printed and nothing else. A flag that quietly
+    // changed which guards ran would be a way to make the lane faster by making it
+    // weaker.
+    expect(readSelection([]).profile).toBe(false);
+    expect(readSelection(['--profile']).profile).toBe(true);
+    expect(readSelection(['--profile', '--only', 'architecture'])).toMatchObject({
+      only: 'architecture',
+      profile: true,
+    });
+  });
+
   for (const args of [['--root'], ['--root', '--json'], ['--root', '-x']]) {
     test(`rejects ${args.join(' ')}`, () => {
       expect(() => readSelection(args)).toThrow('--root needs a directory');
@@ -948,6 +960,65 @@ describe('architecture: the guard command', () => {
     expect(capability, 'expected runtime-capability in the JSON output').toBeDefined();
     expect(capability?.line).toBe(2);
     expect(capability?.message).toContain('node-runtime');
+  });
+
+  test('prints per-guard elapsed time under --profile, for every guard it ran', () => {
+    // The measurement the CI decision rests on has to be reproducible by whoever
+    // reads the claim, from the command a developer already types. Asserting only
+    // that some number appears would pass on a guard that timed one guard and
+    // printed its own runtime as the rest.
+    const result = cli(makeProject(BASE), ['--profile']);
+    expect(result.code).toBe(0);
+
+    const report = JSON.parse(
+      Bun.spawnSync({
+        cmd: [
+          'bun',
+          'run',
+          'src/cli.ts',
+          'guard',
+          '--only',
+          'architecture',
+          '--root',
+          makeProject(BASE),
+          '--json',
+        ],
+        cwd: join(REPO_ROOT, 'scripts'),
+      }).stdout.toString(),
+    ) as { guards: { id: string }[]; timings: { id: string; ms: number }[] };
+
+    expect(report.timings.map((timing) => timing.id)).toEqual(
+      report.guards.map((guard) => guard.id),
+    );
+    for (const timing of report.timings) {
+      expect(timing.ms).toBeGreaterThanOrEqual(0);
+    }
+
+    // The rendered table, not merely the presence of an id somewhere in the output:
+    // every id in the JSON also appears in the `ok` lines above the table, so an
+    // assertion of `toContain(id)` would pass against a `--profile` that printed no
+    // timings at all.
+    expect(result.stdout).toContain('elapsed, per guard:');
+    const rows = [...result.stdout.matchAll(/^\s+(\d+) ms\s{2}(\S+)$/gm)].map((match) => ({
+      ms: Number(match[1]),
+      id: match[2],
+    }));
+
+    // One row per guard, plus the total, and the guard ids are the ones that ran.
+    expect(rows.at(-1)?.id).toBe('total');
+    expect(
+      rows
+        .slice(0, -1)
+        .map((row) => row.id)
+        .sort(),
+    ).toEqual(report.guards.map((guard) => guard.id).sort());
+
+    // The total is the sum of the rows beside it. Compared within one output only:
+    // the JSON above comes from a second CLI invocation, so its numbers belong to a
+    // different process and comparing across them fails on a loaded runner while
+    // proving nothing.
+    const totalMs = rows.at(-1)?.ms ?? -1;
+    expect(rows.slice(0, -1).every((row) => totalMs >= row.ms)).toBe(true);
   });
 
   test('refuses --root without a directory rather than scanning the repository', () => {

@@ -15,7 +15,7 @@ convention, little enough that you will replace it.
 | **App** | SvelteKit 3 + Svelte 5 on Cloudflare Workers via `@sveltejs/adapter-cloudflare`, D1 via Drizzle, Better Auth (email/password) |
 | **Shape** | One application, one Worker, one origin. The pages, the hashed assets and `/api/*` are all served from the same hostname. |
 | **Tests** | Four lanes, all running without credentials |
-| **Tooling** | `logs` CLI, database and deploy scripts, seven architectural guards, Pi agent config |
+| **Tooling** | `logs` CLI, database and deploy scripts, eight architectural guards, Pi agent config |
 
 There is no separate backend to deploy and no dev proxy to keep honest. The browser
 half and the Worker half are the same package, separated by a path the linter and
@@ -62,6 +62,23 @@ defaults to 5173.
 
 Nothing above needs a Cloudflare account. The local Worker runs against Wrangler's
 local D1.
+
+## Commands
+
+Every command runs from the repository root unless it says otherwise. AGENTS.md is
+the authority and the full list; these are the ones a first hour needs, and each one
+names what is missing rather than failing obscurely:
+
+| Command | What it does |
+|---|---|
+| `bun install` | Install from the committed lockfile. |
+| `bun run setup` | Check the toolchain and write `.env` from the example. |
+| `bun run setup:doctor` | Prove the browser prerequisites actually launch. |
+| `bun run dev` | The app in Node with emulated bindings. `apps/frontend/client` has its own ports. |
+| `bun run dev:worker` | The **built** Worker in real workerd. Requires `bun run build` first. |
+| `bun run test:all` | The four test lanes, no duplicates. |
+| `bun run guard` | Eight whole-repository invariants. |
+| `bun run deploy:check --env staging` | The offline deployment plan. No credential, no network. |
 
 ## Tests
 

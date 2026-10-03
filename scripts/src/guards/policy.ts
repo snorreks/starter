@@ -38,6 +38,17 @@ export type Plane = 'browser' | 'worker' | 'node' | 'portable';
 export type Role =
   /** A declaration file. It contributes no edge — see `UNCONSTRAINED_ROLES`. */
   | 'ambient'
+  /**
+   * The native application's bridge to the shell: the one place a `@tauri-apps/*`
+   * dependency may appear.
+   *
+   * A role rather than a capability allowance, because a capability allowance would
+   * be a statement about the *whole browser plane*, and that is exactly the blanket
+   * permission this round refused. A static SvelteKit bundle and the web app run the
+   * same JavaScript in different hosts; only the composition root of the native app
+   * is guaranteed to have the Tauri API object, so only it may name it.
+   */
+  | 'native-bridge'
   /** A page under `src/routes/`: composition that builds a screen. */
   | 'route-view'
   /** `+server.ts`, `+*.server.ts`, `hooks.server.ts`: a thin HTTP/load adapter. */
@@ -170,7 +181,12 @@ export interface CapabilityRule {
   readonly reason: string;
 }
 
-export type Capability = 'node-runtime' | 'bun-runtime' | 'worker-runtime' | 'dom-runtime';
+export type Capability =
+  | 'node-runtime'
+  | 'bun-runtime'
+  | 'worker-runtime'
+  | 'dom-runtime'
+  | 'native-runtime';
 
 export const CAPABILITY_RULES: readonly CapabilityRule[] = [
   {
@@ -217,7 +233,126 @@ export const CAPABILITY_RULES: readonly CapabilityRule[] = [
     root: 'svelte/reactivity',
     reason: "Svelte's client runtime compiles against a DOM that workerd does not have.",
   },
+  {
+    capability: 'native-runtime',
+    root: '@tauri-apps',
+    reason:
+      'The Tauri API object is injected by the native shell into the webview. A web ' +
+      'page has no such object, so this dependency does not resolve at all there.',
+  },
 ];
+
+/**
+ * Capabilities that a *role* holds rather than a plane holding them.
+ *
+ * `PLANE_CAPABILITIES` answers "which runtimes provide this", and that is the right
+ * question for Node, Bun, workerd and a DOM. It is the wrong question for the Tauri
+ * bridge, because the thing that provides the API is not a runtime — it is one
+ * composition root inside a browser-plane application, and the rest of that
+ * application is served as ordinary static files to browsers that will crash on the
+ * same import.
+ *
+ * So this table overrides the plane check for the capabilities it names: the module's
+ * role is checked instead. A row here is an assertion that the capability is confined
+ * to a named, explicitly placed set of files, which is what makes it different from
+ * adding the capability to `PLANE_CAPABILITIES` and calling it done.
+ */
+export const CAPABILITY_ROLES: Readonly<Partial<Record<Capability, readonly Role[]>>> = {
+  'native-runtime': ['native-bridge'],
+};
+
+/** The roles a capability is confined to, or `undefined` when it is a plane's to hold. */
+export const capabilityRoles = (capability: Capability): readonly Role[] | undefined =>
+  CAPABILITY_ROLES[capability];
+
+/**
+ * The trees this repository generates rather than writes, with the reason each is one.
+ *
+ * Two different jobs are done with this list, and both fail silently if it is missing:
+ *
+ *   - Discovery skips them, so a generated directory is not mistaken for a project
+ *     that owes a hand-maintained README, and a `.ts` file a generator emitted is not
+ *     reported as an unclassified source file.
+ *   - A reviewer reading a diagnostic can tell a path nobody edits from a path
+ *     somebody forgot.
+ *
+ * Patterns are repository-relative and match whole path segments. Anything that is
+ * *vendored* rather than generated (`node_modules`) is here for the same reason and
+ * the same cost: neither is a place a person maintains code.
+ *
+ * Build-output directory *names* are deliberately **not** in this table, because a
+ * bare name is not enough to tell output from source: a package may legitimately keep
+ * code in `src/build/`, `src/dist/` or a directory called `target/`, and a walker that
+ * skipped it by name would drop real source from the graph *and* from project
+ * discovery without saying anything — the failure this table exists to prevent.
+ *
+ * Those names are recognised by the manifest beside the directory instead, which is a
+ * fact about the filesystem rather than about the spelling: see
+ * `isGeneratedOutputDirectory` in `module_graph.ts`, the one predicate every walker
+ * shares. `src-tauri/target` stays named below, because that layout is fixed by the
+ * Tauri CLI and does not depend on inferring it, and Wrangler's local state needs no
+ * row of its own because it lives under `.wrangler`.
+ *
+ * Rust is absent by construction rather than by pattern. `SOURCE_EXTENSIONS` is
+ * `.ts`, `.tsx` and `.svelte`, so no `.rs` file is ever parsed as TypeScript — Rust is
+ * validated by `cargo check`/`cargo test` in its own lanes, and a guard that parsed it
+ * would be a second, weaker answer to a question the compiler already answers.
+ */
+export const GENERATED_TREES: readonly { readonly test: RegExp; readonly reason: string }[] = [
+  {
+    test: /(^|\/)node_modules(\/|$)/,
+    reason: 'Installed dependencies. Vendored, not maintained here.',
+  },
+  {
+    test: /(^|\/)\.moon\/cache(\/|$)/,
+    reason: 'Moon writes task hashes and outputs; it creates the directory on first run.',
+  },
+  {
+    test: /(^|\/)\.svelte-kit(\/|$)/,
+    reason: 'Generated by `svelte-kit sync`; absent in a fresh checkout.',
+  },
+  { test: /(^|\/)\.wrangler(\/|$)/, reason: 'Wrangler local state, including `.wrangler/state`.' },
+  { test: /(^|\/)\.direnv(\/|$)/, reason: 'direnv cache.' },
+  {
+    test: /(^|\/)src-tauri\/target(\/|$)/,
+    reason:
+      'Cargo build output for the Tauri shell, named by its fixed layout rather than ' +
+      'inferred from a neighbouring manifest.',
+  },
+  {
+    test: /(^|\/)src-tauri\/(?:gen|gen-schemas|vendor)(\/|$)/,
+    reason:
+      'Tauri regenerates the Android and Xcode projects from `tauri.conf.json` and ' +
+      '`Cargo.toml`, and `tauri vendor` writes the crates it embeds. They are build ' +
+      'products of the shell, and the shell owns their documentation.',
+  },
+];
+
+const GENERATED_TREES_COMPILED: readonly RegExp[] = GENERATED_TREES.map((entry) => entry.test);
+
+/** Is this repository-relative path inside a generated or vendored tree? */
+export const isGeneratedPath = (relativePath: string): boolean =>
+  GENERATED_TREES_COMPILED.some((test) => test.test(relativePath));
+
+/**
+ * Directories a build tool writes its output into.
+ *
+ * A name, not a path, because the path is what this rule must *not* decide on: a
+ * package may own a directory called `target`, `build` or `dist`, and those are
+ * source. The name alone identifies a candidate; a manifest beside it is what
+ * confirms it — see `isGeneratedOutputDirectory`.
+ */
+export const GENERATED_OUTPUT_DIRECTORY_NAMES: readonly string[] = [
+  'target',
+  'build',
+  'dist',
+  'coverage',
+  'test-results',
+  'playwright-report',
+];
+
+/** The manifests whose presence beside a directory marks it as that project's output. */
+export const PROJECT_MANIFEST_NAMES: readonly string[] = ['package.json', 'Cargo.toml'];
 
 /** Capabilities each plane may hold. Absent entries are violations. */
 export const PLANE_CAPABILITIES: Record<Plane, readonly Capability[]> = {
@@ -381,8 +516,23 @@ export const PLANE_PLACEMENTS: readonly { readonly test: RegExp; readonly plane:
     test: new RegExp(`^${escapeForRegExp(entry.prefix)}`),
     plane: 'node',
   })),
+  // The static native application and the scheduled jobs Worker. Named individually
+  // rather than covered by `^apps/` or `^apps/backend/`, because a blanket prefix is
+  // how a new application under one of these roots would be classified without anybody
+  // deciding what it is: `apps/backend/analytics` must be refused as unclassified until
+  // someone says what runtime it has.
+  { test: /^apps\/frontend\/native\/src\/lib\/platform\//, plane: 'browser' },
+  { test: /^apps\/frontend\/native\/src\//, plane: 'browser' },
+  // Everything else in the native app — `src-tauri/`, its scripts, its tests — is
+  // tooling that runs on Node. The Rust inside it is never parsed; see GENERATED_TREES.
+  { test: /^apps\/frontend\/native\//, plane: 'node' },
+  { test: /^apps\/backend\/jobs\//, plane: 'worker' },
   { test: /^packages\/shared\//, plane: 'portable' },
   { test: /^packages\/backend\//, plane: 'worker' },
+  // `packages/frontend/*` is browser code, and the two shared packages added this
+  // round keep that plane for a stated reason: their contract is a view, a ViewModel
+  // and a transport a browser half consumes. They are portable in the sense of "two
+  // hosts", not in the sense of `packages/shared`, which promises workerd as well.
   { test: /^packages\/frontend\//, plane: 'browser' },
   { test: /^scripts\//, plane: 'node' },
   { test: /^\.pi\//, plane: 'node' },
@@ -427,6 +577,30 @@ export const ROLE_PLACEMENTS: readonly { readonly test: RegExp; readonly role: R
   { test: /^apps\/frontend\/client\/src\/routes\/.+\.svelte$/, role: 'route-view' },
   { test: /^apps\/frontend\/client\/src\/lib\/server\//, role: 'server-module' },
 
+  // The static native application. Its routes are composition like the web app's, and
+  // the whole of `src/lib/platform/**` is the bridge to the Tauri shell — the only
+  // place `@tauri-apps/*` may be named (see CAPABILITY_ROLES).
+  { test: /^apps\/frontend\/native\/src\/routes\/.+\.svelte$/, role: 'route-view' },
+  { test: /^apps\/frontend\/native\/src\/lib\/platform\//, role: 'native-bridge' },
+  { test: /^apps\/frontend\/native\/src\/lib\//, role: 'module' },
+  { test: /^apps\/frontend\/native\//, role: 'module' },
+  // The scheduled jobs Worker has no SvelteKit route plane; every module in it is
+  // worker code reached through a binding.
+  { test: /^apps\/backend\/jobs\//, role: 'module' },
+
+  // The shared feature package carries the same View -> ViewModel -> service layers as
+  // the web app's own `src/lib/features/**`, in a package instead of an application.
+  // The rules are shared as one pattern so a file cannot be a View in one app and a
+  // plain module in the other.
+  { test: /^packages\/frontend\/features\/.+\.svelte$/, role: 'view' },
+  { test: /^packages\/frontend\/features\/.+view_model.+$/, role: 'view-model' },
+  { test: /^packages\/frontend\/features\/.+service.+$/, role: 'service' },
+  { test: /^packages\/frontend\/features\/.+composition.+$/, role: 'composition' },
+  { test: /^packages\/frontend\/features\//, role: 'module' },
+  // Contracts and injected transports. No component and no screen state, so no
+  // feature role applies and none is claimed.
+  { test: /^packages\/frontend\/platform\//, role: 'module' },
+
   // Feature-local layers, decided inside a feature directory.
   { test: /^apps\/frontend\/client\/src\/lib\/features\/.+\.svelte$/, role: 'view' },
   { test: /^apps\/frontend\/client\/src\/lib\/features\/.+view_model.+$/, role: 'view-model' },
@@ -463,11 +637,146 @@ export const PLANE_OWNERS: Record<Plane, string> = {
   portable: 'packages/shared/* — and it must stay loadable in a browser, in workerd and under Bun',
   browser:
     'apps/frontend/client/src/** (excluding src/lib/server/** and the route adapter ' +
-    'shapes), packages/frontend/*, or packages/shared/* for a portable contract',
+    'shapes), apps/frontend/native/src/**, packages/frontend/*, or packages/shared/* ' +
+    'for a portable contract',
   worker:
     'apps/frontend/client/src/lib/server/** or a route adapter (+server.ts, ' +
-    '+page.server.ts, +layout.server.ts, hooks.server.ts), packages/backend/*',
+    '+page.server.ts, +layout.server.ts, hooks.server.ts), apps/backend/jobs/**, ' +
+    'packages/backend/*',
   node: 'scripts/** or .pi/** — code that runs outside both application planes',
 };
 
 export const describeAllowed = (plane: Plane): string => MAY_REACH[plane].join(', ');
+
+/**
+ * Cross-workspace relative imports the architecture permits, each with its reason.
+ *
+ * A relative path that leaves its own workspace package skips two declarations at once:
+ * the package's `exports` map and its dependency list. `rulePackageExports` and
+ * `ruleDeclaredDependencies` both check those declarations, and both are written
+ * against package specifiers — so a `../../scripts/src/shared/paths.ts` passed every
+ * rule in this file. It resolves today, it keeps resolving after the file moves, and
+ * the `exports` map stops meaning anything for that edge.
+ *
+ * The remedy is always the same: publish the subpath the importer needs, declare the
+ * dependency, and import it by name. So the exemptions below are pairs of
+ * *workspaces*, not patterns of paths, and each has to keep naming a real reason:
+ *
+ *   - `apps/e2e` -> `scripts`. The Playwright harness, its global setup and its config
+ *     run in the same Bun process as the tooling they configure and assert about.
+ *     Importing the module directly is what makes the harness test the *real* path
+ *     resolution and port allocation instead of a copy of it. Nothing here is shipped:
+ *     the harness is role `test`/`config`, so no bundle can contain it.
+ *   - `apps/frontend/client` -> `scripts`. Its Vitest config, which runs in Node
+ *     before any application code is loaded and therefore cannot use a browser
+ *     dependency to find the executable.
+ *
+ * Two properties keep this from becoming a hole:
+ *
+ *   1. Each pair is *narrowed by the plane rules above*, not by this list. A shipped
+ *      browser module in `apps/frontend/client` reaching `scripts/` is already a
+ *      `plane-reachability` violation, so nothing unsafe is granted here.
+ *   2. `ruleRelativeImportExemptionsAreUsed` reports a row that no longer matches any
+ *      edge, the same way `ruleNodeOnlySubpaths` reports an unreachable declaration.
+ *      An exemption nobody uses is dead policy, and dead policy is where the next
+ *      blanket permission grows.
+ */
+export interface RelativeImportExemption {
+  /** Repo-relative directory of the importing workspace package. */
+  readonly from: string;
+  /** Repo-relative directory of the package it reaches. */
+  readonly to: string;
+  readonly reason: string;
+}
+
+export const CROSS_WORKSPACE_RELATIVE_EXEMPTIONS: readonly RelativeImportExemption[] = [
+  {
+    from: 'apps/e2e',
+    to: 'scripts',
+    reason:
+      'The Playwright harness and the tooling it drives are one Bun process. It ' +
+      'imports the module so the harness exercises the real path resolution, port ' +
+      'allocation and browser lookup rather than a second copy of them.',
+  },
+  {
+    from: 'apps/frontend/client',
+    to: 'scripts',
+    reason:
+      'The Vitest config resolves the browser executable before any application ' +
+      'module is loaded, and runs in Node. It is role `config`, so nothing it ' +
+      'reaches can reach a browser bundle.',
+  },
+];
+
+/**
+ * What a first-party project's README has to answer.
+ *
+ * Five obligations, and the wording is deliberately free: each is a set of heading
+ * patterns rather than a required string, so two projects with different voices both
+ * satisfy it. What is not free is the *content* — a README that cannot say what the
+ * project runs on, or how to run its tasks, is the documentation failure this guard
+ * exists to make visible, and a project that ships without one cannot be reviewed by
+ * anybody who did not write it.
+ *
+ * Headings, not prose, because a heading is a promise about a section and a paragraph
+ * is not: matching prose would make the check a keyword search that any sentence could
+ * satisfy. One README per *project*, not per source directory — the obligation is that
+ * somebody can find out how to work here, not that every folder repeats it.
+ */
+export interface ReadmeSection {
+  readonly id: string;
+  /** Any heading matching any of these counts. Case-insensitive. */
+  readonly headings: readonly RegExp[];
+  /** Printed with the violation, so the fix is the missing heading, not a paragraph. */
+  readonly guidance: string;
+}
+
+export const REQUIRED_README_SECTIONS: readonly ReadmeSection[] = [
+  {
+    id: 'purpose',
+    headings: [
+      /purpose/i,
+      /^what (this|it) is/i,
+      /^what is (here|in)/i,
+      /overview/i,
+      /^runtime/i,
+      /^what you get/i,
+    ],
+    guidance: 'Say what the project is and which runtime(s) its code executes on.',
+  },
+  {
+    id: 'setup',
+    headings: [
+      /setup/i,
+      /^config(uration)?\b/i,
+      /install/i,
+      /prerequisit/i,
+      /environment/i,
+      /getting started/i,
+    ],
+    guidance:
+      'Name the configuration and prerequisites a fresh checkout needs, and where they ' +
+      'are declared.',
+  },
+  {
+    id: 'commands',
+    headings: [/commands?/i, /^usage/i, /^tasks?/i, /how to run/i, /^running/i],
+    guidance:
+      'List the commands with the working directory each one runs from, because ' +
+      '"bun run test" is a different command in four of this repository\'s projects.',
+  },
+  {
+    id: 'validation',
+    headings: [/validat/i, /^tests?\b/i, /^check/i, /verif/i, /artifacts?/i],
+    guidance:
+      'Say what proves this project works — which lane, which runner, which count is ' +
+      'nonzero — and what it produces as output.',
+  },
+  {
+    id: 'boundaries',
+    headings: [/boundar/i, /architect/i, /depend/i, /^docs?\b/i, /see also/i, /^related/i],
+    guidance:
+      'State what this project may import and what may not import it, and link the ' +
+      'canonical guide rather than copying it.',
+  },
+];

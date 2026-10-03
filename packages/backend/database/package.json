@@ -14,7 +14,7 @@
     "format": "biome format src",
     "fix": "biome check --write src --error-on-warnings",
     "typecheck": "tsc --noEmit",
-    "test": "bun test --pass-with-no-tests"
+    "test": "bun test"
   },
   "dependencies": {
     "@starter/schemas": "workspace:*",

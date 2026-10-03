@@ -440,6 +440,40 @@ describe('documented-paths', () => {
     expect(violations[0].message).toContain('.moon/tracked/marker.txt');
   });
 
+  test('reports a link that is one directory too shallow in a project README', () => {
+    // The class of rot this file's link check originally could not see, because it
+    // only read the top-level documents. A link in a package README is relative to
+    // *that package*, so the depth is one fact per project and it is easy to get
+    // wrong — nine such links existed here, all written one level too shallow, in
+    // files that were never in a diff anybody reviewed.
+    const root = makeTree({
+      'README.md': '# fixture\n',
+      'package.json': JSON.stringify({
+        name: 'fixture',
+        private: true,
+        workspaces: ['packages/shared/*'],
+      }),
+      // Three levels deep, which is where the real packages are: `packages/shared/x`
+      // with `../../docs/` resolves to `packages/docs`, which is not a directory.
+      'packages/shared/thing/package.json': JSON.stringify({ name: '@starter/thing' }),
+      'packages/shared/thing/README.md':
+        '# @starter/thing\n\nSee [architecture](../../docs/architecture.md).\n',
+      'docs/architecture.md': '# Architecture\n',
+    });
+
+    const violations = guardDocumentedPaths(root).violations;
+    expect(violations).toHaveLength(1);
+    expect(violations[0].file).toBe('packages/shared/thing/README.md');
+    expect(violations[0].message).toContain('../../docs/architecture.md');
+
+    // One level deeper resolves it, which is the actual fix rather than a removal.
+    writeFileSync(
+      join(root, 'packages/shared/thing/README.md'),
+      '# @starter/thing\n\nSee [architecture](../../../docs/architecture.md).\n',
+    );
+    expect(guardDocumentedPaths(root).violations).toEqual([]);
+  });
+
   test('the live documentation agrees with the live tree', () => {
     // A missing document must fail before the guard's absent-file handling.
     for (const doc of [

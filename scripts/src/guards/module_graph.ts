@@ -34,31 +34,38 @@
 
 import { existsSync, readdirSync, readFileSync, realpathSync, statSync } from 'node:fs';
 import { builtinModules } from 'node:module';
-import { dirname, join, relative, resolve as resolvePath } from 'node:path';
+import { basename, dirname, join, relative, resolve as resolvePath } from 'node:path';
 import { parse as parseSvelte } from 'svelte/compiler';
 import ts from 'typescript';
 import {
   CAPABILITY_RULES,
   type Capability,
+  GENERATED_OUTPUT_DIRECTORY_NAMES,
+  isGeneratedPath,
   type Plane,
+  PROJECT_MANIFEST_NAMES,
   planeOf,
   type Role,
   roleOf,
 } from './policy.ts';
 
-/** Skip these: vendored, generated, or not source. */
+/**
+ * Skip these by name: vendored, generated, or not source.
+ *
+ * Only names that cannot plausibly be a source directory a person maintains. The
+ * build-output names — `build`, `dist`, `target`, `coverage`, `test-results`,
+ * `playwright-report` — are deliberately **not** here. They are ordinary words, and a
+ * walk that skipped them by name would drop `packages/thing/src/build/` without a
+ * word; they are recognised instead by `isGeneratedOutputDirectory`, which confirms a
+ * candidate against the manifest beside it. Keeping both lists is what made the same
+ * directory name-only in one walker and manifest-confirmed in another.
+ */
 export const IGNORED_DIRS = new Set([
   'node_modules',
   '.git',
   '.moon',
   '.svelte-kit',
-  'build',
-  'dist',
   '.wrangler',
-  'state',
-  'coverage',
-  'test-results',
-  'playwright-report',
   '.direnv',
 ]);
 
@@ -73,7 +80,14 @@ export const IGNORED_DIRS = new Set([
  */
 export const GRAPH_EXCLUDED_DIRS: readonly string[] = ['scripts/tests/fixtures'];
 
-/** Source extensions the graph and the textual guards both treat as code. */
+/**
+ * Source extensions the graph and the textual guards both treat as code.
+ *
+ * Deliberately no `.rs`. Rust is not a dialect of TypeScript, and a guard that parsed
+ * it would be a second and strictly weaker answer to a question `cargo check` and
+ * `cargo test` answer properly. A native crate is discovered as a *project* — it owes
+ * a README — and its source is validated by its own lane.
+ */
 export const SOURCE_EXTENSIONS = ['.ts', '.tsx', '.svelte'];
 
 /**
@@ -102,8 +116,21 @@ export const listSourceFiles = (root: string): string[] => {
       if (GRAPH_EXCLUDED_DIRS.includes(relativePath)) {
         continue;
       }
+      // The same generated trees the project discovery walk skips, from the one
+      // policy in `policy.ts`. A directory a generator writes is not a hole in the
+      // policy: reporting its `.ts` files as unclassified would make `bun run guard`
+      // fail after a build, which is the same class of failure as demanding a
+      // committed output directory.
+      if (isGeneratedPath(relativePath)) {
+        continue;
+      }
       const full = join(directory, entry);
       if (statSync(full).isDirectory()) {
+        // Confirmed against the manifest beside it, so a source directory named
+        // `build` or `target` is still walked.
+        if (isGeneratedOutputDirectory(full)) {
+          continue;
+        }
         walk(full, relativePath);
         continue;
       }
@@ -120,6 +147,27 @@ export const listSourceFiles = (root: string): string[] => {
 /** Repo-relative POSIX path. The canonical identity of a first-party module. */
 export const toRelative = (root: string, file: string): string =>
   relative(root, file).split('\\').join('/');
+
+/**
+ * Is `absoluteDirectory` build output for the project beside it?
+ *
+ * `target`, `build`, `dist` and the rest are ordinary directory names, and a walker
+ * that skipped them by name would drop a package's own `src/build/` from the graph
+ * *and* from project discovery without reporting anything — the silent failure the
+ * generation policy exists to prevent, reintroduced through a second table.
+ *
+ * So the name is the candidate and the manifest is the confirmation: output belongs to
+ * a project, and the project has a `package.json` or a `Cargo.toml` sitting next to
+ * the output. One `existsSync` per candidate, and it is the only I/O either walker
+ * does beyond the walk itself.
+ */
+export const isGeneratedOutputDirectory = (absoluteDirectory: string): boolean => {
+  if (!GENERATED_OUTPUT_DIRECTORY_NAMES.includes(basename(absoluteDirectory))) {
+    return false;
+  }
+  const parent = dirname(absoluteDirectory);
+  return PROJECT_MANIFEST_NAMES.some((manifest) => existsSync(join(parent, manifest)));
+};
 
 /** How a specifier was resolved. Each kind answers a different question. */
 export type ResolutionKind =
@@ -675,6 +723,7 @@ export const readWorkspacePackages = (root: string): Map<string, WorkspacePackag
       ? readdirSync(baseDir)
           .map((entry) => `${base}/${entry}`)
           .filter((entry) => statSync(join(root, entry)).isDirectory())
+          .filter((entry) => !isGeneratedPath(entry))
       : [base];
 
     for (const relativeDir of relativeDirs) {

@@ -17,6 +17,30 @@ apps/e2e              Playwright                  -> shared
 scripts, .pi          tooling                     -> shared
 ```
 
+### The roots the policy already owns
+
+Four more roots are classified in `PLANE_PLACEMENTS` before they hold a file, because
+this round adds them next:
+
+| Root | Plane | What makes it different |
+|---|---|---|
+| `packages/frontend/features/**` | browser | The View / ViewModel / service layers, in a package two hosts share. The role rules match it and the web app's own feature directory with one pattern, so a file cannot be a View in one and a plain module in the other |
+| `packages/frontend/platform/**` | browser | Contracts and injected transports. No component, no screen state, so no feature role is claimed — and no platform implementation leaks into `packages/shared` |
+| `apps/frontend/native/**` | browser under `src/`, Node elsewhere | A static SvelteKit bundle. Its `src/lib/platform/**` is the `native-bridge` role, the one place `@tauri-apps/*` may be named |
+| `apps/backend/jobs/**` | worker | A scheduled Worker reached through bindings, not through a route adapter |
+
+Two properties are deliberate. There is **no** blanket entry for an application
+directory, so an application nobody has heard of is reported as unclassified rather
+than inheriting a plane from where it sits. And the Tauri API is confined by *role*,
+not added to the browser plane's capabilities — a static bundle and the web app run
+the same JavaScript in different hosts, and only one composition root of one
+application has the API object.
+
+Rust is outside the TypeScript graph by construction: the source extensions are `.ts`,
+`.tsx` and `.svelte`. A crate is a *project* — it owes a README — and its source is
+validated by Cargo in its own lane. Full details and the measured guard cost are in
+[docs/lint.md](lint.md).
+
 The dependency direction is one-way, and two independent mechanisms enforce it:
 Biome checks import statements as written, and `bun run guard` resolves the real module
 graph and checks what those imports actually reach. Neither is sufficient alone — Biome
@@ -26,6 +50,25 @@ cannot see through a re-export, and a guard cannot see a `// TODO` in a comment.
 browser, and in Node tooling. The moment `packages/shared/utils` imports
 `drizzle-orm`, that import is either dead code in two of those three places or a
 runtime failure in one.
+
+**And a workspace boundary is a declaration, not a folder.** A relative path that
+leaves its own package skips the `exports` map and the dependency list at once, so
+`../../scripts/src/shared/paths.ts` is refused: publish the subpath, declare the
+dependency, import by name. The rule is stated over runtime edges, and the reason is
+written down rather than implied — TypeScript erases an `import type`, so a type-only
+edge cannot reach a bundle; the compile-time coupling it does create is owned by the
+server-type-only rule.
+
+Exactly two pairs are exempt, each declared with its reason in
+`CROSS_WORKSPACE_RELATIVE_EXEMPTIONS`, and each checked for staleness: `apps/e2e` ->
+`scripts`, because the Playwright harness and the tooling it configures are one Bun
+process and the harness should exercise the real path resolution rather than a copy;
+and `apps/frontend/client` -> `scripts`, because the Vitest config resolves the
+browser executable before any application module is loaded, in Node. Delete the last
+import that uses a row and the guard reports the row, the same way a Node-only
+declaration is reported when its subpath stops being published. The plane rules narrow
+both rows further — a shipped browser module reaching `scripts/` is already a
+`plane-reachability` violation — so nothing unsafe is granted by the exemption itself.
 
 ### Two runtimes in one package
 
@@ -45,13 +88,21 @@ and a `+page.svelte` is deliberately not on the list, so the components beside a
 
 ### How the guard enforces it
 
-Three files, one responsibility each:
+Five files, one responsibility each:
 
 | File | Owns |
 |---|---|
-| `scripts/src/guards/policy.ts` | The architecture as data: four planes, the 4×4 reachability matrix, runtime capabilities, roles, and the two declared Node-only subpaths. Every row carries the reason it exists. |
-| `scripts/src/guards/module_graph.ts` | The real graph. TypeScript parses `.ts`, Svelte locates the script blocks in `.svelte` and TypeScript reads those, and every specifier is resolved through the owning project's own `tsconfig.json` and through each workspace package's `exports` map. |
-| `scripts/src/guards/guard_architecture.ts` | Sixteen rules over that graph, each producing a diagnostic that names the source, the target, the dependency chain, the rule, and the ownership the code should move to. |
+| `scripts/src/guards/policy.ts` | The architecture as data: four planes, the 4×4 reachability matrix, runtime capabilities and the roles that may hold them, the declared exemptions, and the generation policy. Every row carries the reason it exists. |
+| `scripts/src/guards/module_graph.ts` | The real graph. TypeScript parses `.ts`, Svelte locates the script blocks in `.svelte` and TypeScript reads those, and every specifier is resolved through the owning project's own `tsconfig.json` and through each workspace package's `exports` map. Also the source walk, and the one predicate that needs I/O: a Cargo target directory, recognised by the manifest beside it rather than by its name. |
+| `scripts/src/guards/guard_architecture.ts` | Seventeen rules over that graph, each producing a diagnostic that names the source, the target, the dependency chain, the rule, and the ownership the code should move to. |
+| `scripts/src/guards/project_discovery.ts` | Which directories are projects: Bun workspace globs, Moon projects, and first-party `Cargo.toml` files. Imported by the README guard *and* by `guardDocumentedPaths`, so "a project" is one definition rather than two. |
+| `scripts/src/guards/guard_readmes.ts` | That each of them answers the five questions a README owes. |
+
+The rule added this round is the one the others were blind to. `ruleDeclaredDependencies` and `rulePackageExports` both read a package's
+declarations, and both are written against *package* specifiers — so a relative path
+out of a workspace skipped both of them simultaneously. It is a rule about the
+boundary rather than about relative paths: within one package a relative import is
+how modules are written, and every other rule still checks those edges.
 
 What this replaced, and why it mattered: the previous guard read import statements out
 of source text with a regular expression and matched the resulting specifiers against a
@@ -94,11 +145,14 @@ The properties worth knowing:
   `cloudflare:workers` into a component **passes** the production build and lands in the
   client chunk. That behavior is not covered by this test. The graph guard catches that
   import; the bundler does not.
-- **Not a rule about relative paths between tooling packages.** `apps/e2e` reaches
-  `scripts/src/shared/paths.ts` by relative path. That is a real smell and the
-  undeclared-dependency rule does not cover it; the failure mode that rule exists for — a
-  dependency that resolves only because a hoister provided it — does not arise between two
-  private packages that are built together. Stated rather than exempted.
+- **Not a rule about *unrelated* relative paths between tooling packages.** The guard
+  does have a rule for a relative import that leaves its workspace — it is the one that
+  made `apps/e2e` -> `scripts` a *declared exemption* rather than a smell stated and
+  forgotten. What it still does not claim is anything about the dependency's
+  *declaration* between two private packages that are built together: the failure mode
+  `ruleDeclaredDependencies` exists for is a dependency that resolves only because a
+  hoister provided it, and that does not arise here. The exemption is a decision with a
+  reason and a staleness check, which is a different thing from not looking.
 
 ## Versions, and why each is pinned
 

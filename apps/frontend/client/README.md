@@ -64,8 +64,21 @@ lanes drive. `bun run check:bundle` is the check that it is deployable at all.
 `@starter/utils`, because Node strips types without transforming them. `bun run
 dev:worker` and every test lane are unaffected. See `docs/capability-matrix.md`.
 
+## Boundaries
+
+May import `@starter/ui`, `@starter/schemas`, `@starter/utils`. Only the `server`
+rows of the table above may import `@starter/database` and `@starter/auth` — even as
+a type. A `+page.server.ts` calls `#lib/server/…` directly and never fetches its own
+origin: a round trip from inside the process that serves `/api` is a second,
+differently authenticated path to the same data.
+
+A relative path that leaves this workspace is refused by `bun run guard`, because it
+skips both the `exports` map and the dependency list; the one declared exemption is
+`vitest.config.ts` reaching `scripts/src/shared/browser_path.ts`, and the guard
+reports that row if nothing uses it any more.
+
 ## Canonical docs
 
-[architecture](../docs/architecture.md) · [auth](../docs/auth.md) ·
-[cloudflare](../docs/cloudflare.md) · [logs](../docs/logs.md) ·
-[testing](../docs/testing.md) · [deployment](../docs/deployment.md)
+[architecture](../../../docs/architecture.md) · [auth](../../../docs/auth.md) ·
+[cloudflare](../../../docs/cloudflare.md) · [logs](../../../docs/logs.md) ·
+[testing](../../../docs/testing.md) · [deployment](../../../docs/deployment.md)

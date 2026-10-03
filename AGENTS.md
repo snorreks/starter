@@ -53,6 +53,7 @@ bun run typecheck
 bun run lint
 bun run format
 bun run guard               # whole-repository invariants
+bun run guard -- --profile  # the same, plus per-guard elapsed time
 bun run guard:whole-repo
 bun run workflows           # CI workflow policy: pins, permissions, bounds, secrets
 bun run smoke               # fresh checkout of this template, no credentials
@@ -196,6 +197,14 @@ bun run --cwd packages/backend/database db:generate
   status. A `limit` argument bounds lines, not bytes.
 - **Comments state the invariant and its reason.** Not the history of how the bug
   got fixed — that belongs in `docs/first-round-review.md`.
+- **Every first-party project has a README, and the set is discovered.** Bun
+  workspaces, Moon projects and first-party `Cargo.toml` files each oblige one; the
+  `project-readme` guard finds them and refuses a README that answers none of purpose,
+  setup, commands, validation, or boundaries. A hardcoded list would have documented
+  the five projects that existed and none of the four this round adds.
+- **A new application root is classified deliberately.** `PLANE_PLACEMENTS` has no
+  blanket entry for an application directory, on purpose: a project nobody has heard
+  of is reported as `unclassified-source` until somebody says what runtime it has.
 
 ## Where things are written down
 

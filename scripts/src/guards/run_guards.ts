@@ -2,30 +2,49 @@
 //
 //   bun run guard             # every guard
 //   bun run guard -- --json   # machine-readable
+//   bun run guard -- --profile   # per-guard elapsed time
 //   bun run guard -- --only architecture
 //   bun run guard -- --root /tmp/a-fixture-tree
 //
-// Runs in a few seconds across the whole repository.
+// Runs in about a second and a half across the whole repository on the machine this
+// was measured on, and the number is printed rather than asserted: see
+// `scripts/tests/new_roots_guards.test.ts` and the timing note in docs/lint.md.
 //
 // Every guard is a hard invariant with an empty baseline. There is no waiver
 // file and no ledger: the architecture is new, so there is no pre-existing debt
 // to record, and a baseline that starts non-empty is a place for the next
 // failure to hide.
+//
+// Nothing here is cached, deliberately. A guard result that is read from a cache is
+// only as fresh as the cache key, and this one reads the whole repository through a
+// parser — so a key that forgot a tsconfig `paths` change, an `exports` entry or an
+// alias would silently certify a tree nobody checked. Measured at a second or two
+// against a static lane that already spends minutes on typecheck and lint, there is
+// nothing here to buy.
 
 import { resolve as resolvePath } from 'node:path';
 import { ALL_GUARDS, type GuardResult, REPO_ROOT } from './boundary.ts';
+
+export interface GuardTiming {
+  readonly id: string;
+  readonly ms: number;
+}
 
 export interface GuardReport {
   passed: boolean;
   total: number;
   failing: number;
   guards: GuardResult[];
+  /** Wall time per guard. Always collected; `--profile` is what prints it. */
+  timings: GuardTiming[];
 }
 
 export interface GuardSelection {
   readonly only?: string;
   /** Repository root to scan. Defaults to the repository this file lives in. */
   readonly root: string;
+  /** Print per-guard elapsed time after the report. */
+  readonly profile: boolean;
 }
 
 /**
@@ -47,10 +66,13 @@ export const readSelection = (args: readonly string[]): GuardSelection => {
   const root = rootIndex === -1 ? REPO_ROOT : resolvePath(operand as string);
   const onlyIndex = args.indexOf('--only');
   const only = onlyIndex === -1 ? undefined : args[onlyIndex + 1];
-  return only === undefined ? { root } : { only, root };
+  const profile = args.includes('--profile');
+  return only === undefined ? { profile, root } : { only, profile, root };
 };
 
-export const runAll = (selection: GuardSelection = { root: REPO_ROOT }): GuardReport => {
+export const runAll = (
+  selection: GuardSelection = { profile: false, root: REPO_ROOT },
+): GuardReport => {
   const selected =
     selection.only === undefined
       ? ALL_GUARDS
@@ -60,16 +82,22 @@ export const runAll = (selection: GuardSelection = { root: REPO_ROOT }): GuardRe
     process.stderr.write(
       `No guard named "${selection.only}". Available: ${ALL_GUARDS.map((guard) => guard.id).join(', ')}\n`,
     );
-    return { passed: false, total: 0, failing: 0, guards: [] };
+    return { passed: false, total: 0, failing: 0, guards: [], timings: [] };
   }
 
-  const guards = selected.map((guard) => guard.run(selection.root));
+  const guards: GuardResult[] = [];
+  const timings: GuardTiming[] = [];
+  for (const guard of selected) {
+    const started = performance.now();
+    guards.push(guard.run(selection.root));
+    timings.push({ id: guard.id, ms: performance.now() - started });
+  }
   const failing = guards.filter((guard) => guard.violations.length > 0).length;
 
-  return { passed: failing === 0, total: guards.length, failing, guards };
+  return { passed: failing === 0, total: guards.length, failing, guards, timings };
 };
 
-const render = (report: GuardReport): string => {
+const render = (report: GuardReport, profile: boolean): string => {
   const lines: string[] = [];
 
   for (const guard of report.guards) {
@@ -95,16 +123,28 @@ const render = (report: GuardReport): string => {
       ? `${report.total} guard(s) passed.`
       : `${report.failing} of ${report.total} guard(s) failed.`,
   );
+
+  if (profile) {
+    const total = report.timings.reduce((sum, timing) => sum + timing.ms, 0);
+    lines.push('');
+    lines.push('  elapsed, per guard:');
+    for (const timing of [...report.timings].sort((a, b) => b.ms - a.ms)) {
+      lines.push(`    ${timing.ms.toFixed(0).padStart(6)} ms  ${timing.id}`);
+    }
+    lines.push(`    ${total.toFixed(0).padStart(6)} ms  total`);
+  }
+
   return lines.join('\n');
 };
 
 export const main = (args: readonly string[]): number => {
-  const report = runAll(readSelection(args));
+  const selection = readSelection(args);
+  const report = runAll(selection);
 
   if (args.includes('--json')) {
     process.stdout.write(`${JSON.stringify(report, null, 2)}\n`);
   } else {
-    process.stdout.write(`${render(report)}\n`);
+    process.stdout.write(`${render(report, selection.profile)}\n`);
   }
 
   return report.passed ? 0 : 1;

@@ -43,6 +43,8 @@ import {
 } from './module_graph.ts';
 import {
   type Capability,
+  CROSS_WORKSPACE_RELATIVE_EXEMPTIONS,
+  capabilityRoles,
   describeAllowed,
   FORBIDDEN_ROLE_EDGES,
   isDeclaredNodeOnly,
@@ -53,6 +55,7 @@ import {
   PLANE_OWNERS,
   planeMayUse,
   planeOf,
+  type RelativeImportExemption,
   SERVER_TYPE_ONLY_FORBIDDEN_ROOTS,
   UNCONSTRAINED_ROLES,
   WORKSPACE_PACKAGE_SCOPE,
@@ -80,6 +83,24 @@ const owningPackage = (graph: ModuleGraph, file: string): WorkspacePackage | nul
 /** `packages/shared/schemas/src/index.ts` -> `@starter/schemas`. */
 const packageOfFile = (graph: ModuleGraph, file: string): WorkspacePackage | null =>
   owningPackage(graph, file);
+
+/**
+ * The directory that owns a file, as a workspace boundary.
+ *
+ * `.` for a file no workspace package owns — a root-level script, or a file in the
+ * directory the guard was pointed at. Treating "outside every package" as its own
+ * boundary is what stops a file at the repository root from reaching into a package's
+ * `src/` with no declaration on either side.
+ */
+const workspaceDirOf = (graph: ModuleGraph, file: string): string =>
+  owningPackage(graph, file)?.dir ?? '.';
+
+const exemptionKey = (from: string, to: string): string => `${from}->${to}`;
+
+const isRelativeImportExempt = (from: string, to: string): boolean =>
+  CROSS_WORKSPACE_RELATIVE_EXEMPTIONS.some(
+    (exemption: RelativeImportExemption) => exemption.from === from && exemption.to === to,
+  );
 
 /**
  * The repo-relative file a workspace package's `exports` map publishes for a subpath.
@@ -465,6 +486,11 @@ const lineOfFirstEdge = (module: ModuleNode, chain: readonly ChainStep[]): numbe
  * `@starter/utils/process` lives in a portable package, so a plane check alone sees a
  * legal edge; the capability travels through it to `node:child_process`, and the
  * browser half that reached it does not have Node.
+ *
+ * One capability is checked against the module's *role* instead, because what provides
+ * it is not a runtime: `CAPABILITY_ROLES` in `policy.ts` names the roles allowed to
+ * hold `native-runtime`, which is how the Tauri bridge is confined to the native
+ * application's composition root without granting it to every browser file.
  */
 const ruleRuntimeCapabilities = (context: Context): void => {
   for (const module of context.graph.modules.values()) {
@@ -472,7 +498,12 @@ const ruleRuntimeCapabilities = (context: Context): void => {
       continue;
     }
     for (const capability of [...module.capabilities].sort()) {
-      if (planeMayUse(module.plane, capability)) {
+      const roles = capabilityRoles(capability);
+      if (roles === undefined) {
+        if (planeMayUse(module.plane, capability)) {
+          continue;
+        }
+      } else if (roles.includes(module.role)) {
         continue;
       }
       report(context, {
@@ -486,6 +517,7 @@ const ruleRuntimeCapabilities = (context: Context): void => {
           `  ${module.plane} may use: ${
             PLANE_CAPABILITIES[module.plane].join(', ') || 'nothing'
           }.\n` +
+          (roles === undefined ? '' : `  A ${module.role} may use it: ${roles.join(', ')}.\n`) +
           '  A Node-only helper reached from a browser is a build that fails in ' +
           'production, not in review.',
       });
@@ -503,6 +535,8 @@ const describeCapability = (capability: Capability): string => {
       return 'workerd';
     case 'dom-runtime':
       return 'a DOM';
+    case 'native-runtime':
+      return 'the Tauri shell';
   }
 };
 
@@ -844,7 +878,131 @@ const ruleNodeOnlySubpaths = (context: Context): void => {
 };
 
 /**
- * Rule 16 — the graph is not empty.
+ * Rule 16 — a relative import may not leave its own workspace package.
+ *
+ * The gap this closes is a real one rather than a theoretical one. Rules 6 and 7 both
+ * read a package's declarations, and both are written against *package* specifiers, so
+ * `import { resolveBrowser } from '../../scripts/src/shared/browser_path.ts'` skipped
+ * both of them at once: it is not a package name, so neither the `exports` map nor the
+ * dependency list was consulted. It resolved, it typechecked, and it kept resolving
+ * after the file it pointed at moved — which is the moment a declaration should have
+ * started refusing to be ignored.
+ *
+ * The rule is stated over *runtime* edges, and that is a deliberate boundary rather
+ * than a gap. An `import type` from another workspace is erased by TypeScript, so it
+ * cannot put a module into a bundle and cannot carry a Node requirement into a
+ * browser. What it does is tie one workspace's compile-time surface to another's file
+ * layout, and that question already has an owner: `ruleServerTypeOnlyBoundary` refuses
+ * a browser module naming a server package, even type-only.
+ *
+ * Within one package a relative import is how modules are written, so the rule is
+ * about the *boundary*, not about relative paths: `src/lib/features/notes/../utils/…`
+ * inside the same package is invisible here and fully checked by every other rule.
+ */
+const ruleCrossWorkspaceRelativeImports = (context: Context): void => {
+  for (const module of context.graph.modules.values()) {
+    const from = workspaceDirOf(context.graph, module.file);
+    for (const edge of module.edges) {
+      if (edge.typeOnly || !edge.specifier.startsWith('.')) {
+        continue;
+      }
+      const target = edge.resolution.file;
+      if (target === undefined) {
+        // A generated module (`./$types`) or an unresolved one. Both are other rules'
+        // answers, and reporting a bypass for an edge with no resolved target would be
+        // reporting something the graph never established.
+        continue;
+      }
+      const reached = context.graph.modules.get(target);
+      if (reached === undefined) {
+        continue;
+      }
+      const to = workspaceDirOf(context.graph, target);
+      if (to === from || isRelativeImportExempt(from, to)) {
+        continue;
+      }
+      report(context, {
+        rule: 'cross-workspace-relative-import',
+        file: module.file,
+        line: edge.line,
+        message:
+          `A relative import leaves ${from} and reaches ${to} by file path, which is ` +
+          'past both of the declarations that edge was supposed to go through.\n' +
+          `  Chain: ${renderChain([
+            { module, via: undefined },
+            { module: reached, via: edge.specifier },
+          ])}\n` +
+          `  ${from} does not publish ${to}'s internals, and ${from}/package.json does ` +
+          `not declare it as a dependency.\n` +
+          `  Remedy: export the module from ${to}'s package.json \`exports\` map, add ` +
+          `${to} to ${from}/package.json, and import it by package name.\n` +
+          '  A path into another workspace is how a deep import becomes permanent: it ' +
+          'keeps resolving after the file moves, which is exactly when the boundary ' +
+          'should start refusing.',
+      });
+    }
+  }
+};
+
+/**
+ * Rule 17 — every declared relative-import exemption still matches an edge.
+ *
+ * The other half, and the one that keeps the table honest. An exemption nobody uses is
+ * a permission that outlived its reason, and the next one is added beside it. This is
+ * the same shape as `ruleNodeOnlySubpaths`' unreachable-declaration half, applied for
+ * the same reason: an exemption with no way in is worse than none.
+ */
+const ruleRelativeImportExemptionsAreUsed = (context: Context): void => {
+  const used = new Set<string>();
+
+  for (const module of context.graph.modules.values()) {
+    const from = workspaceDirOf(context.graph, module.file);
+    for (const edge of module.edges) {
+      if (edge.typeOnly || !edge.specifier.startsWith('.')) {
+        continue;
+      }
+      const target = edge.resolution.file;
+      if (target === undefined) {
+        continue;
+      }
+      const to = workspaceDirOf(context.graph, target);
+      if (to !== from) {
+        used.add(exemptionKey(from, to));
+      }
+    }
+  }
+
+  // A tree that does not contain the importing workspace at all — every fixture but
+  // one, and a partial checkout — cannot invalidate a pair. Reporting it there would
+  // make the rule assert something about a repository it is not looking at.
+  const workspaces = new Set(context.graph.packages.values());
+  const declares = (dir: string): boolean =>
+    [...workspaces].some((entry) => entry.dir === dir) ||
+    [...context.graph.modules.keys()].some((file) => file.startsWith(`${dir}/`));
+
+  for (const exemption of CROSS_WORKSPACE_RELATIVE_EXEMPTIONS) {
+    if (used.has(exemptionKey(exemption.from, exemption.to))) {
+      continue;
+    }
+    if (!declares(exemption.from)) {
+      continue;
+    }
+    report(context, {
+      rule: 'stale-relative-import-exemption',
+      file: 'scripts/src/guards/policy.ts',
+      line: 1,
+      message:
+        `CROSS_WORKSPACE_RELATIVE_EXEMPTIONS permits ${exemption.from} -> ` +
+        `${exemption.to}, and no import in this tree does that any more.\n` +
+        `  Declared reason: ${exemption.reason}\n` +
+        '  Delete the row. An exemption nobody uses is a permission that outlived the\n' +
+        '  reason it was written for, and it is where the next blanket one grows.',
+    });
+  }
+};
+
+/**
+ * Rule 18 — the graph is not empty.
  *
  * A guard that finds nothing has not proved anything. If the discovery walk returned
  * no modules at all, either the root is wrong or every placement row is wrong, and
@@ -892,6 +1050,8 @@ export const guardArchitecture = (root: string): GuardResult => {
   ruleTestRunnerPlacement(context);
   rulePackageCycles(context);
   ruleNodeOnlySubpaths(context);
+  ruleCrossWorkspaceRelativeImports(context);
+  ruleRelativeImportExemptionsAreUsed(context);
 
   return {
     id: 'architecture',

@@ -174,6 +174,22 @@ export const BASE_PROJECT: Project = {
         'src/app.d.ts':
           "import type { Container } from '#lib/server/container.ts';\ndeclare global {\n  namespace App {\n    interface Locals {\n      container: Container;\n    }\n  }\n}\nexport {};\n",
         'src/lib/server/container.ts': 'export type Container = { db: unknown };\n',
+        // The two cross-workspace relative imports this repository really has from
+        // `apps/frontend/client`, reproduced because the guard reads them: the
+        // Vitest config reaches into `scripts/` for the browser lookup, and that
+        // reach is one of the declared exemptions in
+        // `CROSS_WORKSPACE_RELATIVE_EXEMPTIONS`. A fixture without it would make the
+        // staleness half of that rule untestable against the scaffold itself.
+        'vitest.config.ts':
+          "import { resolveBrowser } from '../../../scripts/src/shared/browser_path.ts';\n\nexport default { test: { setupFiles: [resolveBrowser()] } };\n",
+      },
+    },
+    {
+      name: '@starter/e2e',
+      dir: 'apps/e2e',
+      files: {
+        'playwright.config.ts':
+          "import { resolveBrowser } from '../../scripts/src/shared/browser_path.ts';\nexport const projects = [resolveBrowser()];\n",
       },
     },
     {
@@ -184,6 +200,9 @@ export const BASE_PROJECT: Project = {
         'tsconfig.json': JSON.stringify({ compilerOptions: { strict: true } }, null, 2),
         'src/cli.ts':
           "import { killTree } from '@starter/utils/process';\nexport const main = (): void => killTree;\n",
+        // The two helpers the harness reaches for across the workspace boundary.
+        'src/shared/paths.ts': 'export const repoRoot = "/repo";\n',
+        'src/shared/browser_path.ts': 'export const resolveBrowser = (): string => "chromium";\n',
       },
     },
   ],

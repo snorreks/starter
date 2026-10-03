@@ -5,7 +5,10 @@ here, and nothing else is a second implementation of one. It runs outside both
 application planes, so it may import shared packages and may not import from `apps/`
 code.
 
-## Layout
+## Purpose and layout
+
+The table below is the whole surface: one entrypoint, one module per subcommand, and
+the shared modules every command resolves its paths and its pinned tools through.
 
 | Path | Responsibility |
 |---|---|
@@ -41,6 +44,18 @@ bun run deploy:status | deploy:check | deploy:preflight | deploy:apply | deploy 
 bun run logs web --mode local
 bun run smoke                            # fresh-checkout rehearsal, no credentials
 ```
+
+## Validation and artifacts
+
+`bun run test` runs the unit suite and prints a nonzero count that the CI lane
+asserts; `tests/browser_launch.test.ts` is a separate lane because it spawns real
+Chromium processes. The guards are proved against disposable fixture trees, so a rule
+can be shown to fail without breaking this repository. `bun run smoke` rehearses a
+fresh checkout end to end.
+
+Artifacts: none. This project produces no build output, and `tests/fixtures` holds
+data rather than directories — a nested `package.json` inside a workspace member is
+something `bun install` has opinions about.
 
 ## Boundaries
 
