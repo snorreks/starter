@@ -17,6 +17,7 @@ import { beforeEach, describe, expect, test } from 'bun:test';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { discoverMigrations } from '../../tests/migrations.ts';
 import { createJobRepository, type JobsDatabase } from './job_repository.ts';
 import {
   type ArtifactSweepRepository,
@@ -33,12 +34,16 @@ import {
 const REPO_ROOT = fileURLToPath(new URL('../../../../../', import.meta.url)).replace(/\/$/, '');
 const MIGRATIONS_DIR = join(REPO_ROOT, 'packages/backend/database/drizzle-d1');
 
-const MIGRATIONS = [
-  '0000_graceful_grey_gargoyle.sql',
-  '0001_early_captain_cross.sql',
-  '0002_broken_vector.sql',
-  '0003_dark_phantom_reporter.sql',
-];
+/**
+ * Every applied migration, in order.
+ *
+ * Discovered rather than listed, because a hardcoded list is a list that goes
+ * stale: adding `0004_*.sql` and forgetting this array gives a suite that passes
+ * against a schema one migration behind, which is the one thing a database test
+ * must not do. `readdirSync` order is not guaranteed to be numeric on every
+ * filesystem, hence the explicit sort.
+ */
+const MIGRATIONS = discoverMigrations(MIGRATIONS_DIR);
 
 const migrate = (db: Database): void => {
   for (const file of MIGRATIONS) {

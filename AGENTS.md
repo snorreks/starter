@@ -41,12 +41,16 @@ bun run dev:worker          # the BUILT Worker in real workerd. Requires a build
 bun run build               # vite build -> apps/frontend/client/.svelte-kit/cloudflare/
 bun run check:bundle        # verify the artifact and that it matches its build mode
 
-# Test — four lanes, run them by name
+# Test — four credential-free lanes, plus compute, which is not
 bun run test                # unit, every project
 bun run test:browser        # real Svelte in Chromium
 bun run test:worker         # build, then the built Worker in workerd + real local D1
 bun run e2e                 # built client + built Worker + real browser, one origin
 bun run test:all            # all four, no duplicates
+bun run test:compute        # the jobs Worker: real Workflows, real D1/R2, real FFmpeg.
+                            # Needs a Docker engine, is never cached, and is NOT in
+                            # test:all. Without Docker it fails with the missing
+                            # prerequisite named — it never skips.
 
 # Checks
 bun run typecheck
@@ -112,6 +116,9 @@ launches.
 apps/frontend/client     ONE SvelteKit app: browser half + Worker half
 apps/frontend/native     static SvelteKit app + src-tauri shell; the same features,
                          a bearer transport, an opt-in Stronghold vault
+apps/backend/jobs        the jobs Worker: EncodeWorkflow, MaintenanceWorkflow, the
+                         container Durable Object. No public route.
+apps/backend/media       the Rust/FFmpeg processor that runs inside the container
 apps/e2e                 Playwright specs + the harness that starts the server
 packages/shared/*        portable; no project dependencies
 packages/backend/*       database, auth — server only
@@ -145,6 +152,11 @@ Three directory rules that are *not* stylistic:
   `#lib/server/…`, never `fetch()`ing its own origin. A round trip to `/api/notes`
   from inside the process that serves `/api/notes` is a second, differently
   authenticated path to the same data.
+- **Compute is a second Worker with no public route.** The jobs Worker exports two
+  Workflows and one container Durable Object and nothing else: its `fetch` answers
+  404, the web Worker owns `/api/jobs` and starts an encode through a cross-Worker
+  workflow binding, and the container holds no credential, no R2 key and no D1. A
+  second REST API here would be a second authorization surface with no owner.
 - **A feature receives its collaborators; it does not find them.** `NotesService`
   takes an `ApiTransport`, `AuthViewModel` takes a session, an account service and
   a `Navigation`. Only `apps/frontend/client/src/lib/composition/` decides which
@@ -231,7 +243,7 @@ bun run --cwd packages/backend/database db:generate
 | | |
 |---|---|
 | [docs/README.md](docs/README.md) | documentation index |
-| [docs/testing.md](docs/testing.md) | the four lanes, and how each is verified |
+| [docs/testing.md](docs/testing.md) | the lanes, and how each is verified |
 | [docs/capability-matrix.md](docs/capability-matrix.md) | what is verified, fixture-verified, or not run |
 | [docs/first-round-review.md](docs/first-round-review.md) | fixed and open findings |
 | [docs/architecture.md](docs/architecture.md) | boundaries and why |

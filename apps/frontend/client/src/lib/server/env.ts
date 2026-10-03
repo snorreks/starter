@@ -19,6 +19,7 @@
 // build-time code must not need live bindings — so nothing here has to guess
 // whether a binding exists.
 
+import type { WorkflowInstanceBinding } from '@starter/jobs';
 import { JOBS_PROFILE_DISABLED, JOBS_PROFILE_ENCODE } from './jobs_service.ts';
 
 /** The Worker bindings this application requires. */
@@ -106,6 +107,17 @@ export interface AppEnv {
    * implicit enabling. See `resolveJobsProfile`.
    */
   JOBS_PROFILE?: string;
+  /**
+   * The encode Workflow in the jobs Worker. Present only where the jobs profile is
+   * enabled and the cross-Worker binding is configured; absent is a refusal the
+   * dispatch port names, not a silent no-op.
+   */
+  ENCODE_WORKFLOW?: WorkflowInstanceBinding;
+  /**
+   * The private artifact bucket, shared with the jobs Worker. Absent where the
+   * profile is disabled, because nothing writes to it then.
+   */
+  MEDIA?: R2Bucket;
 }
 
 export const AUTH_SECRET_PLACEHOLDER = 'development-only-not-a-secret';

@@ -25,12 +25,18 @@ It owns the answers to four questions, and nothing else:
 | May this attempt write a result? | `claimAttempt`, `completeAttempt`, `failAttempt` |
 | What does the periodic sweep delete? | `purgeExpiredSessions`, `purgeIdleRateLimits`, `purgeExpiredArtifacts` |
 
-It does **not** own: starting a Workflow (that is `WorkflowDispatchPort`, which
-PR H implements), running FFmpeg (`apps/backend/media`), storing encoded bytes
-(private object storage, bound in PR H), or deciding *when* maintenance runs (PR
-H's schedule). Those boundaries are deliberate: this package is the part that is
-already provable, and a maintenance run can be executed from either Worker
-without either importing the other.
+It does **not** own: running FFmpeg (`apps/backend/media`), holding bytes (private
+object storage, bound in `apps/backend/jobs`), or deciding *when* maintenance runs
+(that schedule lives in the jobs Worker's `wrangler.jsonc`). Those boundaries are
+deliberate: a maintenance run can be executed from either Worker without either
+importing the other.
+
+It now owns two things PR F left as seams:
+
+| Seam | Implementation | Verified by |
+|---|---|---|
+| `WorkflowDispatchPort` | `createWorkflowDispatchPort(binding)` — binds a real Workflow binding, derives nothing it can avoid, and classifies `instance.already_exists` as **success** so a retried dispatch is not an outage | `dispatch_port.test.ts`, and the compute lane |
+| "when maintenance runs" | `createMaintenanceRunRepository` — one row per run, keyed by its trigger, claimed with `INSERT … ON CONFLICT DO NOTHING` | `maintenance_run.test.ts`, and the compute lane |
 
 ## Admission: one statement, four rules
 
@@ -108,9 +114,8 @@ two attempts cannot both see the last one.
 ## Dispatch: a port, and why it is not a queue
 
 `WorkflowDispatchPort` has one method. It is deliberately not a queue, a worker, a
-retry schedule or a dead-letter table: PR H owns all of that, and a second
-implementation here would be one more place for the two to disagree about when a
-job is recoverable.
+retry schedule or a dead-letter table. The jobs Worker owns encode retries and
+maintenance recovery; the port only starts or checks a Workflow instance.
 
 What the port does fix is the failure the round-2 review called out: **D1 committed
 the admission and then the Workflow call failed.** The job row therefore carries
@@ -120,11 +125,11 @@ the admission and then the Workflow call failed.** The job row therefore carries
 `listPendingDispatches` for recovery when its error code is retryable and fewer
 than `MAX_DISPATCH_ATTEMPTS` (3) dispatch calls have failed.
 
-**The live compute profile is disabled.** Until PR H lands, the wired dispatcher is
-`createDisabledDispatchPort()`, which refuses every dispatch with
-`compute_profile_disabled` and says the job is recoverable. It does not report
-success, because a port that did would let `POST /api/jobs` answer 202 for a job
-nothing will ever run — invisible until somebody looks for the video.
+`JOBS_PROFILE=encode` selects `createWorkflowDispatchPort()` through the web
+Worker's encode binding. The default disabled profile selects
+`createDisabledDispatchPort()`, which refuses with `compute_profile_disabled`.
+The jobs Worker's maintenance workflow recovers pending dispatches when encoding
+is enabled.
 
 The recording dispatcher used by the tests lives in `dispatch_port.test.ts` and is
 not exported. A recording dispatcher shipped next to the real one is a second
@@ -157,8 +162,9 @@ lease expires, and failed dispatches that are non-retryable, have exhausted
 retries, or have been idle for one hour (`dispatchRetentionMs` is configurable).
 Live attempt leases are preserved; terminalization releases the owner's active slot.
 
-**Not implemented here:** the schedule. PR H owns `17 * * * *` UTC, the durable
-run key per scheduled slot, and the Worker that executes it.
+The jobs Worker declares `17 * * * *` UTC for staging and production in
+`apps/backend/jobs/wrangler.jsonc`. This package implements the durable run key
+and run repository; `MaintenanceWorkflow` performs the sweep and recovery.
 
 ## The clock
 
@@ -208,7 +214,7 @@ bun run --cwd packages/backend/jobs typecheck
 bun run --cwd packages/backend/jobs lint
 
 bun run --cwd packages/backend/database db:generate   # after a schema change
-bun run db:migrate                                    # local D1, applies 0003_*
+bun run db:migrate                                    # local D1, applies every committed migration
 ```
 
 ## Dependencies and boundaries
@@ -220,7 +226,10 @@ bun run db:migrate                                    # local D1, applies 0003_*
   `ON CONFLICT` are the design, and expressing them through a query builder would
   obscure exactly the part that has to be right.
 * Reached by `apps/frontend/client/src/lib/server/jobs_service.ts` (server plane
-  only) and, after PR H, by the jobs Worker.
+  only) and by `apps/backend/jobs` (the jobs Worker).
+* `workflowIdFor` lives in its own module (`job_identity.ts`) because both the
+  repository and the dispatch port need it, and a value import between those two
+  would be a cycle.
 
 ## What is verified here, and what is not
 
@@ -236,19 +245,27 @@ Verified in this repository, by real statements:
   are confirmed gone;
 - bounded maintenance with truthful affected-row counts.
 
-**Not** verified here, and not claimed:
+### Verified only against the local runtime
 
-- that a Workflow is ever started — there is no compute profile in this PR;
-- that any byte is ever encoded, stored or served — that is `apps/backend/media`
-  plus PR H;
+- Existing-instance dispatch is tested against the local runtime's
+  `instance.already_exists` response and a status lookup. Hosted-provider
+  idempotency has not been verified.
+- The manual maintenance path runs in the compute lane and trigger selection is
+  unit-tested. The local runtime cannot deliver a natural cron event, so natural
+  cron delivery has not been verified.
+
+**Not** verified anywhere in this repository, and not claimed:
+
 - that the live profile's budgets hold under real multi-isolate concurrency — the
   guarantees here are SQLite's, exercised on one engine;
-- scheduling: no cron, no scheduler, no run record.
+- that Cloudflare's managed container runtime starts and stops an instance;
+- any deployed behaviour at all: nothing here deploys.
 
 ## Related
 
 - `@starter/schemas/jobs` — the public DTOs, the frozen enums and the Rust wire contract.
 - `packages/backend/database` — the Drizzle schema and the committed migrations.
 - `apps/backend/media` — the Rust/FFmpeg processor this package's metadata describes.
+- `apps/backend/jobs` — the Worker that runs the Workflows and the schedule.
 - [docs/architecture.md](../../../docs/architecture.md) — planes and boundaries.
 - [docs/testing.md](../../../docs/testing.md) — the four lanes.

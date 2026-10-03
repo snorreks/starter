@@ -75,7 +75,6 @@ import {
   MAX_JOBS_PER_ENVIRONMENT_UTC_DAY,
   MAX_JOBS_PER_USER_HOUR,
   MAX_LISTED_JOBS,
-  WORKFLOW_ID_PREFIX,
 } from '@starter/schemas/jobs';
 
 import {
@@ -84,6 +83,7 @@ import {
   type DispatchErrorCode,
   MAX_DISPATCH_ATTEMPTS,
 } from './dispatch_port.ts';
+import { workflowIdFor } from './job_identity.ts';
 
 const RETRYABLE_DISPATCH_CODES = DISPATCH_ERROR_CODES.filter(
   (code) => DISPATCH_ERROR_MEANINGS[code].retryable,
@@ -295,8 +295,15 @@ const JOB_COLUMNS = `
 export const requestFingerprint = (input: CreateEncodeJob): string =>
   JSON.stringify({ fixture: input.fixture, preset: input.preset });
 
-/** The Workflow instance id for a job. Derived, never stored from a request. */
-export const workflowIdFor = (jobId: string): string => `${WORKFLOW_ID_PREFIX}${jobId}`;
+/**
+ * The Workflow instance id for a job.
+ *
+ * Re-exported from `./job_identity.ts`, where it lives with the reason it is
+ * derived rather than chosen. Every existing importer of `workflowIdFor` keeps
+ * working; the module boundary exists so the dispatch port can enforce the
+ * derivation without importing the repository it is imported by.
+ */
+export { workflowIdFor };
 
 // -----------------------------------------------------------------------------
 // Outcomes

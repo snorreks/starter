@@ -13,9 +13,36 @@ packages/shared/*     schemas, logger, utils      no project dependencies
 packages/backend/*    database, auth, jobs        -> shared
 packages/frontend/*   ui, platform, features      -> shared
 apps/frontend/client  ONE SvelteKit app           browser + Worker in one package
+apps/backend/jobs     the jobs Worker             workerd: Workflows, container, maintenance
+apps/backend/media    the FFmpeg processor        Linux: a container image, reached over a port
 apps/e2e              Playwright                  -> shared
 scripts, .pi          tooling                     -> shared
 ```
+
+### Why compute is a second Worker, and why it has no API
+
+`starter-web` owns the public router, the session and the authorization check.
+`starter-jobs` owns the Workflows, the container Durable Object and the hourly
+sweep. The split is what makes the access boundary checkable:
+
+* **The jobs Worker has no HTTP route.** Its default handler answers 404 to
+  everything. The jobs API is `POST /api/jobs` on the *web* Worker, where the
+  session exists, and it reaches the compute half through a cross-Worker workflow
+  binding — no public path, no second origin, no second auth surface.
+* **Compute cannot read a session.** The jobs Worker would need the session tables
+  only to know whose job to run, and it gets that from the job row instead. Its
+  maintenance step reads `sessions` and `rate_limits` by *bounded deletion*, which
+  needs no identity.
+* **The container holds nothing.** `EncodeContainer`'s type declares no `DB` and no
+  `MEDIA`; the FFmpeg container it starts has no credential, no R2 key and no route.
+  Bytes go out on a request and come back on a response.
+* **The reusable parts are not owned by either.** `packages/backend/jobs` holds
+  admission, fencing, the dispatch port and the maintenance services, so the web
+  Worker and the jobs Worker both use them and neither imports the other.
+
+The rule that keeps this from being aspirational: `bun run guard` classifies
+`apps/backend/jobs/**` as worker plane and its `scripts/` and `tests/` as Node, and
+refuses a jobs Worker that imports `apps/frontend/client/**`.
 
 ### One screen, two hosts, one composition root
 
@@ -419,6 +446,7 @@ index. `check_bundle.test.ts` locks that in with a negative control.
 | `bun run test:worker` | The Worker answers over HTTP: health, auth, notes, ownership, 404 shapes. | Browser behaviour. |
 | `bun run e2e` | Built client + real Worker + real browser, one origin, two sessions isolated. | Anything about a build this checkout did not make. |
 | `bun run test:browser` | Real Svelte in Chromium. | The Worker. |
+| `bun run test:compute` | The built jobs Worker runs real Workflows, a real Durable Object, real local D1/R2 and real FFmpeg. | Cloudflare's managed container runtime, or a natural cron firing — see [testing.md](testing.md). |
 | `bun run guard` | The invariants in this document still hold, over the resolved module graph. | Anything about a build this checkout did not make. |
 
 The dev modes exist because one mode would have to be wrong about something: `vite

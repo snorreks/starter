@@ -52,6 +52,21 @@ declare global {
       readonly LOG_LEVEL?: string;
       readonly RELEASE?: string;
       readonly JOBS_PROFILE?: string;
+      // Cross-Worker Workflow binding into the jobs Worker, and the private artifact
+      // bucket it shares with it. Both are absent in an environment whose jobs
+      // profile is disabled, which is the shipped default; see
+      // `src/lib/server/container.ts` for how their absence is answered.
+      readonly ENCODE_WORKFLOW?: {
+        // `get` is declared because `createWorkflowDispatchPort` calls it: when the
+        // provider answers `instance.already_exists`, the port asks the existing
+        // instance for its status rather than assuming success. Leaving `get` out of
+        // this view made the two type views of the same binding disagree — the file's
+        // own header says a mismatch should be a compile error wherever it is used,
+        // and here nothing used the stale one.
+        create(options: { id: string; params?: unknown }): Promise<{ id: string }>;
+        get(id: string): Promise<{ status(): Promise<{ status: string }> }>;
+      };
+      readonly MEDIA?: R2Bucket;
     }
   }
 
@@ -71,6 +86,17 @@ declare global {
       readonly LOG_LEVEL?: string;
       readonly RELEASE?: string;
       readonly JOBS_PROFILE?: string;
+      readonly ENCODE_WORKFLOW?: {
+        // `get` is declared because `createWorkflowDispatchPort` calls it: when the
+        // provider answers `instance.already_exists`, the port asks the existing
+        // instance for its status rather than assuming success. Leaving `get` out of
+        // this view made the two type views of the same binding disagree — the file's
+        // own header says a mismatch should be a compile error wherever it is used,
+        // and here nothing used the stale one.
+        create(options: { id: string; params?: unknown }): Promise<{ id: string }>;
+        get(id: string): Promise<{ status(): Promise<{ status: string }> }>;
+      };
+      readonly MEDIA?: R2Bucket;
     }
 
     interface Locals {

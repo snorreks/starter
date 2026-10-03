@@ -1,0 +1,33 @@
+{
+  "name": "@starter/jobs-worker",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "license": "MIT",
+  "main": "./src/index.ts",
+  "scripts": {
+    "build": "bun run scripts/build.ts",
+    "dev": "bun run scripts/compute_lane.ts serve",
+    "lint": "biome lint src tests scripts",
+    "format": "biome format src tests scripts",
+    "fix": "biome check --write src tests scripts --error-on-warnings",
+    "typecheck": "tsc --noEmit",
+    "test": "bun run test:unit",
+    "test:unit": "bun test src",
+    "test:worker": "bun run test:compute",
+    "test:compute": "bun run scripts/compute_lane.ts test",
+    "check:config": "bun run scripts/check_config.ts"
+  },
+  "dependencies": {
+    "@starter/jobs": "workspace:*",
+    "@starter/schemas": "workspace:*",
+    "@starter/utils": "workspace:*"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "5.20260929.1",
+    "@types/bun": "1.4.2",
+    "miniflare": "5.20260926.0-alpha",
+    "typescript": "6.0.3",
+    "wrangler": "4.142.0"
+  }
+}

@@ -29,6 +29,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { IDEMPOTENCY_KEY_HEADER } from '@starter/schemas/jobs';
+import { discoverMigrations } from '../../tests/migrations.ts';
 import {
   type Clock,
   createJobRepository,
@@ -57,12 +58,9 @@ const MIGRATIONS_DIR = join(REPO_ROOT, 'packages/backend/database/drizzle-d1');
  * suite that tested a table this repository does not actually have.
  */
 const migrate = (db: Database): void => {
-  const files = [
-    '0000_graceful_grey_gargoyle.sql',
-    '0001_early_captain_cross.sql',
-    '0002_broken_vector.sql',
-    '0003_dark_phantom_reporter.sql',
-  ];
+  // Discovered, not listed: a hardcoded array is one more place to forget when a
+  // migration lands, and a suite running against a stale schema still passes.
+  const files = discoverMigrations(MIGRATIONS_DIR);
   for (const file of files) {
     const sql = readFileSync(join(MIGRATIONS_DIR, file), 'utf8');
     for (const statement of sql.split('--> statement-breakpoint')) {

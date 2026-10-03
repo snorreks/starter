@@ -56,7 +56,8 @@ import {
   resolveRateLimitBudget,
   resolveTrustedOrigins,
 } from './env.ts';
-import { createJobsService, type JobsService } from './jobs_service.ts';
+import { createArtifactReader, createDispatchPort } from './jobs_bindings.ts';
+import { createJobsService, JOBS_PROFILE_ENCODE, type JobsService } from './jobs_service.ts';
 
 /**
  * The tables this application exposes through Drizzle.
@@ -202,7 +203,32 @@ export const getContainer = (rawEnv: unknown, requestOrigin?: string): Container
     // and the binding — not the Drizzle handle — is passed because the repository's
     // statements are hand-written SQL and Drizzle would only be a second name for
     // the same connection.
-    jobs: createJobsService({ db: env.DB, profile: jobsProfile }),
+    // The dispatch port and the artifact reader are passed whenever the profile is
+    // `encode`, and are omitted otherwise.
+    //
+    // Two reasons for that shape rather than "always pass them":
+    //
+    //   * a deployment with the profile disabled has no jobs Worker bound, so
+    //     `ENCODE_WORKFLOW` is absent and passing `undefined` would build a port that
+    //     refuses with `workflow_binding_missing` — a wrong reason for a profile that
+    //     is off on purpose. The disabled port's own refusal is the accurate one;
+    //   * the bucket is the same absence: with no compute there are no artifacts to
+    //     read, and `readOutput` already has a refusal for "no store bound".
+    //
+    // What is *not* conditional is the wiring itself. The moment this deployment says
+    // `JOBS_PROFILE=encode`, the two adapters are live and a job admitted by
+    // `POST /api/jobs` starts a real Workflow instance — no second code path to
+    // remember to switch on.
+    jobs: createJobsService({
+      db: env.DB,
+      profile: jobsProfile,
+      ...(jobsProfile === JOBS_PROFILE_ENCODE
+        ? {
+            dispatch: createDispatchPort(env.ENCODE_WORKFLOW),
+            ...(env.MEDIA === undefined ? {} : { reader: createArtifactReader(env.MEDIA) }),
+          }
+        : {}),
+    }),
     ...(mail.mode === 'capture' ? { mailCapture: mailService as CaptureMailService } : {}),
     auth: createBetterAuth(db, {
       baseURL: baseUrl,

@@ -15,6 +15,7 @@
 import { describe, expect, test } from 'bun:test';
 import {
   createDisabledDispatchPort,
+  createWorkflowDispatchPort,
   DISPATCH_ERROR_CODES,
   type DispatchOutcome,
   type DispatchTarget,
@@ -170,5 +171,223 @@ describe('the disabled dispatch port', () => {
     const first = await port.dispatch(target({ jobId: 'job_a', attemptId: 'attempt-1' }));
     const second = await port.dispatch(target({ jobId: 'job_b', attemptId: 'attempt-2' }));
     expect(first).toEqual(second);
+  });
+});
+
+describe('the Workflow-backed dispatch port', () => {
+  test('a retried admission addresses one instance, not two encodes', async () => {
+    // The claim is about *identity*: `create({ id })` on an existing id is
+    // addressed again by the provider. What this test can prove is the part that
+    // is this repository's responsibility — that the id sent is derived from the
+    // job and is byte-identical across two dispatches of the same job, and that
+    // two different jobs never share one.
+    const seen: Array<{ id: string; params?: unknown }> = [];
+    const port = createWorkflowDispatchPort({
+      get: async () => ({ status: async () => ({ status: 'running' }) }),
+      async create(options) {
+        seen.push({ id: options.id, params: options.params });
+        return { id: options.id };
+      },
+    });
+
+    const first = await port.dispatch(target({ attemptId: 'attempt-1' }));
+    const retry = await port.dispatch(target({ attemptId: 'attempt-2' }));
+    const other = await port.dispatch(
+      target({ jobId: 'job_2', workflowId: workflowIdFor('job_2'), attemptId: 'attempt-3' }),
+    );
+
+    expect(first).toEqual({ ok: true });
+    expect(retry).toEqual({ ok: true });
+    expect(other).toEqual({ ok: true });
+
+    expect(seen[0]?.id).toBe(seen[1]?.id);
+    expect(seen[0]?.id).not.toBe(seen[2]?.id);
+    expect(seen[0]?.id).toBe(workflowIdFor('job_1'));
+  });
+
+  test('the instance carries the frozen fixture, preset and attempt, and nothing else', async () => {
+    let received: unknown;
+    const port = createWorkflowDispatchPort({
+      get: async () => ({ status: async () => ({ status: 'running' }) }),
+      async create(options) {
+        received = options.params;
+        return { id: options.id };
+      },
+    });
+
+    await port.dispatch(target());
+    expect(received).toEqual({
+      jobId: 'job_1',
+      fixture: 'sample-v1',
+      preset: 'demo-180p-v1',
+      attemptId: 'attempt-1',
+    });
+    // No owner id, no storage key, no deadline: the Workflow reads those from the
+    // job row it claims, and a payload that carries them is a payload that can
+    // disagree with the row.
+    expect(JSON.stringify(received)).not.toContain('owner');
+  });
+
+  test('an instance id that is not derived from the job id is refused', async () => {
+    // One job must never be addressable by two instances: two encodes, two
+    // leases, two budget spends. The derivation is the mechanism, so the port
+    // checks it rather than trusting every caller to have used `dispatchTargetFor`.
+    const created: string[] = [];
+    const outcome = await createWorkflowDispatchPort({
+      get: async () => ({ status: async () => ({ status: 'running' }) }),
+      async create(options) {
+        created.push(options.id);
+        return { id: options.id };
+      },
+    }).dispatch(target({ jobId: 'job_2' }));
+
+    expect(outcome.ok).toBe(false);
+    if (outcome.ok) {
+      return;
+    }
+    expect(outcome.code).toBe('protocol_rejected');
+    expect(created).toEqual([]);
+  });
+
+  test('a missing binding is a named capability gap, never a silent success', async () => {
+    // The failure this prevents: an enabled jobs profile with no binding would
+    // admit a job and answer 202 for an instance that can never exist.
+    const outcome = await createWorkflowDispatchPort(undefined).dispatch(target());
+    expect(outcome.ok).toBe(false);
+    if (outcome.ok) {
+      return;
+    }
+    expect(outcome.code).toBe('workflow_binding_missing');
+    expect(outcome.retryable).toBe(true);
+  });
+
+  test('a provider that throws is retryable and carries no provider text', async () => {
+    const outcome = await createWorkflowDispatchPort({
+      get: async () => ({ status: async () => ({ status: 'running' }) }),
+      create: async () => {
+        throw new Error('wrangler exploded: key sk-live-abc123');
+      },
+    }).dispatch(target());
+
+    expect(outcome.ok).toBe(false);
+    if (outcome.ok) {
+      return;
+    }
+    expect(outcome.code).toBe('provider_unavailable');
+    expect(outcome.retryable).toBe(true);
+    // The message is stored on the job row. A provider string there would be
+    // unbounded, unredacted provider text in a column this repository owns.
+    expect(outcome.message).not.toContain('sk-live');
+    expect(outcome.message).not.toContain('wrangler');
+  });
+
+  test('a provider answering in another shape fails permanently rather than on a retry loop', async () => {
+    // Retrying cannot make a peer change its answer shape, so this must not be
+    // retryable: an unrecoverable dispatch retried forever is a spend.
+    const shapes: unknown[] = [null, {}, { id: 42 }, { id: '' }, 'ok', { id: 'x'.repeat(0) }];
+    for (const shape of shapes) {
+      const outcome = await createWorkflowDispatchPort({
+        get: async () => ({ status: async () => ({ status: 'running' }) }),
+        create: async () => shape as { id: string },
+      }).dispatch(target());
+      expect(outcome.ok).toBe(false);
+      if (outcome.ok) {
+        return;
+      }
+      expect(outcome.code).toBe('protocol_rejected');
+      expect(outcome.retryable).toBe(false);
+    }
+  });
+});
+
+describe('dispatching an instance that already exists', () => {
+  test('failed or unavailable existing instances remain retryable provider failures', async () => {
+    for (const status of ['errored', 'terminated', '', null, 'lookup-failed', 'status-failed']) {
+      const outcome = await createWorkflowDispatchPort({
+        create: async () => {
+          throw { code: 'instance.already_exists' };
+        },
+        get: async (id) => {
+          expect(id).toBe(target().workflowId);
+          if (status === 'lookup-failed') {
+            throw new Error('private provider details');
+          }
+          return {
+            status: async () => {
+              if (status === 'status-failed') {
+                throw new Error('private provider details');
+              }
+              return { status: status as string };
+            },
+          };
+        },
+      }).dispatch(target());
+      expect(outcome).toMatchObject({ ok: false, code: 'provider_unavailable', retryable: true });
+      expect(JSON.stringify(outcome)).not.toContain('private provider details');
+    }
+  });
+
+  test('healthy existing instances count as dispatched', async () => {
+    for (const status of ['queued', 'running', 'paused', 'waiting', 'complete']) {
+      const outcome = await createWorkflowDispatchPort({
+        create: async () => {
+          throw { code: 'instance.already_exists' };
+        },
+        get: async () => ({ status: async () => ({ status }) }),
+      }).dispatch(target());
+      expect(outcome).toEqual({ ok: true });
+    }
+  });
+
+  test('an existing instance is a success, not a provider failure', async () => {
+    // The local runtime throws `instance.already_exists` where the hosted one
+    // returns the existing instance. Both mean the same thing — the job's instance
+    // is there — and treating the throw as a failure would mark a retried dispatch
+    // as `dispatch_failed` and, because the code is retryable, make recovery retry
+    // the same call forever.
+    const outcome = await createWorkflowDispatchPort({
+      get: async () => ({ status: async () => ({ status: 'running' }) }),
+      create: async () => {
+        // Shaped exactly as the pinned local runtime throws it: the code is the first
+        // parenthesised token of the message, and there is no `code` property at all.
+        throw new Error(
+          'WorkflowError: (instance.already_exists) Workflow instance with id "encode-job_1" already exists',
+        );
+      },
+    }).dispatch(target());
+
+    expect(outcome).toEqual({ ok: true });
+  });
+
+  test('an error that carries a declared code is honoured without parsing its message', async () => {
+    const outcome = await createWorkflowDispatchPort({
+      get: async () => ({ status: async () => ({ status: 'running' }) }),
+      create: async () => {
+        const error = new Error('a different sentence entirely');
+        (error as Error & { code: string }).code = 'instance.already_exists';
+        throw error;
+      },
+    }).dispatch(target());
+
+    expect(outcome).toEqual({ ok: true });
+  });
+
+  test('a provider failure that merely mentions an existing instance is not a success', async () => {
+    // The check is on the code, not the message: a message search would accept this
+    // one, and accepting it would mean never recording a real outage.
+    const outcome = await createWorkflowDispatchPort({
+      get: async () => ({ status: async () => ({ status: 'running' }) }),
+      create: async () => {
+        const error = new Error('WorkflowError: (quota_exceeded) a quota was exceeded');
+        (error as Error & { code: string }).code = 'provider_unavailable';
+        throw error;
+      },
+    }).dispatch(target());
+
+    expect(outcome.ok).toBe(false);
+    if (outcome.ok) {
+      return;
+    }
+    expect(outcome.code).toBe('provider_unavailable');
   });
 });

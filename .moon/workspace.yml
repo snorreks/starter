@@ -73,11 +73,22 @@ projects:
   # application — and the web app is the only thing that would drag SvelteKit in.
   jobs: 'packages/backend/jobs'
 
-  # Compute. A Rust/FFmpeg processor that runs in a container, not on the
-  # Worker's plane: it has no D1, no R2, no bindings and no credentials, and the
-  # jobs Worker reaches it over an internal port. Its Moon tasks are named
-  # `cargo-*` on purpose — see apps/backend/media/moon.yml for why they do not
-  # join the `:test`/`:lint` selectors the web lanes run without a Rust toolchain.
+  # Compute, in two projects that share a directory:
+  #
+  #   `jobs-worker` the TypeScript Worker that owns the Workflows, the container
+  #              Durable Object and the scheduled maintenance. It is worker-plane code,
+  #              so its tasks are named `test`/`lint`/`typecheck` and join the root
+  #              selectors — and its *compute* lane is named `test-compute`, because
+  #              that one needs a Docker engine. See apps/backend/jobs/moon.yml.
+  #   `media`  the Rust/FFmpeg processor that runs inside the container. Its tasks
+  #            are named `cargo-*` on purpose — see apps/backend/media/moon.yml for
+  #            why they do not join the `:test`/`:lint` selectors the web lanes run
+  #            without a Rust toolchain.
+  #
+  # Two distinct ids for two projects that share a directory name. Moon ids come
+  # from these keys, and `jobs` is already the id of the shared job *domain* package
+  # above — two keys with one name is one of them silently unreachable by selector.
+  jobs-worker: 'apps/backend/jobs'
   media: 'apps/backend/media'
 
 vcs:
