@@ -1,0 +1,130 @@
+$schema: 'https://moonrepo.dev/schemas/project.json'
+
+# apps/backend/jobs/moon.yml
+#
+# The scheduled jobs Worker: two Workflows, one container Durable Object, and the
+# bounded maintenance they run.
+#
+# Task names follow the media crate's precedent and its reason: this project
+# publishes no `test`/`lint` task for the *compute* lane, because the root
+# scripts run Moon by task name (`bun run test` is `:test`, `bun run lint` is
+# `:lint`). A project named `test` would silently join the credential-free web
+# lanes, and the compute lane needs a Docker engine. So:
+#
+#   test              unit lane (src/**/*.test.ts) — no Docker, no D1, no network
+#   test-compute      the real local Workflows + D1 + R2 + a real FFmpeg container
+#   build             the Worker bundle `wrangler deploy` would ship
+#   check-config      the schedule invariants, read from the committed config
+#
+# `test-compute` is never cached: it asserts against a running runtime, a real
+# database, a real bucket and a real container, so a restored "pass" would
+# certify processes this run never started.
+
+layer: 'application'
+
+fileGroups:
+  sources:
+    - 'src/**/*'
+  configs:
+    - 'package.json'
+    - 'tsconfig*.json'
+    - 'moon.yml'
+    - 'wrangler.jsonc'
+  tests:
+    - 'tests/**/*'
+    - 'scripts/**/*'
+
+toolchains:
+  bun:
+  javascript:
+
+dependsOn:
+  - database
+  - jobs
+  - schemas
+  - utils
+
+tasks:
+  build:
+    command: 'bun'
+    args: ['run', 'build']
+    inputs:
+      - '@group(sources)'
+      - '@group(configs)'
+    outputs:
+      - 'dist'
+
+  check-config:
+    command: 'bun'
+    args: ['run', 'check:config']
+    inputs:
+      - '@group(configs)'
+      - '@group(sources)'
+
+  typecheck:
+    command: 'bun'
+    args: ['run', 'typecheck']
+    inputs:
+      - '@group(sources)'
+      - '@group(tests)'
+      - '@group(configs)'
+
+  lint:
+    command: 'bun'
+    args: ['run', 'lint']
+    inputs:
+      - '@group(sources)'
+      - '@group(tests)'
+      - '@group(configs)'
+
+  format:
+    command: 'bun'
+    args: ['run', 'format']
+    inputs:
+      - '@group(sources)'
+      - '@group(tests)'
+      - '@group(configs)'
+
+  fix:
+    command: 'bun'
+    args: ['run', 'fix']
+    inputs:
+      - '@group(sources)'
+      - '@group(tests)'
+      - '@group(configs)'
+
+  # Unit lane. No Docker, no local runtime, no credentials: these tests assert
+  # the parts that are this repository's own — key derivation, refusal
+  # classification, protocol validation, schedule configuration.
+  test:
+    command: 'bun'
+    args: ['run', 'test']
+    inputs:
+      - '@group(sources)'
+      - '@group(configs)'
+
+  # The compute lane. Requires a Docker-compatible engine and runs the built
+  # Worker in the real local Workers runtime (wrangler's own miniflare) with real
+  # local D1 and R2, a real Workflows engine and the real FFmpeg image.
+  test-compute:
+    command: 'bun'
+    args: ['run', 'test:compute']
+    # The lane drives the **built** bundle, so the build is a real dependency rather
+    # than a step somebody has to remember. `client:test-worker` does the same, and a
+    # lane that silently tested the previous build is exactly what `check:bundle`
+    # exists to prevent in the other direction.
+    dependsOn:
+      - '~:build'
+    options:
+      cache: false
+    inputs:
+      - '@group(sources)'
+      - '@group(tests)'
+      - '@group(configs)'
+
+  validate:
+    deps:
+      - '~:lint'
+      - '~:format'
+      - '~:typecheck'
+      - '~:check-config'

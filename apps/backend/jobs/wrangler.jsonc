@@ -1,0 +1,264 @@
+{
+  // apps/backend/jobs/wrangler.jsonc
+  //
+  // The jobs Worker: two Workflows, one container Durable Object, the shared D1
+  // database and one private R2 bucket. It has **no public route** — there is no
+  // `routes` key, and the default handler answers 404 to anything that reaches it.
+  // The only ways in are a Workflow binding (from the web Worker or from this
+  // Worker's own recovery pass) and the schedule below.
+  //
+  // Why a second Worker rather than a second half of the web Worker: the web app
+  // owns the public router, its session, its rate limiter and its cookies. Compute
+  // needs none of those and must not be able to reach them — a container-backed
+  // encode has no reason to be able to read a session table. Splitting the Worker
+  // is what makes that boundary enforceable instead of aspirational.
+  //
+  // `wrangler deploy` is NOT how this file is meant to be applied by hand: the
+  // resource ids come from the gitignored overlay and the environment names from
+  // the resolved target, exactly as for the web Worker. See `scripts/src/deploy`.
+  "$schema": "../../../../node_modules/wrangler/config-schema.json",
+  "name": "starter-jobs",
+  "compatibility_date": "2026-10-01",
+  "compatibility_flags": ["nodejs_compat"],
+  // Built by `bun run build` (`scripts/build.ts`) into `dist/`. Bun is the pinned
+  // bundler in this repository and `cloudflare:workers` is marked external,
+  // because that module is provided by the runtime and not by a registry.
+  "main": "dist/index.js",
+  "observability": {
+    // The same product the web Worker's structured events go to. Workflow step
+    // records are the compute lane's only log surface, so this is not optional
+    // decoration: a failed encode with no observability is a failure nobody can
+    // diagnose.
+    "enabled": true
+  },
+  "vars": {
+    "DEPLOYMENT_ENV": "local",
+    // Local default is `disabled`, and that is a real refusal rather than a
+    // placeholder. The compute lane passes `JOBS_PROFILE=encode` explicitly; a
+    // checkout with no Docker and no compute intent should not be able to admit
+    // a job that would then sit pending forever.
+    //
+    // The deployed environments below set it to `encode` together with the
+    // schedule, so "the profile is on" and "maintenance runs hourly" are enabled
+    // by the same committed configuration rather than by two things somebody has
+    // to remember to change together.
+    "JOBS_PROFILE": "disabled"
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      // The *same* environment-isolated database the web Worker binds. Job state,
+      // sessions, rate-limit windows and maintenance runs are one database on
+      // purpose: the maintenance sweep deletes expired sessions and idle
+      // rate-limit windows, and it cannot do that across two databases without a
+      // distributed transaction it has no reason to have.
+      //
+      // `database_id` is absent for the same reason it is absent from the web
+      // config: an invented id fails at deploy time with an opaque error, and a
+      // real one must never be committed. `bun run deploy:configure` writes it.
+      "database_name": "starter-web",
+      "migrations_dir": "../../../../packages/backend/database/drizzle-d1"
+    }
+  ],
+  "r2_buckets": [
+    {
+      "binding": "MEDIA",
+      // Private. No `preview_bucket_name`, no public access, and no key handed to
+      // the container: bytes go out through the Durable Object port and come back
+      // through the Worker, so the processor never holds a credential that could
+      // read anything else in the bucket.
+      "bucket_name": "starter-media"
+    }
+  ],
+  "durable_objects": {
+    "bindings": [
+      {
+        // One Durable Object per job. That is what makes the container cap
+        // meaningful: `max_instances: 2` below bounds two *jobs* concurrently,
+        // and two attempts of the same job address the same object rather than
+        // starting a second container.
+        "name": "CONTAINER",
+        "class_name": "EncodeContainer"
+      }
+    ]
+  },
+  "migrations": [
+    {
+      // The Durable Object's own storage is SQLite from the start. There is no
+      // SQLite-to-SQLite migration to write later because the object is new in
+      // this release, and a placeholder tag claiming otherwise would be a lie the
+      // provider would act on.
+      "tag": "v1",
+      "new_sqlite_classes": ["EncodeContainer"]
+    }
+  ],
+  "containers": [
+    {
+      // The identity a Durable Object's `exports` entry refers to.
+      "name": "media",
+      "class_name": "EncodeContainer",
+      // Built from PR G's Dockerfile — the same image the media crate's own
+      // measurements were taken from. The path is relative to this file, and the
+      // build context is the crate directory, so nothing outside it can change
+      // what the image contains.
+      "image": "../media/Dockerfile",
+      "image_build_context": "../media",
+      // The cap from the design: at most two live compute instances per
+      // environment. This is a billing and fairness bound as much as a technical
+      // one — a burst of accepted jobs queues rather than multiplying spend.
+      "max_instances": 2,
+      // `basic` — 1/4 vCPU, 1 GiB, 4 GB — measured in
+      // apps/backend/media/README.md against the fixture encode's real timings
+      // and the worst peak memory measured inside the input ceiling. `standard-1`
+      // buys ~1 s on a job that runs a handful of times an hour.
+      "instance_type": "basic",
+      // Lifecycle is the platform's, reached through the Durable Object: the object
+      // holds the handle (`ctx.container`) and arms the inactivity timeout, but the
+      // instance itself is scheduled by Cloudflare.
+      //
+      // `scheduling_policy` is deliberately **not** `durable_object`. That policy
+      // makes the DO the image's owner and restricts this block to
+      // `name`/`class_name`/`images`/observability — verified by
+      // `wrangler deploy --dry-run` against the pinned 4.142.0 schema, which rejects
+      // `image`, `max_instances` and `instance_type` there. The fields this design
+      // depends on (a local Dockerfile, a cap of two, the measured profile) belong to
+      // the platform-scheduled shape, so the configuration states the shape it wants.
+      "observability": { "enabled": true }
+    }
+  ],
+  "workflows": [
+    {
+      "binding": "ENCODE_WORKFLOW",
+      "class_name": "EncodeWorkflow",
+      // The Workflow's stable identity, used for instance and storage namespacing.
+      // Derived from the project stem in the same spirit as the Worker name.
+      "name": "starter-encode",
+      "limits": {
+        // Eight steps' worth of headroom over the four the encode path declares.
+        // A bound that is too low fails an instance mid-run and leaves a job
+        // pending; a bound that is absent is an unbounded run.
+        "steps": 32
+      }
+    },
+    {
+      "binding": "MAINTENANCE_WORKFLOW",
+      "class_name": "MaintenanceWorkflow",
+      "name": "starter-maintenance",
+      "limits": { "steps": 16 },
+      // One maintenance instance at a time. The run-key claim already refuses a
+      // duplicate slot; this keeps the *queue* from growing while an earlier
+      // instance is still running, so a stalled sweep does not accumulate
+      // followers that all find nothing to do.
+      "concurrency": { "limit": 1 },
+      // NO `schedules` here, and that is deliberate.
+      //
+      // This is the whole "never deploy both schedules" requirement expressed as
+      // one structural fact: the top-level configuration is what a local run and a
+      // default deploy read, and it carries no schedule at all. The hourly
+      // schedule appears only inside `[env.staging]` and `[env.production]`,
+      // which is also where `JOBS_PROFILE` becomes `encode`. There is therefore
+      // no configuration in which a cron trigger and an exported `scheduled`
+      // handler both exist for this workflow, because this Worker exports no
+      // `scheduled` handler.
+      //
+      // `src/schedule_config.test.ts` asserts all of that against this file, so
+      // the invariant is checked rather than described.
+    }
+  ],
+  "env": {
+    "staging": {
+      "vars": {
+        "DEPLOYMENT_ENV": "staging",
+        "JOBS_PROFILE": "encode"
+      },
+      "d1_databases": [
+        {
+          "binding": "DB",
+          "database_name": "starter-web",
+          "migrations_dir": "../../../../packages/backend/database/drizzle-d1"
+        }
+      ],
+      "r2_buckets": [{ "binding": "MEDIA", "bucket_name": "starter-media" }],
+      "durable_objects": {
+        "bindings": [{ "name": "CONTAINER", "class_name": "EncodeContainer" }]
+      },
+      "migrations": [{ "tag": "v1", "new_sqlite_classes": ["EncodeContainer"] }],
+      "containers": [
+        {
+          "name": "media",
+          "class_name": "EncodeContainer",
+          "image": "../media/Dockerfile",
+          "image_build_context": "../media",
+          "max_instances": 2,
+          "instance_type": "basic",
+          "observability": { "enabled": true }
+        }
+      ],
+      "workflows": [
+        {
+          "binding": "ENCODE_WORKFLOW",
+          "class_name": "EncodeWorkflow",
+          "name": "starter-encode",
+          "limits": { "steps": 32 }
+        },
+        {
+          "binding": "MAINTENANCE_WORKFLOW",
+          "class_name": "MaintenanceWorkflow",
+          "name": "starter-maintenance",
+          "limits": { "steps": 16 },
+          "concurrency": { "limit": 1 },
+          // The one committed schedule in this repository. Minute 17 rather than
+          // minute 0, because minute 0 is when every other scheduled job on the
+          // platform fires; see `MAINTENANCE_CRON` in `@starter/jobs`, which
+          // `src/schedule_config.test.ts` checks this string against.
+          "schedules": ["17 * * * *"]
+        }
+      ]
+    },
+    "production": {
+      "vars": {
+        "DEPLOYMENT_ENV": "production",
+        "JOBS_PROFILE": "encode"
+      },
+      "d1_databases": [
+        {
+          "binding": "DB",
+          "database_name": "starter-web",
+          "migrations_dir": "../../../../packages/backend/database/drizzle-d1"
+        }
+      ],
+      "r2_buckets": [{ "binding": "MEDIA", "bucket_name": "starter-media" }],
+      "durable_objects": {
+        "bindings": [{ "name": "CONTAINER", "class_name": "EncodeContainer" }]
+      },
+      "migrations": [{ "tag": "v1", "new_sqlite_classes": ["EncodeContainer"] }],
+      "containers": [
+        {
+          "name": "media",
+          "class_name": "EncodeContainer",
+          "image": "../media/Dockerfile",
+          "image_build_context": "../media",
+          "max_instances": 2,
+          "instance_type": "basic",
+          "observability": { "enabled": true }
+        }
+      ],
+      "workflows": [
+        {
+          "binding": "ENCODE_WORKFLOW",
+          "class_name": "EncodeWorkflow",
+          "name": "starter-encode",
+          "limits": { "steps": 32 }
+        },
+        {
+          "binding": "MAINTENANCE_WORKFLOW",
+          "class_name": "MaintenanceWorkflow",
+          "name": "starter-maintenance",
+          "limits": { "steps": 16 },
+          "concurrency": { "limit": 1 },
+          "schedules": ["17 * * * *"]
+        }
+      ]
+    }
+  }
+}

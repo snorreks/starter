@@ -11,7 +11,7 @@
 
 import { Database } from 'bun:sqlite';
 import { beforeEach, describe, expect, test } from 'bun:test';
-import { readFileSync } from 'node:fs';
+import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
@@ -24,12 +24,16 @@ import {
 const REPO_ROOT = fileURLToPath(new URL('../../../../../', import.meta.url)).replace(/\/$/, '');
 const MIGRATIONS_DIR = join(REPO_ROOT, 'packages/backend/database/drizzle-d1');
 
-const MIGRATIONS = [
-  '0000_graceful_grey_gargoyle.sql',
-  '0001_early_captain_cross.sql',
-  '0002_broken_vector.sql',
-  '0003_dark_phantom_reporter.sql',
-];
+/**
+ * Every applied migration, in order, discovered rather than listed.
+ *
+ * A hardcoded list is a list that goes stale, and a suite that silently tests a
+ * schema one migration behind is worse than no suite: it reports the jobs tables
+ * as they were before the newest migration changed them.
+ */
+const MIGRATIONS = readdirSync(MIGRATIONS_DIR)
+  .filter((file) => file.endsWith('.sql'))
+  .sort();
 
 const migrate = (db: Database): void => {
   for (const file of MIGRATIONS) {

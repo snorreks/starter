@@ -25,12 +25,18 @@ It owns the answers to four questions, and nothing else:
 | May this attempt write a result? | `claimAttempt`, `completeAttempt`, `failAttempt` |
 | What does the periodic sweep delete? | `purgeExpiredSessions`, `purgeIdleRateLimits`, `purgeExpiredArtifacts` |
 
-It does **not** own: starting a Workflow (that is `WorkflowDispatchPort`, which
-PR H implements), running FFmpeg (`apps/backend/media`), storing encoded bytes
-(private object storage, bound in PR H), or deciding *when* maintenance runs (PR
-H's schedule). Those boundaries are deliberate: this package is the part that is
-already provable, and a maintenance run can be executed from either Worker
-without either importing the other.
+It does **not** own: running FFmpeg (`apps/backend/media`), holding bytes (private
+object storage, bound in `apps/backend/jobs`), or deciding *when* maintenance runs
+(that schedule lives in the jobs Worker's `wrangler.jsonc`). Those boundaries are
+deliberate: a maintenance run can be executed from either Worker without either
+importing the other.
+
+It now owns two things PR F left as seams:
+
+| Seam | Implementation | Verified by |
+|---|---|---|
+| `WorkflowDispatchPort` | `createWorkflowDispatchPort(binding)` — binds a real Workflow binding, derives nothing it can avoid, and classifies `instance.already_exists` as **success** so a retried dispatch is not an outage | `dispatch_port.test.ts`, and the compute lane |
+| "when maintenance runs" | `createMaintenanceRunRepository` — one row per run, keyed by its trigger, claimed with `INSERT … ON CONFLICT DO NOTHING` | `maintenance_run.test.ts`, and the compute lane |
 
 ## Admission: one statement, four rules
 
@@ -208,7 +214,7 @@ bun run --cwd packages/backend/jobs typecheck
 bun run --cwd packages/backend/jobs lint
 
 bun run --cwd packages/backend/database db:generate   # after a schema change
-bun run db:migrate                                    # local D1, applies 0003_*
+bun run db:migrate                                    # local D1, applies every committed migration
 ```
 
 ## Dependencies and boundaries
@@ -220,7 +226,10 @@ bun run db:migrate                                    # local D1, applies 0003_*
   `ON CONFLICT` are the design, and expressing them through a query builder would
   obscure exactly the part that has to be right.
 * Reached by `apps/frontend/client/src/lib/server/jobs_service.ts` (server plane
-  only) and, after PR H, by the jobs Worker.
+  only) and by `apps/backend/jobs` (the jobs Worker).
+* `workflowIdFor` lives in its own module (`job_identity.ts`) because both the
+  repository and the dispatch port need it, and a value import between those two
+  would be a cycle.
 
 ## What is verified here, and what is not
 
@@ -236,19 +245,25 @@ Verified in this repository, by real statements:
   are confirmed gone;
 - bounded maintenance with truthful affected-row counts.
 
-**Not** verified here, and not claimed:
+- that a dispatch of an existing instance is idempotent against **Cloudflare's**
+  hosted provider — the local runtime throws `instance.already_exists`, and that
+  throw is what the mapping is tested against;
+- that a natural cron firing reaches the workflow — the local runtime cannot deliver
+  a schedule event, so the trigger branch is unit-tested and the manual path is
+  exercised in the compute lane.
 
-- that a Workflow is ever started — there is no compute profile in this PR;
-- that any byte is ever encoded, stored or served — that is `apps/backend/media`
-  plus PR H;
+**Not** verified anywhere in this repository, and not claimed:
+
 - that the live profile's budgets hold under real multi-isolate concurrency — the
   guarantees here are SQLite's, exercised on one engine;
-- scheduling: no cron, no scheduler, no run record.
+- that Cloudflare's managed container runtime starts and stops an instance;
+- any deployed behaviour at all: nothing here deploys.
 
 ## Related
 
 - `@starter/schemas/jobs` — the public DTOs, the frozen enums and the Rust wire contract.
 - `packages/backend/database` — the Drizzle schema and the committed migrations.
 - `apps/backend/media` — the Rust/FFmpeg processor this package's metadata describes.
+- `apps/backend/jobs` — the Worker that runs the Workflows and the schedule.
 - [docs/architecture.md](../../../docs/architecture.md) — planes and boundaries.
 - [docs/testing.md](../../../docs/testing.md) — the four lanes.

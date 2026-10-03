@@ -11,7 +11,7 @@
 
 import { Database } from 'bun:sqlite';
 import { beforeEach, describe, expect, test } from 'bun:test';
-import { readFileSync } from 'node:fs';
+import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { WorkflowDispatchPort } from '@starter/jobs';
 import { databaseMigrationsDir } from '../../../tests/database_paths.ts';
@@ -26,12 +26,12 @@ import {
 } from './jobs_service.ts';
 
 const migrate = (db: Database): void => {
-  for (const file of [
-    '0000_graceful_grey_gargoyle.sql',
-    '0001_early_captain_cross.sql',
-    '0002_broken_vector.sql',
-    '0003_dark_phantom_reporter.sql',
-  ]) {
+  // Discovered from the directory rather than listed, so a new migration is
+  // applied here the day it is generated instead of the day somebody remembers
+  // this array.
+  for (const file of readdirSync(databaseMigrationsDir)
+    .filter((name) => name.endsWith('.sql'))
+    .sort()) {
     for (const statement of readFileSync(join(databaseMigrationsDir, file), 'utf8').split(
       '--> statement-breakpoint',
     )) {

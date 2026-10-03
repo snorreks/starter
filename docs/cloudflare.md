@@ -421,6 +421,104 @@ empty string satisfies `string` while violating `minLength: 1` — the registry
 shipped failing its own schema until this was fixed, and nothing noticed. `null`
 fails the type, so the compiler catches it.
 
+## Compute: Workflows, Containers and one schedule
+
+This repository ships **two** Workers.
+
+| | `starter-web` | `starter-jobs` |
+|---|---|---|
+| Public route | yes — the one origin | **none**; the default handler answers 404 |
+| Owns | sessions, notes, `/api/jobs` | `EncodeWorkflow`, `MaintenanceWorkflow`, `EncodeContainer` |
+| Reads | D1, private R2, the encode Workflow binding | D1, private R2 |
+| Reaches the container | no | one Durable Object per job |
+
+The split is the security boundary, not a deployment convenience. The web app owns
+the session and the authorization check; compute needs neither and must not be able
+to read a session table. `apps/backend/jobs/README.md` has the full layout.
+
+### The schedule, and why there is exactly one
+
+`MaintenanceWorkflow` is scheduled by its **workflow binding**:
+
+```jsonc
+"workflows": [
+  {
+    "binding": "MAINTENANCE_WORKFLOW",
+    "class_name": "MaintenanceWorkflow",
+    "name": "starter-maintenance",
+    "concurrency": { "limit": 1 },
+    "schedules": ["17 * * * *"]   // only in [env.staging] and [env.production]
+  }
+]
+```
+
+Four decisions, each of which is enforced by a test in
+`apps/backend/jobs/src/schedule_config.test.ts`:
+
+* **A binding schedule, not a `scheduled` handler.** The pinned Wrangler (4.142.0)
+  supports `workflows[].schedules` directly — no upgrade was needed — and this
+  Worker exports no `scheduled` handler at all, so "never deploy both schedules" is
+  true by construction rather than by convention.
+* **Minute 17, not minute 0.** Every scheduler on the platform fires at `:00`.
+  Same hourly cadence, one seventeenth of the collision.
+* **Not at the top level.** The top level is what a local run and a default deploy
+  read. A template checkout has no jobs Worker and no bucket, so a schedule there
+  would ask Cloudflare to sweep an account that provisioned nothing.
+* **`concurrency.limit: 1`.** An overlapping firing does not queue behind the first
+  one forever; the second instance finds the run key already claimed and does
+  nothing.
+
+### Deduplication is the database's job
+
+A cron firing can be retried, duplicated, or delivered while the previous run is
+still going. Maintenance deletes rows, so "once per slot" cannot be a property of
+the trigger. `maintenance_runs.run_key` is a primary key derived from the trigger —
+`scheduled:<epoch-ms>` or `manual:<request-id>` — and the claiming statement is
+`INSERT … ON CONFLICT DO NOTHING`. A second firing of one slot affects no rows and
+records why it did nothing.
+
+A manual invocation is a *different key prefix*, and its label is recorded on the
+row. That is what keeps "the last run was scheduled" a question the database can
+answer rather than a claim in a log.
+
+### Containers
+
+| Setting | Value | Why |
+|---|---|---|
+| `max_instances` | 2 | the design's cap; a burst queues rather than multiplying spend |
+| `instance_type` | `basic` | measured in `apps/backend/media/README.md` against the fixture encode's timings and worst-case memory |
+| `image` | `../media/Dockerfile` | the crate's own Dockerfile, digest-pinned base images |
+| `scheduling_policy` | `durable_object` | the container is controlled from `EncodeContainer` and by nothing else |
+
+There is no `stop_after_work` key in the pinned schema, so "stop when the work is
+done" is expressed in code: the Durable Object arms
+`ctx.container.setInactivityTimeout(...)` after each encode (the idle fallback) and
+is told to release when the job's terminal write has happened.
+
+The container holds **no** account credential, no R2 key and no D1 binding, and has
+no public route. Bytes go out on the request and come back on the response.
+
+### What the local runtime can and cannot do
+
+`bun run test:compute` runs the built Worker in **wrangler's own local runtime**
+(`miniflare` at the version wrangler 4.142.0 resolves), with real local D1 and R2,
+a real Durable Object and a real Workflows engine. The processor is the real FFmpeg
+image, started with Docker and addressed through `PROCESSOR_ORIGIN`.
+
+| Claim | Local lane | Provider |
+|---|---|---|
+| Workflow completes after the caller disconnects | proved | not run |
+| Bytes reach a bucket and hash to what was reported | proved | not run |
+| Retries, fencing, terminal refusals | proved | not run |
+| Maintenance deletes real rows and counts them truthfully | proved | not run |
+| `ctx.container` starts and stops an instance | **not applicable locally** | not run |
+| A natural cron firing reaches the Workflow | **not possible locally** | not run |
+
+The two "not run" rows are why no claim in this repository may be reported as live
+provider evidence. `@cloudflare/vitest-pool-workers` — the documented way to test
+Workflows — is not adoptable at present: its newest release peers `vitest ^4.1.0`
+and this workspace runs vitest 5.0.2.
+
 ## Costs
 
 Workers and D1 on the free tier cover a starter's development. D1 bills for reads

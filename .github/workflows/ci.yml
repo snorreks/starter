@@ -1,13 +1,15 @@
 # Continuous integration.
 #
-# Four lanes, ordered by what they can catch and what they cost, and one gate that
+# Five lanes, ordered by what they can catch and what they cost, and one gate that
 # is the only thing a branch protection rule needs to name:
 #
 #   static   typecheck, lint, format, guards, workflow policy, Pi loader. Seconds.
 #   unit     every project's unit lane, plus the real-browser lane. Needs Chromium.
 #   worker   the built Worker in real workerd against real local D1.
+#   compute  the built jobs Worker against real Workflows, real D1/R2 and real FFmpeg.
+#            Needs Docker, builds the processor image, and is the slowest lane.
 #   e2e      the built client and the built Worker, one origin, in a browser.
-#   gate     needs all four. No code, no checkout, no credential.
+#   gate     needs all five. No code, no checkout, no credential.
 #
 # Properties this file exists to hold, each of which it previously lost:
 #
@@ -344,6 +346,51 @@ jobs:
             exit 1
           fi
 
+  compute:
+    name: Compute integration
+    runs-on: ubuntu-latest
+    # The longest lane by a wide margin: it builds a 540 MB image (a Rust release
+    # build plus Debian's FFmpeg) before it can run anything. Thirty minutes is
+    # generous for the encode itself and is here for the image.
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+
+      - name: Restore Bun's download cache
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: ~/.bun/install/cache
+          key: bun-${{ runner.os }}-${{ env.BUN_VERSION }}-${{ hashFiles('bun.lock') }}
+          restore-keys: |
+            bun-${{ runner.os }}-${{ env.BUN_VERSION }}-
+
+      - name: Install
+        run: bun install --frozen-lockfile
+
+      # No image cache. The lane is about whether a *fresh* checkout can build and
+      # run the processor; a restored layer would make that a claim about whoever
+      # filled the cache last, and a Dockerfile change does not reliably invalidate
+      # every layer it should.
+      - name: Compute integration tests
+        # Starts the real FFmpeg image with Docker, then drives the built jobs Worker
+        # in the local Workers runtime against real local D1 and R2. Docker is present
+        # on the runner image; the lane refuses with a named prerequisite if it is not.
+        run: set -o pipefail; bun run test:compute 2>&1 | tee "$RUNNER_TEMP/compute.log"
+
+      - name: Assert the compute lane discovered and passed tests
+        run: |
+          if ! grep -qE "$TESTS_PASSED_PATTERN" "$RUNNER_TEMP/compute.log"; then
+            echo "::error::The compute lane reported no passing tests. See the log above."
+            exit 1
+          fi
+
   e2e:
     name: End to end
     runs-on: ubuntu-latest
@@ -435,7 +482,7 @@ jobs:
     name: CI
     runs-on: ubuntu-latest
     timeout-minutes: 5
-    needs: [static, unit, worker, e2e]
+    needs: [static, unit, worker, compute, e2e]
     if: always() && !cancelled()
     permissions: {}
     steps:
@@ -453,6 +500,7 @@ jobs:
           STATIC_RESULT: ${{ needs.static.result }}
           UNIT_RESULT: ${{ needs.unit.result }}
           WORKER_RESULT: ${{ needs.worker.result }}
+          COMPUTE_RESULT: ${{ needs.compute.result }}
           E2E_RESULT: ${{ needs.e2e.result }}
         run: |
           status=0
@@ -460,7 +508,7 @@ jobs:
           # expansion, so the loop needs no `eval` and no index arithmetic. No `eval`
           # is the point — it would re-introduce the "value parsed as source" problem
           # the env block exists to remove.
-          for var in STATIC_RESULT UNIT_RESULT WORKER_RESULT E2E_RESULT; do
+          for var in STATIC_RESULT UNIT_RESULT WORKER_RESULT COMPUTE_RESULT E2E_RESULT; do
             result="${!var}"
             lane="$(printf '%s' "$var" | tr '[:upper:]' '[:lower:]')"
             lane="${lane%_result}"

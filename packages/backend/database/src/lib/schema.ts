@@ -378,6 +378,72 @@ export const jobArtifactRetirements = sqliteTable('job_artifact_retirements', {
   cutoffAt: integer('cutoff_at', { mode: 'timestamp' }).notNull(),
 });
 
+/**
+ * One scheduled maintenance run, keyed by what caused it.
+ *
+ * The primary key *is* the deduplication mechanism, and that is the whole reason
+ * this table exists. A cron schedule can fire twice for one slot — a retry, a
+ * duplicated configuration, an operator's manual trigger landing on the same
+ * minute — and maintenance is destructive: it deletes sessions, rate-limit
+ * windows and stored artifacts. "Run at most once per slot" therefore has to be a
+ * property of the database rather than a promise the schedule makes, so the run
+ * key is the primary key and the inserting statement is
+ * `INSERT … ON CONFLICT DO NOTHING`. A second invocation of the same slot
+ * affects no rows and reports why.
+ *
+ * The key is derived from the *trigger*, never supplied freely:
+ *
+ *   `scheduled:<scheduledTimeMs>` — one key per scheduled slot, so a duplicate
+ *   firing of `17 * * * *` addresses the same row.
+ *   `manual:<requestId>` — a manual invocation is its own run, and a retried
+ *   manual *request* (same request id) does not run twice.
+ *
+ * Because the two prefixes cannot collide, a manual run is never mistaken for a
+ * scheduled one — which is the difference between honest scheduler evidence and
+ * a run that was started by hand and reported as natural.
+ */
+export const maintenanceRuns = sqliteTable(
+  'maintenance_runs',
+  {
+    /**
+     * `scheduled:<epochMs>` or `manual:<requestId>`. See the table comment: the
+     * key is the deduplication mechanism, so nothing here is nullable.
+     */
+    runKey: text('run_key').primaryKey(),
+    /** `scheduled` for a cron firing, `manual` for an operator or a test. */
+    trigger: text('trigger').notNull(),
+    /** The slot label, e.g. `2026-10-03T17:00:00Z`. Null for a manual run. */
+    slot: text('slot'),
+    /** The provider's `scheduledTime`, epoch ms. Null for a manual run. */
+    scheduledTime: integer('scheduled_time', { mode: 'timestamp' }),
+    /** `running` | `succeeded` | `failed`. */
+    status: text('status').notNull().default('running'),
+    /** One instant for every cutoff in the run. Null until the sweep starts. */
+    cutoffAt: integer('cutoff_at', { mode: 'timestamp' }),
+    startedAt: integer('started_at', { mode: 'timestamp' }).notNull(),
+    completedAt: integer('completed_at', { mode: 'timestamp' }),
+    // Truthful counts, one column per number the report carries. Each is a row
+    // count the database reported, never a count of rows a statement selected.
+    expiredSessions: integer('expired_sessions').notNull().default(0),
+    idleRateLimits: integer('idle_rate_limits').notNull().default(0),
+    artifactsQueued: integer('artifacts_queued').notNull().default(0),
+    artifactsRetired: integer('artifacts_retired').notNull().default(0),
+    pendingDispatches: integer('pending_dispatches').notNull().default(0),
+    /** A frozen code when the run failed. Never provider text. */
+    errorCode: text('error_code'),
+  },
+  (table) => [
+    // "What was the most recent run?" — the query a demo dashboard and a future
+    // jobs screen both ask, and it is answered without touching a sweep.
+    index('maintenance_runs_started_idx').on(table.startedAt),
+    check(
+      'maintenance_runs_status_check',
+      sql`${table.status} in ('running', 'succeeded', 'failed')`,
+    ),
+    check('maintenance_runs_trigger_check', sql`${table.trigger} in ('scheduled', 'manual')`),
+  ],
+);
+
 // -----------------------------------------------------------------------------
 // Row types
 //
@@ -394,6 +460,7 @@ export type NewNoteRow = typeof notes.$inferInsert;
 export type JobRow = typeof jobs.$inferSelect;
 export type NewJobRow = typeof jobs.$inferInsert;
 export type JobArtifactRetirementRow = typeof jobArtifactRetirements.$inferSelect;
+export type MaintenanceRunRow = typeof maintenanceRuns.$inferSelect;
 
 /**
  * Column->table map handed to Better Auth's Drizzle adapter. The adapter looks

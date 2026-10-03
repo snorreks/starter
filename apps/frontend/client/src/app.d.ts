@@ -52,6 +52,14 @@ declare global {
       readonly LOG_LEVEL?: string;
       readonly RELEASE?: string;
       readonly JOBS_PROFILE?: string;
+      // Cross-Worker Workflow binding into the jobs Worker, and the private artifact
+      // bucket it shares with it. Both are absent in an environment whose jobs
+      // profile is disabled, which is the shipped default; see
+      // `src/lib/server/container.ts` for how their absence is answered.
+      readonly ENCODE_WORKFLOW?: {
+        create(options: { id: string; params?: unknown }): Promise<{ id: string }>;
+      };
+      readonly MEDIA?: R2Bucket;
     }
   }
 
@@ -71,6 +79,10 @@ declare global {
       readonly LOG_LEVEL?: string;
       readonly RELEASE?: string;
       readonly JOBS_PROFILE?: string;
+      readonly ENCODE_WORKFLOW?: {
+        create(options: { id: string; params?: unknown }): Promise<{ id: string }>;
+      };
+      readonly MEDIA?: R2Bucket;
     }
 
     interface Locals {

@@ -215,6 +215,7 @@ prerequisite: see `docs/capability-matrix.md`.
 | Browser | `bun run test:browser` | Does this reactivity actually reach the DOM? |
 | Worker | `bun run test:worker` | Does the built Worker route, authenticate and authorize correctly in workerd? |
 | E2E | `bun run e2e` | Does the whole path work, through a build and a browser? |
+| Compute | `bun run test:compute` | Does the durable half actually run — Workflows, a Durable Object, real D1/R2 and real FFmpeg? |
 
 Counts are derived by running the lanes, not recorded here except in
 [capability-matrix.md](capability-matrix.md), which records what a given round
@@ -223,6 +224,10 @@ actually ran:
 ```bash
 bun run test:all          # each lane prints its own count
 ```
+
+`test:all` deliberately does **not** include the compute lane: that one needs a
+Docker engine, and folding it in would make the credential-free, engine-free lanes
+fail on a machine that has neither. It is invoked by name.
 
 ### Unit
 
@@ -595,6 +600,45 @@ It is worth stating what this command earned its keep on:
 It will also report this file, because the paragraph above used to spell the
 package name literally. That is the intended behaviour: the rehearsal flags
 references in prose too, and the fix is to not write the name out.
+
+## The compute lane
+
+```bash
+bun run test:compute      # from the repository root
+```
+
+| | |
+|---|---|
+| Runtime | the built `apps/backend/jobs` bundle, in wrangler's own local runtime (`miniflare`, the version wrangler 4.142.0 resolves) |
+| Database | real local D1, with the committed migrations applied |
+| Storage | real local R2 |
+| Orchestration | a real Workflows engine and a real Durable Object |
+| Compute | the real FFmpeg image (`apps/backend/media`), started with Docker |
+| Prerequisite | a running Docker-compatible engine — **missing Docker fails with a named message, never a skip** |
+| Cached | never; it asserts against a running runtime, a database and a container |
+
+It answers the questions the unit lane structurally cannot:
+
+* does a dispatch return before the encode finishes, and does the Workflow finish
+  anyway?
+* do the bytes reach the bucket, and do they hash to what the processor reported?
+* is a re-dispatch of a live instance one encode rather than two?
+* is a superseded attempt fenced out of a committed success?
+* is invalid media terminal (one container start) and `busy` retried (three)?
+* does the maintenance sweep delete real rows, and does the recorded count match?
+
+### What it does not prove
+
+| Claim | Status |
+|---|---|
+| Cloudflare's managed container runtime (`ctx.container`) | **not applicable locally** — the local runtime has no container, so the lane points the Durable Object at a Docker-run image through `PROCESSOR_ORIGIN` |
+| A natural cron firing reaching the Workflow binding | **not possible locally** — the local runtime cannot deliver a schedule event; the manual invocation path is exercised and the trigger branch is unit-tested |
+| A deployed run | **NOT RUN** — nothing in this repository deploys, and no local result may be reported as provider evidence |
+
+The lane also found three defects that no unit test would have: an R2 conditional
+read whose body streams as empty, a Workflow step whose error class does not survive
+the step boundary, and a Durable Object request that requires a `FixedLengthStream`
+body where a plain `fetch` does not. Each is written down where it is fixed.
 
 ## Coverage
 

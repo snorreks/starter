@@ -540,6 +540,13 @@ export const PLANE_PLACEMENTS: readonly { readonly test: RegExp; readonly plane:
   // Everything else in the native app — `src-tauri/`, its scripts, its tests — is
   // tooling that runs on Node. The Rust inside it is never parsed; see GENERATED_TREES.
   { test: /^apps\/frontend\/native\//, plane: 'node' },
+  // The jobs Worker's own tooling runs outside both application planes. Its bundler
+  // and its compute-lane harness are Node/Bun programs — they start Docker, spawn
+  // `wrangler`, read migration files — and its tests drive the local runtime from
+  // the host. Classifying them as `worker` would be the same mistake as classifying
+  // `apps/frontend/client/scripts/` as browser code, so the distinction is stated
+  // here for the same reason it is stated for that project above.
+  { test: /^apps\/backend\/jobs\/(?:scripts|tests)\//, plane: 'node' },
   { test: /^apps\/backend\/jobs\//, plane: 'worker' },
   { test: /^packages\/shared\//, plane: 'portable' },
   { test: /^packages\/backend\//, plane: 'worker' },
