@@ -21,7 +21,7 @@ import { join } from 'node:path';
 import type { Violation } from '../src/guards/boundary.ts';
 import { guardArchitecture } from '../src/guards/guard_architecture.ts';
 import { buildModuleGraph } from '../src/guards/module_graph.ts';
-import { REPO_ROOT } from '../src/shared/paths.ts';
+import { type Plane, planeOf, type Role, roleOf } from '../src/guards/policy.ts';
 import { BASE_PROJECT, type Member, type Project, writeProject } from './fixtures/architecture.ts';
 
 const created: string[] = [];
@@ -373,13 +373,46 @@ describe('roots: a relative path may not leave its workspace', () => {
   });
 });
 
-// ── the repository itself ────────────────────────────────────────────────────
+// ── the policy rows themselves ───────────────────────────────────────────────
 
-describe('roots: the live repository', () => {
-  test('classifies the new roots as they are written, not as they are planned', () => {
-    // The policy rows are checked against the real tree for the property that is
-    // checkable today: the two roots that exist are classified, and nothing is
-    // reported for roots that do not yet have a file.
-    expect(run(REPO_ROOT)).toEqual([]);
+describe('roots: the policy table classifies a path with no file behind it', () => {
+  // The fixture cases above prove what the guard does with a root that *has* files.
+  // This proves the property only the table can show: the four roots are classified
+  // before they hold anything, which is the whole reason they were added to `policy.ts`
+  // rather than being discovered from a directory listing.
+  //
+  // A direct table lookup, not a scan of the repository. The live tree has no file
+  // under two of these roots yet, so a scan can only assert that nothing was
+  // reported — which is a statement about the tree today, not about the policy, and it
+  // costs a full parse of every source file to make it. The live control belongs to
+  // `architecture_guards.test.ts`, which already owns "this repository satisfies every
+  // rule".
+  test.each<[string, Plane, Role]>([
+    ['packages/frontend/features/src/notes/note_card.svelte', 'browser', 'view'],
+    ['packages/frontend/features/src/notes/notes_view_model.svelte.ts', 'browser', 'view-model'],
+    ['packages/frontend/features/src/notes/notes_service.svelte.ts', 'browser', 'service'],
+    ['packages/frontend/platform/src/transport.ts', 'browser', 'module'],
+    ['apps/frontend/native/src/routes/+page.svelte', 'browser', 'route-view'],
+    ['apps/frontend/native/src/lib/platform/bridge.ts', 'browser', 'native-bridge'],
+    ['apps/frontend/native/src/lib/session.ts', 'browser', 'module'],
+    ['apps/frontend/native/vite.config.ts', 'node', 'config'],
+    ['apps/frontend/native/src-tauri/tauri.conf.json', 'node', 'module'],
+    ['apps/backend/jobs/src/index.ts', 'worker', 'module'],
+  ])('classifies %s as %s/%s', (file, plane, role) => {
+    expect(planeOf(file)).toBe(plane);
+    expect(roleOf(file)).toBe(role);
+  });
+
+  test('refuses an application root it was not told about', () => {
+    // The property that keeps the table from growing by prefix: an application this
+    // round has never heard of has **no plane**, and `buildModuleGraph` keeps a file
+    // only when both a plane and a role are found. So the file lands in `unclassified`
+    // and is reported, rather than inheriting a plane from its parent directory.
+    //
+    // The role alone is not the gate — the catch-all `{ role: 'module' }` row at the
+    // end of `ROLE_PLACEMENTS` matches every application, and that is deliberate: it
+    // is the *plane* row that is a decision, and a role of `module` claims nothing
+    // about runtime. The fixture case above proves the end-to-end consequence.
+    expect(planeOf('apps/backend/analytics/src/index.ts')).toBeNull();
   });
 });

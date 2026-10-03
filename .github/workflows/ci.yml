@@ -97,8 +97,11 @@ env:
 #                             Bun upgrade changes the installer, and an OS change
 #                             changes what the optional packages link against.
 #   `~/.cache/ms-playwright`  The Chromium the two browser lanes launch. Keyed on
-#                             the manifest that pins `@playwright/test`, because the
-#                             browser build is decided there and nowhere else.
+#                             the manifest that pins `@playwright/test` *and* on
+#                             `bun.lock`, because the first decides which browser
+#                             build is wanted and the second decides which version
+#                             is installed — a lockfile change can move the former
+#                             without touching the latter.
 #                             Deliberately **no restore-key**: a partial match would
 #                             restore a Chromium from another Playwright version, and
 #                             `browsers:install` would find a directory it does not
@@ -229,10 +232,13 @@ jobs:
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: ~/.cache/ms-playwright
-          # The manifest pinning `@playwright/test` is what decides the browser
-          # build. No restore-key on purpose; see the caching note at the top of this
-          # file.
-          key: playwright-${{ runner.os }}-${{ hashFiles('apps/e2e/package.json') }}
+          # The manifest pinning `@playwright/test` decides which browser build is
+          # wanted, and `bun.lock` decides which version is actually installed — a
+          # lockfile change can move the former without touching the latter. Both are
+          # in the key, or a cache hit could serve a browser the lockfile no longer
+          # asks for. No restore-key on purpose; see the caching note at the top of
+          # this file.
+          key: playwright-${{ runner.os }}-${{ hashFiles('apps/e2e/package.json', 'bun.lock') }}
 
       - name: Install Playwright's Chromium
         # After the restore, and before the browser lane.
@@ -372,7 +378,7 @@ jobs:
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: ~/.cache/ms-playwright
-          key: playwright-${{ runner.os }}-${{ hashFiles('apps/e2e/package.json') }}
+          key: playwright-${{ runner.os }}-${{ hashFiles('apps/e2e/package.json', 'bun.lock') }}
 
       - name: Install Playwright's Chromium
         # After the restore, for the reason given in the unit job: a restore after

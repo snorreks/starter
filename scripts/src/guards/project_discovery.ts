@@ -30,7 +30,7 @@
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { parse } from 'yaml';
-import { IGNORED_DIRS, isCargoBuildDirectory, readWorkspacePackages } from './module_graph.ts';
+import { IGNORED_DIRS, isGeneratedOutputDirectory, readWorkspacePackages } from './module_graph.ts';
 import { isGeneratedPath } from './policy.ts';
 
 /**
@@ -198,9 +198,9 @@ const cargoCrateDirs = (root: string): string[] => {
         continue;
       }
       if (isDirectory) {
-        // A Cargo target directory is confirmed against the manifest beside it, so a
-        // source directory that happens to be called `target` is still walked.
-        if (isCargoBuildDirectory(full)) {
+        // Build output is confirmed against the manifest beside it, so a source
+        // directory that happens to be called `build` is still walked.
+        if (isGeneratedOutputDirectory(full)) {
           continue;
         }
         walk(full, relativePath);

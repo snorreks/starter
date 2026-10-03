@@ -38,7 +38,12 @@ import { guardArchitecture } from './guard_architecture.ts';
 import { guardProjectReadmes } from './guard_readmes.ts';
 // Discovery lives with the graph builder, because both need to agree about what counts
 // as source. Re-exported here so the guards below do not each pick their own walk.
-import { IGNORED_DIRS, listSourceFiles, SOURCE_EXTENSIONS } from './module_graph.ts';
+import {
+  IGNORED_DIRS,
+  isGeneratedOutputDirectory,
+  listSourceFiles,
+  SOURCE_EXTENSIONS,
+} from './module_graph.ts';
 // The document list and the README-coverage guard have to agree about which
 // directories are projects, so the discovery is imported rather than re-walked.
 import { discoverProjects } from './project_discovery.ts';
@@ -196,6 +201,13 @@ export const guardSourceIsTracked = (root = REPO_ROOT): GuardResult => {
       }
       const full = join(directory, entry);
       if (statSync(full).isDirectory()) {
+        // The same manifest-confirmed build-output rule the graph walk uses, so a
+        // package's own `src/build/` is still checked for gitignored source. Relying
+        // on the name alone here would have been the identical hole in a second
+        // walker.
+        if (isGeneratedOutputDirectory(full)) {
+          continue;
+        }
         walk(full);
         continue;
       }

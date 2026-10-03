@@ -145,11 +145,14 @@ The properties worth knowing:
   `cloudflare:workers` into a component **passes** the production build and lands in the
   client chunk. That behavior is not covered by this test. The graph guard catches that
   import; the bundler does not.
-- **Not a rule about relative paths between tooling packages.** `apps/e2e` reaches
-  `scripts/src/shared/paths.ts` by relative path. That is a real smell and the
-  undeclared-dependency rule does not cover it; the failure mode that rule exists for — a
-  dependency that resolves only because a hoister provided it — does not arise between two
-  private packages that are built together. Stated rather than exempted.
+- **Not a rule about *unrelated* relative paths between tooling packages.** The guard
+  does have a rule for a relative import that leaves its workspace — it is the one that
+  made `apps/e2e` -> `scripts` a *declared exemption* rather than a smell stated and
+  forgotten. What it still does not claim is anything about the dependency's
+  *declaration* between two private packages that are built together: the failure mode
+  `ruleDeclaredDependencies` exists for is a dependency that resolves only because a
+  hoister provided it, and that does not arise here. The exemption is a decision with a
+  reason and a staleness check, which is a different thing from not looking.
 
 ## Versions, and why each is pinned
 
