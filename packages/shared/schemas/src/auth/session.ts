@@ -42,6 +42,55 @@ export const SessionUserSchema = Type.Object(
 export type SessionUser = Static<typeof SessionUserSchema>;
 
 /**
+ * The provider's user, exactly as Better Auth's endpoints return it.
+ *
+ * A separate schema because it is a different contract from `SessionUserSchema`,
+ * and conflating them is a mistake this repository has already made once: the
+ * client used to take the provider's object and call it a `SessionUser`, which
+ * gave a `SessionUser` with `name` where the DTO says `displayName`. Nothing broke
+ * until something validated it.
+ *
+ * Closed on purpose. A field Better Auth adds in a future version is then a
+ * visible failure — "the server sent a session user this build does not
+ * understand" — rather than a silently different identity shape that only shows up
+ * where a screen renders `displayName`. The pinned provider version is
+ * `better-auth` in the application's manifest.
+ */
+export const SessionUserWireSchema = Type.Object(
+  {
+    id: UserIdSchema,
+    /** The provider's field name for what this application calls `displayName`. */
+    name: Type.String({ minLength: 1 }),
+    email: Type.String({ minLength: 3 }),
+    emailVerified: Type.Boolean(),
+    image: Type.Union([Type.String(), Type.Null()]),
+    createdAt: Type.Union([Type.String(), Type.Number()]),
+    updatedAt: Type.Union([Type.String(), Type.Number()]),
+  },
+  { additionalProperties: false },
+);
+
+export type SessionUserWire = Static<typeof SessionUserWireSchema>;
+
+/**
+ * Project the provider's user onto this application's DTO.
+ *
+ * A projection, not a cast, for the reason the schema above exists: the DTO names
+ * five fields and a projection is the only thing that can guarantee the other two
+ * are not carried along into a screen, a log line or a native bundle. `provider` is
+ * a literal for the same reason it is one in the server's `RequestUser` — only
+ * email and password is enabled, and a wider union would publish a claim this
+ * application cannot honour.
+ */
+export const toSessionUser = (wire: SessionUserWire): SessionUser => ({
+  id: wire.id,
+  email: wire.email,
+  displayName: wire.name,
+  provider: 'email',
+  emailVerified: wire.emailVerified,
+});
+
+/**
  * Mirrors `emailAndPassword.minPasswordLength` in `@starter/auth`.
  *
  * Duplicated deliberately and pinned by a test. Two different minimums would mean

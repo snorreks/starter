@@ -1,5 +1,5 @@
 <!--
-  apps/frontend/client/src/lib/features/auth/auth_view.svelte
+  packages/frontend/features/src/auth/auth_view.svelte
 
   Sign-in, sign-up, and the states either of those can end in.
 
@@ -9,6 +9,20 @@
 
   AuthViewModel owns the screen state; individual fields and links do not need
   separate ViewModels.
+
+  `progressive` is the one host difference, and it is a prop rather than a fork
+  ---------------------------------------------------------------------
+  With `progressive`, the form posts to a server action and the mode switch is a
+  submitter carrying its own `toggle` field — so a browser with scripting disabled
+  can still sign in, sign up and switch modes. Those are properties of a *server
+  action*, which is a SvelteKit concept this file does not own.
+
+  Without it, the same fields and the same ViewModel drive the screen, and the mode
+  switch is a plain button. A host with no server actions gets nothing that looks
+  like one: a `method="POST"` form would navigate to a URL that cannot answer, and
+  a `toggle` submitter would post a field nobody reads. So the difference is one
+  boolean the composition root states, rather than two copies of this component that
+  drift apart.
 -->
 <script lang="ts">
 import { Field } from '@starter/ui';
@@ -18,9 +32,11 @@ type Props = {
   viewModel: AuthViewModel;
   /** Errors from the last submission, keyed by field. */
   errors: Record<string, string>;
+  /** True when a server form action can handle a submission with no scripting. */
+  progressive?: boolean;
 };
 
-let { viewModel, errors }: Props = $props();
+let { viewModel, errors, progressive = false }: Props = $props();
 
 const errorFor = (field: string): string | undefined => errors[field];
 </script>
@@ -44,14 +60,15 @@ const errorFor = (field: string): string | undefined => errors[field];
     break every end-to-end test for no reason a user could name.
   -->
   <!--
-    `intent` is a real form field, and the mode switch below is a submitter that posts
-    its own `toggle` field. The form action reads `toggle` before it reads anything else,
-    because that is the one request that is not a submission: handling it as a sign-in
-    would be a side effect of asking to switch modes.
+    `intent` is a real form field, and in the progressive case the mode switch
+    below is a submitter that posts its own `toggle` field. The form action reads
+    `toggle` before it reads anything else, because that is the one request that is
+    not a submission: handling it as a sign-in would be a side effect of asking to
+    switch modes.
   -->
   <form
     id="auth-form"
-    method="POST"
+    method={progressive ? 'POST' : undefined}
     data-testid="auth-form"
     onsubmit={(event) => {
       // With scripting, the ViewModel owns the submission. Without it, the browser posts
@@ -156,11 +173,11 @@ const errorFor = (field: string): string | undefined => errors[field];
 
   <nav class="auth__secondary" aria-label="Other account options">
     <!--
-      A submit button associated with the form, not a `button` with an `onclick`.
-      `form="auth-form"` makes it a *submitter*, which is the only button a browser can
-      post as — so with scripting disabled this still reaches the sign-up form, and with
-      scripting enabled the `onsubmit` handler reads the submitter and switches mode
-      without a round trip.
+      A submit button associated with the form, not a `button` with an `onclick` —
+      in the progressive case. `form="auth-form"` makes it a *submitter*, which is
+      the only button a browser can post as — so with scripting disabled this still
+      reaches the sign-up form, and with scripting enabled the `onsubmit` handler
+      reads the submitter and switches mode without a round trip.
 
       Its own name is `toggle`, and that is what the payload carries: the button posts
       `toggle=` alongside the form's fields, and nothing else does. It deliberately does
@@ -176,17 +193,32 @@ const errorFor = (field: string): string | undefined => errors[field];
       them invalid, and fires no `submit` event at all: the mode switch silently does
       nothing, in a browser and only in a browser, which is the worst possible place for
       it to be broken.
+
+      Without a server action there is no `toggle` field for a submitter to carry and
+      nothing would read it, so the same switch is a plain button there. One control,
+      two hosts, and the difference is the boolean rather than a second component.
     -->
-    <button
-      type="submit"
-      form="auth-form"
-      formnovalidate
-      name="toggle"
-      class="auth__link"
-      data-testid="auth-toggle-mode"
-    >
-      {viewModel.isSignUp ? 'I already have an account' : 'I need an account'}
-    </button>
+    {#if progressive}
+      <button
+        type="submit"
+        form="auth-form"
+        formnovalidate
+        name="toggle"
+        class="auth__link"
+        data-testid="auth-toggle-mode"
+      >
+        {viewModel.isSignUp ? 'I already have an account' : 'I need an account'}
+      </button>
+    {:else}
+      <button
+        type="button"
+        class="auth__link"
+        data-testid="auth-toggle-mode"
+        onclick={() => viewModel.toggleMode()}
+      >
+        {viewModel.isSignUp ? 'I already have an account' : 'I need an account'}
+      </button>
+    {/if}
     <a href="/forgot-password">Forgot your password?</a>
   </nav>
 </section>

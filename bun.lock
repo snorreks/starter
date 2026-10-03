@@ -38,7 +38,9 @@
         "@sinclair/typebox": "0.34.52",
         "@starter/auth": "workspace:*",
         "@starter/database": "workspace:*",
+        "@starter/features": "workspace:*",
         "@starter/logger": "workspace:*",
+        "@starter/platform": "workspace:*",
         "@starter/schemas": "workspace:*",
         "@starter/ui": "workspace:*",
         "@starter/utils": "workspace:*",
@@ -81,6 +83,35 @@
       },
       "devDependencies": {
         "drizzle-kit": "0.31.11",
+      },
+    },
+    "packages/frontend/features": {
+      "name": "@starter/features",
+      "version": "0.1.0",
+      "dependencies": {
+        "@sinclair/typebox": "0.34.52",
+        "@starter/platform": "workspace:*",
+        "@starter/schemas": "workspace:*",
+        "@starter/ui": "workspace:*",
+        "@starter/utils": "workspace:*",
+      },
+      "devDependencies": {
+        "svelte-check": "4.7.6",
+      },
+      "peerDependencies": {
+        "svelte": "^5.0.0",
+      },
+    },
+    "packages/frontend/platform": {
+      "name": "@starter/platform",
+      "version": "0.1.0",
+      "dependencies": {
+        "@sinclair/typebox": "0.34.52",
+        "@starter/schemas": "workspace:*",
+        "@starter/utils": "workspace:*",
+      },
+      "peerDependencies": {
+        "svelte": "^5.0.0",
       },
     },
     "packages/frontend/ui": {
@@ -491,9 +522,13 @@
 
     "@starter/e2e": ["@starter/e2e@workspace:apps/e2e"],
 
+    "@starter/features": ["@starter/features@workspace:packages/frontend/features"],
+
     "@starter/logger": ["@starter/logger@workspace:packages/shared/logger"],
 
     "@starter/pi": ["@starter/pi@workspace:.pi"],
+
+    "@starter/platform": ["@starter/platform@workspace:packages/frontend/platform"],
 
     "@starter/schemas": ["@starter/schemas@workspace:packages/shared/schemas"],
 

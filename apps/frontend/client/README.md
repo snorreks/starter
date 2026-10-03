@@ -10,9 +10,14 @@ and the public authenticated API. There is no second API service and no proxy.
 |---|---|---|
 | `src/hooks.server.ts` | server | The composition root. Builds the container, builds **one** request context, applies cache policy, writes one record per served request. |
 | `src/lib/server/` | server | Bindings container, request context, telemetry ingestion, health/readiness, mail, auth helpers. May import `@starter/database` and `@starter/auth`. Nothing else may. |
-| `src/lib/features/`, `src/lib/services/` | browser | View → ViewModel → service, with injected transport. |
+| `src/lib/composition/` | browser | The composition roots. The only place that knows which transport, navigation and session this host has; every feature collaborator comes from here. |
 | `src/routes/**/+server.ts` | server | API adapters: bound body, validated, mapped to a response. |
 | `src/routes/**/+page.svelte` | browser | Presentation. Excluded from the server permission set on purpose. |
+
+The notes screen and the account screen themselves live in
+`packages/frontend/features`, because two hosts render them; this application is
+the composition root for one of them. See that package's README for the contracts
+it requires.
 
 The plane boundary is enforced twice — Biome's import rules and `bun run guard` —
 because a convention nobody checks is a comment.

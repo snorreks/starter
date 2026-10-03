@@ -66,15 +66,23 @@ migrations by hash, so an edited file will be re-run.
 
 ## 4. Service
 
-`apps/frontend/client/src/lib/services/<domain>_service.svelte.ts`
+`packages/frontend/features/src/<domain>/<domain>_service.svelte.ts`
 
-Wraps `ApiClient`. Return typed values and let `AppError` propagate; do not
-swallow it and return a fallback, because a ViewModel cannot then tell "the
-server said no" from "the network is down".
+Takes an `ApiTransport` in its constructor and never imports one. Validate every
+response with `parseDto` against the shared schema — `request<Thing>` compiles
+whether the server sent things or an error envelope.
+
+Return typed values and let `AppError` propagate; do not swallow it and return a
+fallback, because a ViewModel cannot then tell "the server said no" from "the
+network is down".
 
 ## 5. ViewModel
 
-`apps/frontend/client/src/lib/views/<domain>/`
+`packages/frontend/features/src/<domain>/<domain>_view_model.svelte.ts`
+
+Its collaborators — service, `Navigation`, an account service — arrive through the
+constructor. No `$app/*` import, no module singleton: a screen that resolves its
+own transport cannot be built with a fake.
 
 `$state` for what the view renders. `StaleGuard` for anything async: a superseded
 request must be aborted, not merely ignored, or a user typing "a" then "ab" sees

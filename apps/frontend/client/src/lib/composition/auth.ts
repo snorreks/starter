@@ -1,13 +1,17 @@
-// apps/frontend/client/src/lib/features/auth/auth_composition.ts
+// apps/frontend/client/src/lib/composition/auth.ts
 //
-// Wiring. See notes_composition.ts for why this file exists.
+// The web application's sign-in wiring.
+//
+// See `notes.ts` for why this file exists at all: the shared feature ships a
+// ViewModel, and constructing one requires the host's session, account endpoints
+// and navigation. All three are answered in `session.ts`; this file assembles them
+// and applies the one thing only a route knows — the mode and the address the
+// server pre-filled.
 
-import { sessionService } from '#lib/services/session_service.svelte.ts';
-import { goto } from '$app/navigation';
-import { type AuthMode, AuthViewModel } from './auth_view_model.svelte.ts';
+import { type AuthMode, AuthViewModel } from '@starter/features/auth';
+import { accountService, sessionService, webNavigation } from './session.ts';
 
 export interface AuthComposition {
-  session?: typeof sessionService;
   mode?: AuthMode;
   /**
    * An address to pre-fill.
@@ -18,15 +22,14 @@ export interface AuthComposition {
    * empty field on the one screen that is trying not to lose what was typed.
    */
   email?: string;
-  /** Injectable for tests; defaults to SvelteKit's router. */
-  navigate?: (path: string) => Promise<void> | void;
 }
 
 export const getAuthViewModel = (options: AuthComposition = {}): AuthViewModel => {
   const viewModel = new AuthViewModel({
-    session: options.session ?? sessionService,
+    session: sessionService,
+    account: accountService,
+    navigation: webNavigation,
     mode: options.mode ?? 'sign-in',
-    navigate: options.navigate ?? ((path: string) => goto(path)),
   });
 
   if (options.email !== undefined && options.email.length > 0) {

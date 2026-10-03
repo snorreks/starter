@@ -1,4 +1,4 @@
-// apps/frontend/client/src/lib/features/auth/auth_view_model.svelte.ts
+// packages/frontend/features/src/auth/auth_view_model.svelte.ts
 //
 // The sign-in / sign-up screen's state and commands.
 //
@@ -20,8 +20,19 @@
 // needs a specific response: telling someone "check your email" when their password
 // is wrong teaches them that a wrong password means mail is coming. So the outcome
 // is a union, and the view picks the message.
+//
+// Everything host-specific arrives through the constructor
+// -------------------------------------------------------
+// The session, the account endpoints and navigation are injected, and each is an
+// interface rather than a concrete class. That is what lets this screen run under
+// Bun with no SvelteKit app runtime: `$app/navigation` and a module-scope
+// `apiClient` are exactly what made the previous copy untestable outside a page
+// load. There is no default for any of the three — a default would resolve to the
+// web host's implementation at module scope, and this file would work in a browser
+// and nowhere else, which is the situation this extraction exists to end.
 
 import { Value } from '@sinclair/typebox/value';
+import type { Navigation } from '@starter/platform';
 import {
   AccountErrorCode,
   authErrorCode,
@@ -33,10 +44,8 @@ import {
 import { reportError } from '@starter/ui';
 import { disposeScreen, type ScreenGuards, type ScreenOwner } from '@starter/ui/screen';
 import { MutationGuard, StaleGuard, toAppError } from '@starter/utils';
-import { sendVerificationEmail } from '#lib/services/account_client.ts';
-import { apiClient } from '#lib/services/api_client.ts';
-import type { SessionService } from '#lib/services/session_service.svelte.ts';
-import { goto } from '$app/navigation';
+import type { AccountService } from './account_service.ts';
+import type { AuthSession } from './auth_session_service.svelte.ts';
 
 export type AuthMode = 'sign-in' | 'sign-up';
 
@@ -55,10 +64,12 @@ export type AuthOutcome =
   | { kind: 'failed'; message: string };
 
 export interface AuthViewModelOptions {
-  session: SessionService;
+  session: AuthSession;
   mode: AuthMode;
-  /** Injectable for tests; defaults to SvelteKit's router. */
-  navigate?: (path: string) => Promise<void> | void;
+  /** The mail-sending endpoints. Injected because one of them costs a rate limit. */
+  account: AccountService;
+  /** How this host moves between screens. */
+  navigation: Navigation;
 }
 
 export class AuthViewModel implements ScreenOwner, ScreenGuards {
@@ -79,8 +90,9 @@ export class AuthViewModel implements ScreenOwner, ScreenGuards {
    */
   mounted = false;
 
-  readonly #session: SessionService;
-  readonly #navigate: (path: string) => Promise<void> | void;
+  readonly #session: AuthSession;
+  readonly #account: AccountService;
+  readonly #navigation: Navigation;
 
   /**
    * The submission guard, and the only one this screen needs.
@@ -98,7 +110,8 @@ export class AuthViewModel implements ScreenOwner, ScreenGuards {
   constructor(options: AuthViewModelOptions) {
     this.#session = options.session;
     this.mode = options.mode;
-    this.#navigate = options.navigate ?? ((path: string) => goto(path));
+    this.#account = options.account;
+    this.#navigation = options.navigation;
   }
 
   get isSignUp(): boolean {
@@ -198,7 +211,7 @@ export class AuthViewModel implements ScreenOwner, ScreenGuards {
       this.outcome = outcome;
 
       if (this.outcome.kind === 'signed-in') {
-        await this.#navigate(AUTHENTICATED_PATH);
+        await this.#navigation.go(AUTHENTICATED_PATH);
       }
       return this.outcome.kind === 'signed-in' || this.outcome.kind === 'awaiting-verification';
     } catch (error) {
@@ -231,7 +244,7 @@ export class AuthViewModel implements ScreenOwner, ScreenGuards {
 
     this.isSubmitting = true;
     try {
-      await sendVerificationEmail(apiClient, { email: address });
+      await this.#account.sendVerificationEmail({ email: address });
       if (this.mutations.disposed) {
         return false;
       }

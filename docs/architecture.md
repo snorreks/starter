@@ -11,11 +11,39 @@ a local command actually proves.
 ```
 packages/shared/*     schemas, logger, utils      no project dependencies
 packages/backend/*    database, auth              -> shared
-packages/frontend/*   ui, services                -> shared
+packages/frontend/*   ui, platform, features      -> shared
 apps/frontend/client  ONE SvelteKit app           browser + Worker in one package
 apps/e2e              Playwright                  -> shared
 scripts, .pi          tooling                     -> shared
 ```
+
+### One screen, two hosts, one composition root
+
+`packages/frontend/features` holds the notes screen and the reusable half of the
+account screen; `packages/frontend/platform` holds the four contracts a host
+implements (`ApiTransport`, `Navigation`, `ExternalBrowser`, `SessionStore`). The
+web application composes them in `apps/frontend/client/src/lib/composition/`; a
+static native bundle will compose four different answers and change nothing else.
+
+Three rules make that hold rather than merely sound true, each enforced twice:
+
+- **A feature imports contracts, never a host.** `$app/*`, `@tauri-apps/*`, a
+  Cloudflare binding, `apps/**` — refused by Biome's frontend override and by
+  `bun run guard`.
+- **A service validates its answers.** `parseDto(schema, body, …)` against the
+  same TypeBox schema the server validated with. `request<Note[]>` compiles
+  identically whether the answer is notes or an HTML error page, and the mistake
+  used to surface as "you have no notes yet".
+- **Identity is per request, never module scope.** `SessionState` is constructed
+  by the host's composition root, not by the shared package. A module-scope
+  instance would be one object for the whole Worker isolate, so two concurrent
+  SSR requests would render whichever arrived last.
+
+Progressive enhancement stays where the server plane can reach it: the form
+actions behind `/login`, `/forgot-password`, `/reset-password` and
+`/verify-email`, their origin and rate checks, and the SSR redirects. `AuthView`
+takes a `progressive` boolean so the same controls render with or without a form
+action, rather than the shell pretending it has one.
 
 ### The roots the policy already owns
 
@@ -318,7 +346,7 @@ The create schema rejects a body that carries one — refused, not ignored.
 ```
 route page  →  constructs a ViewModel, hands it to the view
 ViewModel   →  state. $state, StaleGuard, a tagged-union status
-service     →  I/O. Calls ApiClient, returns types, lets AppError propagate
+service     →  I/O. Calls the injected ApiTransport, checks the answer, lets AppError propagate
 component   →  formatting, and raising intents
 ```
 
