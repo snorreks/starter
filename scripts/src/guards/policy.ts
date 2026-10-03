@@ -468,6 +468,11 @@ export const FORBIDDEN_ROLE_EDGES: readonly ForbiddenRoleEdge[] = [
 export const SERVER_TYPE_ONLY_FORBIDDEN_ROOTS: readonly string[] = [
   '@starter/database',
   '@starter/auth',
+  // Job state is server-owned for the same reason the other two are: `JobRecord`
+  // carries a private storage key and is the authorization subject. A browser
+  // ViewModel that names it is compiling against a private server entity, and the
+  // moment someone adds one value import the DTO has already leaked.
+  '@starter/jobs',
 ];
 
 /**

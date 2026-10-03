@@ -12,6 +12,7 @@
     "./auth": "./src/auth/index.ts",
     "./registry": "./src/registry/index.ts",
     "./common": "./src/common/index.ts",
+    "./jobs": "./src/jobs/index.ts",
     "./native": "./src/native.ts"
   },
   "scripts": {

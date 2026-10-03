@@ -47,13 +47,16 @@ import { createResendMailService } from './email/resend_transport.ts';
 import {
   type AppEnv,
   type DeploymentEnvName,
+  type JobsProfileName,
   requireBindings,
   resolveAuthRateLimitIngress,
   resolveAuthSecret,
   resolveDeploymentEnvironment,
+  resolveJobsProfile,
   resolveRateLimitBudget,
   resolveTrustedOrigins,
 } from './env.ts';
+import { createJobsService, type JobsService } from './jobs_service.ts';
 
 /**
  * The tables this application exposes through Drizzle.
@@ -93,6 +96,17 @@ export interface Container {
    * it; deployed environments deliver mail and have no capture service.
    */
   mailCapture?: CaptureMailService;
+  /**
+   * The jobs service, including its resolved capability.
+   *
+   * Present even when the profile is `disabled`, so a route can answer
+   * `503 jobs_profile_disabled` instead of having to know whether the capability
+   * exists. That is the difference between "this deployment cannot do that" and a
+   * 404 that reads like a wrong URL.
+   */
+  jobs: JobsService;
+  /** Resolved jobs capability. `disabled` unless `JOBS_PROFILE` says otherwise. */
+  jobsProfile: JobsProfileName;
 }
 
 /**
@@ -168,6 +182,12 @@ export const getContainer = (rawEnv: unknown, requestOrigin?: string): Container
   const budget = resolveRateLimitBudget(env);
   const ingress = resolveAuthRateLimitIngress(env, isLocal);
 
+  // Resolved before the literal, because both the service and the container's own
+  // `jobsProfile` field need it. An unrecognised value throws here, which refuses
+  // the container the same way a missing auth secret does — rather than surfacing as
+  // a 500 on the first jobs request while notes and auth carry on.
+  const jobsProfile = resolveJobsProfile(env);
+
   const container: Container = {
     env,
     db,
@@ -175,6 +195,14 @@ export const getContainer = (rawEnv: unknown, requestOrigin?: string): Container
     isLocal,
     baseUrl,
     mail: mailService,
+    jobsProfile,
+    // No dispatch port and no artifact reader are passed, so this is the disabled
+    // implementation of each until PR H supplies the real ones. That is the honest
+    // configuration for this PR: `createJobsService` refuses rather than pretending,
+    // and the binding — not the Drizzle handle — is passed because the repository's
+    // statements are hand-written SQL and Drizzle would only be a second name for
+    // the same connection.
+    jobs: createJobsService({ db: env.DB, profile: jobsProfile }),
     ...(mail.mode === 'capture' ? { mailCapture: mailService as CaptureMailService } : {}),
     auth: createBetterAuth(db, {
       baseURL: baseUrl,

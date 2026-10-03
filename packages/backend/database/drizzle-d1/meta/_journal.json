@@ -22,6 +22,13 @@
       "when": 1790942579976,
       "tag": "0002_broken_vector",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "6",
+      "when": 1791035315668,
+      "tag": "0003_dark_phantom_reporter",
+      "breakpoints": true
     }
   ]
 }

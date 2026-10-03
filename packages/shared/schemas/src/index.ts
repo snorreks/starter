@@ -9,6 +9,7 @@
 
 export * from './auth/index.ts';
 export * from './common/index.ts';
+export * from './jobs/index.ts';
 export * from './logging/index.ts';
 export * from './notes/index.ts';
 export * from './registry/index.ts';

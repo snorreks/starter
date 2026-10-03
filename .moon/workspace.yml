@@ -67,6 +67,11 @@ projects:
   # Backend packages: server code. Shared only.
   database: 'packages/backend/database'
   auth: 'packages/backend/auth'
+  # Job state, admission, attempt fencing, the Workflow dispatch port and bounded
+  # maintenance. A backend package rather than a folder inside the web app, because
+  # PR H's jobs Worker has to run the maintenance sweep without importing the web
+  # application — and the web app is the only thing that would drag SvelteKit in.
+  jobs: 'packages/backend/jobs'
 
   # Compute. A Rust/FFmpeg processor that runs in a container, not on the
   # Worker's plane: it has no D1, no R2, no bindings and no credentials, and the
