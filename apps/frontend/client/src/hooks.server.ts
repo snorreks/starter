@@ -32,7 +32,7 @@
 // produces. This response names the problem and contains no secret.
 
 import { env } from 'cloudflare:workers';
-import { createLogger } from '@starter/logger';
+
 // `Handle` from `@sveltejs/kit/hooks`, not from a generated `./$types`.
 //
 // This is a real difference from the route files, and it is the documented
@@ -45,20 +45,70 @@ import type { RequestEvent } from '@sveltejs/kit';
 import type { Handle } from '@sveltejs/kit/hooks';
 import { type Container, getContainer } from '#lib/server/container.ts';
 import { jsonError, notConfigured } from '#lib/server/http.ts';
-import { resolveUser } from '#lib/server/request_context.ts';
+import {
+  buildRequestContext,
+  createServerRecordLogger,
+  type RequestContext,
+} from '#lib/server/request_context.ts';
 
-/** Refuses to start, loudly, before a Worker logs anything. */
-const startupLogger = createLogger({
+/**
+ * Refuses to start, loudly, before a Worker logs anything.
+ *
+ * No container exists yet, so there is no environment to report and the context is
+ * the honest one: a local build with no release id. It emits through the same
+ * structured destination as every request record, and it never renders a second,
+ * human-formatted copy — a duplicate in the platform's log index is worse than a
+ * terse local line, and this logger exists for the deployed case.
+ */
+const { logger: startupLogger } = createServerRecordLogger({
   app: 'web',
   environment: 'local',
   source: 'worker',
   release: 'dev',
-  logLevel: 'INFO',
-  // `false` in local development on purpose: a silent logger means a 503 with an
-  // empty body is undebuggable. Deployed, the platform captures console output, so
-  // a second write would only double-count.
-  silent: typeof process !== 'undefined' && process.env.NODE_ENV === 'production',
 });
+
+/**
+ * One record per served request, written after the response is known.
+ *
+ * In a `finally`, so a thrown handler is still recorded — a request that failed is
+ * the one worth finding. And guarded, because `ConsoleLogger` is a sink consumer,
+ * not a request dependency: if this write ever throws, the caller still gets the
+ * response it was owed.
+ */
+const recordRequest = (
+  context: RequestContext,
+  event: RequestEvent,
+  startedAt: number,
+  status: number,
+): void => {
+  try {
+    // A 4xx or 5xx is a warning, not an info: the platform's own severity filter is
+    // how an incident is found, and a stream where every failure arrives as `info`
+    // is a stream nobody filters by ERROR.
+    const failed = status >= 400;
+    context.logger.write({
+      logLevel: failed ? 'WARNING' : 'INFO',
+      logType: failed ? 'warn' : 'info',
+      event: 'http.request',
+      traceId: context.traceId,
+      message: `${event.request.method} ${event.url.pathname} ${status}`,
+      data: {
+        status,
+        method: event.request.method,
+        path: event.url.pathname,
+        durationMs: Date.now() - startedAt,
+        matched: event.route.id !== null,
+        // The verified id. The client's own correlation label is carried under its
+        // own name, so nothing a caller chose can be read as this request's identity.
+        ...(context.user === null ? {} : { userId: context.user.id }),
+        ...(context.requestId === null ? {} : { providerRequestId: context.requestId }),
+        ...(context.clientTraceId === null ? {} : { clientTraceId: context.clientTraceId }),
+      },
+    });
+  } catch {
+    // Never the reported error. See above.
+  }
+};
 
 const isApiPath = (pathname: string): boolean =>
   pathname === '/api' || pathname.startsWith('/api/');
@@ -100,18 +150,47 @@ export const handle: Handle = async ({ event, resolve }) => {
   }
 
   event.locals.container = container;
-  // Per request, from this request. See the header comment.
-  event.locals.user = await resolveUser(container, event.request.headers);
 
-  const response = await resolve(event);
+  // One context, built once, for this request. The hook is the only place a session
+  // is resolved: routes read `locals.context`, so a route cannot end up holding a
+  // second, differently authenticated view of who is calling.
+  //
+  // Wrapped because a failure to *log* must not become a failed request — the same
+  // rule the telemetry endpoint follows. If the session itself cannot be resolved
+  // there is nothing to hand the routes, and the request is refused with the same
+  // named cause as any other configuration failure.
+  let context: RequestContext;
+  try {
+    context = await buildRequestContext(container, event.request);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    startupLogger.error('request.context_failed', { message });
+    return withCachePolicy(
+      notConfigured(message, isApiPath(event.url.pathname)),
+      cachePolicyFor(event.url.pathname, null),
+    );
+  }
+
+  event.locals.context = context;
+  // Per request, from this request. See the header comment.
+  event.locals.user = context.user;
+
+  const startedAt = Date.now();
+  let response: Response;
+  try {
+    response = await resolve(event);
+  } catch (error) {
+    // A handler that threw is still a served request, and the one most worth a
+    // record. The error is rethrown untouched: the response it produces is the
+    // framework's answer, and inventing one here would hide the failure.
+    recordRequest(context, event, startedAt, 500);
+    throw error;
+  }
 
   // `route.id` is null exactly when nothing matched, which is what makes this a
   // 404 rather than a guess about the response status.
   if (event.route.id === null && isApiPath(event.url.pathname)) {
-    return withCachePolicy(
-      jsonError(404, 'not_found', 'No such route.'),
-      cachePolicyFor(event.url.pathname, event.locals.user),
-    );
+    response = jsonError(404, 'not_found', 'No such route.');
   }
 
   // Cache policy, applied here rather than per route, and to *every* response
@@ -131,7 +210,9 @@ export const handle: Handle = async ({ event, resolve }) => {
   //     headers rather than being declared cacheable here. A blanket `public`
   //     would be a correctness claim this code cannot verify, since whether a page
   //     is anonymous depends on the session rather than on the URL.
-  return withCachePolicy(response, cachePolicyFor(event.url.pathname, event.locals.user));
+  response = withCachePolicy(response, cachePolicyFor(event.url.pathname, event.locals.user));
+  recordRequest(context, event, startedAt, response.status);
+  return response;
 };
 
 /**

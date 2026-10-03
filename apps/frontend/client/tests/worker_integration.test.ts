@@ -27,14 +27,16 @@
 //      the OS pick, and only processes this file started are ever stopped.
 
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:test';
+import assert from 'node:assert/strict';
 import { type ChildProcess, spawn } from 'node:child_process';
-import { closeSync, existsSync, openSync, rmSync } from 'node:fs';
+import { closeSync, existsSync, openSync, readFileSync, rmSync } from 'node:fs';
 import { createServer } from 'node:net';
 import { join } from 'node:path';
+import type { LogEvent } from '@starter/schemas/logging';
 import { createId } from '@starter/utils';
 import { killTree } from '@starter/utils/process';
 import { sleep, spawnSync } from 'bun';
-import { MAX_BODY_BYTES } from '../src/lib/server/telemetry_service.ts';
+import { MAX_BODY_BYTES, MAX_RECORDS_PER_SUBMISSION } from '../src/lib/server/telemetry_service.ts';
 import { REPO_ROOT } from './database_paths.ts';
 
 const APP_DIR = join(REPO_ROOT, 'apps/frontend/client');
@@ -225,6 +227,67 @@ afterAll(() => {
 });
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
+
+/**
+ * Every structured record the Worker has written, read from its own log.
+ *
+ * This is the only way to observe what a deployed Worker emits: there is no other
+ * destination for it, and the defect this file's log section exists for was exactly
+ * that nothing was written. Wrangler prefixes each console call with `stdout: `, so
+ * the prefix is stripped before parsing rather than the whole line being ignored.
+ *
+ * Polling, not a sleep: workerd writes the record before it answers the request, but
+ * the capture file is written by wrangler's own process, so "before the response" is
+ * about the record's existence and not about this read. A short bounded wait for a
+ * count to reach an expectation is the honest way to wait for a file another process
+ * appends to; failing after the budget names the records that were seen.
+ */
+const structuredRecords = (): LogEvent[] => {
+  let contents: string;
+  try {
+    contents = readFileSync(WORKER_LOG, 'utf8');
+  } catch (error) {
+    throw new Error(`Could not read Worker log ${WORKER_LOG}: ${String(error)}`, { cause: error });
+  }
+
+  return contents
+    .split('\n')
+    .map((line) => (line.startsWith('stdout: ') ? line.slice('stdout: '.length) : line))
+    .map((line) => {
+      try {
+        const parsed: unknown = JSON.parse(line);
+        return parsed !== null && typeof parsed === 'object' && 'event' in parsed
+          ? (parsed as LogEvent)
+          : null;
+      } catch {
+        return null;
+      }
+    })
+    .filter((event): event is LogEvent => event !== null);
+};
+
+/**
+ * Wait until at least `count` records match, and return everything that matched.
+ *
+ * The count is a floor, not a target: the assertion that a request produced exactly
+ * one record compares before/after lengths, so this only has to notice that the
+ * append happened. On timeout it returns what it saw, and the caller's length
+ * assertion reports the real number rather than a generic failure.
+ */
+const awaitRecords = async (
+  matches: (event: LogEvent) => boolean,
+  count: number,
+  timeoutMs = 10_000,
+): Promise<LogEvent[]> => {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    const seen = structuredRecords().filter(matches);
+    if (seen.length >= count || Date.now() >= deadline) {
+      return seen;
+    }
+    await sleep(100);
+  }
+};
 
 interface Account {
   email: string;
@@ -1390,6 +1453,35 @@ describe('telemetry', () => {
     expect(rejected.status).toBe(422);
   });
 
+  test('refuses more records than one submission may carry', async () => {
+    const records = (count: number): unknown[] =>
+      Array.from({ length: count }, () => ({
+        timestamp: Date.now(),
+        app: 'web',
+        environment: 'local',
+        source: 'browser',
+        level: 'INFO',
+        event: 'batch.event',
+        release: 'test',
+      }));
+
+    const account = await signUp('integration-telemetry-batch');
+
+    const atLimit = await api(account, '/api/telemetry', {
+      method: 'POST',
+      body: JSON.stringify(records(MAX_RECORDS_PER_SUBMISSION)),
+    });
+    expect(atLimit.status).toBe(202);
+
+    // One over the ceiling: 422, not 202. Accepting it would mean the per-submission
+    // record bound is not enforced, whatever the body byte cap allows through.
+    const overLimit = await api(account, '/api/telemetry', {
+      method: 'POST',
+      body: JSON.stringify(records(MAX_RECORDS_PER_SUBMISSION + 1)),
+    });
+    expect(overLimit.status).toBe(422);
+  });
+
   test('refuses an oversized submission', async () => {
     const oversized = JSON.stringify({
       timestamp: Date.now(),
@@ -1411,4 +1503,287 @@ describe('telemetry', () => {
     // this limit exists to prevent.
     expect(response.status).toBe(413);
   });
+});
+
+// ── What the built Worker actually writes ─────────────────────────────────────
+//
+// The unit lane can prove a logger is configured correctly. Only this lane can
+// prove the *built Worker* emits, which is what a deployment's Logs product would
+// index — and the defect was that in workerd it emitted nothing at all, so every
+// assertion below is about a line that had to appear in wrangler's captured output.
+//
+// `wrangler dev` runs the same workerd that serves a deployment, and its console
+// output is what Cloudflare captures. Local NDJSON is the Node counterpart and is
+// covered by `request_context.test.ts`; the remote history in Workers Logs was NOT
+// RUN here, because that needs a deployed environment and a provider account.
+
+describe('the built Worker emits one structured record per served request', () => {
+  const isRequestTo =
+    (path: string) =>
+    (event: LogEvent): boolean =>
+      event.event === 'http.request' && (event.data as Record<string, unknown>)?.path === path;
+
+  /** The records for one path, after waiting for `expected` of them to exist. */
+  const requestRecords = async (path: string, expected: number): Promise<LogEvent[]> =>
+    awaitRecords(isRequestTo(path), expected);
+
+  test('a real request produces exactly one record, through the platform console', async () => {
+    // Counted as a delta, not as "one record exists": the suite has just made
+    // requests of its own, and a matcher that only asks "is there a record for this
+    // path" would pass while the request under test emitted two.
+    const before = structuredRecords().filter(isRequestTo('/api/health')).length;
+
+    const response = await fetch(`${base()}/api/health`);
+    expect(response.status).toBe(200);
+
+    const after = await requestRecords('/api/health', before + 1);
+    expect(after.length).toBe(before + 1);
+    const record = after[after.length - 1];
+    assert.ok(record, 'Expected a structured Worker log record');
+    expect(record?.app).toBe('web');
+    expect(record?.environment).toBe('local');
+    expect(record?.source).toBe('worker');
+    expect(record?.level).toBe('INFO');
+    expect((record?.release ?? '').length).toBeGreaterThan(0);
+
+    const data = record.data as Record<string, unknown>;
+    expect(data.status).toBe(200);
+    expect(data.method).toBe('GET');
+    expect(typeof data.durationMs).toBe('number');
+    // Correlation is on the record itself, not reconstructed from a message.
+    expect(typeof record?.traceId).toBe('string');
+  }, 30_000);
+
+  test('an unrouted API request records the final 404 exactly once', async () => {
+    const path = `/api/missing-${createId('route', 8)}`;
+    const response = await fetch(`${base()}${path}`);
+    expect(response.status).toBe(404);
+
+    const records = await requestRecords(path, 1);
+    expect(records).toHaveLength(1);
+    const [record] = records;
+    assert.ok(record, 'Expected a structured Worker log record');
+    expect((record.data as Record<string, unknown>).status).toBe(response.status);
+  }, 30_000);
+
+  test('a failing request is recorded as a warning, not as information', async () => {
+    const before = structuredRecords().filter(isRequestTo('/api/notes')).length;
+
+    const response = await fetch(`${base()}/api/notes`);
+    // Anonymous read of the collection.
+    expect(response.status).toBe(401);
+
+    const after = await requestRecords('/api/notes', before + 1);
+    expect(after.length).toBe(before + 1);
+
+    // The platform's severity filter is how an incident is found; a 401 that arrives
+    // as `info` is a stream nobody filters by WARNING.
+    const record = after[after.length - 1];
+    assert.ok(record, 'Expected a structured Worker log record');
+    expect(record.level).toBe('WARNING');
+    expect((record.data as Record<string, unknown>).status).toBe(401);
+  }, 30_000);
+
+  test('an incoming correlation label is echoed as a label, never as the trace id', async () => {
+    const before = structuredRecords().filter(isRequestTo('/api/health')).length;
+
+    const response = await fetch(`${base()}/api/health`, {
+      headers: { 'x-trace-id': `client-${createId('l', 8)}` },
+    });
+    expect(response.status).toBe(200);
+
+    const after = await requestRecords('/api/health', before + 1);
+    expect(after.length).toBe(before + 1);
+
+    const record = after[after.length - 1];
+    assert.ok(record, 'Expected a structured Worker log record');
+    const clientLabel = (record.data as Record<string, unknown>).clientTraceId;
+    expect(typeof clientLabel).toBe('string');
+    expect(record?.traceId).not.toBe(clientLabel);
+  }, 30_000);
+
+  test('a signed-in request record carries the verified user id', async () => {
+    const account = await signUp('integration-request-log');
+    const before = structuredRecords().filter(isRequestTo('/api/notes')).length;
+
+    const response = await fetch(`${base()}/api/notes`, { headers: { cookie: account.cookie } });
+    expect(response.status).toBe(200);
+
+    const after = await requestRecords('/api/notes', before + 1);
+    expect(after.length).toBe(before + 1);
+
+    const record = after[after.length - 1];
+    assert.ok(record, 'Expected a structured Worker log record');
+    const userId = (record.data as Record<string, unknown>).userId;
+    expect(typeof userId).toBe('string');
+  }, 60_000);
+});
+
+describe('a forwarded browser event is stored once, and stays a browser event', () => {
+  test('the record keeps its source, its release, its redacted data and its claims', async () => {
+    const account = await signUp('integration-telemetry-record');
+    const marker = `notes.ui.${createId('ev', 8)}`;
+
+    const submitted = {
+      timestamp: Date.now(),
+      app: 'web',
+      // The client says local. The server overwrites it with its own environment, so
+      // the assertion below is about the server's answer winning.
+      environment: 'production',
+      source: 'browser',
+      level: 'INFO',
+      event: marker,
+      release: 'browser-2026-10-01',
+      traceId: 'tr_client_forwarded',
+      userId: 'user-somebody-claims',
+      data: { noteId: 'nt_forwarded', password: 'hunter2' },
+      clientReported: { userId: 'user-somebody-claims', platform: 'linux' },
+    };
+
+    const response = await api(account, '/api/telemetry', {
+      method: 'POST',
+      body: JSON.stringify(submitted),
+      headers: { ...originHeaders(), 'x-trace-id': 'client-correlation-label' },
+    });
+    expect(response.status).toBe(202);
+
+    const records = await awaitRecords((event) => event.event === marker, 1);
+    expect(records).toHaveLength(1);
+    const [record] = records;
+    assert.ok(record, 'Expected a structured Worker log record');
+
+    // A browser event forwarded through a Worker is still a browser event, and its
+    // artifact release is still its own — that is what answers "which build?".
+    expect(record?.source).toBe('browser');
+    expect(record?.release).toBe('browser-2026-10-01');
+    // The environment is the server's, not the client's claim.
+    expect(record?.environment).toBe('local');
+    expect(record?.app).toBe('web');
+
+    const data = record.data as Record<string, unknown>;
+    // Redaction happened before storage, and the payload itself survived: it used to
+    // be redacted and then thrown away.
+    expect(data.password).toBe('[redacted]');
+    expect(data.noteId).toBe('nt_forwarded');
+
+    const reported = data.clientReported as Record<string, unknown>;
+    expect(reported.userId).toBe('user-somebody-claims');
+    expect(reported.platform).toBe('linux');
+    expect(reported.traceId).toBe('tr_client_forwarded');
+
+    // The identity on the record is the session's, and the correlation is the
+    // server's; neither is anything the client chose.
+    expect(record?.userId).not.toBe('user-somebody-claims');
+    expect(record?.traceId).not.toBe('tr_client_forwarded');
+    expect((data.ingest as Record<string, unknown>).server).toBe(true);
+  }, 60_000);
+
+  test('an anonymous submission is still accepted on the local diagnostic profile', async () => {
+    // This Worker runs the local profile, where an anonymous browser console is the
+    // diagnostic path and is bounded instead. The deployed refusal is proven by
+    // `ingestionAdmission` in `telemetry_service.test.ts`, which can construct a
+    // staging container; here the point is that the local path still works.
+    const marker = `notes.ui.${createId('ev', 6)}`;
+    const response = await fetch(`${base()}/api/telemetry`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', ...originHeaders() },
+      body: JSON.stringify({
+        timestamp: Date.now(),
+        app: 'web',
+        environment: 'local',
+        source: 'browser',
+        level: 'INFO',
+        event: marker,
+        release: 'test',
+      }),
+    });
+    expect(response.status).toBe(202);
+  }, 30_000);
+
+  test('two concurrent signed-in sessions stay isolated in the stored records', async () => {
+    // Concurrency is the point: a Worker isolate serves many requests at once, so an
+    // identity held in module scope would show up here as one user's records landing
+    // under the other user's id — rare, timing-dependent, and indistinguishable from
+    // an authorization bug while debugging it.
+    const [first, second] = await Promise.all([
+      signUp('integration-isolation-a'),
+      signUp('integration-isolation-b'),
+    ]);
+
+    const marker = `notes.ui.${createId('ev', 8)}`;
+    // A correlation label has to survive the bounded-label rule: only
+    // `[A-Za-z0-9._:-]` is accepted, so an address — which is what these two sessions
+    // are distinguished by — would be refused and the assertion below would prove
+    // nothing. A short per-session token stands in for it.
+    const labelFor = (account: Account): string =>
+      `client-label-${account.email.split('-')[0] ?? 'x'}-${createId('l', 6)}`;
+    const submission = (account: Account) =>
+      api(account, '/api/telemetry', {
+        method: 'POST',
+        headers: { ...originHeaders(), 'x-trace-id': labelFor(account) },
+        body: JSON.stringify({
+          timestamp: Date.now(),
+          app: 'web',
+          environment: 'local',
+          source: 'browser',
+          level: 'INFO',
+          event: marker,
+          release: 'test',
+          userId: 'user-forged',
+          clientReported: { userId: 'user-forged' },
+        }),
+      });
+
+    const [one, two] = await Promise.all([submission(first), submission(second)]);
+    expect(one.status).toBe(202);
+    expect(two.status).toBe(202);
+
+    const records = await awaitRecords((event) => event.event === marker, 2);
+    expect(records).toHaveLength(2);
+
+    // Each record's user id is its own session's, and each kept its own correlation
+    // label — so the two submissions never crossed.
+    const userByLabel = new Map<string, string | undefined>();
+    for (const record of records) {
+      const data = record.data as Record<string, unknown>;
+      const reported = data.clientReported as Record<string, unknown>;
+      expect(record.userId).not.toBe('user-forged');
+      userByLabel.set(String(reported.traceId), record.userId);
+    }
+
+    // Two distinct labels, each mapped to the user id of its own session.
+    expect(userByLabel.size).toBe(2);
+    for (const [label, userId] of userByLabel) {
+      expect(label).toMatch(/^client-label-/);
+      expect(typeof userId).toBe('string');
+      expect(userId).not.toBe('user-forged');
+    }
+    const ids = [...userByLabel.values()];
+    expect(ids[0]).not.toBe(ids[1]);
+  }, 60_000);
+
+  test('a malformed record never reaches the log stream', async () => {
+    const marker = `notes.ui.${createId('ev', 8)}`;
+    const account = await signUp('integration-telemetry-malformed');
+
+    const forged = await api(account, '/api/telemetry', {
+      method: 'POST',
+      body: JSON.stringify({
+        timestamp: Date.now(),
+        app: 'web',
+        environment: 'local',
+        source: 'browser',
+        level: 'INFO',
+        event: marker,
+        release: 'test',
+        // Not part of the schema: a second identity channel would be refused.
+        trustedUserId: 'root',
+      }),
+    });
+    expect(forged.status).toBe(422);
+
+    // Give a refused submission every chance to have been written anyway.
+    await sleep(500);
+    expect(structuredRecords().filter((event) => event.event === marker)).toHaveLength(0);
+  }, 60_000);
 });

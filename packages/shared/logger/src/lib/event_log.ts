@@ -85,10 +85,23 @@ export const toLogEvent = (entry: LogEntry, context: LogContext, ...data: unknow
 
   // Payload fields are redacted, depth-bounded and size-bounded before they can
   // reach any sink, so a later sink cannot become the leak.
-  if (data.length > 0) {
-    event.data = {
-      args: redactValue(data, { extraKeys: context.extraRedactedKeys }) as Record<string, unknown>,
-    };
+  //
+  // `entry.data` and the interpolated arguments are kept apart on purpose: the
+  // former is a record's fields, the latter is a human-readable message tail. Merging
+  // them is what produced `data.args` holding a note id.
+  const payload: Record<string, unknown> = {
+    ...(entry.data === undefined
+      ? {}
+      : (redactValue(entry.data, {
+          extraKeys: context.extraRedactedKeys,
+        }) as Record<string, unknown>)),
+    ...(data.length === 0
+      ? {}
+      : { args: redactValue(data, { extraKeys: context.extraRedactedKeys }) }),
+  };
+
+  if (Object.keys(payload).length > 0) {
+    event.data = payload;
   }
 
   return event;

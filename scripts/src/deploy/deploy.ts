@@ -51,6 +51,7 @@ import {
   deployStep,
   HEALTH_PATH,
   migrationStep,
+  READINESS_PATH,
   renderApply,
 } from './apply.ts';
 import { hasApiToken, secretInArgvProblem } from './credentials.ts';
@@ -370,6 +371,13 @@ export const planDeploy = (
       cwd: CLIENT_DIR,
       remote: true,
     },
+    {
+      description: `Verify readiness at ${target.origin}${READINESS_PATH}`,
+      command: 'fetch',
+      args: [`${target.origin}${READINESS_PATH}`],
+      cwd: CLIENT_DIR,
+      remote: true,
+    },
   ];
 
   notices.push(
@@ -635,8 +643,11 @@ export const main = async (argv: readonly string[]): Promise<number> => {
       );
     }
 
+    // Both probes are named on success, because a verification that only mentioned
+    // liveness reads as though readiness was never asked.
     process.stdout.write(
       `ok  ${result.path} -> ${result.status}, release ${result.reportedRelease ?? 'unreported'}\n` +
+        `ok  ${result.readiness?.path ?? '/health/ready'} -> ${result.readiness?.status ?? 'unknown'} (ready)\n` +
         `    ${resolved.target.workerName} at ${resolved.target.origin}\n`,
     );
     return EXIT.ok;

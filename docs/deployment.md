@@ -145,11 +145,20 @@ which one.
    alone cannot tell two databases apart.
 4. **Deploy.** The target resolved by `resolveTarget`, named explicitly with `--name`,
    carrying `--var RELEASE:<sha>` and `--meta source_sha=…,artifact=…`.
-5. **Verify.** `GET <origin>/health`, and the `release` it reports compared against
-   **this run's own SHA**. A `200` is not enough: the previous release still serving
-   while a new one propagates is exactly the state in which a deploy reports done and
-   the site is still wrong. The request is bounded, so an origin that accepts the
-   connection and never answers cannot hold the job open.
+5. **Verify.** Two probes, and both must pass.
+   - `GET <origin>/health`, and the `release` it reports compared against **this run's
+     own SHA**. A `200` is not enough: the previous release still serving while a new
+     one propagates is exactly the state in which a deploy reports done and the site
+     is still wrong.
+   - `GET <origin>/health/ready`, which must answer 200 **and** report `ok: true`.
+     Liveness reads configuration and cannot fail on its own, so a release whose D1
+     binding is unusable answers the first probe perfectly and fails every real
+     request. A 200 liveness plus a 503 readiness is a **failed** release record,
+     recorded rather than swallowed.
+
+   Each probe is bounded by its own timeout, so an origin that accepts the connection
+   and never answers cannot hold the job open, and a slow readiness probe cannot
+   consume the liveness budget.
 6. **Record.** Source SHA, artifact digest, destination, provider identity, smoke
    result and whether migrations were skipped, in
    `.starter/releases/<environment>.json`.
@@ -327,6 +336,12 @@ must not touch the database: a load balancer polling a database-backed probe cou
 routing health to database latency and pulls every Worker out of rotation while the
 application still serves.
 
+**Verification asks both.** `bun run deploy verify` and the pipeline's own verify
+step fetch `/health` and then `/health/ready`; a failure at either fails the
+verification, and a failed verification is still recorded — the deployment id in that
+record is what a rollback needs. A 200 from `/health/ready` whose body reports
+`ok: false` is a failure too: the contract is the report, not the status line.
+
 The readiness probe is `SELECT 1`, which D1 answers without touching a table — it
 measures the binding, not the data. Auth and mail are validated in `getContainer`,
 which throws before a request is ever served, so a Worker with a missing
@@ -370,7 +385,10 @@ server code reaches a client chunk.
   "sourceSha": "…", "artifactDigest": "sha256:…",
   "deploymentId": "…", "versionId": "…",
   "recordedAt": "2026-…",
-  "smoke": { "ok": true, "path": "/health", "status": 200, "reportedRelease": "…", "problem": null }
+  "smoke": {
+    "ok": true, "path": "/health", "status": 200, "reportedRelease": "…", "problem": null,
+    "readiness": { "path": "/health/ready", "ok": true, "status": 200, "problem": null }
+  }
 }
 ```
 
@@ -386,9 +404,14 @@ what shipped; it does not decide whether to deploy. Deciding that is `--yes`. A 
 whose invalidation is a correctness problem eventually decides wrongly, and a cache
 that concludes "nothing changed" publishes nothing at all.
 
-`smoke` keeps the status and the reported release id. It does **not** keep the response
-body — the record outlives the deployment and gets pasted into tickets, and a body is
-whatever the origin chose to return.
+`smoke` keeps the status and the reported release id, plus the readiness answer as
+`readiness: { path, ok, status, problem }`. `readiness` is `null` when liveness failed
+first and readiness was therefore never asked: a record claiming readiness was checked
+would be a claim nobody made. `path` is whichever probe decided the outcome.
+
+Neither probe's body is kept — the record outlives the deployment and gets pasted into
+tickets, and a body is whatever the origin chose to return. That applies to the
+readiness report too, whose `detail` fields name database internals.
 
 ## R2 — the future private-upload choice
 
@@ -433,7 +456,7 @@ either means writing down which workload justifies it.
 ## Verifying a deployment worked
 
 ```bash
-bun run deploy verify --env staging           # fetches /health, reports the release id
+bun run deploy verify --env staging           # /health identity + /health/ready
 bun run deploy:status                         # recorded SHA + digest per environment
 bun run logs web --mode staging               # historical query
 bun run logs web --mode staging --follow      # live tail

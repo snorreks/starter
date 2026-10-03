@@ -170,14 +170,26 @@ export abstract class BaseLoggerService implements LoggerInterface {
    * Public because a sink has to know whether an event was suppressed before it
    * records it — otherwise a `MemoryLogSink` fills with events the console
    * never showed, and a test asserting on the ring asserts on fiction.
+   *
+   * The configured level is the *lowest severity that is emitted*, so the test is
+   * whether the entry's severity reaches it.
+   *
+   * The comparison was `configured > entry`, which is backwards: with the default
+   * `INFO` it suppressed everything except `DEBUG` — a deployed Worker at its
+   * default level emitted only debug records, and dropped the `ERROR` it existed to
+   * report. Nothing noticed, because the effect looked identical to "the code never
+   * logged", which is the same conclusion the missing workerd sink produced. Both
+   * had to be fixed before a record could be observed at all.
    */
   willLog(entry: LogEntry): boolean {
     if (this.logLevel === 'NONE') {
-      return true;
+      // `NONE` is a real level meaning "emit nothing". It used to return `true`,
+      // which let a sink record events a `NONE` logger was configured to discard.
+      return false;
     }
     return (
-      LogLevelPriority[LogLevelIndex[this.logLevel]] >
-      LogLevelPriority[LogLevelIndex[entry.logLevel]]
+      LogLevelPriority[LogLevelIndex[entry.logLevel]] >=
+      LogLevelPriority[LogLevelIndex[this.logLevel]]
     );
   }
 

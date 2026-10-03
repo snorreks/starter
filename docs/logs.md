@@ -144,6 +144,60 @@ So the second rule of this repository is: never log a value. Log a field name.
 the logging path, where a cyclic or hostile payload must not be able to hang or
 crash the process trying to report the problem.
 
+## One record, one destination
+
+Every record leaves through exactly one emitter, chosen per runtime:
+
+| Runtime | Destination | Why |
+|---|---|---|
+| workerd | one JSON object through `console`, on the console method for its level | `wrangler tail`, Workers Logs and Logpush index console output. Nothing else in a Worker is captured. |
+| Node | one NDJSON line on stdout | `bun run dev` redirects stdout into `.wrangler/logs/app.ndjson`, which is what `--mode local` reads. |
+
+Two consequences worth stating, because both were defects:
+
+- **`silent` is not a destination.** It suppresses the human-formatted render and
+  nothing else. `createLogger` now refuses `silent: true` with no sink and no
+  memory sink, because a logger configured that way emits nowhere — which is what a
+  deployed Worker was doing, silently, while every other signal looked healthy.
+- **The level is the lowest severity emitted.** It used to compare the other way
+  round, so a logger at the default `INFO` emitted only `DEBUG` and dropped
+  `ERROR`. If a record you expect is missing, check this before blaming the sink.
+
+## Identity, and what a client is allowed to claim
+
+A record's identity comes from the session, never from a payload.
+
+| Field | Who decides it |
+|---|---|
+| `traceId` | The server, generated per request. |
+| `requestId` | The provider's `cf-ray`, bounded to `[A-Za-z0-9._:-]` and 200 characters, or omitted. |
+| `userId` | The verified session, or absent. |
+| `environment` | `container.environment`, after validation. A staging deployment records `staging`. |
+| `source`, `release`, `level`, `timestamp` on a **forwarded** record | Client claims, validated against the schema and kept — a browser event retains its source, artifact release, severity and event time. |
+| client identity claims | `data.clientReported`, labelled, including a submitted top-level `userId` or `traceId`. |
+| an incoming `x-trace-id` header | `data.clientTraceId` on the request record — never the trace id. |
+
+The redaction described above is applied to the forwarded payload, and the redacted
+payload **is** stored. It used to be redacted into a local variable and then dropped.
+
+## `/api/telemetry` bounds
+
+| Bound | Value | Unit |
+|---|---|---|
+| `MAX_BODY_BYTES` | 16 KiB | bytes per submission, refused before parsing (413) |
+| `MAX_RECORDS_PER_SUBMISSION` | 20 | records, refused by the schema (422) |
+| `MAX_SUBMISSIONS_PER_WINDOW` | 60 | **submissions** per minute per caller, isolate-local |
+
+The submission counter lives in an isolate-local `Map`. It is a brake on a loop, not
+accounting: no durability, no sharing between isolates. It is not a security control,
+which is why deployed ingestion requires a session — local development still accepts
+an anonymous submission, bounded by the two ceilings above, because that is how a
+browser console is diagnosed without inventing an account.
+
+A record that fails to store is reported in the response body (`accepted`,
+`submitted`, `rejected`) and never fails the request. Notes and sign-in do not break
+because a log write threw.
+
 ## When there are no logs
 
 If `bun run logs web --mode local --level DEBUG` is also empty, the app is not
