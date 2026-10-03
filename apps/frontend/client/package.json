@@ -27,6 +27,7 @@
     "@starter/auth": "workspace:*",
     "@starter/database": "workspace:*",
     "@starter/features": "workspace:*",
+    "@starter/jobs": "workspace:*",
     "@starter/logger": "workspace:*",
     "@starter/platform": "workspace:*",
     "@starter/schemas": "workspace:*",

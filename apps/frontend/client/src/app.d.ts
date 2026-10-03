@@ -51,6 +51,7 @@ declare global {
       readonly MAIL_FROM?: string;
       readonly LOG_LEVEL?: string;
       readonly RELEASE?: string;
+      readonly JOBS_PROFILE?: string;
     }
   }
 
@@ -69,6 +70,7 @@ declare global {
       readonly MAIL_FROM?: string;
       readonly LOG_LEVEL?: string;
       readonly RELEASE?: string;
+      readonly JOBS_PROFILE?: string;
     }
 
     interface Locals {

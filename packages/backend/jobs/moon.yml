@@ -1,0 +1,72 @@
+$schema: 'https://moonrepo.dev/schemas/v2/project.json'
+
+# Every task is a delegation to this project's own package.json script, which is
+# the authority for what the script does.
+#
+# There is deliberately no `build` task. This project ships TypeScript source
+# consumed by two Workers (the web Worker through the API routes, and the jobs
+# Worker through its bindings), and it produces no artifact of its own. A `build`
+# here would be an `echo`, which is the failure mode this repository's first rule
+# names. The one project with a real artifact keeps it.
+layer: 'library'
+
+fileGroups:
+  sources:
+    - 'src/**/*'
+  configs:
+    - 'package.json'
+    - 'tsconfig*.json'
+    - 'moon.yml'
+  tests:
+    - 'src/**/*.test.ts'
+    - 'src/**/*.spec.ts'
+    - 'tests/**/*'
+
+toolchains:
+  bun:
+  javascript:
+
+dependsOn:
+  - schemas
+
+tasks:
+  typecheck:
+    command: 'bun'
+    args: ['run', 'typecheck']
+    inputs:
+      - '@group(sources)'
+      - '@group(tests)'
+      - '@group(configs)'
+  lint:
+    command: 'bun'
+    args: ['run', 'lint']
+    inputs:
+      - '@group(sources)'
+      - '@group(tests)'
+      - '@group(configs)'
+  format:
+    command: 'bun'
+    args: ['run', 'format']
+    inputs:
+      - '@group(sources)'
+      - '@group(tests)'
+      - '@group(configs)'
+  fix:
+    command: 'bun'
+    args: ['run', 'fix']
+    inputs:
+      - '@group(sources)'
+      - '@group(tests)'
+      - '@group(configs)'
+  test:
+    command: 'bun'
+    args: ['run', 'test']
+    inputs:
+      - '@group(sources)'
+      - '@group(tests)'
+      - '@group(configs)'
+  validate:
+    deps:
+      - '~:lint'
+      - '~:format'
+      - '~:typecheck'
