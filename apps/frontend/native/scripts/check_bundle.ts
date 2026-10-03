@@ -24,7 +24,7 @@
 // runs on the bytes that will actually ship.
 
 import { readdirSync, readFileSync, statSync } from 'node:fs';
-import { join } from 'node:path';
+import { join, posix } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 // `new URL(relative, import.meta.url)` resolves against *this file*, which lives in
@@ -75,7 +75,12 @@ export const WEB_BUILD_DIR = fileURLToPath(
 const NATIVE_SPECIFIER = '@tauri-apps/';
 
 export interface BundleProblem {
-  code: 'no_output' | 'no_fallback' | 'no_assets' | 'server_code_in_bundle' | 'native_import_in_web';
+  code:
+    | 'no_output'
+    | 'no_fallback'
+    | 'no_assets'
+    | 'server_code_in_bundle'
+    | 'native_import_in_web';
   message: string;
   remedy: string;
 }
@@ -94,7 +99,7 @@ export const listFiles = (dir: string): string[] => {
     const full = join(dir, entry);
     if (statSync(full).isDirectory()) {
       for (const nested of listFiles(full)) {
-        found.push(join(entry, nested));
+        found.push(posix.join(entry, nested));
       }
       continue;
     }
@@ -124,7 +129,9 @@ const scanFor = (
       if (source === undefined || source === null) {
         return [];
       }
-      return markers.filter((marker) => source.includes(marker)).map((marker) => onFound(file, marker));
+      return markers
+        .filter((marker) => source.includes(marker))
+        .map((marker) => onFound(file, marker));
     });
 
 /**
@@ -208,9 +215,7 @@ export const main = (): number => {
   const problems = [...checkBundle(), ...checkWebBundle()];
 
   if (problems.length === 0) {
-    process.stdout.write(
-      `bundle ok: ${listFiles(BUILD_DIR).length} file(s) in ${BUILD_DIR}\n`,
-    );
+    process.stdout.write(`bundle ok: ${listFiles(BUILD_DIR).length} file(s) in ${BUILD_DIR}\n`);
     return 0;
   }
 

@@ -31,7 +31,6 @@ import {
   externalBrowser,
   nativeNavigation,
   nativeTransport,
-  rememberStoredAccount,
   sessionState,
   unlockVault,
   vaultStore,
@@ -131,7 +130,6 @@ async function signInWithBrowser(): Promise<void> {
     }
 
     if (remember) {
-      rememberStoredAccount(user.id);
       await adoptSession(outcome.token.access_token, user.id, true);
       passphrase = '';
     } else {

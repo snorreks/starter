@@ -168,21 +168,11 @@ export const restoreSession = async (): Promise<string | null> => {
   return null;
 };
 
-/**
- * Which accounts might hold a credential.
- *
- * The scope key contains the account, and the vault offers no enumeration — by
- * design (see `VaultPort`). So the app remembers the last account it stored in
- * this process, and otherwise reports "nothing to restore".
- */
-let lastStoredAccount: string | null = null;
+/** The last account is persisted under a fixed, origin-scoped vault key. */
+export const rememberStoredAccount = (account: string): Promise<void> =>
+  vaultStore.rememberStoredAccount(account);
 
-export const rememberStoredAccount = (account: string): void => {
-  lastStoredAccount = account;
-};
-
-const knownAccounts = async (): Promise<string[]> =>
-  lastStoredAccount === null ? [] : [lastStoredAccount];
+const knownAccounts = (): Promise<string[]> => vaultStore.knownAccounts();
 
 /**
  * Unlock the vault, and adopt whatever credential was remembered for it.

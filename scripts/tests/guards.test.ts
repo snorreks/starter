@@ -319,6 +319,21 @@ describe('version-mirrors', () => {
     expect(guardVersionMirrors(root).violations).toHaveLength(1);
   });
 
+  for (const version of ['1.4.2', '1.4.0', null]) {
+    test(`checks the native workflow Bun mirror (${version})`, () => {
+      const root = makeTree({
+        'config/toolchain.json': pins('1.4.2'),
+        '.bun-version': '1.4.2',
+        '.github/workflows/ci.yml': workflow('1.4.2'),
+        '.github/workflows/native.yml': workflow(version),
+      });
+      const violations = guardVersionMirrors(root).violations;
+      expect(violations.map((violation) => violation.file)).toEqual(
+        version === '1.4.2' ? [] : ['.github/workflows/native.yml'],
+      );
+    });
+  }
+
   test('the live repository agrees with itself', () => {
     // The fixture cases prove the rule; this proves the rule is currently met.
     expect(guardVersionMirrors(REPO_ROOT).violations).toEqual([]);

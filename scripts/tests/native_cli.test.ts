@@ -68,6 +68,18 @@ describe('the argv the Tauri CLI receives', () => {
     expect(planned.remedy).toContain('native.yml');
   });
 
+  test('an explicit target cannot bypass the cross-host platform refusal', () => {
+    const elsewhere = hostPlatform() === 'linux' ? 'windows' : 'linux';
+    const target = elsewhere === 'windows' ? 'x86_64-pc-windows-msvc' : 'x86_64-unknown-linux-gnu';
+    for (const mode of ['dev', 'build']) {
+      const planned = planInvocation(parse([mode, '--platform', elsewhere, '--target', target]));
+      expect(planned.ok).toBe(false);
+      if (!planned.ok) {
+        expect(planned.message).toContain('cannot be built on this host');
+      }
+    }
+  });
+
   test('a Rust target triple is passed through unchanged', () => {
     const planned = planInvocation(parse(['build', '--target', 'aarch64-apple-darwin']));
 

@@ -33,49 +33,74 @@
 // shell, and the fallback is what the shell serves for a path with no page of its
 // own.
 
+import { assertNativeCsp, resolveApiOrigin } from '@starter/schemas/native';
 import adapter from '@sveltejs/adapter-static';
 import { sveltekit } from '@sveltejs/kit/vite';
 import { vitePreprocess } from '@sveltejs/vite-plugin-svelte';
 import tailwindcss from '@tailwindcss/vite';
-import { type PluginOption, defineConfig } from 'vite';
+import { defineConfig, loadEnv, type PluginOption } from 'vite';
 import { NATIVE_DEV_HOST, NATIVE_DEV_PORT } from './dev_ports.ts';
 
-export default defineConfig({
-  plugins: [
-    tailwindcss(),
-    sveltekit({
-      preprocess: [vitePreprocess()],
-      adapter: adapter({
-        pages: 'build',
-        assets: 'build',
-        // Deep links (`/notes`) and any path the prerender pass did not produce.
-        fallback: 'index.html',
-        // A Tauri bundle is compressed as an archive by the installer; a
-        // precompressed sidecar in the frontend directory doubles what ships for a
-        // few percent of download time.
-        precompress: false,
-        // See the header: a route that cannot be prerendered fails the build.
-        strict: true,
-      }),
-      alias: {
-        '#lib': 'src/lib',
+export default defineConfig(({ command, mode }) => {
+  const env = loadEnv(mode, process.cwd(), 'VITE_');
+  // SvelteKit sync loads this config too. Validate when serving/building, so
+  // type generation does not require a deployment origin.
+  const validateOrigin = (): void => {
+    const apiOrigin = resolveApiOrigin({
+      raw: env.VITE_NATIVE_API_ORIGIN,
+      dev: command === 'serve',
+    });
+    if (process.env.TAURI_CONFIG !== undefined) {
+      const config = JSON.parse(process.env.TAURI_CONFIG) as {
+        app?: { security?: { csp?: string; devCsp?: string } };
+      };
+      const security = config.app?.security;
+      assertNativeCsp(security?.csp ?? '', apiOrigin);
+      assertNativeCsp(security?.devCsp ?? '', apiOrigin);
+    }
+  };
+  return {
+    plugins: [
+      {
+        name: 'native-api-policy',
+        buildStart: validateOrigin,
+        configureServer: validateOrigin,
       },
-    }) as PluginOption,
-  ],
+      tailwindcss(),
+      sveltekit({
+        preprocess: [vitePreprocess()],
+        adapter: adapter({
+          pages: 'build',
+          assets: 'build',
+          // Deep links (`/notes`) and any path the prerender pass did not produce.
+          fallback: 'index.html',
+          // A Tauri bundle is compressed as an archive by the installer; a
+          // precompressed sidecar in the frontend directory doubles what ships for a
+          // few percent of download time.
+          precompress: false,
+          // See the header: a route that cannot be prerendered fails the build.
+          strict: true,
+        }),
+        alias: {
+          '#lib': 'src/lib',
+        },
+      }) as PluginOption,
+    ],
 
-  // The port `src-tauri/tauri.conf.json` names as `devUrl`. `strictPort` so a
-  // busy port fails loudly here instead of producing a shell pointed at another
-  // project's dev server.
-  server: {
-    port: NATIVE_DEV_PORT,
-    strictPort: true,
-    host: NATIVE_DEV_HOST,
-  },
+    // The port `src-tauri/tauri.conf.json` names as `devUrl`. `strictPort` so a
+    // busy port fails loudly here instead of producing a shell pointed at another
+    // project's dev server.
+    server: {
+      port: NATIVE_DEV_PORT,
+      strictPort: true,
+      host: NATIVE_DEV_HOST,
+    },
 
-  build: {
-    target: 'es2022',
-    // No source maps in the shipped bundle. They name internal paths of a
-    // template, and the shell has no error-reporting sink to receive them.
-    sourcemap: false,
-  },
+    build: {
+      target: 'es2022',
+      // No source maps in the shipped bundle. They name internal paths of a
+      // template, and the shell has no error-reporting sink to receive them.
+      sourcemap: false,
+    },
+  };
 });

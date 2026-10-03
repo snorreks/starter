@@ -564,7 +564,8 @@ const inheritsFromBridgedRole = (
   if (module.ownCapabilities.has(capability)) {
     return false;
   }
-  return originRoles(module, capability, context, new Set()).every((role) => roles.includes(role));
+  const origins = originRoles(module, capability, context, new Set());
+  return origins.length > 0 && origins.every((role) => roles.includes(role));
 };
 
 /**

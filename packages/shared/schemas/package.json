@@ -11,7 +11,8 @@
     "./notes": "./src/notes/index.ts",
     "./auth": "./src/auth/index.ts",
     "./registry": "./src/registry/index.ts",
-    "./common": "./src/common/index.ts"
+    "./common": "./src/common/index.ts",
+    "./native": "./src/native.ts"
   },
   "scripts": {
     "lint": "biome lint src",

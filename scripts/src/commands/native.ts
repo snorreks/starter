@@ -17,6 +17,7 @@
 // `.ok()`.
 
 import { spawnSync } from 'node:child_process';
+import { nativeConfiguration } from '../native/config.ts';
 import { inspectNative, renderNativeReport } from '../native/doctor.ts';
 import {
   NATIVE_DIR,
@@ -68,6 +69,13 @@ const launch = (options: PlanOptions): number => {
     return fail(`${planned.message}\n  ${planned.remedy}`, EXIT.usage);
   }
 
+  let configuration: ReturnType<typeof nativeConfiguration>;
+  try {
+    configuration = nativeConfiguration(options.mode);
+  } catch (error) {
+    return fail(String(error), EXIT.usage);
+  }
+
   const report = inspectNative();
   if (!report.ok) {
     process.stderr.write(`${renderNativeReport(report)}\n`);
@@ -85,7 +93,11 @@ const launch = (options: PlanOptions): number => {
   }
 
   const { args, cwd } = planned.invocation;
-  const result = spawnSync(bin, [...args], { stdio: 'inherit', cwd });
+  const result = spawnSync(bin, [...args, '--config', configuration.config], {
+    stdio: 'inherit',
+    cwd,
+    env: configuration.env,
+  });
 
   if (result.error !== undefined) {
     return fail(`Could not start ${bin}: ${result.error.message}`, EXIT.unavailable);

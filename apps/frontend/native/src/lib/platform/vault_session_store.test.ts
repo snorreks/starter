@@ -104,6 +104,23 @@ describe('an unlocked store', () => {
     expect(await store.load(PRODUCTION)).toBe(TOKEN);
   });
 
+  test('a new store discovers the persisted account only after unlock', async () => {
+    await store.save(PRODUCTION, TOKEN);
+    vault.unlocked = false;
+    const restarted = new VaultSessionStore({ vault, origin: PRODUCTION.origin });
+    expect(await restarted.knownAccounts()).toEqual([]);
+    await restarted.unlock(vault.passphrase);
+    expect(await restarted.knownAccounts()).toEqual([PRODUCTION.account]);
+    expect(await restarted.load(PRODUCTION)).toBe(TOKEN);
+    const staging = new VaultSessionStore({ vault, origin: STAGING.origin });
+    expect(await staging.knownAccounts()).toEqual([]);
+    await restarted.clear(PRODUCTION);
+    expect(await restarted.knownAccounts()).toEqual([]);
+    expect(
+      await new VaultSessionStore({ vault, origin: PRODUCTION.origin }).knownAccounts(),
+    ).toEqual([]);
+  });
+
   test('a wrong passphrase does not unlock, and stores nothing', async () => {
     const fresh = new FakeVault();
     const freshStore = new VaultSessionStore({ vault: fresh, origin: PRODUCTION.origin });
@@ -186,7 +203,7 @@ describe('signing out', () => {
     vault.unlocked = false; // the process restarted: the vault is locked again
 
     await restarted.clear(PRODUCTION);
-    expect(vault.entries.size).toBe(1);
+    expect(vault.entries.size).toBe(2);
 
     await restarted.unlock(vault.passphrase);
     expect(vault.entries.size).toBe(0);

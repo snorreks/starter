@@ -128,7 +128,14 @@ Absent, and each absence closes a door: no `shell:` (the snapshot's launcher cou
 commands), no `http:`, no updater, no sidecar. `withGlobalTauri` is `false`, so the
 page cannot reach `window.__TAURI__` at all.
 
-The CSP names the one API origin in `connect-src`. The snapshot's was
+`native:dev` and `native:build` normalize `VITE_NATIVE_API_ORIGIN` from the
+launch environment and generate the CSP's `connect-src` for that origin. Development
+defaults to `http://127.0.0.1:5173`; builds require an explicit HTTPS origin.
+The launcher passes the same origin to Vite and the CSP to Tauri through `--config`,
+for both `csp` and `devCsp`. Vite refuses a mismatch. Set the variable in the launch
+environment when using these commands; their resolved value takes precedence over
+Vite `.env` files. The checked-in CSP permits only local IPC until the launcher
+adds the API origin. The snapshot's was
 `connect-src … https:`, which allows any injected script to exfiltrate a session
 token to anywhere — the opposite of the point.
 

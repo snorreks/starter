@@ -9,10 +9,10 @@
 // asserted to pass.
 
 import { afterEach, describe, expect, test } from 'bun:test';
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { checkBundle, checkWebBundle } from './check_bundle.ts';
+import { checkBundle, checkWebBundle, listFiles } from './check_bundle.ts';
 
 const roots: string[] = [];
 
@@ -41,6 +41,10 @@ afterEach(() => {
 });
 
 describe('a bundle the shell can load', () => {
+  test('nested asset names use POSIX separators on every host', () => {
+    expect(listFiles(cleanBundle()).sort()).toEqual(['_app/immutable/entry/app.js', 'index.html']);
+  });
+
   test('passes', () => {
     expect(checkBundle(cleanBundle())).toEqual([]);
   });
@@ -59,9 +63,7 @@ describe('a bundle the shell can load', () => {
   test('a shell with no code is reported rather than shipped', () => {
     // A build that produced HTML and no client assets opens a blank window, which
     // is not an error anywhere in the pipeline.
-    const problems = checkBundle(
-      bundleWith('no-assets', { 'index.html': '<!doctype html>' }),
-    );
+    const problems = checkBundle(bundleWith('no-assets', { 'index.html': '<!doctype html>' }));
 
     expect(problems.map((problem) => problem.code)).toEqual(['no_assets']);
   });

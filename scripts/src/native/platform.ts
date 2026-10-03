@@ -131,7 +131,7 @@ export const planInvocation = (options: PlanOptions): PlanResult => {
     };
   }
 
-  if (platform !== undefined && platform !== hostPlatform() && target === undefined) {
+  if (platform !== undefined && platform !== hostPlatform()) {
     // Refusing, not forwarding. This is not a preference: the Tauri 2 CLI has no
     // `--linux`/`--macos`/`--windows` flag at all, so the snapshot's
     // `tauri build --windows` was a usage error, and the nearest thing that

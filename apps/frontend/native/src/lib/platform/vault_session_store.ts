@@ -205,6 +205,27 @@ export class VaultSessionStore implements SessionStore {
     return sessionVaultKey(scope);
   }
 
+  // Separate namespace from session records, with a fixed key per origin.
+  #accountKey(): string {
+    return `starter.native.last-account.${encodeURIComponent(this.#origin)}`;
+  }
+
+  async rememberStoredAccount(account: string): Promise<void> {
+    this.#assertScope({ origin: this.#origin, account });
+    if (!(await this.#vault.isUnlocked())) {
+      throw new VaultLockedError('Unlock the session vault before remembering an account.');
+    }
+    await this.#vault.write(this.#accountKey(), account);
+  }
+
+  async knownAccounts(): Promise<string[]> {
+    if (!(await this.#vault.isUnlocked())) {
+      return [];
+    }
+    const account = await this.#vault.read(this.#accountKey());
+    return account === null ? [] : [account];
+  }
+
   async load(scope: SessionScope): Promise<string | null> {
     const key = this.#assertScope(scope);
 
@@ -221,12 +242,12 @@ export class VaultSessionStore implements SessionStore {
     if (stored === null) {
       // Unreadable record: treat it as absent *and* remove it, so a corrupt
       // entry cannot become a permanent "there is something here".
-      await this.#vault.remove(key);
+      await this.clear(scope);
       return null;
     }
 
     if (stored.expiresAt !== null && stored.expiresAt <= this.#now()) {
-      await this.#vault.remove(key);
+      await this.clear(scope);
       return null;
     }
 
@@ -247,6 +268,7 @@ export class VaultSessionStore implements SessionStore {
     const record: StoredSession = { version: 1, token, expiresAt: null };
     await this.#vault.write(key, JSON.stringify(record));
     this.#boundAccount = scope.account;
+    await this.rememberStoredAccount(scope.account);
   }
 
   async clear(scope: SessionScope): Promise<void> {
@@ -257,11 +279,13 @@ export class VaultSessionStore implements SessionStore {
     if (!(await this.#vault.isUnlocked())) {
       // Queued rather than dropped. See decision 4 in the header.
       this.#pendingRemovals.add(key);
+      this.#pendingRemovals.add(this.#accountKey());
       this.#boundAccount = null;
       return;
     }
 
     await this.#vault.remove(key);
+    await this.#vault.remove(this.#accountKey());
     this.#boundAccount = null;
   }
 

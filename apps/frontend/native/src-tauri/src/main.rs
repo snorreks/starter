@@ -6,8 +6,8 @@
 //
 // `windows_subsystem = "windows"` only in release: a Windows debug build keeps its
 // console, because that is where a panicking shell says why. A release build has
-// no console, which is why the startup failure in `lib.rs` also goes through the
-// log plugin — a panic nobody can read is the same as a silent no-op.
+// no console. A startup failure in `lib.rs` panics via `expect`; the default
+// panic hook writes to stderr, which may be invisible in a Windows release.
 
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
