@@ -21,9 +21,16 @@ There is no separate backend to deploy and no dev proxy to keep honest. The brow
 half and the Worker half are the same package, separated by a path the linter and
 `bun run guard` both check.
 
-This is a web starter. There is no native shell: no desktop or mobile bundle, no
-Rust toolchain, and no `@tauri-apps/*` dependency to upgrade. A product that needs
-one should add a client and an authenticated API boundary deliberately.
+The application is a web app. There is still no native shell: no desktop or mobile
+bundle and no `@tauri-apps/*` dependency to upgrade. A product that needs one
+should add a client and an authenticated API boundary deliberately.
+
+One Rust crate sits outside both planes:
+[`apps/backend/media`](apps/backend/media/README.md) is a bounded FFmpeg encode
+processor — an internal HTTP entrypoint for Cloudflare Containers and a finite CLI
+for a batch runner, sharing one encoding core. It is not part of `bun run test`,
+`lint` or `typecheck`: the web lanes stay free of a Rust toolchain and of FFmpeg,
+and the compute lane names its own prerequisites.
 
 Nothing is provisioned. There are no Cloudflare resource ids, no signing keys, no
 domains, and no tokens anywhere in the repository — see

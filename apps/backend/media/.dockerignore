@@ -1,0 +1,30 @@
+# apps/backend/media/.dockerignore
+#
+# The build context is the crate directory. Everything excluded here is either
+# large, machine-specific, or would let a developer's local state change what the
+# image contains.
+
+# Build output. Copied from the builder stage, never from the host: a host
+# `target/` may hold a debug binary, or one built for another architecture, and
+# either would be a silently wrong artefact.
+target/
+**/target/
+
+# Local scratch and fixture output. The Dockerfile does not copy media fixtures.
+**/*.tmp
+/tmp/
+
+# Version control and editor state.
+.git
+.gitignore
+
+# Documentation that is not needed at runtime and would only grow the context.
+# The crate README and THIRD_PARTY.md are shipped separately, in the repository.
+README.md
+docs/
+
+# Local configuration and CI definitions that have no meaning inside the image.
+.github/
+moon.yml
+rustfmt.toml
+.gitattributes

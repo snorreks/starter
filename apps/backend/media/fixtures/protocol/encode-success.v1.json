@@ -1,0 +1,16 @@
+{
+  "protocol": "sample-v1",
+  "preset": "demo-180p-v1",
+  "attempt_id": "attempt-1",
+  "output_bytes": 12345,
+  "output_sha256": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+  "probe": {
+    "container_format": "mov,mp4,m4a,3gp,3g2,mj2",
+    "video_codec": "h264",
+    "width": 320,
+    "height": 180,
+    "duration_ms": 3000,
+    "video_streams": 1,
+    "audio_streams": 1
+  }
+}

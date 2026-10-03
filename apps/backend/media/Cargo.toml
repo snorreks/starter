@@ -1,0 +1,61 @@
+# apps/backend/media/Cargo.toml
+#
+# One crate, two entrypoints (`serve` for Cloudflare Containers, `encode` for a
+# finite batch job), one encoding core shared by both. There is no workspace
+# above it: the media crate and the native (Tauri) crate keep separate
+# dependency sets, and only the *toolchain policy* is shared
+# (`rust-toolchain.toml`, and docs/toolchain.md).
+#
+# Exact version pins, matching the repository's Bun rule. `Cargo.lock` is
+# committed and every task runs with `--locked`, so a drifting resolver fails
+# instead of silently choosing a different transitive dependency.
+#
+# Deliberately absent: an HTTP framework. There are two routes and a bounded
+# body; `src/http.rs` parses HTTP/1.1 itself in about 300 lines, which keeps the
+# read/limit path visible instead of hidden behind middleware configuration.
+[package]
+name = "starter-media"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.98"
+publish = false
+description = "Bounded FFmpeg encode processor: Cloudflare Container HTTP entrypoint and finite CLI"
+
+[lib]
+name = "starter_media"
+path = "src/lib.rs"
+
+[[bin]]
+name = "starter-media"
+path = "src/main.rs"
+
+[dev-dependencies]
+# The integration tests hash bytes themselves, to check the recorded digest
+# against the file rather than trusting the encoder's own claim, and they send a
+# real SIGTERM, which `std` does not expose.
+sha2 = { version = "=0.10.9", default-features = false }
+[target.'cfg(unix)'.dev-dependencies]
+libc = "=0.2.190"
+
+[dependencies]
+# Wire types for the versioned protocol, and JSON for /health and error bodies.
+serde = { version = "=1.0.229", features = ["derive"] }
+serde_json = "=1.0.151"
+# Content hash of the real output bytes. Not for cross-host reproducibility.
+sha2 = { version = "=0.10.9", default-features = false }
+# Owned temp directories that are removed on success, failure, timeout,
+# disconnect and SIGTERM. Removing a directory tree by hand is how orphans are
+# created.
+tempfile = "=3.23.0"
+# SIGTERM/SIGINT handling. std has no signal API, and the default disposition
+# for SIGTERM kills the process without running temp-directory cleanup.
+signal-hook = { version = "=0.3.18", default-features = false }
+
+[profile.release]
+# opt-level 3 (the Cargo default) on purpose. This process is CPU-bound inside
+# FFmpeg, not size-bound; shrinking our own binary while FFmpeg dominates runtime
+# and image size would trade measured encode wall time for bytes that do not
+# decide the number that matters. Measured numbers are in README.md.
+opt-level = 3
+debug = false
+strip = "symbols"
