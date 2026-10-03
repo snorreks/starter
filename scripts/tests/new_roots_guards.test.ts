@@ -217,6 +217,32 @@ describe('roots: apps/frontend/native', () => {
     ).toEqual([]);
   });
 
+  test('lets a route consume the composition root the bridge feeds', () => {
+    // The other half of the rule above, and the reason it is phrased the way it is.
+    // The composition root exists so routes can consume it; a rule that reported
+    // every screen for reaching it would be forbidding dependency injection, and the
+    // thing it complained about would be the architecture working.
+    //
+    // Three hops, deliberately: route -> composition -> bridge. The capability is
+    // named in exactly one file, and the guard has to find that one file rather than
+    // stopping at the immediate target.
+    const native: Member = {
+      name: '@starter/native',
+      dir: 'apps/frontend/native',
+      files: {
+        ...TAURI_API,
+        'src/lib/platform/bridge.ts':
+          "import { invoke } from '@tauri-apps/api/core';\nexport const openExternal = (url: string): Promise<unknown> => invoke('open', { url });\n",
+        'src/lib/composition/session.ts':
+          "import { openExternal } from '../platform/bridge.ts';\nexport const open = (url: string): Promise<unknown> => openExternal(url);\n",
+        'src/routes/+page.svelte':
+          "<script lang=\"ts\">\n  import { open } from '../lib/composition/session.ts';\n</script>\n<button onclick={() => open('https://example.test')}>open</button>\n",
+      },
+    };
+
+    expect(run(makeProject(withMembers([native])))).toEqual([]);
+  });
+
   test('leaves the shell, its Rust and its generated projects out of the graph', () => {
     // Three separate claims, one tree. `src-tauri/**` is Node tooling as far as the
     // TypeScript graph is concerned; `.rs` is not TypeScript and is validated by its

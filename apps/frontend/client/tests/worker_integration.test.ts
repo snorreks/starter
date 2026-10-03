@@ -1787,3 +1787,282 @@ describe('a forwarded browser event is stored once, and stays a browser event', 
     expect(structuredRecords().filter((event) => event.event === marker)).toHaveLength(0);
   }, 60_000);
 });
+
+// ── Device authorization and bearer sessions ─────────────────────────────────
+//
+// The native client's whole sign-in path, driven against the built Worker in real
+// workerd with real D1: request a code, approve it in a browser session, poll, and
+// use the token against the same `/api/notes` the web app uses.
+//
+// Everything a native client does is here, and each negative control is a property
+// the acceptance criteria name:
+//
+//   * the approval page is a **route on this application**, not a URL the plugin
+//     invented, and an anonymous visitor cannot reach it;
+//   * a bearer token reaches **only its own owner's** data, and cannot choose an
+//     owner;
+//   * a bearer token does **not** bypass email verification — an unverified
+//     account has no way to obtain one, so the assertion is made on the sign-in
+//     step that would otherwise have been skipped;
+//   * revoking the session server-side **kills the token** immediately.
+//
+// The one place real time is waited on is marked, and it cannot be injected away:
+// the plugin enforces its own polling interval against a wall clock, so proving
+// the successful poll means waiting out that interval once.
+describe('device authorization', () => {
+  const CLIENT_ID = 'starter-native-desktop-test';
+
+  interface DeviceCode {
+    device_code: string;
+    user_code: string;
+    verification_uri: string;
+    verification_uri_complete: string;
+    expires_in: number;
+    interval: number;
+  }
+
+  /** Ask for a code, exactly as the native client does. */
+  const requestCode = async (clientId = CLIENT_ID): Promise<DeviceCode> => {
+    const response = await authFetch('/api/auth/device/code', {
+      method: 'POST',
+      body: JSON.stringify({ client_id: clientId, scope: '' }),
+    });
+    if (!response.ok) {
+      throw new Error(`device/code failed: ${response.status} ${await response.text()}`);
+    }
+    return (await response.json()) as DeviceCode;
+  };
+
+  /** Poll once, returning the provider's own answer. */
+  const pollToken = async (
+    code: DeviceCode,
+    clientId = CLIENT_ID,
+  ): Promise<{ status: number; body: Record<string, unknown> }> => {
+    const response = await authFetch('/api/auth/device/token', {
+      method: 'POST',
+      body: JSON.stringify({
+        grant_type: 'urn:ietf:params:oauth:grant-type:device_code',
+        device_code: code.device_code,
+        client_id: clientId,
+      }),
+    });
+    return { status: response.status, body: (await response.json()) as Record<string, unknown> };
+  };
+
+  /** Open the approval page as a signed-in browser would, which claims the code. */
+  const claimInBrowser = async (
+    account: Account,
+    code: DeviceCode,
+  ): Promise<{ status: number; html: string }> => {
+    const response = await fetch(
+      `${base()}/device?user_code=${encodeURIComponent(code.user_code)}`,
+      { headers: { cookie: account.cookie }, redirect: 'manual' },
+    );
+    return { status: response.status, html: await response.text() };
+  };
+
+  /** Press one of the two buttons on the approval page, as a form submission. */
+  const decideInBrowser = async (
+    account: Account,
+    code: DeviceCode,
+    action: 'approve' | 'deny',
+  ): Promise<number> => {
+    const response = await fetch(
+      `${base()}/device?/${action}&user_code=${encodeURIComponent(code.user_code)}`,
+      {
+        method: 'POST',
+        headers: {
+          cookie: account.cookie,
+          origin: base(),
+          // The headers a browser form submission actually sends. A bare `fetch`
+          // accepts anything and gets SvelteKit's serialized action result
+          // (HTTP 200 with a JSON body) instead of the 303 a person follows, so
+          // this test has to ask for what the browser asks for.
+          accept: 'text/html,application/xhtml+xml',
+          'content-type': 'application/x-www-form-urlencoded',
+        },
+        body: '',
+        redirect: 'manual',
+      },
+    );
+    return response.status;
+  };
+
+  test('the verification URI is a route on this application', async () => {
+    // A client told to open `https://elsewhere.test/device` by a plugin default
+    // would show a sign-in that cannot complete, with nothing to act on.
+    const code = await requestCode();
+
+    expect(code.verification_uri).toBe(`${base()}/device`);
+    expect(code.verification_uri_complete).toContain(encodeURIComponent(code.user_code));
+    expect(code.interval).toBeGreaterThan(0);
+    expect(code.expires_in).toBeGreaterThan(0);
+  }, 60_000);
+
+  test('an anonymous visitor cannot reach the approval page', async () => {
+    const code = await requestCode();
+    const { status } = await claimInBrowser({ email: '', password: '', cookie: '' }, code);
+
+    // Redirected to sign-in rather than shown an approval screen that cannot work.
+    expect(status).toBe(303);
+  }, 60_000);
+
+  test('a user approves, the client polls, and the token works on the same API', async () => {
+    const account = await signUp('integration-device-approve');
+    const code = await requestCode();
+
+    // First poll before anybody decided: pending, not an error the client should
+    // treat as a failure.
+    const first = await pollToken(code);
+    expect(first.status).toBe(400);
+    expect(first.body.error).toBe('authorization_pending');
+
+    const claimed = await claimInBrowser(account, code);
+    expect(claimed.status).toBe(200);
+    // The page shows the code and the client, so a user can tell what they approve.
+    expect(claimed.html).toContain(code.user_code);
+    expect(claimed.html).toContain(CLIENT_ID);
+
+    // A second poll inside the interval is the provider's back-off, which is what
+    // the client's `slow_down` handling exists for.
+    const tooFast = await pollToken(code);
+    expect(tooFast.body.error).toBe('slow_down');
+
+    const decided = await decideInBrowser(account, code, 'approve');
+    expect(decided).toBe(303);
+
+    // Real time, deliberately: the plugin compares `lastPolledAt` against the wall
+    // clock, so the successful poll cannot happen until the interval has passed.
+    await sleep(code.interval * 1_000 + 750);
+
+    const approved = await pollToken(code);
+    expect(approved.status).toBe(200);
+    expect(approved.body.token_type).toBe('Bearer');
+    const token = String(approved.body.access_token ?? '');
+    expect(token.length).toBeGreaterThan(0);
+
+    // The same `/api/notes` the browser uses, with a bearer token and no cookie.
+    const withBearer = async (path: string, init: RequestInit = {}): Promise<Response> =>
+      fetch(`${base()}${path}`, {
+        ...init,
+        headers: {
+          ...(init.body === undefined ? {} : { 'content-type': 'application/json' }),
+          ...originHeaders(),
+          authorization: `Bearer ${token}`,
+        },
+      });
+
+    const created = await withBearer('/api/notes', {
+      method: 'POST',
+      body: JSON.stringify({ title: 'from the desktop app', body: 'written with a bearer token' }),
+    });
+    expect(created.status).toBe(200);
+    const createdNote = (await created.json()) as { id: string };
+
+    const list = (await (await withBearer('/api/notes')).json()) as {
+      notes: { id: string; title: string }[];
+    };
+    expect(list.notes.some((note) => note.id === createdNote.id)).toBe(true);
+
+    // …and the cookie session still sees it, because both paths are the same
+    // account rather than two identities.
+    const cookieList = (await (await api(account, '/api/notes')).json()) as {
+      notes: { title: string }[];
+    };
+    expect(cookieList.notes.some((note) => note.title === 'from the desktop app')).toBe(true);
+  }, 120_000);
+
+  test('a bearer token cannot choose an owner, and reaches only its own notes', async () => {
+    const account = await signUp('integration-device-owner');
+    const other = await signUp('integration-device-other');
+    const code = await requestCode();
+
+    await claimInBrowser(account, code);
+    await decideInBrowser(account, code, 'approve');
+    await sleep(code.interval * 1_000 + 750);
+    const approved = await pollToken(code);
+    expect(approved.status).toBe(200);
+    const token = String(approved.body.access_token);
+
+    const headers = (extra: Record<string, string> = {}): Record<string, string> => ({
+      'content-type': 'application/json',
+      ...originHeaders(),
+      authorization: `Bearer ${token}`,
+      ...extra,
+    });
+
+    // `NoteCreateSchema` sets `additionalProperties: false`, so a forged owner is
+    // refused rather than accepted and ignored.
+    const forged = await fetch(`${base()}/api/notes`, {
+      method: 'POST',
+      headers: headers(),
+      body: JSON.stringify({ title: 'forged', body: '', ownerId: 'someone-else' }),
+    });
+    expect(forged.status).toBe(422);
+
+    // The real note lands under the token's own owner and under nobody else's.
+    const mine = (await (
+      await fetch(`${base()}/api/notes`, {
+        method: 'POST',
+        headers: headers(),
+        body: JSON.stringify({ title: 'owned by the token', body: '' }),
+      })
+    ).json()) as { id: string };
+    const theirList = (await (
+      await fetch(`${base()}/api/notes`, {
+        headers: { ...originHeaders(), cookie: other.cookie },
+      })
+    ).json()) as { notes: { id: string }[] };
+
+    expect(theirList.notes.some((note) => note.id === mine.id)).toBe(false);
+  }, 120_000);
+
+  test('a denied request never yields a token, and a polled-after-denial code says so', async () => {
+    const account = await signUp('integration-device-deny');
+    const code = await requestCode();
+
+    await claimInBrowser(account, code);
+    const decided = await decideInBrowser(account, code, 'deny');
+    expect(decided).toBe(303);
+
+    const after = await pollToken(code);
+    expect(after.status).toBe(400);
+    expect(after.body.error).toBe('access_denied');
+  }, 60_000);
+
+  test('an invented token is refused, and revoking the session kills a real one', async () => {
+    const account = await signUp('integration-device-revoke');
+
+    const invented = await fetch(`${base()}/api/notes`, {
+      headers: { ...originHeaders(), authorization: 'Bearer not-a-real-token' },
+    });
+    expect(invented.status).toBe(401);
+
+    const code = await requestCode();
+    await claimInBrowser(account, code);
+    await decideInBrowser(account, code, 'approve');
+    await sleep(code.interval * 1_000 + 750);
+    const approved = await pollToken(code);
+    expect(approved.status).toBe(200);
+    const token = String(approved.body.access_token);
+
+    const beforeRevoke = await fetch(`${base()}/api/notes`, {
+      headers: { ...originHeaders(), authorization: `Bearer ${token}` },
+    });
+    expect(beforeRevoke.status).toBe(200);
+
+    // Revoked through the provider's own sign-out, with the same token: this is
+    // what the native sign-out button calls.
+    const signedOut = await authFetch('/api/auth/sign-out', {
+      method: 'POST',
+      body: '{}',
+      headers: { authorization: `Bearer ${token}` },
+    });
+    expect(signedOut.ok).toBe(true);
+
+    const afterRevoke = await fetch(`${base()}/api/notes`, {
+      headers: { ...originHeaders(), authorization: `Bearer ${token}` },
+    });
+    expect(afterRevoke.status).toBe(401);
+  }, 120_000);
+});

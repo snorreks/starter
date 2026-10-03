@@ -35,6 +35,12 @@ projects:
   # SvelteKit project, so there is one project here and its two runtimes are a
   # property of the source layout, not of the build graph.
   client: 'apps/frontend/client'
+  # The static native client: a second application, and a second build target. It is
+  # a project here so `bun run typecheck`/`lint`/`format`/`test` cover it with the
+  # rest of the repository — its unit lane needs nothing the web lanes do not. Its
+  # Rust shell keeps `cargo-*` task names for the reason the media crate does, so
+  # no contributor needs a Rust toolchain to run `bun run test`.
+  native: 'apps/frontend/native'
   e2e: 'apps/e2e'
 
   # Shared packages: portable, no project dependencies at all.

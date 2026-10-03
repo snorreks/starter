@@ -256,6 +256,15 @@ export const CAPABILITY_RULES: readonly CapabilityRule[] = [
  * role is checked instead. A row here is an assertion that the capability is confined
  * to a named, explicitly placed set of files, which is what makes it different from
  * adding the capability to `PLANE_CAPABILITIES` and calling it done.
+ *
+ * "Confined to the bridge" means *naming* it is confined to the bridge. A module that
+ * reaches the bridge inherits the capability and stays inside the same native host —
+ * the composition root exists precisely so routes can consume it — and
+ * `ruleRuntimeCapabilities` is what tells those two apart. The check that stays strict
+ * is the one that matters for the web application: a browser module that imports
+ * `@tauri-apps/*` itself is a build that breaks on the first page to reach it, and
+ * `apps/frontend/client/scripts/check_bundle.ts` asserts the same property on the
+ * emitted artifact.
  */
 export const CAPABILITY_ROLES: Readonly<Partial<Record<Capability, readonly Role[]>>> = {
   'native-runtime': ['native-bridge'],
@@ -561,8 +570,11 @@ export const ROLE_PLACEMENTS: readonly { readonly test: RegExp; readonly role: R
   { test: /\.(test|spec)\.tsx?$/, role: 'test' },
   { test: /(?:^|\/)(?:tests|__tests__|browser_tests)\//, role: 'test' },
   // Test harnesses that are not named like tests: the Bun preload, the Playwright
-  // global setup, the per-lane setup module.
+  // global setup, the per-lane setup module. Two preloads, named one by one, rather
+  // than a pattern over `test_setup.ts`: a pattern would also classify a file that
+  // happens to be called that in a directory the application ships.
   { test: /^apps\/frontend\/client\/src\/lib\/test_setup\.ts$/, role: 'test' },
+  { test: /^apps\/frontend\/native\/src\/lib\/test_setup\.ts$/, role: 'test' },
   { test: /^apps\/e2e\/global-setup\.ts$/, role: 'test' },
   // Bundler, test-runner and build configuration.
   { test: /(?:^|\/)[\w.-]+\.config\.tsx?$/, role: 'config' },

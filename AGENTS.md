@@ -72,6 +72,11 @@ bun run deploy:preflight --env staging      # authenticated, read-only
 bun run deploy:apply --env staging --yes    # build, migrate, deploy, verify, record
 bun run deploy verify --env staging
 
+# Native — a separate lane: it needs a Rust toolchain and a webview library
+bun run native:doctor    # what this host can build. Exit 3 when a prerequisite is missing.
+bun run native:dev       # the static app plus the Tauri shell
+bun run native:build     # a release binary (unsigned; no installer, no store upload)
+
 # Logs — one app; --source tells the two halves apart
 bun run logs web --mode local --follow
 bun run logs web --mode local --source browser
@@ -92,6 +97,8 @@ own:
 | Chromium's shared libraries | `test:browser`, `e2e` | `error while loading shared libraries` |
 | `CHROMIUM_PATH`, or a populated Playwright cache | `test:browser`, `e2e` | `Failed to launch chromium because executable doesn't exist` |
 | a free port in this checkout's range | `test:worker`, `e2e` | `PortUnavailable`, naming the port and its listener |
+| Rust toolchain 1.98.1 with clippy + rustfmt | `native:dev`, `native:build` | `bun run native:doctor` names it; a missing one is exit 3, not a linker error |
+| WebKitGTK 4.1 development files (Linux) | `native:dev`, `native:build` on Linux | named by `native:doctor`, which asks `pkg-config` |
 
 See [docs/capability-matrix.md](docs/capability-matrix.md).
 
@@ -103,6 +110,8 @@ launches.
 
 ```
 apps/frontend/client     ONE SvelteKit app: browser half + Worker half
+apps/frontend/native     static SvelteKit app + src-tauri shell; the same features,
+                         a bearer transport, an opt-in Stronghold vault
 apps/e2e                 Playwright specs + the harness that starts the server
 packages/shared/*        portable; no project dependencies
 packages/backend/*       database, auth — server only
@@ -142,6 +151,12 @@ Three directory rules that are *not* stylistic:
   ones this host has. A feature that imported `$app/navigation` or resolved a
   module singleton would work in a browser and nowhere else.
 
+- **The native app is a client of the web Worker, not a second server.**
+  `apps/frontend/native/src/lib/platform/**` is the only directory permitted to name
+  `@tauri-apps/*`, and no module in the native app may reach `@starter/database`,
+  `@starter/auth`, `drizzle-orm`, `better-auth` or a Cloudflare binding. Two
+  `check:bundle` commands assert the same property on the emitted artifacts, in
+  opposite directions.
 - **One authority decides what a command would change.** `scripts/src/deploy/target.ts`
   exports `resolveTarget(environment)`. Every command that can reach a remote
   resource resolves its destination through it and nothing else resolves one

@@ -14,6 +14,7 @@ Start here. Nothing below is required reading before running a command — the
 | change the architecture | [architecture.md](architecture.md) |
 | deploy it | [deployment.md](deployment.md) |
 | change accounts, sessions or mail | [auth.md](auth.md) |
+| build or understand the desktop client | [native.md](native.md) |
 
 ## Guides
 
@@ -33,6 +34,8 @@ Start here. Nothing below is required reading before running a command — the
 - [../apps/backend/media/README.md](../apps/backend/media/README.md) — the bounded
   FFmpeg processor: protocol, preset, limits, measured image, and its container
   and CLI entrypoints
+- [native.md](native.md) — the desktop client: device sign-in, the vault, the
+  capability set, and what a release would still need
 - [rename-checklist.md](rename-checklist.md) — before your first release
 - [adding-a-feature.md](adding-a-feature.md) — the shape of a change here
 - [agent.md](agent.md) — Pi extensions, project trust, and the discovery rules

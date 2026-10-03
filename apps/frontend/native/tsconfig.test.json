@@ -1,0 +1,27 @@
+{
+  "//": [
+    "Config for the Bun unit lane (`bun test`).",
+    "It exists because the SvelteKit-generated config excludes `*.test.ts`, and",
+    "because this lane has to resolve `#lib` and the workspace packages on its own.",
+    "Reactivity is NOT tested here — see src/lib/test_setup.ts."
+  ],
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "types": ["bun"],
+    "noEmit": true,
+    "paths": {
+      "#lib": ["./src/lib"],
+      "#lib/*": ["./src/lib/*"],
+      "@starter/platform": ["../../../packages/frontend/platform/src/index.ts"],
+      "@starter/features": ["../../../packages/frontend/features/src/index.ts"],
+      "@starter/features/*": ["../../../packages/frontend/features/src/*"],
+      "@starter/schemas": ["../../../packages/shared/schemas/src/index.ts"],
+      "@starter/schemas/*": ["../../../packages/shared/schemas/src/*"],
+      "@starter/ui": ["../../../packages/frontend/ui/src/index.ts"],
+      "@starter/ui/*": ["../../../packages/frontend/ui/src/*"],
+      "@starter/utils": ["../../../packages/shared/utils/src/index.ts"],
+      "@starter/utils/*": ["../../../packages/shared/utils/src/*"]
+    }
+  },
+  "include": ["src/**/*.test.ts", "src/lib/test_setup.ts", "scripts/**/*.test.ts"]
+}

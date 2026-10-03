@@ -309,6 +309,35 @@ Negative controls, all against real processes, all in this round's run:
 | **Cloud Run Job** | Documented in the crate README, implemented nowhere. No GCP account, no storage adapter, no IAM. |
 | **`cargo audit` / `cargo deny`** | Not configured. `Cargo.lock` and `cargo tree` are the dependency record. |
 
+## The native desktop lane (PR D)
+
+A third dated section, for the same reason as the media one: this file records one
+round per run, and this round added a lane rather than re-running the web one.
+Nothing above this line changed.
+
+**Proved here, on this host:**
+
+| Capability | How it was verified | Command | Result |
+|---|---|---|---|
+| Frontend build | `@sveltejs/adapter-static`, `strict: true`, bundled fallback | `bun run --cwd apps/frontend/native build` | `Wrote site to "build"`, 20 files |
+| Bundle separation | Marker scan on the artifact, in both directions | `bun run --cwd apps/frontend/native check:bundle` | ok |
+| Unit tests | Config validation, bearer headers, vault rules, URL allowance, bundle control | `bun run --cwd apps/frontend/native test` | **49 pass, 0 fail** |
+| Device flow, both sides | Built Worker in real workerd + real local D1: request a code, approve it in a browser session, poll, use the token | `bun run test:worker` | **68 pass, 0 fail** across the file |
+| Schema needs no migration | The real generator against the real schema | `bun run db:generate` | `No schema changes, nothing to migrate` |
+| Rust formatting | `rustfmt --check` over `build.rs`, `src/lib.rs`, `src/main.rs` | `cargo fmt --check` | clean |
+| Command refusals | Argv planning, exit codes, cwd, no `bunx` | `bun run --cwd scripts test` | 571 tests in the tooling lane |
+
+**NOT RUN here, with the reason:**
+
+| Capability | Why it was not run | What would run it |
+|---|---|---|
+| `cargo check` / `cargo test` / `cargo clippy` on `src-tauri` | This host has **no WebKitGTK 4.1** (`pkg-config --exists webkit2gtk-4.1` fails), and Tauri's Linux dependency chain cannot link without it. `cargo` itself is present; the webview libraries are not. | `bun run native:doctor`, then `cargo test --locked` in `apps/frontend/native/src-tauri` |
+| A real desktop binary on Linux, macOS, Windows | Needs the toolchain above. The CI lane that does it is added by this change. | `.github/workflows/native.yml`, `desktop` job |
+| Launching the packaged app | No display, no signed app, no deployment to point it at | `./apps/frontend/native/src-tauri/target/release/starter` |
+| An authenticated workflow inside the shell | Both sides are proved separately (see the device rows); the last mile needs a signed-in window | A deployment, then `bun run native:dev` |
+| Android / iOS builds | Out of scope for this change. | Not implemented |
+| Notarization, signing, app stores | Need credentials this repository does not have, and this change adds no remote secret. | Not implemented |
+
 ## Host prerequisites the lanes need
 
 Not part of the repository, but a missing one presents as a confusing failure.
@@ -319,6 +348,8 @@ Not part of the repository, but a missing one presents as a confusing failure.
 | Chromium's shared libraries (`libglib-2.0.so.0`, `libnss3`, `libgbm`, X11, …) | `test:browser`, `e2e` | `error while loading shared libraries`, reported as `Target page, context or browser has been closed` |
 | `CHROMIUM_PATH`, or a populated Playwright cache | `test:browser`, `e2e` | `browserType.launch: Failed to launch chromium because executable doesn't exist` — or, with neither, Playwright's own download path |
 | a **free** port in this checkout's range | `test:worker`, `e2e` | `PortUnavailable`, naming the port and how to find the listener |
+| Rust toolchain 1.98.1 with clippy + rustfmt | `native:dev`, `native:build` | `bun run native:doctor` lists it under `MISS`, exit 3 |
+| WebKitGTK 4.1 development files | `native:dev`, `native:build` on Linux | `webkit2gtk-sys`'s build script, naming a crate instead of a package |
 
 On NixOS these come from a dev shell, which arrives with the direnv phase. Until
 then, provide them yourself; the commands above name each missing one rather than

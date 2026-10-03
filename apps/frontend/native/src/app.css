@@ -1,0 +1,26 @@
+/*
+  The native client's single stylesheet.
+
+  The same tokens as the web app, imported from the same package: a theme is a
+  token change, and a native client that shipped its own palette would be a
+  second design system inside one template.
+
+  No utility classes in markup, matching the web app's default. Tailwind is
+  wired up and available; the screens here use the shared UI components.
+*/
+@import "@starter/ui/tokens.css";
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  min-height: 100%;
+}
+
+body {
+  background: var(--color-canvas);
+  color: var(--color-text);
+  /* The shell sets no font; the platform's is the correct answer on every
+     desktop OS this builds for. */
+  font-family: system-ui, sans-serif;
+}

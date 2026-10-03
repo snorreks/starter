@@ -56,6 +56,7 @@ import {
   planeMayUse,
   planeOf,
   type RelativeImportExemption,
+  type Role,
   SERVER_TYPE_ONLY_FORBIDDEN_ROOTS,
   UNCONSTRAINED_ROLES,
   WORKSPACE_PACKAGE_SCOPE,
@@ -491,6 +492,24 @@ const lineOfFirstEdge = (module: ModuleNode, chain: readonly ChainStep[]): numbe
  * it is not a runtime: `CAPABILITY_ROLES` in `policy.ts` names the roles allowed to
  * hold `native-runtime`, which is how the Tauri bridge is confined to the native
  * application's composition root without granting it to every browser file.
+ *
+ * For those role-held capabilities the check distinguishes two ways of acquiring one,
+ * because they are different mistakes:
+ *
+ *   * **Naming it.** A module whose own specifier is `@tauri-apps/*` must itself be
+ *     the bridge. This is the rule `scripts/tests/new_roots_guards.test.ts` pins, and
+ *     it is the one that matters: a component reaching for `invoke` itself is a page
+ *     that would break in any other host.
+ *   * **Inheriting it.** A module that reaches the *bridge* — the composition root, a
+ *     route, a screen — is part of the same native host and is allowed to hold what
+ *     the bridge holds. Refusing this would forbid dependency injection outright: the
+ *     composition root is exactly the thing routes are supposed to consume, so a
+ *     transitive check would report every screen in the application while the thing it
+ *     is complaining about is the architecture working.
+ *
+ * Inheriting from anything *else* — a module that is not the bridge but names the API
+ * itself — is still a violation, because that intermediate is exactly the leak the
+ * bridge placement exists to prevent.
  */
 const ruleRuntimeCapabilities = (context: Context): void => {
   for (const module of context.graph.modules.values()) {
@@ -503,7 +522,10 @@ const ruleRuntimeCapabilities = (context: Context): void => {
         if (planeMayUse(module.plane, capability)) {
           continue;
         }
-      } else if (roles.includes(module.role)) {
+      } else if (
+        roles.includes(module.role) ||
+        inheritsFromBridgedRole(module, capability, context)
+      ) {
         continue;
       }
       report(context, {
@@ -523,6 +545,59 @@ const ruleRuntimeCapabilities = (context: Context): void => {
       });
     }
   }
+};
+
+/**
+ * Does this module hold `capability` only by reaching a module whose role is allowed
+ * to hold it?
+ *
+ * True when the module does not name the capability's package itself and every edge
+ * that introduces it lands on an allowed role. See the rule's header for why the two
+ * ways of acquiring one are treated differently.
+ */
+const inheritsFromBridgedRole = (
+  module: ModuleNode,
+  capability: Capability,
+  context: Context,
+): boolean => {
+  const roles = capabilityRoles(capability) ?? [];
+  if (module.ownCapabilities.has(capability)) {
+    return false;
+  }
+  return originRoles(module, capability, context, new Set()).every((role) => roles.includes(role));
+};
+
+/**
+ * Every role at which `capability` is actually named, reached from `module`.
+ *
+ * The walk is not one level deep: the composition root reaches the bridge, and a
+ * route reaches the composition root, and the route is the module being judged. What
+ * matters is where the `@tauri-apps/*` specifier is *written*, so this follows first
+ * -party edges until it finds the modules that hold the capability themselves, and
+ * answers with their roles. An empty result means the capability is in the fixpoint
+ * but no module names it, which is reported rather than treated as inherited.
+ */
+const originRoles = (
+  module: ModuleNode,
+  capability: Capability,
+  context: Context,
+  seen: Set<string>,
+): Role[] => {
+  if (seen.has(module.file)) {
+    return [];
+  }
+  seen.add(module.file);
+
+  if (module.ownCapabilities.has(capability)) {
+    return [module.role];
+  }
+
+  return module.edges.flatMap((edge) => {
+    const target = context.graph.modules.get(edge.resolution.file ?? '');
+    return target === undefined || !target.capabilities.has(capability)
+      ? []
+      : originRoles(target, capability, context, seen);
+  });
 };
 
 const describeCapability = (capability: Capability): string => {

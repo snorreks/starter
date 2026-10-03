@@ -96,18 +96,31 @@ export const verifications = sqliteTable('verifications', {
 });
 
 /**
- * Device-authorization codes. Unused, and kept on purpose.
+ * Device-authorization codes. Used by the native client, and kept on purpose.
  *
- * This table served a native client that signed in by approving a short user code
- * in a browser. That client no longer exists and the Better Auth
- * `device-authorization` plugin is no longer enabled, so nothing reads or writes
- * this table.
+ * This table serves a native client that signs in by approving a short user code in
+ * a browser it does not own. `apps/frontend/native` does that through the pinned
+ * Better Auth `device-authorization` plugin, whose model name is `deviceCode` — so
+ * the entry in `betterAuthSchema` below is what makes the plugin write here.
  *
- * It stays because it is in migrations that have been applied — locally and to
- * deployed databases. Dropping it here would make the Drizzle schema disagree
- * with the database, and rewriting or adding a migration is a reviewed change of
- * its own rather than something to smuggle in with a schema edit. See the
- * migration `0001_early_captain_cross.sql`.
+ * Two things are deliberate:
+ *
+ *   - **The columns are the plugin's, plus this repository's usual audit pair.** The
+ *     plugin owns `device_code`, `user_code`, `user_id`, `expires_at`, `status`,
+ *     `last_polled_at`, `polling_interval`, `client_id` and `scope`; `created_at`
+ *     and `updated_at` are added by the Drizzle adapter for every model it manages.
+ *     Nothing here is invented for this application's convenience, so a plugin
+ *     upgrade that changes its fields shows up as a missing column rather than as a
+ *     silently unwritten value.
+ *   - **It stays in migrations that have been applied.** The table was created in
+ *     `0001_early_captain_cross.sql` and exists in deployed databases. Re-enabling
+ *     the plugin needed **no new migration**, which is verified rather than assumed:
+ *     `bun run db:generate` produces no diff against this schema, and the Worker
+ *     integration test exercises the whole flow against real local D1.
+ *
+ * Dropping it would also be a behavioural change rather than a cleanup: the rows
+ * are what a pending native sign-in is waiting on, and a signed-in user revoking
+ * one is a supported operation.
  */
 export const deviceCodes = sqliteTable(
   'device_codes',

@@ -1,0 +1,69 @@
+# apps/frontend/native/src-tauri/Cargo.toml
+#
+# The native shell.
+#
+# Deliberately minimal. It provides a window, a secure context, and native log
+# capture — nothing else. Every plugin in this file is a capability the template
+# actually exercises, because an unused plugin in a template is an unused attack
+# surface that the next person has to audit instead of delete.
+#
+# Exact version pins with `=`, matching the media crate and the Bun rule. A
+# drifting resolver is how a desktop build starts failing for reasons unrelated to
+# the change under review, and `Cargo.lock` is committed and used with `--locked`.
+#
+# No updater, no signing keys, no sidecars. An updater needs an endpoint and a
+# keypair that belong to whoever ships the app; a sidecar is a binary the template
+# author chose. Both are the adopter's, and `docs/native.md` says how to add them.
+
+[package]
+# Neutral. A template's identifier must not name the project it came from: it is
+# written into every user's bundle id, their install path and their signing
+# identity, and changing it after the first release is not free.
+name = "starter"
+version = "0.1.0"
+description = "A Bun + SvelteKit + Cloudflare starter, wrapped for desktop and mobile."
+authors = ["you"]
+edition = "2021"
+rust-version = "1.98"
+
+# The library target, so the same code can be built as a mobile app library as
+# well as a desktop binary. See `src/lib.rs`.
+[lib]
+name = "starter_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "=2.7.1", features = [] }
+
+[dependencies]
+tauri = { version = "=2.12.1", features = [] }
+# Structured native logs, forwarded to the same NDJSON the other log producers
+# write, so one `bun run logs` covers the app and the Worker.
+tauri-plugin-log = "=2.10.0"
+# Hands an approval URL to the user's own browser. See
+# `src/lib/platform/external_browser.ts` for why this is a capability and not a
+# webview.
+tauri-plugin-opener = "=2.7.0"
+# The encrypted vault behind opt-in "remember me". Cross-platform on desktop and
+# mobile; the passphrase is the user's and is never stored. The key is derived
+# from it with argon2id in `src/lib.rs`.
+tauri-plugin-stronghold = "=2.4.0"
+# Argon2id, used only to turn the user's passphrase into the 32-byte snapshot
+# key. `alloc` alone is enough: the shell calls `hash_password_into` and nothing
+# else, so the password-hash and getrandom halves of the crate are not pulled in.
+argon2 = { version = "=0.6.0", default-features = false, features = ["alloc"] }
+
+[features]
+# Enabled by `tauri dev`, not in a shipped build. A custom protocol that serves
+# the frontend is only correct against a built bundle.
+custom-protocol = ["tauri/custom-protocol"]
+
+[profile.release]
+codegen-units = 1
+lto = true
+opt-level = "s"
+panic = "abort"
+# Smaller binary. A debug-symbol full build of this shell is roughly 300 MB, which
+# is a poor first impression for anyone who runs `cargo build --release` to check
+# it compiles.
+strip = true

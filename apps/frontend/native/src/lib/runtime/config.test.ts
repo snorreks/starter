@@ -1,0 +1,105 @@
+// apps/frontend/native/src/lib/runtime/config.test.ts
+//
+// The configuration refuses, and each refusal is a failure someone actually made.
+
+import { describe, expect, test } from 'bun:test';
+import {
+  DEFAULT_CLIENT_ID,
+  DEFAULT_DEV_API_ORIGIN,
+  NativeConfigError,
+  resolveApiOrigin,
+  resolveClientId,
+} from './config.ts';
+
+describe('the API origin a packaged build talks to', () => {
+  test('a development build with nothing configured talks to the local Worker', () => {
+    expect(resolveApiOrigin({ raw: undefined, dev: true })).toBe(DEFAULT_DEV_API_ORIGIN);
+    expect(resolveApiOrigin({ raw: '   ', dev: true })).toBe(DEFAULT_DEV_API_ORIGIN);
+  });
+
+  test('a packaged build with nothing configured refuses rather than guessing', () => {
+    // The failure this prevents: the app starts, every request goes to a loopback
+    // port nothing is listening on, and the symptom is "sign-in does nothing".
+    expect(() => resolveApiOrigin({ raw: undefined, dev: false })).toThrow(NativeConfigError);
+    expect(() => resolveApiOrigin({ raw: undefined, dev: false })).toThrow(/no default/i);
+  });
+
+  test('a packaged build refuses plain http', () => {
+    // A bearer token on a cleartext request is the whole reason this is refused,
+    // and the message has to say which value was wrong.
+    expect(() => resolveApiOrigin({ raw: 'http://api.example.test', dev: false })).toThrow(/https/);
+    // Including for loopback: localhost is not a safe place for a credential
+    // merely because it is the developer's own machine.
+    expect(() => resolveApiOrigin({ raw: 'http://127.0.0.1:5173', dev: false })).toThrow(
+      NativeConfigError,
+    );
+  });
+
+  test('a development build may use http only to loopback', () => {
+    expect(resolveApiOrigin({ raw: 'http://localhost:5173', dev: true })).toBe(
+      'http://localhost:5173',
+    );
+    expect(resolveApiOrigin({ raw: 'http://[::1]:5173', dev: true })).toBe('http://[::1]:5173');
+    // A development build pointed at a colleague's machine over plain http is
+    // the case the dev-only relaxation must not cover.
+    expect(() => resolveApiOrigin({ raw: 'http://192.168.1.20:8787', dev: true })).toThrow(
+      NativeConfigError,
+    );
+  });
+
+  test('a relative value is refused rather than resolved against the shell origin', () => {
+    // `new URL('/api', 'tauri://localhost')` would succeed and produce a request
+    // against the bundled file protocol, which answers HTML.
+    expect(() => resolveApiOrigin({ raw: '/api', dev: true })).toThrow(/absolute URL/i);
+    expect(() => resolveApiOrigin({ raw: 'api.example.test', dev: true })).toThrow(
+      NativeConfigError,
+    );
+  });
+
+  test('a path, a query and a fragment are each refused', () => {
+    // `https://host/api` + `/api/notes` is `https://host/api/api/notes`, which
+    // 404s; a trailing slash alone is not a path and must not be refused.
+    expect(resolveApiOrigin({ raw: 'https://api.example.test/', dev: false })).toBe(
+      'https://api.example.test',
+    );
+    expect(() => resolveApiOrigin({ raw: 'https://api.example.test/api', dev: false })).toThrow(
+      /origin only/i,
+    );
+    expect(() => resolveApiOrigin({ raw: 'https://api.example.test?x=1', dev: false })).toThrow(
+      NativeConfigError,
+    );
+    expect(() => resolveApiOrigin({ raw: 'https://api.example.test#f', dev: false })).toThrow(
+      NativeConfigError,
+    );
+  });
+
+  test('a non-http scheme is refused even when the URL parses', () => {
+    // `file://` and `tauri://` both parse. A token posted to either is a token
+    // posted to nowhere, or to a file.
+    expect(() => resolveApiOrigin({ raw: 'file:///etc/passwd', dev: false })).toThrow(
+      NativeConfigError,
+    );
+    expect(() => resolveApiOrigin({ raw: 'tauri://localhost', dev: false })).toThrow(
+      NativeConfigError,
+    );
+  });
+
+  test('the resolved value is normalized, so a scope key cannot be spelled two ways', () => {
+    expect(resolveApiOrigin({ raw: 'https://API.Example.test:443', dev: false })).toBe(
+      'https://api.example.test',
+    );
+  });
+});
+
+describe('the device-authorization client id', () => {
+  test('defaults to a public, documented identifier', () => {
+    expect(resolveClientId(undefined)).toBe(DEFAULT_CLIENT_ID);
+    expect(resolveClientId('  ')).toBe(DEFAULT_CLIENT_ID);
+  });
+
+  test('accepts a conventional id and refuses one that would need escaping', () => {
+    expect(resolveClientId('starter-desktop-2')).toBe('starter-desktop-2');
+    expect(() => resolveClientId('starter desktop/2')).toThrow(NativeConfigError);
+    expect(() => resolveClientId('x'.repeat(65))).toThrow(NativeConfigError);
+  });
+});

@@ -1,0 +1,203 @@
+# The native desktop lane.
+#
+# Two jobs, and the split between them is the point:
+#
+#   rust      format, clippy and the crate's unit test on one platform, because
+#             none of the three is platform-specific and all three are cheap.
+#   desktop   a real `tauri build` on Linux, macOS and Windows, with the binary
+#             uploaded as an artifact named by target and revision.
+#
+# What is deliberately absent, each of which is a different capability and not a
+# smaller version of this one:
+#
+#   * **Signing and notarization.** A Windows certificate, an Apple Developer ID
+#     and notarization credentials are inputs a fork's pull request cannot supply,
+#     and a workflow that referenced them would fail for every contributor. The
+#     build job therefore produces an *unsigned* binary and says so in the
+#     artifact name; a release lane with real credentials is added by whoever owns
+#     releases.
+#   * **An installer.** `--no-bundle` skips AppImage, DMG and MSI, which need
+#     downloaders and packagers of their own. The unit under test is the shell and
+#     the frontend it embeds.
+#   * **A launched application.** See `docs/native.md`: launching needs a display,
+#     a webview and a session, and "the binary exists" is not "the app runs". CI
+#     records the first honestly rather than implying the second.
+#
+# Nothing here needs a credential, and `pull_request` from a fork gets none.
+#
+# The Rust toolchain is not installed by an action: the runners already carry
+# `rustup`, and `rustup` honours `apps/frontend/native/src-tauri/rust-toolchain.toml`
+# the moment `cargo` is invoked there — which is why the channel in that file is a
+# number rather than "stable".
+
+name: Native
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  BUN_VERSION: '1.4.2'
+  # The Rust channel is declared by `src-tauri/rust-toolchain.toml`; this is only a
+  # human-readable label for the job summary and for the artifact names.
+  RUST_TOOLCHAIN_LABEL: '1.98.1'
+  # The API origin a packaged build is compiled against. There is no deployment in
+  # this repository, so this is a reserved name that can never resolve — which is
+  # the point: a build that somehow shipped a real origin would show it here.
+  VITE_NATIVE_API_ORIGIN: 'https://api.starter.invalid'
+
+jobs:
+  rust:
+    name: Rust fmt, clippy and unit tests
+    runs-on: ubuntu-latest
+    # A compile of the shell's dependencies is the slowest thing here, and it is
+    # bounded rather than open-ended so a wedged build fails with a name.
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install the pinned toolchain
+        # `rustup` reads `rust-toolchain.toml` from the crate directory, so this both
+        # installs the channel the crate pins and fails loudly if the file is missing.
+        run: rustup show active-toolchain || rustup toolchain install
+
+      - name: Format
+        # `cargo fmt --check`, never a write: a formatter that rewrites on CI hides
+        # which commit introduced the drift.
+        working-directory: apps/frontend/native/src-tauri
+        run: cargo fmt --check
+
+      - name: Clippy
+        # Warnings denied, over every target, so a test-only helper is linted too.
+        working-directory: apps/frontend/native/src-tauri
+        run: cargo clippy --locked --all-targets -- -D warnings
+
+      - name: Unit tests
+        # There is a real test in this crate (the vault key derivation), so this
+        # cannot be a zero-test pass. The count is asserted rather than assumed.
+        working-directory: apps/frontend/native/src-tauri
+        run: |
+          set -o pipefail
+          cargo test --locked 2>&1 | tee "$RUNNER_TEMP/rust-test.log"
+          if ! grep -qE '(^|[[:space:]])[1-9][0-9]* (passed|passed;)' "$RUNNER_TEMP/rust-test.log"; then
+            echo "::error::The Rust lane reported no passing tests. See the log above."
+            exit 1
+          fi
+
+  desktop:
+    name: Desktop build (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    strategy:
+      # One in flight at a time per platform: three native builds at once is a
+      # three-times-longer queue behind a shared Cargo download cache, and a cancelled
+      # half-finished build teaches nothing.
+      max-parallel: 1
+      fail-fast: false
+      matrix:
+        # The three desktop platforms a real user installs this on. A Linux `.deb`
+        # build would be an extra packager; the binary is the unit under test here.
+        os: [ubuntu-22.04, macos-14, windows-2022]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+
+      - name: Restore Bun's download cache
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: ~/.bun/install/cache
+          key: bun-${{ runner.os }}-${{ env.BUN_VERSION }}-${{ hashFiles('bun.lock') }}
+          restore-keys: |
+            bun-${{ runner.os }}-${{ env.BUN_VERSION }}-
+
+      - name: Install
+        run: bun install --frozen-lockfile
+
+      # The webview libraries Tauri links against. Ubuntu's runner image does not
+      # carry them, and the failure otherwise arrives from `webkit2gtk-sys`'s build
+      # script naming a crate instead of a package.
+      - name: Install Linux webview libraries
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y \
+            libwebkit2gtk-4.1-dev \
+            libappindicator3-dev \
+            librsvg2-dev \
+            patchelf
+
+      - name: Report what this host can build
+        # The same command a contributor runs, and it must pass: a doctor that fails
+        # here means the build below would fail with a worse message.
+        run: bun run native:doctor
+
+      - name: Build the static frontend
+        # Run directly rather than through `bun run native:build` so the doctor has
+        # already proved the capability, and so this step's output is the frontend
+        # alone: if the frontend is broken, the failure names the frontend.
+        run: bun run --cwd apps/frontend/native build
+
+      - name: Prove the frontend carries no server code
+        # The control that keeps the two application bundles from converging. It runs
+        # here, before the shell is built, because a leak found here is a review of
+        # one JavaScript file rather than of an installer.
+        run: bun run --cwd apps/frontend/native check:bundle
+
+      - name: Build the desktop binary
+        # `--no-bundle` is the honest scope for this lane: a signed installer needs
+        # credentials this workflow deliberately does not have. The binary is the
+        # thing that proves the shell compiles and links against the frontend above.
+        #
+        # No `--platform`: each runner *is* its platform, and naming it would only
+        # ask this command to resolve a name to the triple it is already on. What it
+        # does is refuse a platform the host is not — so this step passing is a
+        # statement that the matrix entry and the runner agree.
+        run: bun run native:build -- --no-bundle
+
+      - name: Locate the built binary
+        id: artifact
+        # Paths differ per platform, so they are searched rather than hardcoded; a
+        # missing binary is then an error from this step rather than an empty upload.
+        shell: bash
+        run: |
+          set -euo pipefail
+          found="$(find apps/frontend/native/src-tauri/target/release -maxdepth 1 -type f \
+            \( -name 'starter' -o -name 'starter.exe' \) | head -n 1 || true)"
+          if [ -z "$found" ]; then
+            echo "::error::no built binary under src-tauri/target/release"
+            ls -la apps/frontend/native/src-tauri/target/release || true
+            exit 1
+          fi
+          cp "$found" "$RUNNER_TEMP/starter-unsigned"
+          {
+            echo "path=$RUNNER_TEMP/starter-unsigned"
+            echo "sha=$(sha256sum "$found" | cut -d' ' -f1)"
+          } >> "$GITHUB_OUTPUT"
+          echo "built $found"
+          sha256sum "$found"
+
+      - name: Upload the unsigned binary
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          # Target, revision and the word "unsigned" are in the name on purpose: an
+          # artifact that cannot be mistaken for a release is not mistaken for one.
+          name: starter-desktop-${{ runner.os }}-${{ github.sha }}-unsigned
+          path: ${{ steps.artifact.outputs.path }}
+          retention-days: 7
+          if-no-files-found: error

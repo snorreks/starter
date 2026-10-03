@@ -1,0 +1,8 @@
+#
+# The same 100-column limit Biome enforces on the TypeScript half, so a line that
+# fits the repository's other language fits this one too. `use_small_heuristics`
+# is left at its default on purpose: rustfmt's built-in table is the one the Rust
+# ecosystem formats against, and a private table makes this crate look different
+# from every other Rust code a contributor has read. Identical to
+# `apps/backend/media/rustfmt.toml`.
+max_width = 100
