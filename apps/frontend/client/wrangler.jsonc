@@ -138,7 +138,7 @@
           // same reason `database_name` is — a name a fresh clone will never own,
           // because the account behind it does not exist until `deploy:configure`
           // runs.
-          "bucket_name": "starter-media"
+          "bucket_name": "starter-media-staging"
         }
       ],
       "workflows": [
@@ -162,7 +162,7 @@
           "migrations_dir": "../../../packages/backend/database/drizzle-d1"
         }
       ],
-      "r2_buckets": [{ "binding": "MEDIA", "bucket_name": "starter-media" }],
+      "r2_buckets": [{ "binding": "MEDIA", "bucket_name": "starter-media-production" }],
       "workflows": [
         {
           "binding": "ENCODE_WORKFLOW",

@@ -306,6 +306,7 @@ describe('classifying a refusal', () => {
       return;
     }
     expect(outcome.code).toBe('invalid_media');
+    expect(outcome.message).toBe('The processor refused the request.');
     expect(outcome.retryable).toBe(false);
   });
 

@@ -16,6 +16,7 @@
 // local server that misbehaves on purpose for a negative control. Every byte, every
 // header and every validation is real in both cases.
 
+import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { convertV4MiniflareOptions, Miniflare } from 'miniflare';
@@ -45,9 +46,11 @@ export interface JobsBindings {
   CONTAINER: DurableObjectNamespace;
   ENCODE_WORKFLOW: {
     create(options: { id: string; params?: unknown }): Promise<WorkflowInstanceHandle>;
+    get(id: string): Promise<WorkflowInstanceHandle>;
   };
   MAINTENANCE_WORKFLOW: {
     create(options: { id: string; params?: unknown }): Promise<WorkflowInstanceHandle>;
+    get(id: string): Promise<WorkflowInstanceHandle>;
   };
 }
 
@@ -60,9 +63,15 @@ export interface JobsRuntime {
 /** Every committed migration, applied in order, to the real local database. */
 const applyMigrations = async (db: D1Database): Promise<void> => {
   const { readdirSync, readFileSync } = await import('node:fs');
+  if (!existsSync(MIGRATIONS_DIR)) {
+    throw new Error(`Expected SQL migrations directory at ${MIGRATIONS_DIR}.`);
+  }
   const files = readdirSync(MIGRATIONS_DIR)
     .filter((file) => file.endsWith('.sql'))
     .sort();
+  if (files.length === 0) {
+    throw new Error(`Expected at least one .sql migration in ${MIGRATIONS_DIR}.`);
+  }
   for (const file of files) {
     const sql = readFileSync(join(MIGRATIONS_DIR, file), 'utf8');
     for (const statement of sql.split('--> statement-breakpoint')) {
@@ -88,6 +97,11 @@ export const startJobsRuntime = async (options: {
   processorOrigin: string;
   migrations?: boolean;
 }): Promise<JobsRuntime> => {
+  if (!existsSync(DIST_ENTRY)) {
+    throw new Error(
+      `Expected built jobs Worker at ${DIST_ENTRY}. Run the jobs Worker build first.`,
+    );
+  }
   const miniflare = new Miniflare(
     convertV4MiniflareOptions({
       workers: [

@@ -421,6 +421,7 @@ describe('refusals, at the real processor boundary', () => {
       });
       expect(await awaitInstance(instance)).toBe('complete');
 
+      expect(await liar.bindings.MEDIA.head(outputKey('job-liar', 'attempt-liar-1'))).toBeNull();
       const job = await repositoryLiar.getJobForOwner('user-liar', 'job-liar');
       expect(job?.status).toBe('failed');
       expect(job?.errorCode).toBe('encode_failed');
@@ -520,28 +521,32 @@ describe('refusals, at the real processor boundary', () => {
   });
 
   test('exhausted attempts end the job as failed rather than leaving it running', async () => {
+    let encodeCalls = 0;
     const server = Bun.serve({
       port: 0,
       hostname: '127.0.0.1',
-      fetch: (request) =>
-        new URL(request.url).pathname === '/encode'
-          ? Response.json(
-              {
-                error: {
-                  code: 'busy',
-                  message: 'an encode is already in progress',
-                  retryable: true,
-                },
+      fetch: (request) => {
+        if (new URL(request.url).pathname === '/encode') {
+          encodeCalls += 1;
+          return Response.json(
+            {
+              error: {
+                code: 'busy',
+                message: 'an encode is already in progress',
+                retryable: true,
               },
-              { status: 429 },
-            )
-          : Response.json({
-              release: 'test',
-              protocol: 'sample-v1',
-              fixture: 'sample-v1',
-              presets: [],
-              limits: {},
-            }),
+            },
+            { status: 429 },
+          );
+        }
+        return Response.json({
+          release: 'test',
+          protocol: 'sample-v1',
+          fixture: 'sample-v1',
+          presets: [],
+          limits: {},
+        });
+      },
     });
 
     const stuck = await startJobsRuntime({ processorOrigin: `http://127.0.0.1:${server.port}` });
@@ -575,6 +580,7 @@ describe('refusals, at the real processor boundary', () => {
       // sees it will wait for an encode that is never coming.
       expect(job?.status).toBe('failed');
       expect(job?.errorCode).toBe('attempts_exhausted');
+      expect(encodeCalls).toBe(3);
       // The lease is released, so maintenance and the next attempt are not blocked by
       // a claim nobody holds.
       expect(job?.activeAttemptId).toBeNull();
@@ -585,9 +591,6 @@ describe('refusals, at the real processor boundary', () => {
   });
 
   test('a job whose fixture is not in the store fails instead of encoding nothing', async () => {
-    await seedUser(db(), 'user-nofixture');
-    await admit('user-nofixture', 'job-nofixture', `key-nofixture-${Date.now()}`);
-    void FIXTURE_KEY;
     // The fixture *is* present in this runtime, so this asserts the opposite path is
     // real: the same job, in a runtime whose bucket has never been seeded.
     const empty = await startJobsRuntime({
@@ -622,6 +625,7 @@ describe('refusals, at the real processor boundary', () => {
         systemClock,
       ).getJobForOwner('user-empty', 'job-empty');
       expect(job?.status).toBe('failed');
+      expect(job?.errorCode).toBe('encode_failed');
       expect(job?.outputKey).toBeNull();
     } finally {
       await empty.dispose();

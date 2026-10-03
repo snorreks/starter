@@ -50,6 +50,7 @@ describe('the dispatch port this Worker binds', () => {
     // The local runtime throws `instance.already_exists` where the hosted one returns
     // the instance. Both mean the instance is there, which is what dispatch wanted.
     const port = createDispatchPort({
+      get: async () => ({ status: async () => ({ status: 'running' }) }),
       create: async () => {
         throw new Error(
           'WorkflowError: (instance.already_exists) Workflow instance with id "encode-job_1" already exists',

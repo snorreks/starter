@@ -45,7 +45,12 @@ import {
   systemClock,
   type WorkflowInstanceBinding,
 } from '@starter/jobs';
-import type { JobsEnv } from '../env.ts';
+import {
+  type JobsEnv,
+  requireJobsBindings,
+  requireJobsDeploymentEnvironment,
+  resolveJobsProfile,
+} from '../env.ts';
 import { createMediaStore, type MediaStore } from '../media_store.ts';
 
 export type { MaintenanceRunRequest };
@@ -105,6 +110,8 @@ export class MaintenanceWorkflow extends WorkflowEntrypoint<JobsEnv, Maintenance
     // no payload at all. Deriving the trigger from one shape or the other — rather
     // than from an operator's memory — is what makes "this run was scheduled"
     // checkable.
+    requireJobsBindings(this.env);
+    requireJobsDeploymentEnvironment(this.env);
     const request = this.requestFor(event);
     const runs = createMaintenanceRunRepository(this.env.DB, systemClock);
     const repository = createJobRepository(this.env.DB, systemClock);
@@ -164,47 +171,70 @@ export class MaintenanceWorkflow extends WorkflowEntrypoint<JobsEnv, Maintenance
     // queued in the same pass. A run that only queued would leave the next hour's
     // run to finish work this one started — recoverable, and one extra hour of
     // latency for every artifact.
-    const retired = await step.do<{ deleted: number }>('delete-expired-bytes', async () => {
-      const queued = await repository.listArtifactRetirements(MAX_MAINTENANCE_BATCH);
-      let deleted = 0;
-      for (const retirement of queued) {
-        await store.delete(retirement.outputKey);
-        // R2's delete is idempotent, so an object that was already absent and one
-        // that was just removed are the same outcome. The row is closed only after
-        // the store confirms the object is gone, and both writes are reported.
-        if (await store.isRemoved(retirement.outputKey)) {
-          await repository.completeArtifactRetirement(retirement.jobId);
-          if (await repository.clearJobOutput(retirement.jobId)) {
-            deleted += 1;
+    let retired: { deleted: number };
+    let recovery: RecoveryResult;
+    try {
+      retired = await step.do<{ deleted: number }>('delete-expired-bytes', async () => {
+        const queued = await repository.listArtifactRetirements(MAX_MAINTENANCE_BATCH);
+        let deleted = 0;
+        for (const retirement of queued) {
+          await store.delete(retirement.outputKey);
+          // R2's delete is idempotent, so an object that was already absent and one
+          // that was just removed are the same outcome. The row is closed only after
+          // the store confirms the object is gone, and both writes are reported.
+          if (await store.isRemoved(retirement.outputKey)) {
+            await repository.completeArtifactRetirement(retirement.jobId);
+            if (await repository.clearJobOutput(retirement.jobId)) {
+              deleted += 1;
+            }
+          } else {
+            await repository.recordArtifactRetirementRetry(retirement.jobId);
           }
-        } else {
-          await repository.recordArtifactRetirementRetry(retirement.jobId);
         }
-      }
-      return { deleted };
-    });
+        return { deleted };
+      });
 
-    const recovery = await step.do<RecoveryResult>('recover-dispatches', async () => {
-      const port = createWorkflowDispatchPort(this.env.ENCODE_WORKFLOW as WorkflowInstanceBinding);
-      const pending = await repository.listPendingDispatches(MAX_RECOVERY_DISPATCHES);
-      let dispatched = 0;
-      let refused = 0;
-      for (const job of pending) {
-        // One attempt id per recovery, derived from the job. Deterministic on
-        // purpose: a second recovery pass for the same job addresses the same
-        // instance and the same attempt, so it cannot double the work either.
-        const outcome = await port.dispatch(dispatchTargetFor(job, `recovery-${job.id}`));
-        if (outcome.ok) {
-          await repository.markDispatched(job.id);
-          dispatched += 1;
-        } else {
-          await repository.markDispatchFailed(job.id, outcome.code);
-          refused += 1;
+      recovery = await step.do<RecoveryResult>('recover-dispatches', async () => {
+        const profile = resolveJobsProfile(this.env);
+        if (!profile.ok) {
+          throw new Error(`${profile.problem} ${profile.remedy}`);
         }
-      }
-      const remaining = (await repository.listPendingDispatches(MAX_RECOVERY_DISPATCHES)).length;
-      return { dispatched, refused, remaining };
-    });
+        if (profile.profile !== 'encode') {
+          return {
+            dispatched: 0,
+            refused: 0,
+            remaining: (await repository.listPendingDispatches(MAX_RECOVERY_DISPATCHES)).length,
+          };
+        }
+        const port = createWorkflowDispatchPort(
+          this.env.ENCODE_WORKFLOW as WorkflowInstanceBinding,
+        );
+        const pending = await repository.listPendingDispatches(MAX_RECOVERY_DISPATCHES);
+        let dispatched = 0;
+        let refused = 0;
+        for (const job of pending) {
+          // One attempt id per recovery, derived from the job. Deterministic on
+          // purpose: a second recovery pass for the same job addresses the same
+          // instance and the same attempt, so it cannot double the work either.
+          const outcome = await port.dispatch(dispatchTargetFor(job, `recovery-${job.id}`));
+          if (outcome.ok) {
+            await repository.markDispatched(job.id);
+            dispatched += 1;
+          } else {
+            await repository.markDispatchFailed(job.id, outcome.code);
+            refused += 1;
+          }
+        }
+        const remaining = (await repository.listPendingDispatches(MAX_RECOVERY_DISPATCHES)).length;
+        return { dispatched, refused, remaining };
+      });
+    } catch (error) {
+      await step.do('record-failed-recovery', async () => {
+        await runs.fail(claim.runKey, 'dispatch_recovery_failed');
+        return true;
+      });
+      throw error;
+    }
 
     await step.do('record', async () => {
       await runs.complete(claim.runKey, {

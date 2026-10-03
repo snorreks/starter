@@ -183,6 +183,7 @@ describe('the Workflow-backed dispatch port', () => {
     // two different jobs never share one.
     const seen: Array<{ id: string; params?: unknown }> = [];
     const port = createWorkflowDispatchPort({
+      get: async () => ({ status: async () => ({ status: 'running' }) }),
       async create(options) {
         seen.push({ id: options.id, params: options.params });
         return { id: options.id };
@@ -207,6 +208,7 @@ describe('the Workflow-backed dispatch port', () => {
   test('the instance carries the frozen fixture, preset and attempt, and nothing else', async () => {
     let received: unknown;
     const port = createWorkflowDispatchPort({
+      get: async () => ({ status: async () => ({ status: 'running' }) }),
       async create(options) {
         received = options.params;
         return { id: options.id };
@@ -232,6 +234,7 @@ describe('the Workflow-backed dispatch port', () => {
     // checks it rather than trusting every caller to have used `dispatchTargetFor`.
     const created: string[] = [];
     const outcome = await createWorkflowDispatchPort({
+      get: async () => ({ status: async () => ({ status: 'running' }) }),
       async create(options) {
         created.push(options.id);
         return { id: options.id };
@@ -260,6 +263,7 @@ describe('the Workflow-backed dispatch port', () => {
 
   test('a provider that throws is retryable and carries no provider text', async () => {
     const outcome = await createWorkflowDispatchPort({
+      get: async () => ({ status: async () => ({ status: 'running' }) }),
       create: async () => {
         throw new Error('wrangler exploded: key sk-live-abc123');
       },
@@ -283,6 +287,7 @@ describe('the Workflow-backed dispatch port', () => {
     const shapes: unknown[] = [null, {}, { id: 42 }, { id: '' }, 'ok', { id: 'x'.repeat(0) }];
     for (const shape of shapes) {
       const outcome = await createWorkflowDispatchPort({
+        get: async () => ({ status: async () => ({ status: 'running' }) }),
         create: async () => shape as { id: string },
       }).dispatch(target());
       expect(outcome.ok).toBe(false);
@@ -296,6 +301,44 @@ describe('the Workflow-backed dispatch port', () => {
 });
 
 describe('dispatching an instance that already exists', () => {
+  test('failed or unavailable existing instances remain retryable provider failures', async () => {
+    for (const status of ['errored', 'terminated', '', null, 'lookup-failed', 'status-failed']) {
+      const outcome = await createWorkflowDispatchPort({
+        create: async () => {
+          throw { code: 'instance.already_exists' };
+        },
+        get: async (id) => {
+          expect(id).toBe(target().workflowId);
+          if (status === 'lookup-failed') {
+            throw new Error('private provider details');
+          }
+          return {
+            status: async () => {
+              if (status === 'status-failed') {
+                throw new Error('private provider details');
+              }
+              return { status: status as string };
+            },
+          };
+        },
+      }).dispatch(target());
+      expect(outcome).toMatchObject({ ok: false, code: 'provider_unavailable', retryable: true });
+      expect(JSON.stringify(outcome)).not.toContain('private provider details');
+    }
+  });
+
+  test('healthy existing instances count as dispatched', async () => {
+    for (const status of ['queued', 'running', 'paused', 'waiting', 'complete']) {
+      const outcome = await createWorkflowDispatchPort({
+        create: async () => {
+          throw { code: 'instance.already_exists' };
+        },
+        get: async () => ({ status: async () => ({ status }) }),
+      }).dispatch(target());
+      expect(outcome).toEqual({ ok: true });
+    }
+  });
+
   test('an existing instance is a success, not a provider failure', async () => {
     // The local runtime throws `instance.already_exists` where the hosted one
     // returns the existing instance. Both mean the same thing — the job's instance
@@ -303,6 +346,7 @@ describe('dispatching an instance that already exists', () => {
     // as `dispatch_failed` and, because the code is retryable, make recovery retry
     // the same call forever.
     const outcome = await createWorkflowDispatchPort({
+      get: async () => ({ status: async () => ({ status: 'running' }) }),
       create: async () => {
         // Shaped exactly as the pinned local runtime throws it: the code is the first
         // parenthesised token of the message, and there is no `code` property at all.
@@ -317,6 +361,7 @@ describe('dispatching an instance that already exists', () => {
 
   test('an error that carries a declared code is honoured without parsing its message', async () => {
     const outcome = await createWorkflowDispatchPort({
+      get: async () => ({ status: async () => ({ status: 'running' }) }),
       create: async () => {
         const error = new Error('a different sentence entirely');
         (error as Error & { code: string }).code = 'instance.already_exists';
@@ -331,6 +376,7 @@ describe('dispatching an instance that already exists', () => {
     // The check is on the code, not the message: a message search would accept this
     // one, and accepting it would mean never recording a real outage.
     const outcome = await createWorkflowDispatchPort({
+      get: async () => ({ status: async () => ({ status: 'running' }) }),
       create: async () => {
         const error = new Error('WorkflowError: (quota_exceeded) a quota was exceeded');
         (error as Error & { code: string }).code = 'provider_unavailable';

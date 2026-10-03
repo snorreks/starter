@@ -34,7 +34,7 @@
 // attempt-scoped key.
 
 import { DurableObject } from 'cloudflare:workers';
-import { MEDIA_CONTAINER_PORT } from './env.ts';
+import { MEDIA_CONTAINER_PORT, resolveProcessorOrigin } from './env.ts';
 import { MAX_INPUT_BYTES, MAX_OUTPUT_BYTES } from './media_store.ts';
 import {
   createProcessorClient,
@@ -94,11 +94,14 @@ export class EncodeContainer extends DurableObject<EncodeContainerEnv> {
    * question an operator needs answered by reading the configuration.
    */
   private processor(): EncodeProcessor {
-    const configured = this.env.PROCESSOR_ORIGIN?.trim() ?? '';
-    if (configured.length > 0) {
+    const configured = resolveProcessorOrigin(this.env.PROCESSOR_ORIGIN);
+    if (!configured.ok) {
+      throw new Error(configured.problem);
+    }
+    if (configured.origin.length > 0) {
       return createProcessorClient({
         fetcher: fetch,
-        origin: configured,
+        origin: configured.origin,
         maxInputBytes: MAX_INPUT_BYTES,
         maxOutputBytes: MAX_OUTPUT_BYTES,
       });

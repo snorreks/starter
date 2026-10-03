@@ -14,9 +14,10 @@
 
 import { Database } from 'bun:sqlite';
 import { beforeEach, describe, expect, test } from 'bun:test';
-import { readdirSync, readFileSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { discoverMigrations } from '../../tests/migrations.ts';
 import { createJobRepository, type JobsDatabase } from './job_repository.ts';
 import {
   type ArtifactSweepRepository,
@@ -42,9 +43,7 @@ const MIGRATIONS_DIR = join(REPO_ROOT, 'packages/backend/database/drizzle-d1');
  * must not do. `readdirSync` order is not guaranteed to be numeric on every
  * filesystem, hence the explicit sort.
  */
-const MIGRATIONS = readdirSync(MIGRATIONS_DIR)
-  .filter((file) => file.endsWith('.sql'))
-  .sort();
+const MIGRATIONS = discoverMigrations(MIGRATIONS_DIR);
 
 const migrate = (db: Database): void => {
   for (const file of MIGRATIONS) {

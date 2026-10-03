@@ -142,21 +142,15 @@ export const dispatchTargetFor = (job: JobRecord, attemptId: string): DispatchTa
 // -----------------------------------------------------------------------------
 
 /**
- * The one method this repository asks of a Workflow binding.
+ * The creation and status lookup this repository asks of a Workflow binding.
  *
- * Declared structurally rather than importing `cloudflare:workers`, and that is
- * the point: the shape a Workflow binding has (`create({ id, params })`) is a
- * two-line contract, while importing the platform module would make this package
- * unloadable outside workerd — and this package is also used by the jobs Worker's
- * own recovery pass and by unit tests that run under Bun.
- *
- * `create` is also the *whole* reason dispatch is idempotent. Cloudflare's binding
- * addresses an existing instance by id instead of starting a second one, so the
- * deterministic `workflowId` is what turns "the caller retried" into "the same
- * instance was addressed again" rather than two encodes of one job.
+ * Declared structurally so this package also runs outside workerd. A deterministic
+ * id addresses the same instance on retry; when creation reports an existing
+ * instance, its status must confirm that it has not errored or been terminated.
  */
 export interface WorkflowInstanceBinding {
   create(options: { id: string; params?: unknown }): Promise<{ id: string }>;
+  get(id: string): Promise<{ status(): Promise<{ status: string }> }>;
 }
 
 /**
@@ -254,16 +248,23 @@ export const createWorkflowDispatchPort = (
         },
       });
     } catch (error) {
-      // "This instance already exists" is **success**, and it is the case this whole
-      // derivation exists to produce: a retried admission, a crash between the D1
-      // commit and the response, and a recovery pass all address one instance. The
-      // local runtime (wrangler 4.142.0's miniflare) throws
-      // `instance.already_exists` rather than returning the existing instance, and
-      // treating that as a provider failure would make every retry look like an
-      // outage — and, because the code is retryable, would make recovery retry
-      // forever.
+      // An existing instance counts only if it can still run or has completed.
+      // Failed instances and unavailable status reads remain recoverable failures.
       if (isAlreadyExists(error)) {
-        return { ok: true };
+        try {
+          const instance = await binding.get(target.workflowId);
+          const { status } = await instance.status();
+          if (
+            typeof status === 'string' &&
+            status.length > 0 &&
+            status !== 'errored' &&
+            status !== 'terminated'
+          ) {
+            return { ok: true };
+          }
+        } catch {
+          // A failed lookup cannot certify that this job was dispatched.
+        }
       }
       // The reason is deliberately not interpolated: it is provider text, and it
       // would end up stored on the job row.

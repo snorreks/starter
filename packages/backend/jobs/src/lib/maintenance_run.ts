@@ -48,9 +48,7 @@
 import type { Clock, JobsDatabase } from './job_repository.ts';
 import type { MaintenanceReport } from './maintenance.ts';
 
-export type { MaintenanceReport };
-
-export type { Clock };
+export type { Clock, MaintenanceReport };
 
 /**
  * The one schedule this deployment runs maintenance on.
@@ -113,7 +111,7 @@ export interface MaintenanceRun {
  * The slot a scheduled time belongs to, as epoch milliseconds.
  *
  * Derived from the *cron*, not assumed: an hourly schedule floors to the hour, and
- * anything with an explicit minute floors to that minute. Reading the cron's
+ * schedules with multiple minutes per hour floor to the minute. Reading the cron's
  * minute field is what keeps this correct if the schedule is ever changed to a
  * quarter-hourly one — a hardcoded hourly floor would then collapse four distinct
  * slots into one and silently skip three of them.
@@ -125,7 +123,7 @@ export interface MaintenanceRun {
  */
 export const slotFloorMs = (scheduledTimeMs: number, cron: string = MAINTENANCE_CRON): number => {
   const minuteField = cron.trim().split(/\s+/)[0] ?? '*';
-  const hourly = minuteField === '*' || minuteField === '*/1';
+  const hourly = /^(?:[0-5]?\d)$/.test(minuteField);
   const floor = hourly ? 3_600_000 : 60_000;
   return Math.floor(scheduledTimeMs / floor) * floor;
 };
@@ -178,8 +176,8 @@ export const describeRunRequest = (
 ): { runKey: string; slot: string | null; scheduledTime: number | null } =>
   request.trigger === 'scheduled'
     ? {
-        runKey: scheduledRunKey(request.scheduledTimeMs, request.cron ?? MAINTENANCE_CRON),
-        slot: slotLabel(request.scheduledTimeMs, request.cron ?? MAINTENANCE_CRON),
+        runKey: scheduledRunKey(request.scheduledTimeMs, MAINTENANCE_CRON),
+        slot: slotLabel(request.scheduledTimeMs, MAINTENANCE_CRON),
         scheduledTime: request.scheduledTimeMs,
       }
     : { runKey: manualRunKey(request.requestId), slot: null, scheduledTime: null };
@@ -330,9 +328,14 @@ export const createMaintenanceRunRepository = (
            SET cutoff_at = ?, started_at = ?, completed_at = NULL, error_code = NULL,
                expired_sessions = 0, idle_rate_limits = 0, artifacts_queued = 0,
                artifacts_retired = 0, pending_dispatches = 0
-           WHERE run_key = ? AND status = 'running'`,
+           WHERE run_key = ? AND status = 'running' AND started_at = ?`,
         )
-        .bind(Math.floor(cutoffAtMs / 1000), nowSec, described.runKey)
+        .bind(
+          Math.floor(cutoffAtMs / 1000),
+          nowSec,
+          described.runKey,
+          Math.floor(existing.startedAt / 1000),
+        )
         .run();
       if (takeover.changes !== 1) {
         // Another invocation took it over between the read and this write. Its

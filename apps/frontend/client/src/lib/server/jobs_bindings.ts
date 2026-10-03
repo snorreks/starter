@@ -22,7 +22,11 @@
 // reaches this half of the application, which is why the web Worker still builds and
 // tests exactly as it did before compute existed.
 
-import { createWorkflowDispatchPort, type WorkflowDispatchPort } from '@starter/jobs';
+import {
+  createWorkflowDispatchPort,
+  type WorkflowDispatchPort,
+  type WorkflowInstanceBinding,
+} from '@starter/jobs';
 import type { JobArtifactReader, RangeRequest } from '#lib/server/jobs_service.ts';
 
 /**
@@ -36,9 +40,7 @@ import type { JobArtifactReader, RangeRequest } from '#lib/server/jobs_service.t
  * how to retry that one.
  */
 export const createDispatchPort = (
-  binding:
-    | { create(options: { id: string; params?: unknown }): Promise<{ id: string }> }
-    | undefined,
+  binding: WorkflowInstanceBinding | undefined,
 ): WorkflowDispatchPort => createWorkflowDispatchPort(binding);
 
 /**

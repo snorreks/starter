@@ -152,14 +152,13 @@ export interface EncodeProcessor {
  */
 const readRefusal = async (response: Response): Promise<ProcessorOutcome> => {
   let code: ProcessorErrorCode = 'internal_error';
-  let message = 'The processor refused the request.';
+  const message = 'The processor refused the request.';
   try {
     const document: unknown = await response.json();
     const error = (document as { error?: { code?: unknown; message?: unknown } } | null)?.error;
     if (typeof error?.code === 'string' && typeof error.message === 'string') {
       if (isKnownCode(error.code)) {
         code = error.code;
-        message = error.message;
       }
     }
   } catch {

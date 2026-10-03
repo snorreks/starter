@@ -13,9 +13,10 @@
 
 import { Database } from 'bun:sqlite';
 import { beforeEach, describe, expect, test } from 'bun:test';
-import { readdirSync, readFileSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { discoverMigrations } from '../../tests/migrations.ts';
 import type { Clock, JobsDatabase } from './job_repository.ts';
 import {
   createMaintenanceRunRepository,
@@ -31,9 +32,7 @@ import {
 const REPO_ROOT = fileURLToPath(new URL('../../../../../', import.meta.url)).replace(/\/$/, '');
 const MIGRATIONS_DIR = join(REPO_ROOT, 'packages/backend/database/drizzle-d1');
 
-const MIGRATIONS = readdirSync(MIGRATIONS_DIR)
-  .filter((file) => file.endsWith('.sql'))
-  .sort();
+const MIGRATIONS = discoverMigrations(MIGRATIONS_DIR);
 
 const migrate = (db: Database): void => {
   for (const file of MIGRATIONS) {
@@ -99,6 +98,24 @@ const report = (overrides: Partial<MaintenanceReport> = {}): MaintenanceReport =
 });
 
 describe('the run key', () => {
+  test('every-minute schedules keep two distinct minutes separate', () => {
+    const first = Date.UTC(2026, 9, 3, 17, 0, 0);
+    for (const cron of ['* * * * *', '*/1 * * * *']) {
+      expect(scheduledRunKey(first, cron)).not.toBe(scheduledRunKey(first + 60_000, cron));
+    }
+  });
+
+  test('provider cron metadata cannot change the committed maintenance slot', () => {
+    const scheduledTimeMs = Date.UTC(2026, 9, 3, 17, 17, 0);
+    expect(
+      describeRunRequest({ trigger: 'scheduled', scheduledTimeMs, cron: '* * * * *' }),
+    ).toEqual({
+      runKey: scheduledRunKey(scheduledTimeMs, MAINTENANCE_CRON),
+      slot: slotLabel(scheduledTimeMs, MAINTENANCE_CRON),
+      scheduledTime: scheduledTimeMs,
+    });
+  });
+
   test('two firings of one scheduled slot address the same run', () => {
     // 17:00:00 and 17:00:59 are the same hourly slot. A provider that delivers
     // one firing late, or twice, must not be able to start two sweeps.
@@ -152,6 +169,19 @@ describe('the run key', () => {
 });
 
 describe('claiming a run', () => {
+  test('two callers observing a stale run cannot both take it over', async () => {
+    const request = { trigger: 'manual' as const, requestId: 'concurrent-takeover' };
+    await repository.begin(request, nowMs);
+    nowMs += MAINTENANCE_RUN_TAKEOVER_MS + 1_234;
+    // Both reads resolve before either caller resumes at its compare-and-set.
+    const claims = await Promise.all([
+      repository.begin(request, nowMs),
+      repository.begin(request, nowMs),
+    ]);
+    expect(claims.filter((claim) => claim.ok)).toHaveLength(1);
+    expect(claims.filter((claim) => !claim.ok && claim.reason === 'in_progress')).toHaveLength(1);
+  });
+
   test('a second firing of one slot cannot start a second sweep', async () => {
     const scheduledTimeMs = Date.UTC(2026, 9, 3, 17, 0, 0);
     const first = await repository.begin({ trigger: 'scheduled', scheduledTimeMs }, nowMs);

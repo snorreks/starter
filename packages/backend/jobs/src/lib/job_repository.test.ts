@@ -25,10 +25,11 @@
 
 import { Database } from 'bun:sqlite';
 import { beforeEach, describe, expect, test } from 'bun:test';
-import { readdirSync, readFileSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { IDEMPOTENCY_KEY_HEADER } from '@starter/schemas/jobs';
+import { discoverMigrations } from '../../tests/migrations.ts';
 import {
   type Clock,
   createJobRepository,
@@ -59,9 +60,7 @@ const MIGRATIONS_DIR = join(REPO_ROOT, 'packages/backend/database/drizzle-d1');
 const migrate = (db: Database): void => {
   // Discovered, not listed: a hardcoded array is one more place to forget when a
   // migration lands, and a suite running against a stale schema still passes.
-  const files = readdirSync(MIGRATIONS_DIR)
-    .filter((file) => file.endsWith('.sql'))
-    .sort();
+  const files = discoverMigrations(MIGRATIONS_DIR);
   for (const file of files) {
     const sql = readFileSync(join(MIGRATIONS_DIR, file), 'utf8');
     for (const statement of sql.split('--> statement-breakpoint')) {

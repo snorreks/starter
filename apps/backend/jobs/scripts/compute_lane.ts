@@ -214,7 +214,7 @@ export const fixtureBytes = async (): Promise<Uint8Array> =>
 
 export const build = async (): Promise<void> => {
   if (!existsSync(DIST_ENTRY)) {
-    fail(
+    throw new Error(
       'apps/backend/jobs/dist/index.js does not exist. Run `bun run build` first: this lane\n' +
         '  drives the *built* Worker, so a lane that bundled its own copy would not be\n' +
         '  testing the artifact a deploy ships.',
@@ -235,7 +235,17 @@ const runTests = async (env: Record<string, string>): Promise<number> => {
     env: { ...process.env, ...env },
   });
   return new Promise((resolve) => {
-    child.on('exit', (code) => resolve(code ?? 1));
+    const interrupt = () => child.kill('SIGINT');
+    const terminate = () => child.kill('SIGTERM');
+    const finish = (code: number) => {
+      process.off('SIGINT', interrupt);
+      process.off('SIGTERM', terminate);
+      resolve(code);
+    };
+    process.once('SIGINT', interrupt);
+    process.once('SIGTERM', terminate);
+    child.once('error', () => finish(1));
+    child.once('exit', (code) => finish(code ?? 1));
   });
 };
 
@@ -271,12 +281,28 @@ if (command === 'serve') {
   const dockerVersion = requireDocker();
   await ensureMediaImage(dockerVersion);
   const processor = await startProcessor();
-  const code = await runTests({
-    COMPUTE_LANE: '1',
-    PROCESSOR_ORIGIN: `http://127.0.0.1:${PROCESSOR_PORT}`,
-    MEDIA_IMAGE,
-  });
-  await processor.stop();
+  let stopping: Promise<void> | undefined;
+  const stop = () => (stopping ??= processor.stop());
+  const interrupt = () => {
+    void stop().finally(() => process.exit(130));
+  };
+  const terminate = () => {
+    void stop().finally(() => process.exit(143));
+  };
+  process.once('SIGINT', interrupt);
+  process.once('SIGTERM', terminate);
+  let code: number;
+  try {
+    code = await runTests({
+      COMPUTE_LANE: '1',
+      PROCESSOR_ORIGIN: `http://127.0.0.1:${PROCESSOR_PORT}`,
+      MEDIA_IMAGE,
+    });
+  } finally {
+    await stop();
+    process.off('SIGINT', interrupt);
+    process.off('SIGTERM', terminate);
+  }
   process.exit(code);
 } else {
   fail(`Unknown compute-lane command "${command}". Use "test" or "serve".`);

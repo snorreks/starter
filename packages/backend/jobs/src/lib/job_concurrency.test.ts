@@ -11,9 +11,10 @@
 
 import { Database } from 'bun:sqlite';
 import { beforeEach, describe, expect, test } from 'bun:test';
-import { readdirSync, readFileSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { discoverMigrations } from '../../tests/migrations.ts';
 import {
   type Clock,
   createJobRepository,
@@ -31,9 +32,7 @@ const MIGRATIONS_DIR = join(REPO_ROOT, 'packages/backend/database/drizzle-d1');
  * schema one migration behind is worse than no suite: it reports the jobs tables
  * as they were before the newest migration changed them.
  */
-const MIGRATIONS = readdirSync(MIGRATIONS_DIR)
-  .filter((file) => file.endsWith('.sql'))
-  .sort();
+const MIGRATIONS = discoverMigrations(MIGRATIONS_DIR);
 
 const migrate = (db: Database): void => {
   for (const file of MIGRATIONS) {

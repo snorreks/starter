@@ -166,7 +166,7 @@ export const createMediaStore = (
     // `head` is the cheap existence check, and it is available below for exactly
     // that; this path wants the body anyway, so it reads the object once and treats
     // a null as the truth it is.
-    const object = await bucket.get(key).catch(() => null);
+    const object = await bucket.get(key);
     if (object === null) {
       return null;
     }

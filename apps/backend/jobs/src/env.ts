@@ -99,6 +99,16 @@ export const resolveJobsProfile = (env: { JOBS_PROFILE?: string }): ProfileResol
   return { ok: true, profile: match };
 };
 
+/** Deployment mode must be explicit at every Workflow entry. */
+export const requireJobsDeploymentEnvironment = (env: { DEPLOYMENT_ENV?: string }): void => {
+  const value = env.DEPLOYMENT_ENV?.trim();
+  if (value === undefined || !['local', 'development', 'staging', 'production'].includes(value)) {
+    throw new Error(
+      'Set DEPLOYMENT_ENV to local, development, staging, or production in apps/backend/jobs/wrangler.jsonc.',
+    );
+  }
+};
+
 const REQUIRED_BINDINGS = ['DB', 'MEDIA', 'ENCODE_WORKFLOW', 'MAINTENANCE_WORKFLOW', 'CONTAINER'];
 
 /**

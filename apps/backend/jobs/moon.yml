@@ -60,6 +60,7 @@ tasks:
     inputs:
       - '@group(configs)'
       - '@group(sources)'
+      - '@group(tests)'
 
   typecheck:
     command: 'bun'

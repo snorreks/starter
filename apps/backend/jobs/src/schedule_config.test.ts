@@ -35,8 +35,8 @@ interface WorkflowEntry {
 }
 
 interface WranglerConfig {
-  name: string;
-  main: string;
+  name?: string;
+  main?: string;
   routes?: unknown[];
   vars?: Record<string, string>;
   d1_databases?: Array<{ binding: string; database_name: string }>;
@@ -50,7 +50,7 @@ interface WranglerConfig {
     image?: string;
   }>;
   workflows?: WorkflowEntry[];
-  env?: Record<string, { workflows?: WorkflowEntry[]; vars?: Record<string, string> }>;
+  env?: Record<string, WranglerConfig>;
 }
 
 /**
@@ -149,6 +149,25 @@ describe('the committed maintenance schedule', () => {
 });
 
 describe('the configuration as a whole', () => {
+  test('web and jobs share a distinct MEDIA bucket for each deployed environment', () => {
+    const web = JSON.parse(
+      stripComments(readFileSync(join(APP_DIR, '../../frontend/client/wrangler.jsonc'), 'utf8')),
+    ) as WranglerConfig;
+    const names: string[] = [];
+    for (const environment of ['staging', 'production']) {
+      const jobsBucket = config().env?.[environment]?.r2_buckets?.find(
+        (bucket) => bucket.binding === 'MEDIA',
+      )?.bucket_name;
+      const webBucket = web.env?.[environment]?.r2_buckets?.find(
+        (bucket) => bucket.binding === 'MEDIA',
+      )?.bucket_name;
+      expect(jobsBucket).toBe(`starter-media-${environment}`);
+      expect(webBucket).toBe(jobsBucket);
+      names.push(jobsBucket as string);
+    }
+    expect(new Set(names).size).toBe(2);
+  });
+
   test('this Worker has no route and no public API', () => {
     const document = config();
     // `routes` absent means no custom domain; the default is workers.dev only if a
@@ -158,7 +177,7 @@ describe('the configuration as a whole', () => {
     // The entry must not export a queue consumer or a `scheduled` handler either:
     // a second trigger for the same sweep is what "never both" rules out at the
     // code level, and the schedule above is the only one.
-    expect(entry).not.toMatch(/export\s+default\s*\{[^}]*scheduled/s);
+    expect(entry).not.toMatch(/\bscheduled\s*(?:\(|:)/);
     expect(entry).not.toMatch(/async\s+queue\s*\(/);
   });
 
@@ -186,6 +205,11 @@ describe('the configuration as a whole', () => {
     // Non-inheritable keys are not inherited: an environment that omits `r2_buckets`
     // deploys a Worker whose code asks for `MEDIA` and gets nothing.
     for (const [, section] of Object.entries(config().env ?? {})) {
+      expect(section.d1_databases?.map((binding) => binding.binding)).toContain('DB');
+      expect(section.r2_buckets?.map((binding) => binding.binding)).toContain('MEDIA');
+      expect(section.durable_objects?.bindings.map((binding) => binding.name)).toContain(
+        'CONTAINER',
+      );
       expect(section.workflows?.map((workflow) => workflow.binding).sort()).toEqual([
         'ENCODE_WORKFLOW',
         'MAINTENANCE_WORKFLOW',

@@ -114,9 +114,8 @@ two attempts cannot both see the last one.
 ## Dispatch: a port, and why it is not a queue
 
 `WorkflowDispatchPort` has one method. It is deliberately not a queue, a worker, a
-retry schedule or a dead-letter table: PR H owns all of that, and a second
-implementation here would be one more place for the two to disagree about when a
-job is recoverable.
+retry schedule or a dead-letter table. The jobs Worker owns encode retries and
+maintenance recovery; the port only starts or checks a Workflow instance.
 
 What the port does fix is the failure the round-2 review called out: **D1 committed
 the admission and then the Workflow call failed.** The job row therefore carries
@@ -126,11 +125,11 @@ the admission and then the Workflow call failed.** The job row therefore carries
 `listPendingDispatches` for recovery when its error code is retryable and fewer
 than `MAX_DISPATCH_ATTEMPTS` (3) dispatch calls have failed.
 
-**The live compute profile is disabled.** Until PR H lands, the wired dispatcher is
-`createDisabledDispatchPort()`, which refuses every dispatch with
-`compute_profile_disabled` and says the job is recoverable. It does not report
-success, because a port that did would let `POST /api/jobs` answer 202 for a job
-nothing will ever run — invisible until somebody looks for the video.
+`JOBS_PROFILE=encode` selects `createWorkflowDispatchPort()` through the web
+Worker's encode binding. The default disabled profile selects
+`createDisabledDispatchPort()`, which refuses with `compute_profile_disabled`.
+The jobs Worker's maintenance workflow recovers pending dispatches when encoding
+is enabled.
 
 The recording dispatcher used by the tests lives in `dispatch_port.test.ts` and is
 not exported. A recording dispatcher shipped next to the real one is a second
@@ -163,8 +162,9 @@ lease expires, and failed dispatches that are non-retryable, have exhausted
 retries, or have been idle for one hour (`dispatchRetentionMs` is configurable).
 Live attempt leases are preserved; terminalization releases the owner's active slot.
 
-**Not implemented here:** the schedule. PR H owns `17 * * * *` UTC, the durable
-run key per scheduled slot, and the Worker that executes it.
+The jobs Worker declares `17 * * * *` UTC for staging and production in
+`apps/backend/jobs/wrangler.jsonc`. This package implements the durable run key
+and run repository; `MaintenanceWorkflow` performs the sweep and recovery.
 
 ## The clock
 
@@ -245,12 +245,14 @@ Verified in this repository, by real statements:
   are confirmed gone;
 - bounded maintenance with truthful affected-row counts.
 
-- that a dispatch of an existing instance is idempotent against **Cloudflare's**
-  hosted provider — the local runtime throws `instance.already_exists`, and that
-  throw is what the mapping is tested against;
-- that a natural cron firing reaches the workflow — the local runtime cannot deliver
-  a schedule event, so the trigger branch is unit-tested and the manual path is
-  exercised in the compute lane.
+### Verified only against the local runtime
+
+- Existing-instance dispatch is tested against the local runtime's
+  `instance.already_exists` response and a status lookup. Hosted-provider
+  idempotency has not been verified.
+- The manual maintenance path runs in the compute lane and trigger selection is
+  unit-tested. The local runtime cannot deliver a natural cron event, so natural
+  cron delivery has not been verified.
 
 **Not** verified anywhere in this repository, and not claimed:
 

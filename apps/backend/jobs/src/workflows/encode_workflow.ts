@@ -57,7 +57,12 @@ import {
   JOB_OUTPUT_RETENTION_MS,
   type JobStatus,
 } from '@starter/schemas/jobs';
-import type { JobsEnv } from '../env.ts';
+import {
+  type JobsEnv,
+  requireJobsBindings,
+  requireJobsDeploymentEnvironment,
+  resolveJobsProfile,
+} from '../env.ts';
 import { createMediaStore, MAX_INPUT_BYTES, MAX_OUTPUT_BYTES } from '../media_store.ts';
 import { createProcessorClient } from '../processor_client.ts';
 
@@ -147,6 +152,15 @@ export class EncodeWorkflow extends WorkflowEntrypoint<JobsEnv, EncodeWorkflowPa
   }
 
   override async run(event: WorkflowEvent<EncodeWorkflowParams>, step: WorkflowStep) {
+    requireJobsBindings(this.env);
+    requireJobsDeploymentEnvironment(this.env);
+    const profile = resolveJobsProfile(this.env);
+    if (!profile.ok) {
+      throw new Error(`${profile.problem} ${profile.remedy}`);
+    }
+    if (profile.profile !== 'encode') {
+      return { jobId: event.payload.jobId, outcome: 'compute_profile_disabled' };
+    }
     const params = event.payload;
     const repository = createJobRepository(this.env.DB as unknown as JobsDatabase, systemClock);
     const store = createMediaStore(this.env.MEDIA);
@@ -251,9 +265,11 @@ export class EncodeWorkflow extends WorkflowEntrypoint<JobsEnv, EncodeWorkflowPa
       // wrote. The object *is* the artifact; the response is a claim about it.
       const head = await store.head(encoded.key);
       if (head === null) {
+        await store.delete(encoded.key);
         return 'missing_output';
       }
       if (head.bytes !== encoded.bytes) {
+        await store.delete(encoded.key);
         return 'size_mismatch';
       }
       const written = await repository.completeAttempt(params.jobId, params.attemptId, {
@@ -269,6 +285,9 @@ export class EncodeWorkflow extends WorkflowEntrypoint<JobsEnv, EncodeWorkflowPa
       });
       // `fenced` is not a failure: this attempt lost its lease, so the winner's
       // committed result stands and this one must not overwrite it.
+      if (!written.ok) {
+        await store.delete(encoded.key);
+      }
       return written.ok ? 'committed' : 'fenced';
     });
 
@@ -337,6 +356,7 @@ export class EncodeWorkflow extends WorkflowEntrypoint<JobsEnv, EncodeWorkflowPa
     // re-sending the same input cannot change the processor's output, so this is
     // not a retry.
     if (write.bytes !== outcome.artifact.bytes || write.sha256 !== outcome.artifact.sha256) {
+      await store.delete(write.key);
       return {
         ok: false,
         retryable: false,

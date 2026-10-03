@@ -16,7 +16,7 @@
   // `wrangler deploy` is NOT how this file is meant to be applied by hand: the
   // resource ids come from the gitignored overlay and the environment names from
   // the resolved target, exactly as for the web Worker. See `scripts/src/deploy`.
-  "$schema": "../../../../node_modules/wrangler/config-schema.json",
+  "$schema": "../../../node_modules/wrangler/config-schema.json",
   "name": "starter-jobs",
   "compatibility_date": "2026-10-01",
   "compatibility_flags": ["nodejs_compat"],
@@ -57,7 +57,7 @@
       // config: an invented id fails at deploy time with an opaque error, and a
       // real one must never be committed. `bun run deploy:configure` writes it.
       "database_name": "starter-web",
-      "migrations_dir": "../../../../packages/backend/database/drizzle-d1"
+      "migrations_dir": "../../../packages/backend/database/drizzle-d1"
     }
   ],
   "r2_buckets": [
@@ -175,10 +175,10 @@
         {
           "binding": "DB",
           "database_name": "starter-web",
-          "migrations_dir": "../../../../packages/backend/database/drizzle-d1"
+          "migrations_dir": "../../../packages/backend/database/drizzle-d1"
         }
       ],
-      "r2_buckets": [{ "binding": "MEDIA", "bucket_name": "starter-media" }],
+      "r2_buckets": [{ "binding": "MEDIA", "bucket_name": "starter-media-staging" }],
       "durable_objects": {
         "bindings": [{ "name": "CONTAINER", "class_name": "EncodeContainer" }]
       },
@@ -224,10 +224,10 @@
         {
           "binding": "DB",
           "database_name": "starter-web",
-          "migrations_dir": "../../../../packages/backend/database/drizzle-d1"
+          "migrations_dir": "../../../packages/backend/database/drizzle-d1"
         }
       ],
-      "r2_buckets": [{ "binding": "MEDIA", "bucket_name": "starter-media" }],
+      "r2_buckets": [{ "binding": "MEDIA", "bucket_name": "starter-media-production" }],
       "durable_objects": {
         "bindings": [{ "name": "CONTAINER", "class_name": "EncodeContainer" }]
       },
