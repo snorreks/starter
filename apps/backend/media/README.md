@@ -1,6 +1,10 @@
 # apps/backend/media — the bounded FFmpeg encode processor
 
-One Rust crate with one encoding core and two entrypoints:
+## Purpose and runtime
+
+One Rust crate with one encoding core and two entrypoints. It runs as a Linux
+process — inside a Cloudflare Container, or as a finite batch command — and never
+in the browser or in workerd.
 
 | Entrypoint | Shape | Used by |
 |---|---|---|
@@ -147,7 +151,7 @@ three seconds, but the window is deliberately *not* a fingerprint of it: the CLI
 encodes local files with the same preset, so "three seconds exactly" would make
 that entrypoint useless.
 
-## Local development
+## Setup and commands
 
 Requires Rust 1.98.1 (`rust-toolchain.toml` handles the pin if you have `rustup`),
 a C toolchain for the `libc` dependency, and `ffmpeg`/`ffprobe` on `PATH`. Run
@@ -383,9 +387,9 @@ The timeout and cancellation controls use an injected clock
 120 seconds proves the same thing more slowly. The invalid/oversized controls are
 real refusals with real byte counts.
 
-`scripts/measure.sh` runs the image and asserts the measurements in the table
-above; it exits non-zero if a number stops matching, so the README cannot drift
-away from the image without something failing.
+`apps/backend/media/scripts/measure.sh` runs the image and asserts the
+measurements in the table above; it exits non-zero if a number stops matching, so
+the README cannot drift away from the image without something failing.
 
 ## Related
 
