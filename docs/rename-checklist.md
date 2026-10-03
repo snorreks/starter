@@ -45,7 +45,9 @@ The pieces to remove, in dependency order:
 3. a migration: `bun run db:generate && bun run db:migrate`
 4. `apps/frontend/client/src/lib/server/notes_service.ts`, and its two route adapters
    (`src/routes/api/notes/+server.ts` and `src/routes/api/notes/[id]/+server.ts`)
-5. `apps/frontend/client/src/lib/features/notes/`
+5. `packages/frontend/features/src/notes/` — the View, ViewModel and service are
+   shared, so removing the feature removes them from both the web app and any other
+   host
 6. `apps/frontend/client/src/routes/notes/`, and its tests
 7. `apps/e2e/tests/notes.spec.ts`; keep `auth.spec.ts` and retarget it
 

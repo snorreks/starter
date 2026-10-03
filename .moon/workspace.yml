@@ -51,6 +51,14 @@ projects:
   # were already in `@starter/utils`, and the one component that needed to survive
   # moved into `@starter/ui` beside the components it renders.
   ui: 'packages/frontend/ui'
+  # `platform` is the contracts a host implements; `features` is the notes and
+  # account screens built on them. Both are browser-plane code that any host can
+  # render — the SSR web application today, a static native bundle next. Neither
+  # may import an application, a SvelteKit router or a Tauri bridge; `bun run
+  # guard` refuses each of those edges, which is what keeps one copy of a screen
+  # honest for two hosts.
+  platform: 'packages/frontend/platform'
+  features: 'packages/frontend/features'
 
   # Backend packages: server code. Shared only.
   database: 'packages/backend/database'

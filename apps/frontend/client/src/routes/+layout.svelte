@@ -9,7 +9,7 @@ import '#lib/runtime/logger';
 import { setDialogCapabilities } from '@starter/ui';
 import type { Snippet } from 'svelte';
 import { untrack } from 'svelte';
-import { sessionService, sessionState } from '#lib/services/session_service.svelte';
+import { sessionService, sessionState } from '#lib/composition/session.ts';
 import { goto, invalidateAll } from '$app/navigation';
 import type { LayoutData } from './$types';
 
@@ -29,22 +29,33 @@ setDialogCapabilities({
   confirm: async () => window.confirm('Are you sure?'),
 });
 
-let user = $state(sessionState.user);
-$effect(() => sessionState.subscribe((next) => (user = next)));
-
-// Seeded from the server's answer rather than fetched. `locals.user` is already
-// the verified identity, so a browser round trip here has exactly two possible
-// outcomes — the same answer, or the server and the browser disagreeing about who
-// is signed in — and the second is a bug rather than a refresh.
+// The server's answer is the identity. `locals.user` is already verified, so a
+// browser round trip here has exactly two possible outcomes — the same answer, or
+// the server and the browser disagreeing about who is signed in — and the second
+// is a bug rather than a refresh.
 //
-// `untrack` because this runs once, on both the server and the client, and only
-// the value at this moment is wanted. After a client-side navigation SvelteKit
-// re-runs the load and hands the component new props, and the *server* has already
-// re-rendered every page from them — the browser state is then brought back into
-// agreement by `invalidateAll()` and the sign-out path below, both of which are
-// explicit about it. Re-seeding reactively here would instead overwrite a session
-// the user just established by signing in.
-sessionState.set(untrack(() => data.user));
+// Read for the first render on both sides, and *written* into the client-side
+// session state from an effect rather than at component initialisation. An effect
+// does not run during SSR, so a request rendered on the server no longer writes
+// to module-scope state at all. That is the specific thing that matters here: the
+// session state is one object for the whole Worker isolate, so two concurrent
+// requests assigning to it would render whichever request arrived last — a signed
+// out user shown somebody else's address, from a page that cannot be cached.
+//
+// `untrack` for the same reason as before: this is the value at this moment, not a
+// live binding.
+let user = $state(untrack(() => data.user));
+
+$effect(() => {
+  // Browser only. Brings the client session into agreement with what the server
+  // just said, and follows later navigations: SvelteKit re-runs the load and hands
+  // this component new props, and `invalidateAll()` after a sign-in or sign-out is
+  // what triggers it. Both are explicit about wanting it — re-seeding on every
+  // value read would instead overwrite a session the user just established by
+  // signing in.
+  sessionState.set(data.user);
+  return sessionState.subscribe((next) => (user = next));
+});
 
 async function signOut(): Promise<void> {
   await sessionService.signOut();

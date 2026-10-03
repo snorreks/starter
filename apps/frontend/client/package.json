@@ -23,13 +23,15 @@
     "test:integration": "bun run build && bun test tests/worker_integration.test.ts"
   },
   "dependencies": {
+    "@sinclair/typebox": "0.34.52",
     "@starter/auth": "workspace:*",
     "@starter/database": "workspace:*",
+    "@starter/features": "workspace:*",
     "@starter/logger": "workspace:*",
+    "@starter/platform": "workspace:*",
     "@starter/schemas": "workspace:*",
     "@starter/ui": "workspace:*",
     "@starter/utils": "workspace:*",
-    "@sinclair/typebox": "0.34.52",
     "better-auth": "1.7.6",
     "drizzle-orm": "0.45.3"
   },

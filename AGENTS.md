@@ -106,7 +106,7 @@ apps/frontend/client     ONE SvelteKit app: browser half + Worker half
 apps/e2e                 Playwright specs + the harness that starts the server
 packages/shared/*        portable; no project dependencies
 packages/backend/*       database, auth — server only
-packages/frontend/*      ui, services — browser only
+packages/frontend/*      ui, platform, features — browser only
 scripts                  one tooling workspace
 .pi                      agent extensions, helpers, tests
 ```
@@ -136,6 +136,11 @@ Three directory rules that are *not* stylistic:
   `#lib/server/…`, never `fetch()`ing its own origin. A round trip to `/api/notes`
   from inside the process that serves `/api/notes` is a second, differently
   authenticated path to the same data.
+- **A feature receives its collaborators; it does not find them.** `NotesService`
+  takes an `ApiTransport`, `AuthViewModel` takes a session, an account service and
+  a `Navigation`. Only `apps/frontend/client/src/lib/composition/` decides which
+  ones this host has. A feature that imported `$app/navigation` or resolved a
+  module singleton would work in a browser and nowhere else.
 
 - **One authority decides what a command would change.** `scripts/src/deploy/target.ts`
   exports `resolveTarget(environment)`. Every command that can reach a remote

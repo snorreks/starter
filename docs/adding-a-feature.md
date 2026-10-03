@@ -138,18 +138,34 @@ works in development and fails in production for different reasons.
 
 ## 5. Client service
 
-`apps/frontend/client/src/lib/services/<domain>_service.svelte.ts`
+`packages/frontend/features/src/<domain>/<domain>_service.svelte.ts`
+
+A service takes an `ApiTransport` in its constructor and never imports one. The
+web application's transport is constructed in
+`apps/frontend/client/src/lib/composition/transport.ts`; a host that has no cookies
+constructs a different one and changes nothing else in this file.
 
 ```ts
-export class ThingService extends BaseClass {
-  readonly #api: ApiClient;
-  constructor(options: { api: ApiClient; className?: string }) { /* ... */ }
+export class ThingService {
+  readonly #transport: ApiTransport;
+
+  constructor(options: { transport: ApiTransport }) {
+    this.#transport = options.transport;
+  }
 
   async list(signal?: AbortSignal): Promise<Thing[]> {
-    return await this.#api.get<ThingList>('/api/things', { signal }).then((r) => r.things);
+    const body = await this.#transport.request<unknown>('/api/things', {
+      method: 'GET',
+      ...(signal === undefined ? {} : { signal }),
+    });
+    return parseDto(ThingListSchema, body, 'a thing list').things;
   }
 }
 ```
+
+**Check every response with `parseDto` against the shared schema.** `request<Thing>`
+compiles identically whether the server sent things or an error envelope, and
+`parseBody as T` turns a version skew into a screen showing nothing.
 
 Return typed values and let `AppError` propagate. Do not catch it and return a
 fallback — a ViewModel cannot then tell "the server said no" from "the network is
@@ -157,10 +173,16 @@ down", and both render as an empty list.
 
 ## 6. ViewModel
 
-`apps/frontend/client/src/lib/features/<domain>/`
+`packages/frontend/features/src/<domain>/<domain>_view_model.svelte.ts`
+
+The ViewModel receives its collaborators explicitly — service, and any host
+capability (`Navigation`, an account service) it needs. Nothing here imports
+`$app/*` or a module singleton, because a screen that resolves its own transport
+cannot be constructed with a fake, which makes every test of it a test of the
+network.
 
 ```ts
-export class ThingViewModel extends BaseClass {
+export class ThingViewModel {
   status = $state<Status>({ kind: 'loading' });   // loading | ready | error
   #guard = new StaleGuard();
 
@@ -195,8 +217,10 @@ formatting, and imports nothing from `@starter/ui` — Svelte components in a Wo
 compile and then fail, or drag `svelte/internal` into a bundle with no DOM. Both
 Biome and `bun run guard` refuse it.
 
-Compose it in a `*_composition.ts` next to the ViewModel, so the wiring is in one
-place and a test can construct the ViewModel without mounting anything.
+Compose it in the host's composition root — `src/lib/composition/<domain>.ts` for
+the web application — so the wiring is in one place and a test can construct the
+ViewModel without mounting anything. The composition root is also the only place
+that knows which transport, navigation and session the host has.
 
 ## 8. Tests
 

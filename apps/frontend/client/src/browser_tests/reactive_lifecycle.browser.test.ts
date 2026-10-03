@@ -11,14 +11,12 @@
 // No network and no server: services are faked, which is the point of the
 // composition seam.
 
+import { NoteCard, type NotesService, NotesViewModel } from '@starter/features/notes';
 import type { Note } from '@starter/schemas/notes';
 import { ErrorState, ScreenContainer } from '@starter/ui';
 import { StaleGuard } from '@starter/utils';
 import { flushSync } from 'svelte';
 import { describe, expect, test } from 'vitest';
-import NoteCard from '#lib/features/notes/note_card.svelte';
-import type { NotesService } from '#lib/features/notes/notes_service.svelte.ts';
-import { NotesViewModel } from '#lib/features/notes/notes_view_model.svelte.ts';
 import { emptySnippet, mountInDocument } from './mount_helper.ts';
 
 const note = (overrides: Partial<Note> = {}): Note => ({

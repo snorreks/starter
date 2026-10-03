@@ -226,15 +226,20 @@ bun run test:all          # each lane prints its own count
 
 ### Unit
 
-Across `packages/shared/*`, `scripts`, the client's Bun lane (which now includes the
-deployment-mode resolution tests that used to live in the API app), and the Pi
-extensions plus their loader smoke test.
+Across `packages/shared/*`, `packages/frontend/{platform,features}`, `scripts`, the
+client's Bun lane (which now includes the deployment-mode resolution tests that
+used to live in the API app), and the Pi extensions plus their loader smoke test.
 
 Pure logic, schema refusals, redaction, flag parsing, deploy and migration plans,
 process-tree teardown, and the contract state machine.
 
 The shared packages are where this matters most: everything else imports them, so
 a bug there surfaces as a confusing failure somewhere unrelated.
+
+`platform` and `features` run in this lane with **no application runtime**: their
+preload installs rune identity functions and deliberately installs *no* `$app/*`
+mock, so a shared module that reached for a host router fails to resolve rather
+than passing against a mock the web application happens to provide.
 
 ### Browser — `src/browser_tests`, Chromium via Vitest
 

@@ -1,0 +1,29 @@
+{
+  "name": "@starter/platform",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "license": "MIT",
+  "svelte": "./src/index.ts",
+  "exports": {
+    ".": {
+      "svelte": "./src/index.ts",
+      "default": "./src/index.ts"
+    }
+  },
+  "scripts": {
+    "lint": "biome lint src",
+    "format": "biome format src",
+    "fix": "biome check --write src --error-on-warnings",
+    "typecheck": "tsc --noEmit",
+    "test": "bun test"
+  },
+  "dependencies": {
+    "@sinclair/typebox": "0.34.52",
+    "@starter/schemas": "workspace:*",
+    "@starter/utils": "workspace:*"
+  },
+  "peerDependencies": {
+    "svelte": "^5.0.0"
+  }
+}

@@ -17,9 +17,9 @@
       given. `Refresh` and every mutation still go through `/api/notes`.
 -->
 <script lang="ts">
+import { NotesView } from '@starter/features/notes';
 import { untrack } from 'svelte';
-import { NotesView } from '#lib/features/notes';
-import { getNotesViewModel } from '#lib/features/notes/notes_composition';
+import { getNotesViewModel } from '#lib/composition/notes.ts';
 import type { PageData } from './$types';
 
 let { data }: { data: PageData } = $props();

@@ -134,7 +134,7 @@ reviewed:
 
 | Root | Plane | Role that is not the default |
 |---|---|---|
-| `packages/frontend/features/**` | `browser` | The View / ViewModel / service layers, decided by name exactly as in the web app's own `src/lib/features/**` |
+| `packages/frontend/features/**` | `browser` | The View / ViewModel / service layers, decided by name exactly as the web app's own feature directory used to decide them — one pattern covers both, so a file cannot be a View in the package and a plain module in the app |
 | `packages/frontend/platform/**` | `browser` | None. Contracts and injected transports; no screen state, so no feature role is claimed |
 | `apps/frontend/native/**` | `browser` under `src/`, `node` elsewhere | `src/lib/platform/**` is `native-bridge` — the only place `@tauri-apps/*` may appear |
 | `apps/backend/jobs/**` | `worker` | None yet |

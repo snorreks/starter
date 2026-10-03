@@ -17,13 +17,18 @@
   Nothing here fetches on mount.
 -->
 <script lang="ts">
+import { type AuthOutcome, AuthView } from '@starter/features/auth';
 import { untrack } from 'svelte';
-import { type AuthOutcome, AuthView, getAuthViewModel } from '#lib/features/auth';
-import { goto, invalidateAll } from '$app/navigation';
+import { getAuthViewModel } from '#lib/composition/auth.ts';
+import { goto } from '$app/navigation';
 import type { PageData } from './$types';
 
 let { data, form }: { data: PageData; form: ActionData } = $props();
 
+// `progressive` is the whole of this route's difference from the shared view: this
+// route *has* a form action, so the form posts to it when scripting is off and the
+// mode switch is the `toggle` submitter that action reads. A host with no action
+// renders the same component without it.
 const viewModel = getAuthViewModel({
   // Read untracked, because this is the *initial* mode and not a live binding. The
   // server owns which mode is rendered — the mode switch is a form submission, and a
@@ -39,14 +44,6 @@ const viewModel = getAuthViewModel({
   // hydration. That is a visible flash of an empty field on a screen whose whole point
   // is not losing what was typed.
   email: untrack(() => data.email),
-  navigate: async (path) => {
-    // After a successful sign-in the server has to re-render: the layout load
-    // carries the user, and `/notes` redirects on its own load. A client-side `goto`
-    // alone would navigate to a page whose server load runs against the session the
-    // browser already has.
-    await invalidateAll();
-    await goto(path);
-  },
 });
 
 $effect(() => {
@@ -111,5 +108,5 @@ type ActionData = {
 </script>
 
 {#if data.user === null}
-  <AuthView {viewModel} errors={viewModel.errors} />
+  <AuthView {viewModel} errors={viewModel.errors} progressive />
 {/if}

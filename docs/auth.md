@@ -185,6 +185,8 @@ unauthenticated request look identical at the `getSession` boundary.
 - `apps/frontend/client/src/lib/server/container.ts` is where auth, mail, the rate
   limiter and trusted origins are wired. It is the composition root for the server
   half; adding a dependency there means adding it deliberately, not transitively.
-- The feature's browser half is `src/lib/features/auth/`. It is a plain class plus a
+- The feature's browser half is `@starter/features`'s auth subpath
+  (`packages/frontend/features/src/auth/`), composed by
+  `apps/frontend/client/src/lib/composition/auth.ts`. It is a plain class plus a
   composition function — see [adding-a-feature.md](adding-a-feature.md) for why there
   is no base class to extend.

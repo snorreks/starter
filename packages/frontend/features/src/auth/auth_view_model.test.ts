@@ -14,21 +14,46 @@
 // would tell someone to go and check their inbox when their password is simply
 // wrong — and they would wait there for mail that is never coming.
 
-import { describe, expect, mock, spyOn, test } from 'bun:test';
+import { describe, expect, mock, test } from 'bun:test';
+import type { Navigation } from '@starter/platform';
+import type { SessionUser } from '@starter/schemas/auth';
 import { AppError, errorTypeForStatus } from '@starter/utils';
-import { apiClient } from '#lib/services/api_client.ts';
+import type { AccountService } from './account_service.ts';
+import type { AuthSession } from './auth_session_service.svelte.ts';
 import { AuthViewModel } from './auth_view_model.svelte.ts';
 
 const ADDRESS = 'someone@example.test';
 
+/**
+ * A user of the right shape, so a stub that resolves successfully resolves a
+ * value the production signature promises. `as unknown as AuthSession` above is
+ * then only carrying the *rejecting* stubs, where the return value is never read.
+ */
+const USER: SessionUser = {
+  id: 'user_1',
+  email: ADDRESS,
+  displayName: 'Someone',
+  provider: 'email',
+  emailVerified: true,
+};
+
 /** A `SessionService` whose every method the test controls. */
 const sessionStub = (
   overrides: Partial<Record<'signIn' | 'signUp', () => Promise<unknown>>> = {},
-) => ({
-  signIn: overrides.signIn ?? (() => Promise.resolve()),
-  signUp: overrides.signUp ?? (() => Promise.resolve()),
-  signOut: () => Promise.resolve(),
-  refresh: () => Promise.resolve(),
+): AuthSession =>
+  ({
+    signIn: overrides.signIn ?? (() => Promise.resolve(USER)),
+    signUp: overrides.signUp ?? (() => Promise.resolve(USER)),
+    signOut: () => Promise.resolve(),
+  }) as unknown as AuthSession;
+
+/** The three host capabilities, all fakes. Nothing here reaches an application. */
+const accountStub = (
+  overrides: Partial<{ sendVerificationEmail: () => Promise<void> }> = {},
+): AccountService => ({
+  sendVerificationEmail: overrides.sendVerificationEmail ?? (() => Promise.resolve()),
+  requestPasswordReset: () => Promise.resolve(),
+  resetPassword: () => Promise.resolve(),
 });
 
 const build = (
@@ -36,18 +61,24 @@ const build = (
     signIn?: () => Promise<unknown>;
     signUp?: () => Promise<unknown>;
     mode?: 'sign-in' | 'sign-up';
+    account?: AccountService;
   } = {},
 ): { viewModel: AuthViewModel; navigations: string[] } => {
   const navigations: string[] = [];
+  const navigation: Navigation = {
+    go: (path) => {
+      navigations.push(path);
+    },
+  };
+
   const viewModel = new AuthViewModel({
     session: sessionStub({
       ...(options.signIn ? { signIn: options.signIn } : {}),
       ...(options.signUp ? { signUp: options.signUp } : {}),
-    }) as never,
+    }),
+    account: options.account ?? accountStub(),
+    navigation,
     mode: options.mode ?? 'sign-in',
-    navigate: (path) => {
-      navigations.push(path);
-    },
   });
 
   viewModel.form = { email: ADDRESS, password: 'correct horse battery', displayName: 'Someone' };
@@ -168,25 +199,27 @@ describe('disposal during verification resend', () => {
       const gate = new Promise<void>((resolve) => {
         release = resolve;
       });
-      const post = spyOn(apiClient, 'post').mockImplementation(async <T>() => {
+      const sendVerificationEmail = mock(async () => {
         await gate;
         if (rejected) {
           throw new Error('send failed');
         }
-        return undefined as T;
       });
       try {
-        const { viewModel } = build();
+        const { viewModel } = build({ account: accountStub({ sendVerificationEmail }) });
         const pending = viewModel.resendVerification();
         await viewModel.dispose();
         release();
+
+        // Both outcomes are the same from here: the screen has been torn down, so
+        // neither a success message nor a failure may be published into it.
         expect(await pending).toBe(false);
         expect(viewModel.outcome).toBeUndefined();
         expect(viewModel.isSubmitting).toBe(false);
         expect(await viewModel.resendVerification()).toBe(false);
-        expect(post).toHaveBeenCalledTimes(1);
+        expect(sendVerificationEmail).toHaveBeenCalledTimes(1);
       } finally {
-        post.mockRestore();
+        sendVerificationEmail.mockRestore();
       }
     });
   }

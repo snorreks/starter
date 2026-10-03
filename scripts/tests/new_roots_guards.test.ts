@@ -110,6 +110,51 @@ describe('roots: packages/frontend/features keeps the feature layers', () => {
     expect(violation?.message).toContain('view');
     expect(violation?.message).toContain('service');
   });
+
+  test('rejects a shared feature that reaches an application by relative path', () => {
+    // The edge this extraction was most likely to take by accident. The web
+    // application's composition root owns a transport; a feature that imports it
+    // would compile, would pass its own tests, and would then be unreachable from
+    // the second host — with nothing in the type system saying so.
+    //
+    // The remedy the diagnostic prints is the one that works: publish the contract
+    // (`@starter/platform`) and take it as a constructor argument.
+    const features = featuresMember({
+      ...FEATURE_FILES,
+      'src/notes/notes_service.svelte.ts':
+        "import { notesService } from '../../../../../apps/frontend/client/src/lib/features/notes/notes_service.svelte.ts';\nexport const leaked = notesService;\n",
+    });
+
+    const violation = firstOf(
+      run(makeProject(withMembers([features]))),
+      'cross-workspace-relative-import',
+    );
+    expect(violation, 'expected cross-workspace-relative-import').toBeDefined();
+    expect(violation?.file).toBe('packages/frontend/features/src/notes/notes_service.svelte.ts');
+    expect(violation?.message).toContain('apps/frontend/client');
+    expect(violation?.message).toContain('exports');
+  });
+
+  test('rejects the Tauri API inside a shared feature', () => {
+    // A native bridge is the native composition root's job and lives in the
+    // `native-bridge` role there. A shared feature that imports it would be a
+    // component that only resolves inside a desktop shell — and it would still be
+    // in the web bundle, where `@tauri-apps/api` does not exist at all. The web
+    // build is the host that finds out last, which is why this has to be a guard
+    // and not a review convention.
+    const features = featuresMember({
+      ...FEATURE_FILES,
+      'src/notes/note_card.svelte':
+        '<script lang="ts">\n  import { invoke } from \'@tauri-apps/api/core\';\n</script>\n<article>{invoke}</article>\n',
+    });
+
+    const violation = firstOf(run(makeProject(withMembers([features]))), 'runtime-capability');
+    expect(violation, 'expected runtime-capability').toBeDefined();
+    expect(violation?.file).toBe('packages/frontend/features/src/notes/note_card.svelte');
+    expect(violation?.message).toContain('native-runtime');
+    // The positive half of the same rule: an ordinary shared component is fine.
+    expect(run(makeProject(withMembers([featuresMember(FEATURE_FILES)])))).toEqual([]);
+  });
 });
 
 // ── the native application ───────────────────────────────────────────────────

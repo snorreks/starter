@@ -1,0 +1,75 @@
+$schema: 'https://moonrepo.dev/schemas/v2/project.json'
+
+# Written out rather than extended from a template, like every other library in
+# this workspace: each task is a delegation to this project's own package.json
+# script, which stays the authority for what the script does. See
+# .moon/workspace.yml for why caching is handled by `scripts/src/ci/cache_scope.ts`
+# rather than here.
+layer: 'library'
+
+fileGroups:
+  sources:
+    - 'src/**/*'
+  configs:
+    - 'package.json'
+    - 'tsconfig*.json'
+    - 'moon.yml'
+  tests:
+    - 'src/**/*.test.ts'
+    - 'src/**/*.spec.ts'
+
+toolchains:
+  bun:
+  javascript:
+
+# `platform` is first because the features depend on its contracts. It is a
+# Moon project with its own published exports rather than a relative import, so
+# the build order is the one thing here that a reader cannot get from the imports
+# alone at the workspace level.
+dependsOn:
+  - platform
+  - schemas
+  - ui
+  - utils
+
+tasks:
+  typecheck:
+    command: 'bun'
+    args: ['run', 'typecheck']
+    inputs:
+      - '@group(sources)'
+      - '@group(tests)'
+      - '@group(configs)'
+  lint:
+    command: 'bun'
+    args: ['run', 'lint']
+    inputs:
+      - '@group(sources)'
+      - '@group(tests)'
+      - '@group(configs)'
+  format:
+    command: 'bun'
+    args: ['run', 'format']
+    inputs:
+      - '@group(sources)'
+      - '@group(tests)'
+      - '@group(configs)'
+  fix:
+    command: 'bun'
+    args: ['run', 'fix']
+    inputs:
+      - '@group(sources)'
+      - '@group(tests)'
+      - '@group(configs)'
+  test:
+    command: 'bun'
+    args: ['run', 'test']
+    inputs:
+      - '@group(sources)'
+      - '@group(tests)'
+      - '@group(configs)'
+  validate:
+    deps:
+      - '~:lint'
+      - '~:format'
+      - '~:typecheck'

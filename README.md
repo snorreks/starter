@@ -127,7 +127,7 @@ apps/
   e2e                Playwright
 packages/
   shared/            schemas, logger, utils — portable, no dependencies
-  frontend/          ui, services — browser code
+  frontend/          ui, platform, features — browser code
   backend/           database, auth — server code
 scripts/             CLI: logs, db, deploy, guards, contract, setup
 .pi/                 agent settings, skills, prompts, the log tool
