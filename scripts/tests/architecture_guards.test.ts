@@ -999,24 +999,26 @@ describe('architecture: the guard command', () => {
     // assertion of `toContain(id)` would pass against a `--profile` that printed no
     // timings at all.
     expect(result.stdout).toContain('elapsed, per guard:');
-    const timingRows = result.stdout.match(/^\s+\d+ ms\s{2}\S+$/gm) ?? [];
-    // One row per guard, plus the total.
-    expect(timingRows).toHaveLength(report.timings.length + 1);
-    for (const timing of report.timings) {
-      expect(timingRows.some((row) => row.endsWith(`  ${timing.id}`))).toBe(true);
-    }
-    const total = report.timings.map((timing) => timing.ms);
-    expect(timingRows.at(-1)).toContain('total');
-    // The total is the sum of the rows, so it is at least the largest of them. The
-    // two CLI runs below are separate processes, so the printed number cannot be
-    // compared to the JSON one directly — the invariant that holds across processes is
-    // the ordering, and it is what catches a table that prints one guard's time for
-    // every row.
-    const totalMs = Number(timingRows.at(-1)?.trim().split(/\s+/)[0]);
-    expect(Number.isFinite(totalMs)).toBe(true);
-    for (const ms of total) {
-      expect(totalMs).toBeGreaterThanOrEqual(ms);
-    }
+    const rows = [...result.stdout.matchAll(/^\s+(\d+) ms\s{2}(\S+)$/gm)].map((match) => ({
+      ms: Number(match[1]),
+      id: match[2],
+    }));
+
+    // One row per guard, plus the total, and the guard ids are the ones that ran.
+    expect(rows.at(-1)?.id).toBe('total');
+    expect(
+      rows
+        .slice(0, -1)
+        .map((row) => row.id)
+        .sort(),
+    ).toEqual(report.guards.map((guard) => guard.id).sort());
+
+    // The total is the sum of the rows beside it. Compared within one output only:
+    // the JSON above comes from a second CLI invocation, so its numbers belong to a
+    // different process and comparing across them fails on a loaded runner while
+    // proving nothing.
+    const totalMs = rows.at(-1)?.ms ?? -1;
+    expect(rows.slice(0, -1).every((row) => totalMs >= row.ms)).toBe(true);
   });
 
   test('refuses --root without a directory rather than scanning the repository', () => {
