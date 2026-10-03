@@ -30,7 +30,7 @@ prerequisites and name them: run `bun run native:doctor`.
 
 | Variable | Where | Meaning |
 |---|---|---|
-| `VITE_NATIVE_API_ORIGIN` | build time | Absolute **https** origin of the deployed API. A packaged build with no value **refuses to build** — there is no default, because a client pointed at a loopback port starts successfully and then signs nobody in. |
+| `VITE_NATIVE_API_ORIGIN` | build time | Absolute **https** origin of the deployed API. A packaged build with no value **refuses to build**, and it refuses at the *build* rather than at the first request — there is no default, because a client pointed at a loopback port starts successfully and then signs nobody in. The launcher and Vite read the same value through `@starter/schemas/native`, and the launcher's value also generates the CSP's `connect-src`. |
 | `VITE_NATIVE_CLIENT_ID` | build time | The device-authorization client id. **Public**, and documented as such in `src/lib/runtime/config.ts`: it is compiled into a binary anybody can unpack, so treating it as a secret is how a template grows a client secret nobody can rotate. |
 | `NATIVE_DEV_PORT` | run time | The dev server the shell loads. Default `1420`. Deliberately not `PORT`, which the web app already owns. |
 
@@ -47,9 +47,9 @@ desktop toolchain.
 | Command | Working directory | What it does |
 |---|---|---|
 | `bun run native:doctor` | root | Reports what this host can build. Exit 3 when a prerequisite is missing. |
-| `bun run native:dev` | root | `tauri dev`: the static app plus the shell |
-| `bun run native:build` | root | `tauri build`: a release binary |
-| `bun run native:build -- --macos --no-bundle` | root | One platform, no installer |
+| `bun run native:dev` | root | `tauri dev`: the static app plus the shell. Defaults to the loopback dev origin when `VITE_NATIVE_API_ORIGIN` is unset. |
+| `bun run native:build` | root | `tauri build`: a release binary. **Requires `VITE_NATIVE_API_ORIGIN`** — the launcher resolves it and refuses to start without one. |
+| `bun run native:build -- --no-bundle` | root | The binary without an installer: the honest scope for a machine with no signing credentials. |
 | `bun run build` | `apps/frontend/native` | The static frontend only |
 | `bun run check:bundle` | `apps/frontend/native` | Asserts the built bundle has no server code, and the web bundle has no native imports |
 | `bun run test` | `apps/frontend/native` | Unit lane: config, transport, vault, URL allowance, bundle control |
