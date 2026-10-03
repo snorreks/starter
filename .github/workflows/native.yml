@@ -72,6 +72,12 @@ jobs:
         # installs the channel the crate pins and fails loudly if the file is missing.
         run: rustup show active-toolchain || rustup toolchain install
 
+      # Before every cargo step below, in this job as well as in `desktop`. Without
+      # it `cargo test` dies inside `glib-sys`'s build script, on the job whose
+      # entire subject is this crate's own Rust — naming a crate rather than the
+      # package that provides it, which is the failure this action prevents.
+      - uses: ./.github/actions/install-native-linux-deps
+
       - name: Format
         # `cargo fmt --check`, never a write: a formatter that rewrites on CI hides
         # which commit introduced the drift.
@@ -131,16 +137,11 @@ jobs:
 
       # The webview libraries Tauri links against. Ubuntu's runner image does not
       # carry them, and the failure otherwise arrives from `webkit2gtk-sys`'s build
-      # script naming a crate instead of a package.
+      # script naming a crate instead of a package. One definition, shared with
+      # the `rust` job: see the action's own comment for why it is not copied.
       - name: Install Linux webview libraries
         if: runner.os == 'Linux'
-        run: |
-          sudo apt-get update
-          sudo apt-get install --no-install-recommends -y \
-            libwebkit2gtk-4.1-dev \
-            libappindicator3-dev \
-            librsvg2-dev \
-            patchelf
+        uses: ./.github/actions/install-native-linux-deps
 
       - name: Report what this host can build
         # The same command a contributor runs, and it must pass: a doctor that fails
@@ -185,12 +186,21 @@ jobs:
             exit 1
           fi
           cp "$found" "$RUNNER_TEMP/starter-unsigned"
+          # One digest, two commands. macOS ships `shasum` and has never shipped
+          # `sha256sum`, so the obvious spelling fails on exactly the runner whose
+          # build it was meant to certify — after the binary was built and copied,
+          # which is the most expensive place to discover it.
+          if command -v sha256sum >/dev/null 2>&1; then
+            digest="$(sha256sum "$found" | cut -d' ' -f1)"
+          else
+            digest="$(shasum -a 256 "$found" | cut -d' ' -f1)"
+          fi
           {
             echo "path=$RUNNER_TEMP/starter-unsigned"
-            echo "sha=$(sha256sum "$found" | cut -d' ' -f1)"
+            echo "sha=$digest"
           } >> "$GITHUB_OUTPUT"
           echo "built $found"
-          sha256sum "$found"
+          echo "sha256 $digest"
 
       - name: Upload the unsigned binary
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1

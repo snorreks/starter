@@ -1,0 +1,47 @@
+# The Linux system libraries a Tauri build links against.
+#
+# One definition, used by every Linux job in `.github/workflows/native.yml`.
+#
+# Why a composite action rather than the same `apt-get` block twice: the
+# `rust` job and the `desktop` job both compile the shell, so both need these, and
+# a copy that drifts is how a job starts failing on a package the other one
+# already installs. The two failures this fixes were both of that shape — a
+# `glib-sys` build script naming a crate rather than the package that provides
+# it.
+#
+# `--no-install-recommends` because these packages pull a large set of
+# documentation and translations that a build does not read, and a runner image
+# that spends three minutes installing them is a runner image that times out.
+#
+# What each package is for, because the list is otherwise a wall of names:
+#   libwebkit2gtk-4.1-dev  the webview Tauri's window renders in; `webkit2gtk-sys`
+#                         asks pkg-config for `webkit2gtk-4.1` and fails without it
+#   libappindicator3-dev   tray icon support, pulled in by the Tauri feature set
+#   librsvg2-dev           SVG rasterisation for the bundled icons
+#   patchelf               rewrites RPATHs so the binary finds its libraries
+name: 'Install Tauri Linux dependencies'
+description: 'Install the webview and image libraries a Tauri desktop build links against on Linux.'
+
+runs:
+  using: composite
+  steps:
+    - name: apt-get update
+      shell: bash
+      run: sudo apt-get update
+
+    - name: Install webview, tray, SVG and RPATH tooling
+      shell: bash
+      run: |
+        sudo apt-get install --no-install-recommends -y \
+          libwebkit2gtk-4.1-dev \
+          libappindicator3-dev \
+          librsvg2-dev \
+          patchelf
+
+    - name: Prove the webview is visible to pkg-config
+      shell: bash
+      # Asserted rather than assumed: `webkit2gtk-sys`'s build script reports a
+      # missing library by naming a crate and a pkg-config module, which is a much
+      # worse message than "the install did not take". This step prints the
+      # version that the build will use.
+      run: pkg-config --modversion webkit2gtk-4.1

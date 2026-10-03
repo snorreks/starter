@@ -42,19 +42,50 @@ const isExecutableFile = (path: string): boolean => {
  * Order matters: two packages can declare different versions of the same tool and
  * the more specific caller should win.
  */
+/**
+ * The filenames a package manager may give one binary, in the order to try them.
+ *
+ * `tauri` alone works on Linux and macOS and misses on Windows, where a `.bin`
+ * entry is a shim named `<tool>.cmd` (and Bun may also write `<tool>.exe` for a
+ * real native binary). That produced a Windows CI job reporting
+ * `MISS tauri cli — not installed` on a runner where `bun install` had just
+ * installed it, one minute before a build that needed it.
+ *
+ * The extensionless name stays first: a POSIX symlink is what both Unix package
+ * managers create, and a `cmd` shim would not be runnable there anyway.
+ */
+export const BIN_SUFFIXES = ['', '.cmd', '.exe'] as const;
+
+/**
+ * `root` is a parameter for the same reason `checkMirrors(root)` takes one: this
+ * resolves paths inside a repository, and asserting that against the live
+ * `node_modules` would test whatever the last `bun install` happened to produce.
+ * A fixture tree with a `.bin` directory in it is the thing that can be made to
+ * fail on purpose.
+ */
 export const resolveWorkspaceBin = (
   tool: string,
   declaringPackages: readonly string[] = [],
+  root: string = REPO_ROOT,
 ): string | null => {
-  for (const packageDir of declaringPackages) {
-    const candidate = join(REPO_ROOT, packageDir, 'node_modules', '.bin', tool);
-    if (isExecutableFile(candidate)) {
-      return candidate;
+  const directories = [
+    ...declaringPackages.map((packageDir) => join(root, packageDir, 'node_modules', '.bin')),
+    join(root, 'node_modules', '.bin'),
+  ];
+
+  // Suffix inside the directory loop, not the other way round: the *declaring
+  // package* is the more specific answer, so a tool declared by this project must
+  // win even when the root only has the other platform's shim.
+  for (const directory of directories) {
+    for (const suffix of BIN_SUFFIXES) {
+      const candidate = join(directory, `${tool}${suffix}`);
+      if (isExecutableFile(candidate)) {
+        return candidate;
+      }
     }
   }
 
-  const rootBin = join(REPO_ROOT, 'node_modules', '.bin', tool);
-  return isExecutableFile(rootBin) ? rootBin : null;
+  return null;
 };
 
 /**
