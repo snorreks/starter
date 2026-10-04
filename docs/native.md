@@ -454,18 +454,23 @@ starts uploading files nothing can attribute.
 
 ## Mobile capabilities, stated separately
 
-| Capability | Where it is proved | State |
+A lane that exists is not a lane that has run. These are the rows as CI actually
+left them, with the evidence that closed each one and nothing claimed beyond it.
+
+| Capability | State | Evidence |
 |---|---|---|
-| Android debug APK + release AAB build | `native.yml` `android` job | Lane exists; run it against a branch to fill the cell |
-| Android installed and launched on an emulator | `native.yml` `android` job | Lane exists; same |
-| Android back key | `native.yml` `android` job | Lane exists; same |
-| iOS simulator build, unsigned | `native.yml` `ios` job, `macos-14` | Lane exists; same |
-| iOS installed and launched on a simulator | `native.yml` `ios` job | Lane exists; same |
-| Induced failure propagates from the CLI | both jobs | Lane exists; same |
-| Signed AAB / archive | `native-release.yml` | Lane exists; needs `ANDROID_KEYSTORE_*` / Apple secrets |
-| Physical device | nowhere | **Not implemented.** Needs a provisioned device and a human. |
-| Google Play or App Store upload | nowhere | **Not implemented, deliberately.** A store credential in CI is a second authority with its own rollback story. |
-| Authenticated sign-in and the notes path on a device | nowhere | **Not implemented.** Needs a deployed API; the steps are named in `docs/testing.md`. |
+| Android debug APK + release AAB, unsigned | **Proved.** | `android` job, API 34 / NDK 29 / JDK 17. Both packages built; `check:artifacts` passed. |
+| Android installed and launched on an emulator | **Proved.** | `adb install -r` reported `Success`; `am start -W` on the package and activity *resolved from the device*; `dumpsys activity activities` matched. |
+| Android back key | **Proved.** | `KEYCODE_BACK` twice, then the package asserted still registered. |
+| iOS simulator bundle, unsigned | **Proved.** | `ios` job on `macos-15` / Xcode 26.3: `Finished 1 iOS Bundle at: …/gen/apple/build/arm64-sim/Starter.app`. |
+| iOS installed and launched on a simulator | **Proved.** | `xcrun simctl install` + `launch`, then `get_app_container`. |
+| A build failure propagates out of the launcher | **Proved.** | Both lanes: a fresh `CARGO_TARGET_DIR` and a nonexistent linker, with the log asserted to name it. |
+| The iOS dependency graph compiles | **Proved.** | `cargo check --locked --target aarch64-apple-ios-sim -p num_threads` after the `libc` pin. |
+| Signed AAB / archive, notarization | **Not proved.** | `native-release.yml` exists; it needs keystore and Apple secrets this repository does not have. |
+| Physical device | **Not proved.** | Needs a human, a provisioned device, an Apple Developer account. |
+| Google Play / App Store Connect upload | **Not implemented, deliberately.** | A store credential in CI is a second authority with its own rollback story. |
+| Authenticated sign-in and the notes path on a device | **Not proved.** | Needs a deployed API; the template ships none, and the lanes say so in their own job summaries. |
+| Stronghold on a phone | **Not proved.** | The store's rules are platform-independent and unit-tested; the OS keychain and process freezing are device observations. |
 
 ## Running it yourself
 
