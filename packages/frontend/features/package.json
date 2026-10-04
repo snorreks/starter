@@ -17,6 +17,10 @@
     "./auth": {
       "svelte": "./src/auth/index.ts",
       "default": "./src/auth/index.ts"
+    },
+    "./jobs": {
+      "svelte": "./src/jobs/index.ts",
+      "default": "./src/jobs/index.ts"
     }
   },
   "scripts": {

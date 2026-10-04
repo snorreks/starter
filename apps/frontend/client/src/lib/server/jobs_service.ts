@@ -31,10 +31,13 @@ import {
   type Clock,
   createDisabledDispatchPort,
   createJobRepository,
+  createMaintenanceRunRepository,
   type DispatchOutcome,
   type JobRecord,
   type JobRepository,
   type JobsDatabase,
+  MAINTENANCE_CRON,
+  type MaintenanceRun,
   parseJobCursor,
   systemClock,
   type WorkflowDispatchPort,
@@ -45,6 +48,8 @@ import type {
   JobDto,
   JobList,
   JobOutput,
+  LatestMaintenance,
+  MaintenanceEvidence,
 } from '@starter/schemas/jobs';
 import { createId } from '@starter/utils';
 
@@ -156,6 +161,39 @@ export type ListJobsOutcome =
   | { ok: true; page: JobList }
   | { ok: false; code: 'invalid_cursor'; detail: string };
 
+/** How a maintenance-evidence read ended. */
+export type LatestMaintenanceOutcome =
+  | { ok: true; latest: LatestMaintenance }
+  | { ok: false; code: 'jobs_profile_disabled'; detail: string };
+
+/** The bound for the general latest-runs query. Scheduled evidence is read separately. */
+export const MAINTENANCE_EVIDENCE_ROWS = 20;
+
+/**
+ * Project a stored run onto the client DTO.
+ *
+ * The mapping is explicit field by field rather than a spread. A stored row
+ * carries a run key — `manual:<requestId>` for an operator-triggered run — and a
+ * spread would put an internal request id on a browser contract the first time
+ * someone added a column to the table.
+ */
+export const toMaintenanceEvidence = (run: MaintenanceRun): MaintenanceEvidence => ({
+  trigger: run.trigger,
+  status: run.status,
+  slot: run.slot,
+  scheduledTime: run.scheduledTime,
+  startedAt: run.startedAt,
+  completedAt: run.completedAt,
+  counts: {
+    expiredSessions: run.expiredSessions,
+    idleRateLimits: run.idleRateLimits,
+    artifactsQueued: run.artifactsQueued,
+    artifactsRetired: run.artifactsRetired,
+    pendingDispatches: run.pendingDispatches,
+  },
+  errorCode: run.errorCode,
+});
+
 /** How an output read ended. */
 export type OutputReadOutcome =
   | {
@@ -190,6 +228,14 @@ export interface JobsService {
     jobId: string,
     rangeHeader: string | null,
   ): Promise<OutputReadOutcome>;
+  /**
+   * The most recent maintenance run, and the most recent *scheduled* one.
+   *
+   * Both, separately, because a single "last run" field is exactly how a manual
+   * invocation gets reported as a natural scheduled firing. See
+   * `LatestMaintenanceSchema`.
+   */
+  latestMaintenance(): Promise<LatestMaintenanceOutcome>;
   repository(): JobRepository;
 }
 
@@ -220,10 +266,39 @@ export const createJobsService = (options: {
   const clock = options.clock ?? systemClock;
   const dispatch = options.dispatch ?? createDisabledDispatchPort();
   const repository = createJobRepository(options.db, clock);
+  const runs = createMaintenanceRunRepository(options.db, clock);
 
   return {
     profile: options.profile,
     repository: () => repository,
+
+    async latestMaintenance() {
+      if (options.profile !== JOBS_PROFILE_ENCODE) {
+        return {
+          ok: false,
+          code: 'jobs_profile_disabled',
+          detail:
+            'This deployment has the jobs profile disabled, so there is no schedule to report.',
+        };
+      }
+
+      const newestFirst = await runs.list(MAINTENANCE_EVIDENCE_ROWS);
+      const newestScheduled = await runs.latestByTrigger('scheduled');
+
+      return {
+        ok: true,
+        latest: {
+          // The frozen cron. Not read from a binding: this repository's
+          // `wrangler.jsonc` and its configuration test both assert this string,
+          // and the jobs Worker that runs the schedule is a different Worker this
+          // one cannot inspect at request time.
+          schedule: MAINTENANCE_CRON,
+          latest: newestFirst[0] === undefined ? null : toMaintenanceEvidence(newestFirst[0]),
+          latestScheduled: newestScheduled === null ? null : toMaintenanceEvidence(newestScheduled),
+          serverTime: clock.now(),
+        },
+      };
+    },
 
     async create(ownerId, input, idempotencyKey) {
       if (options.profile !== JOBS_PROFILE_ENCODE) {

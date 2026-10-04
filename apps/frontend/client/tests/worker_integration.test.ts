@@ -1808,7 +1808,15 @@ describe('the jobs API with the compute profile disabled', () => {
       'idempotency-key': createId('key', 12),
     };
 
-    for (const path of ['/api/jobs', '/api/jobs/job_anything', '/api/jobs/job_anything/output']) {
+    for (const path of [
+      '/api/jobs',
+      '/api/jobs/job_anything',
+      '/api/jobs/job_anything/output',
+      // The scheduler-evidence read is a jobs capability like the others, so a
+      // deployment without one must name it rather than answer 404 or, worse, 200
+      // with a fabricated "no runs yet".
+      '/api/jobs/maintenance',
+    ]) {
       const response = await api(account, path, { method: 'GET', headers });
       expect(response.status).toBe(503);
       const parsed = (await response.json()) as { error?: string };
@@ -2233,6 +2241,34 @@ describe('the jobs API with the compute profile enabled', () => {
     expect(readBack.status).toBe(200);
     expect(((await readBack.json()) as { status: string }).status).toBe('pending');
   }, 90_000);
+
+  test('the scheduler evidence answers, and says nothing has run yet', async () => {
+    // This Worker's D1 has had no maintenance run written to it, so "no scheduled
+    // run" and "no run at all" are the true answers. Reporting either as a run, or
+    // as a 404, would put a claim about a schedule on a screen with no evidence
+    // for it — which is the dishonest case the two fields exist to separate.
+    const account = await jobsSignUp('integration-jobs-maintenance');
+    const response = await jobsApi(account, '/api/jobs/maintenance');
+
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as {
+      schedule: string | null;
+      latest: unknown;
+      latestScheduled: unknown;
+      serverTime: number;
+    };
+    expect(body.schedule).toBe('17 * * * *');
+    expect(body.latest).toBeNull();
+    expect(body.latestScheduled).toBeNull();
+    expect(typeof body.serverTime).toBe('number');
+  }, 90_000);
+
+  test('the scheduler evidence needs a session, like every other jobs route', async () => {
+    const response = await fetch(`${jobsBase()}/api/jobs/maintenance`, {
+      headers: originHeadersFor(jobsBase),
+    });
+    expect(response.status).toBe(401);
+  }, 30_000);
 });
 
 // ── Device authorization and bearer sessions ─────────────────────────────────

@@ -261,3 +261,106 @@ describe('a request carries what the call asked for', () => {
     expect(calls[0]?.init.signal).toBe(controller.signal);
   });
 });
+
+describe('the byte path, which is deliberately not the JSON path', () => {
+  const mp4 = (): Response =>
+    new Response(new Uint8Array([0, 0, 0, 24, 102, 116, 121, 112]), {
+      status: 200,
+      headers: { 'content-type': 'video/mp4', 'content-length': '8' },
+    });
+
+  test('bytes come back as bytes, and the declared length is reported', async () => {
+    const { transport } = recording(() => mp4());
+
+    const artifact = await transport.fetchBytes('/api/jobs/job_1/output');
+
+    expect(artifact.bytes.byteLength).toBe(8);
+    expect(artifact.contentType).toBe('video/mp4');
+    expect(artifact.contentLength).toBe(8);
+  });
+
+  test('the JSON path would have destroyed these bytes', async () => {
+    // The reason this is a second method. `request()` reads the body as text and
+    // parses it, so pointed at a binary body it either throws or returns a
+    // truncated string that looks like a successful answer.
+    const { transport } = recording(() => mp4());
+
+    const failure = await transport
+      .request('/api/jobs/job_1/output')
+      .catch((error: unknown) => error);
+
+    expect(failure).toBeInstanceOf(AppError);
+    expect((failure as AppError).errorType).toBe('server');
+  });
+
+  test('the credentials decision applies to bytes exactly as it does to JSON', async () => {
+    // A media element cannot carry a cookie decision, which is why the bytes come
+    // through this method: the same `credentials` the session uses is attached
+    // here, and nowhere else.
+    const { transport, calls } = recording(() => mp4());
+
+    await transport.fetchBytes('/api/jobs/job_1/output');
+
+    expect(calls[0]?.init.credentials).toBe('include');
+  });
+
+  test('a bounded range becomes one Range header, and no range asks for none', async () => {
+    const { transport, calls } = recording(() => mp4());
+
+    await transport.fetchBytes('/api/jobs/job_1/output', {
+      range: { startInclusive: 0, endInclusive: 1023 },
+    });
+    await transport.fetchBytes('/api/jobs/job_1/output');
+
+    expect(new Headers(calls[0]?.init.headers).get('range')).toBe('bytes=0-1023');
+    expect(new Headers(calls[1]?.init.headers).get('range')).toBeNull();
+  });
+
+  test('an expired artifact is a typed refusal, not an empty success', async () => {
+    // 410 with the server's envelope. A screen that received an empty Blob here
+    // would show a player with nothing in it and call it an encode.
+    const { transport } = recording(() =>
+      jsonResponse(
+        { error: 'output_expired', message: 'That result has passed its retention window.' },
+        410,
+      ),
+    );
+
+    const failure = await transport
+      .fetchBytes('/api/jobs/job_1/output')
+      .catch((error: unknown) => error);
+
+    expect(failure).toBeInstanceOf(AppError);
+    expect((failure as AppError).status).toBe(410);
+    expect((failure as AppError).message).toMatch(/retention/);
+  });
+
+  test('an HTML error page from an intermediary keeps the status, not a JSON complaint', async () => {
+    const { transport } = recording(
+      () =>
+        new Response('<html>gateway</html>', {
+          status: 502,
+          headers: { 'content-type': 'text/html' },
+        }),
+    );
+
+    const failure = await transport
+      .fetchBytes('/api/jobs/job_1/output')
+      .catch((error: unknown) => error);
+
+    expect((failure as AppError).errorType).toBe('server');
+    expect((failure as AppError).status).toBe(502);
+  });
+
+  test('an aborted byte fetch is cancellation rather than an outage', async () => {
+    const { transport } = recording(() => {
+      throw new DOMException('aborted', 'AbortError');
+    });
+
+    const failure = await transport
+      .fetchBytes('/api/jobs/job_1/output')
+      .catch((error: unknown) => error);
+
+    expect(isAbortError(failure)).toBe(true);
+  });
+});

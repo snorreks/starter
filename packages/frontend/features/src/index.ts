@@ -13,9 +13,10 @@
 // root in the host that has it — which is what
 // `apps/frontend/client/src/lib/composition/` contains today.
 //
-// Subpath exports (`./notes`, `./auth`) are published so a host imports the
-// feature it renders rather than the barrel, and a bundle cannot pull in a screen
-// it will never mount.
+// Subpath exports (`./notes`, `./auth`, `./jobs`) are published so a host imports
+// the feature it renders rather than the barrel, and a bundle cannot pull in a
+// screen it will never mount.
 
 export * from './auth/index.ts';
+export * from './jobs/index.ts';
 export * from './notes/index.ts';

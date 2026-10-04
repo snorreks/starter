@@ -24,7 +24,13 @@
 //      header is the only place it appears, which is why this is a decorator over
 //      the shared transport rather than a hand-written `fetch` loop.
 
-import { type ApiTransport, HttpTransport, type TransportRequestOptions } from '@starter/platform';
+import {
+  type ArtifactBytes,
+  type ArtifactRequestOptions,
+  type ArtifactTransport,
+  HttpTransport,
+  type TransportRequestOptions,
+} from '@starter/platform';
 
 /**
  * Where the current credential comes from.
@@ -51,8 +57,14 @@ export interface BearerTransportOptions {
  * the API answers 401, which is the same answer a signed-out browser gets. It
  * does not throw, because "not signed in yet" is a state the sign-in screen has
  * to render, not an error.
+ *
+ * The byte path is delegated rather than rebuilt, for one reason that matters more
+ * than the DRY: a `<video>` element issues its own request with no header, so the
+ * encoded result has to come *through* this decorator. Delegation means the
+ * credential is attached in a header and nowhere else — no token in a URL, no
+ * second code path that could forget it.
  */
-export const createBearerTransport = (options: BearerTransportOptions): ApiTransport => {
+export const createBearerTransport = (options: BearerTransportOptions): ArtifactTransport => {
   const inner = new HttpTransport({
     baseUrl: options.origin,
     credentials: 'omit',
@@ -70,6 +82,26 @@ export const createBearerTransport = (options: BearerTransportOptions): ApiTrans
         // Caller headers first, then the credential: a per-call `authorization`
         // header is not a thing any caller has, and letting one through would be
         // a way to present somebody else's token.
+        headers: {
+          ...requestOptions.headers,
+          ...(token === null ? {} : { authorization: `Bearer ${token}` }),
+        },
+      });
+    },
+
+    fetchBytes: (
+      path: string,
+      requestOptions: ArtifactRequestOptions = {},
+    ): Promise<ArtifactBytes> => {
+      const token = options.getToken();
+
+      // The credential is added here rather than being inherited from the
+      // constructor, for the same reason as `request`: a sign-out has to take
+      // effect on the very next byte fetch. This is also the one method where
+      // forgetting it would be invisible — the request would simply answer 401,
+      // and the screen would read as signed out rather than as a bug.
+      return inner.fetchBytes(path, {
+        ...requestOptions,
         headers: {
           ...requestOptions.headers,
           ...(token === null ? {} : { authorization: `Bearer ${token}` }),

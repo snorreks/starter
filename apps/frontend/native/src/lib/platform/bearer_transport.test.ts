@@ -134,3 +134,81 @@ describe('the bearer transport', () => {
     await expect(transport.request('/api/notes')).rejects.toThrow();
   });
 });
+
+describe('the bearer transport, on the byte path', () => {
+  const mp4 = (): Response =>
+    new Response(new Uint8Array([0, 0, 0, 24, 102, 116, 121, 112]), {
+      status: 200,
+      headers: { 'content-type': 'video/mp4' },
+    });
+
+  const transportOver = (seen: Seen[], getToken: () => string | null) =>
+    createBearerTransport({
+      origin: 'https://api.example.test',
+      getToken,
+      fetch: (async (input: RequestInfo | URL, init?: RequestInit) => {
+        seen.push({ url: String(input), init });
+        return mp4();
+      }) as typeof globalThis.fetch,
+    });
+
+  test('the encoded result is fetched with the bearer header, like any other call', async () => {
+    // The reason the result is fetched through the transport at all: a `<video>`
+    // element issues its own request with no header, so a media element pointed at
+    // the API would go out anonymous and answer 401. This is the path that does
+    // carry the credential.
+    const seen: Seen[] = [];
+    const transport = transportOver(seen, () => 'token-value');
+
+    const artifact = await transport.fetchBytes('/api/jobs/job_1/output');
+
+    expect(artifact.bytes.byteLength).toBe(8);
+    const headers = new Headers(seen[0]?.init?.headers);
+    expect(headers.get('authorization')).toBe('Bearer token-value');
+    // And nowhere else: the URL is the endpoint, never a credential.
+    expect(seen[0]?.url).toBe('https://api.example.test/api/jobs/job_1/output');
+    expect(seen[0]?.url).not.toContain('token-value');
+    // `omit`, like every other call here: a shell has no cookie jar, and the
+    // credential is the header above.
+    expect(seen[0]?.init?.credentials).toBe('omit');
+    expect(new Headers(seen[0]?.init?.headers).get('cookie')).toBeNull();
+  });
+
+  test('a signed-out window fetches nothing privileged', async () => {
+    // No token means no header, and the API answers 401 — the same answer a
+    // signed-out browser gets. The screen renders "sign in" rather than a video
+    // that will not load.
+    const seen: Seen[] = [];
+    const transport = transportOver(seen, () => null);
+
+    await transport.fetchBytes('/api/jobs/job_1/output');
+
+    expect(new Headers(seen[0]?.init?.headers).get('authorization')).toBeNull();
+  });
+
+  test('the token is read per fetch, so a sign-out takes effect immediately', async () => {
+    let token: string | null = 'token-value';
+    const seen: Seen[] = [];
+    const transport = transportOver(seen, () => token);
+
+    await transport.fetchBytes('/api/jobs/job_1/output');
+    token = null;
+    await transport.fetchBytes('/api/jobs/job_2/output');
+
+    expect(new Headers(seen[0]?.init?.headers).get('authorization')).toBe('Bearer token-value');
+    expect(new Headers(seen[1]?.init?.headers).get('authorization')).toBeNull();
+  });
+
+  test('a caller cannot put somebody else\u2019s token on a byte request', async () => {
+    const seen: Seen[] = [];
+    const transport = transportOver(seen, () => 'token-value');
+
+    await transport.fetchBytes('/api/jobs/job_1/output', {
+      headers: { authorization: 'Bearer somebody-else' },
+    });
+
+    // The credential is applied after the call's headers, so a caller cannot
+    // present another account's token through the byte path.
+    expect(new Headers(seen[0]?.init?.headers).get('authorization')).toBe('Bearer token-value');
+  });
+});

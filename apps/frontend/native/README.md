@@ -19,9 +19,24 @@ belongs in a shared package:
 
 So `apps/frontend/client` keeps SSR and this app stays static. Neither was traded
 away for the other. Everything they share — the notes screen, the account service,
-the session service, the device-authorization flow — comes from
-`@starter/features`, unmodified. There is one notes feature in this repository and
-this package renders it with a different transport.
+the session service, the device-authorization flow, the sample-encode screen —
+comes from `@starter/features`, unmodified. There is one notes feature in this
+repository and this package renders it with a different transport.
+
+### The one place a shell differs from a browser: media
+
+`/jobs` fetches an encoded result through the transport and plays it from a Blob.
+A browser could get away with `<video src="/api/jobs/:id/output">`, because the
+session cookie rides along. This window has no cookie jar and its credential is a
+bearer token, so a media element's own request would go out anonymous and answer
+401. Fetching through `createBearerTransport`'s byte path puts the credential in a
+**header**, which is the only place it ever appears: not in the URL, not in a
+`Referer`, not in a proxy log. There is no capability URL to mint, store and
+revoke, and signing out stops the next fetch.
+
+`src/lib/platform/app_activity.ts` is the other half of the lifecycle. A window
+behind another one still reports itself `visible`, so the poll is stopped by
+visibility **and** focus, and resumed by either.
 
 ## Setup and configuration
 
@@ -52,7 +67,7 @@ desktop toolchain.
 | `bun run native:build -- --no-bundle` | root | The binary without an installer: the honest scope for a machine with no signing credentials. |
 | `bun run build` | `apps/frontend/native` | The static frontend only |
 | `bun run check:bundle` | `apps/frontend/native` | Asserts the built bundle has no server code, and the web bundle has no native imports |
-| `bun run test` | `apps/frontend/native` | Unit lane: config, transport, vault, URL allowance, bundle control |
+| `bun run test` | `apps/frontend/native` | Unit lane: config, transport (JSON **and** byte path), vault, URL allowance, window activity, bundle control |
 | `cargo fmt --check`, `cargo clippy --locked --all-targets -- -D warnings`, `cargo test --locked` | `apps/frontend/native/src-tauri` | The Rust shell |
 
 ## Validation
