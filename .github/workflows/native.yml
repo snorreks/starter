@@ -266,15 +266,29 @@ jobs:
           java-version: '17'
 
       - name: Install the Android SDK, NDK and emulator
-        # `packages` is the pinned CLI's own list (platform-tools, the compileSdk
-        # platform, and the emulator for the launch step below). Versions are not
-        # given here: `android-actions/setup-android` resolves them, and the NDK
-        # the CLI needs is checked by `bun run native:doctor -- --platform
-        # android` in the next step, which fails with the exact version.
+        # Every package name here was read out of Google's own repository index
+        # (`dl.google.com/android/repository/repository2-3.xml` and
+        # `sys-img/google_apis/sys-img2-3.xml`), not guessed.
+        #
+        # `platforms;android-37` does **not** exist. Android publishes platform
+        # packages under minor-versioned names — `android-37.0`, `37.1`, `37.2` —
+        # and CI proved it: `sdkmanager` answered `Failed to find package
+        # 'platforms;android-37'` and the lane died before building anything.
+        # `37.2` is the newest 37.x on the **stable** channel; the `-beta`
+        # variants are deliberately not used.
+        #
+        # `ndk;29.0.13846066` is `NDK_VERSION` in the pinned CLI's own source, and
+        # `bun run native:doctor -- --platform android` in the next step is what
+        # requires it — it would otherwise be missing and the build would refuse.
         uses: android-actions/setup-android@be39fa834029ff78f1a44aa3bb0819b8fc2bd8fd # v4.0.4
         with:
           cmdline-tools-version: 13114758
-          packages: 'platform-tools platforms;android-37 emulator system-images;android-34;google_apis;x86_64'
+          packages: >-
+            platform-tools
+            platforms;android-37.2
+            ndk;29.0.13846066
+            emulator
+            system-images;android-34;google_apis;x86_64
           accept-android-sdk-licenses: true
 
       - name: Install the pinned toolchain and the mobile targets
@@ -440,7 +454,9 @@ jobs:
 
   ios:
     name: iOS simulator bundle
-    runs-on: macos-14
+    # macos-15, not macos-14: the step below needs Xcode 16+, and macos-14's
+    # `/Applications/Xcode.app` symlink pointed at 15.4 while 16.2 sat beside it.
+    runs-on: macos-15
     timeout-minutes: 75
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -462,13 +478,28 @@ jobs:
       - name: Install
         run: bun install --frozen-lockfile
 
-      - name: Select the full Xcode and report its version
-        # The command line tools cannot build an app. `xcode-select -p` naming
-        # `/Library/Developer/CommandLineTools` is the failure this catches.
+      - name: Select the newest installed Xcode and report its version
+        # `/Applications/Xcode.app` is a *symlink*, and on the image this job used
+        # it pointed at 15.4 — while 16.2 sat beside it. `tauri ios init` writes the
+        # project with XcodeGen in project format 77, and Xcode 15 refuses it with
+        # "The project cannot be opened because it is in a future Xcode project
+        # file format (77)". So: pick the newest by version, then assert the
+        # major, rather than trusting a symlink whose target moves.
         run: |
           set -euo pipefail
-          sudo xcode-select -s /Applications/Xcode.app
-          xcodebuild -version
+          newest="$(ls -d /Applications/Xcode_*.app | sort -V | tail -n 1)"
+          echo "newest installed Xcode: $newest"
+          sudo xcode-select -s "$newest"
+          version="$(xcodebuild -version | head -n 1)"
+          echo "$version"
+          major="${version##* }"; major="${major%%.*}"
+          case "$major" in
+            ''|*[!0-9]*) echo "::error::cannot read an Xcode major version from '$version'"; exit 1 ;;
+          esac
+          if [ "$major" -lt 16 ]; then
+            echo "::error::Xcode $version cannot open the project format \`tauri ios init\` writes (77). Xcode 16 or newer is required."
+            exit 1
+          fi
           xcrun simctl list runtimes | head -n 5
 
       - name: Install the pinned toolchain and the iOS targets

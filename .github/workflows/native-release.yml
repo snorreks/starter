@@ -566,11 +566,12 @@ jobs:
         uses: android-actions/setup-android@be39fa834029ff78f1a44aa3bb0819b8fc2bd8fd # v4.0.4
         with:
           cmdline-tools-version: 13114758
-          # `ndk;29.0.13846066` is REQUIRED_NDK_VERSION from the pinned Tauri CLI.
-          # Without it `bun run native:doctor -- --platform android` reports the NDK
-          # as missing and the build step below refuses — correctly, but four
-          # minutes into a lane that could have installed it.
-          packages: 'platform-tools platforms;android-37 ndk;29.0.13846066'
+          # `platforms;android-37` does not exist — Android publishes minor-versioned
+          # platform packages and CI's sdkmanager answered "Failed to find package".
+          # `37.2` is the newest 37.x on the stable channel. `ndk;29.0.13846066` is
+          # the pinned CLI's own constant, without which `native:doctor` refuses and
+          # the build below is four minutes wasted.
+          packages: 'platform-tools platforms;android-37.2 ndk;29.0.13846066'
           accept-android-sdk-licenses: true
 
       - name: Install
@@ -720,7 +721,9 @@ jobs:
     name: iOS signed archive for App Store Connect
     needs: preflight
     if: contains(inputs.targets, 'ios')
-    runs-on: macos-14
+    # macos-15 for the same reason as the uncredentialed lane: Xcode 16+ is needed
+    # to open the project format `tauri ios init` writes.
+    runs-on: macos-15
     timeout-minutes: 75
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -731,11 +734,25 @@ jobs:
         with:
           bun-version: ${{ env.BUN_VERSION }}
 
-      - name: Select the full Xcode
+      - name: Select the newest installed Xcode
+        # `/Applications/Xcode.app` is a symlink that pointed at 15.4 on the image
+        # this first used, while 16.2 sat beside it; `tauri ios init` writes project
+        # format 77, which Xcode 15 refuses. Pick the newest, then assert the major.
         run: |
           set -euo pipefail
-          sudo xcode-select -s /Applications/Xcode.app
-          xcodebuild -version
+          newest="$(ls -d /Applications/Xcode_*.app | sort -V | tail -n 1)"
+          echo "newest installed Xcode: $newest"
+          sudo xcode-select -s "$newest"
+          version="$(xcodebuild -version | head -n 1)"
+          echo "$version"
+          major="${version##* }"; major="${major%%.*}"
+          case "$major" in
+            ''|*[!0-9]*) echo "::error::cannot read an Xcode major version from '$version'"; exit 1 ;;
+          esac
+          if [ "$major" -lt 16 ]; then
+            echo "::error::Xcode $version cannot open project format 77; Xcode 16 or newer is required."
+            exit 1
+          fi
 
       - name: Install
         run: bun install --frozen-lockfile

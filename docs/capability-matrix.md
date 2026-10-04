@@ -353,6 +353,7 @@ A fourth dated section. This round extended the shell to Android and iOS and did
 | Committed config carries no dev reachability | Marker scan of `tauri.conf.json` for `usesCleartextTraffic`, `networkSecurityConfig`, `NSAppTransportSecurity`, `NSAllowsArbitraryLoads`, `NSAllowsLocalNetworking`, `NSExceptionDomains`; plus no `bundle.iOS.infoPlist` | `bun test ./tests/mobile_platform_config.test.ts` (cwd `scripts`) | 9 pass, 0 fail |
 | No desktop window minimum reaches a phone | `app.windows[]` has no `minWidth`/`minHeight` | same | same |
 | Android pins are the CLI's constants | `SDK_VERSION = 37`, `NDK_VERSION = 29.0.13846066` read from the pinned CLI source | `bun test ./tests/native_mobile.test.ts` | same |
+| The compileSdk API level is not the installable package | `repository2-3.xml` and `sys-img/google_apis/sys-img2-3.xml`: `platforms;android-37` does not exist; `37.2` does and unpacks into `platforms/android-37.2/` | `bun test ./tests/mobile_prerequisites.test.ts` | 18 pass, 0 fail |
 | A device host cannot survive into a packaged build | `resolveApiOrigin({ dev: false, devHost })` throws; `dev` comes from the subcommand | `bun run --cwd apps/frontend/native test` | 77 pass, 0 fail |
 | Lifecycle: suspend, resume, offline, disposal | A real `EventTarget`, no phone | same | same |
 | The lifecycle decision | The ViewModel's rule, not the layout's: refresh only on the transition *into* `active` | same | same |

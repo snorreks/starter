@@ -229,14 +229,29 @@ Android module), `adb`, and the rustup targets the requested ABIs need.
 
 | Pin | Value | Where it comes from |
 |---|---|---|
-| `compileSdk` / `targetSdk` | 37 | `SDK_VERSION` in `crates/tauri-cli/src/mobile/android/mod.rs` |
-| NDK | 29.0.13846066 | `NDK_VERSION` in the same file |
+| `compileSdk` / `targetSdk` **API level** | 37 | `SDK_VERSION` in `crates/tauri-cli/src/mobile/android/mod.rs` |
+| Installable platform package | `platforms;android-37.2` | `repository2-3.xml`: the newest 37.x on the stable channel |
+| NDK | `ndk;29.0.13846066` | `NDK_VERSION` in the same file |
 | `minSdkVersion` | 24 | `bundle.android.minSdkVersion` in `tauri.conf.json` |
 
-The first two are the CLI's constants, so they are not re-stated here as a
-preference — a build against a different platform number fails inside Gradle
-naming a property, and `sdkmanager "platforms;android-37" "ndk;29.0.13846066"` is
-the fix.
+The API level is **not** a package name, and conflating the two is a failure CI
+already made: Android publishes platform packages under minor-versioned names
+(`android-36.1`, `android-37.0`, `android-37.1`, `android-37.2`,
+`android-37.2-beta1`…), there is no bare `platforms;android-37`, and
+`sdkmanager` answers `Warning: Failed to find package 'platforms;android-37'`.
+Each of those archives unpacks into `platforms/android-<major>.<minor>/`, so a
+correctly provisioned SDK contains `android-37.2` and **no** `android-37`
+directory at all — which is why `bun run native:doctor -- --platform android`
+compares the API **major** level instead of matching a directory name. Both
+constants live side by side in `scripts/src/native/mobile.ts` with the evidence
+attached.
+
+So, to provision a host by hand:
+
+```bash
+sdkmanager "platform-tools" "platforms;android-37.2" "ndk;29.0.13846066" \
+          "emulator" "system-images;android-34;google_apis;x86_64"
+```
 
 The generated Gradle project is **not committed**. `tauri android init` writes
 `src-tauri/gen/android/`, which is gitignored, excluded from project discovery by

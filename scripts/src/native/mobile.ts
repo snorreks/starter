@@ -88,11 +88,51 @@ export const IOS_TARGET_TRIPLES: Readonly<Record<IosTarget, string>> = {
 export const IOS_EXPORT_METHODS = ['app-store-connect', 'release-testing', 'debugging'] as const;
 export type IosExportMethod = (typeof IOS_EXPORT_METHODS)[number];
 
-/** The NDK the pinned CLI installs when it has to. From its own source. */
+/**
+ * The NDK the pinned CLI installs when it has to. From its own source.
+ */
 export const REQUIRED_NDK_VERSION = '29.0.13846066';
 
-/** The Android platform the pinned CLI compiles against. From its own source. */
-export const REQUIRED_ANDROID_SDK = '37';
+/**
+ * The compileSdk the pinned CLI's Gradle template sets, as an **API level**.
+ *
+ * `SDK_VERSION: u8 = 37` in `crates/tauri-cli/src/mobile/android/mod.rs`. It is
+ * the number Gradle's `compileSdk = 37` and `targetSdk = 37` are written with,
+ * and it is *not* an installable package name — see the next constant, for the
+ * failure that confusing the two produces.
+ */
+export const REQUIRED_ANDROID_API_LEVEL = '37';
+
+/**
+ * The package that installs that API level, verified against the SDK repository.
+ *
+ * Android publishes platform packages under **minor-versioned** names:
+ * `platforms;android-36.1`, `android-37.0`, `android-37.1`, `android-37.2`,
+ * `android-37.2-beta1`. There is no bare `platforms;android-37`, and CI proved
+ * it — `sdkmanager` answered `Warning: Failed to find package
+ * 'platforms;android-37'` and the lane died before it built anything.
+ *
+ * Each of those archives unpacks into `platforms/android-<major>.<minor>/` (read
+ * out of `platform-37.2_r01.zip`'s central directory: 11 395 entries, every one
+ * under `android-37.2/`). So `$ANDROID_HOME/platforms` contains `android-37.2`
+ * and *no* `android-37` directory either — which is why the doctor below compares
+ * the API **major** level rather than matching a directory name.
+ *
+ * 37.2 is the newest 37.x on the stable channel; 37.2-beta1…3 exist and are not
+ * used, because a release lane should not track a preview.
+ */
+export const REQUIRED_ANDROID_PLATFORM_PACKAGE = 'platforms;android-37.2';
+
+/**
+ * The API level `REQUIRED_ANDROID_PLATFORM_PACKAGE` provides.
+ *
+ * Parsed from the package name rather than repeated, so the two cannot drift: if
+ * the package is bumped to 38.1 this follows it.
+ */
+export const platformPackageApiLevel = (packageName: string): string => {
+  const match = /^platforms;android-(\d+)/.exec(packageName);
+  return match?.[1] ?? REQUIRED_ANDROID_API_LEVEL;
+};
 
 /**
  * The flags each subcommand accepts.

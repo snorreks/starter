@@ -26,7 +26,8 @@ import {
   type MobilePlatform,
   parseMobileArgs,
   planMobileInvocation,
-  REQUIRED_ANDROID_SDK,
+  REQUIRED_ANDROID_API_LEVEL,
+  REQUIRED_ANDROID_PLATFORM_PACKAGE,
   REQUIRED_NDK_VERSION,
 } from '../src/native/mobile.ts';
 import { hostPlatform } from '../src/native/platform.ts';
@@ -316,10 +317,21 @@ describe('the vocabulary comes from the CLI, and only from the CLI', () => {
     }
   });
 
-  test("the pinned SDK and NDK versions are the CLI's constants, not a preference", () => {
+  test("the pinned API level and NDK are the CLI's constants, not a preference", () => {
     // From crates/tauri-cli/src/mobile/android/mod.rs at tauri-cli-v2.12.1.
-    expect(REQUIRED_ANDROID_SDK).toBe('37');
+    expect(REQUIRED_ANDROID_API_LEVEL).toBe('37');
     expect(REQUIRED_NDK_VERSION).toBe('29.0.13846066');
+  });
+
+  test('the installable platform package is not the API level', () => {
+    // Two different things, and CI proved it: `SDK_VERSION: u8 = 37` is what
+    // Gradle's `compileSdk` is written with, and no package by that name exists —
+    // `sdkmanager` answered "Failed to find package 'platforms;android-37'" and
+    // the lane died before building anything.
+    expect(REQUIRED_ANDROID_PLATFORM_PACKAGE).toMatch(/^platforms;android-\d+\.\d+$/);
+    expect(REQUIRED_ANDROID_PLATFORM_PACKAGE).not.toBe(
+      `platforms;android-${REQUIRED_ANDROID_API_LEVEL}`,
+    );
   });
 });
 

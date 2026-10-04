@@ -28,7 +28,8 @@ import {
   type AndroidTarget,
   IOS_TARGET_TRIPLES,
   type IosTarget,
-  REQUIRED_ANDROID_SDK,
+  REQUIRED_ANDROID_API_LEVEL,
+  REQUIRED_ANDROID_PLATFORM_PACKAGE,
   REQUIRED_NDK_VERSION,
 } from './mobile.ts';
 import { hostPlatform } from './platform.ts';
@@ -132,41 +133,71 @@ export const androidSdkCheck = (env: MobileEnvironment): Check => {
 };
 
 /**
- * The installed platform and the one the pinned CLI compiles against.
+ * The installed platform, and whether it is the API level the pinned CLI needs.
  *
- * `compileSdk = 37` is a constant in the CLI's own source, not a preference. A
- * build against a different platform number produces an error naming a Gradle
- * property, and the fix is one `sdkmanager` line; saying which one is the point.
+ * `compileSdk = 37` is a constant in the CLI's own Gradle template, not a
+ * preference. What it is *not* is a directory name: Android publishes platform
+ * packages under minor-versioned names and unpacks them into
+ * `platforms/android-<major>.<minor>/`, so a correctly provisioned SDK carries
+ * `android-37.2` and no `android-37` at all. This check therefore compares the
+ * **API major level**, which is the thing Gradle resolves `compileSdk = 37` to.
+ *
+ * The two bugs this replaces, both of which reported the same wrong thing:
+ * asking for `platforms;android-37`, which `sdkmanager` refuses with "Failed to
+ * find package"; and matching `/^android-\d+$/`, which never matches `android-37.2`
+ * — so a correctly installed SDK read as having no platform at all.
  */
 export const androidPlatformCheck = (env: MobileEnvironment): Check => {
+  const name = `android platform ${REQUIRED_ANDROID_API_LEVEL}`;
+  const install = `\`sdkmanager "${REQUIRED_ANDROID_PLATFORM_PACKAGE}"\``;
+
   const root = androidSdkRoot(env);
   if (root === undefined || !existsSync(root)) {
-    return absent(
-      `android platform ${REQUIRED_ANDROID_SDK}`,
-      'no SDK to look in',
-      'The pinned Tauri CLI compiles against android-37. `sdkmanager "platforms;android-37"`.',
-    );
+    return absent(name, 'no SDK to look in', `Install it with ${install}.`);
   }
   const platforms = join(root, 'platforms');
   let found: string[] = [];
   try {
-    found = readdirSync(platforms).filter((entry) => /^android-\d+$/.test(entry));
+    found = readdirSync(platforms).filter((entry) => /^android-\d+(\.\d+)?$/.test(entry));
   } catch {
-    return absent(
-      `android platform ${REQUIRED_ANDROID_SDK}`,
-      'no platforms/ directory in the SDK',
-      'The pinned Tauri CLI compiles against android-37. `sdkmanager "platforms;android-37"`.',
-    );
+    return absent(name, 'no platforms/ directory in the SDK', `Install it with ${install}.`);
   }
-  const wanted = `android-${REQUIRED_ANDROID_SDK}`;
-  return found.includes(wanted)
-    ? ok(`android platform ${REQUIRED_ANDROID_SDK}`, wanted)
+
+  // Highest minor of the required major, so `37.2` beats `37.0` and an SDK that
+  // somehow carries several is reported at the one it would actually use.
+  const matching = found
+    .filter((entry) => apiLevelOf(entry) === REQUIRED_ANDROID_API_LEVEL)
+    .sort(compareVersions);
+
+  return matching.length > 0
+    ? ok(name, `${matching[matching.length - 1]} (installed: ${found.join(', ')})`)
     : absent(
-        `android platform ${REQUIRED_ANDROID_SDK}`,
+        name,
         found.length === 0 ? 'none installed' : `installed: ${found.join(', ')}`,
-        `The pinned Tauri CLI compiles against ${wanted}. ` +
-          `\`sdkmanager "platforms;${wanted}"\`.`,
+        `The pinned Tauri CLI compiles against API ${REQUIRED_ANDROID_API_LEVEL}. ${install}.`,
       );
+};
+
+/** The API level of an installed platform directory: `android-37.2` → `37`. */
+export const apiLevelOf = (directory: string): string =>
+  /^android-(\d+)/.exec(directory)?.[1] ?? '';
+
+/** Numeric version comparison, so `37.10` sorts after `37.2`. */
+const compareVersions = (left: string, right: string): number => {
+  const parts = (value: string): number[] =>
+    value
+      .split('.')
+      .map((part) => Number(part.replace(/^android-/, '')))
+      .map((part) => (Number.isFinite(part) ? part : 0));
+  const a = parts(left);
+  const b = parts(right);
+  for (let index = 0; index < Math.max(a.length, b.length); index += 1) {
+    const difference = (a[index] ?? 0) - (b[index] ?? 0);
+    if (difference !== 0) {
+      return difference;
+    }
+  }
+  return 0;
 };
 
 /**

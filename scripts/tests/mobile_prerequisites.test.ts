@@ -17,7 +17,12 @@ import { afterAll, describe, expect, test } from 'bun:test';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { REQUIRED_ANDROID_SDK, REQUIRED_NDK_VERSION } from '../src/native/mobile.ts';
+import {
+  platformPackageApiLevel,
+  REQUIRED_ANDROID_API_LEVEL,
+  REQUIRED_ANDROID_PLATFORM_PACKAGE,
+  REQUIRED_NDK_VERSION,
+} from '../src/native/mobile.ts';
 import {
   androidNdkCheck,
   androidPlatformCheck,
@@ -78,18 +83,47 @@ describe('which SDK directory is read', () => {
   });
 });
 
-describe('the compileSdk platform', () => {
-  test(`the CLI's android-${REQUIRED_ANDROID_SDK} is present`, () => {
-    const root = sdk([], [`android-${REQUIRED_ANDROID_SDK}`]);
-    expect(androidPlatformCheck({ ANDROID_HOME: root }).ok).toBe(true);
+describe('the compileSdk platform, which is an API level and not a package name', () => {
+  test('the package name is a real one, and there is no bare android-37 to ask for', () => {
+    // Read out of dl.google.com/android/repository/repository2-3.xml: the 37.x
+    // platforms are `android-37.0`, `37.1`, `37.2` and three betas. Asking
+    // `sdkmanager` for `platforms;android-37` returns "Failed to find package",
+    // which is how CI found this.
+    expect(REQUIRED_ANDROID_PLATFORM_PACKAGE).toBe('platforms;android-37.2');
+    expect(REQUIRED_ANDROID_PLATFORM_PACKAGE).not.toBe('platforms;android-37');
+    expect(platformPackageApiLevel(REQUIRED_ANDROID_PLATFORM_PACKAGE)).toBe(
+      REQUIRED_ANDROID_API_LEVEL,
+    );
   });
 
-  test('a different installed platform does not satisfy it', () => {
+  test('an SDK carrying android-37.2 satisfies API 37', () => {
+    // The archive unpacks into platforms/android-37.2/, so there is no
+    // `android-37` directory for a name-equality check to find.
+    const root = sdk([], ['android-37.2']);
+    const check = androidPlatformCheck({ ANDROID_HOME: root });
+    expect(check.ok).toBe(true);
+    expect(check.detail).toContain('android-37.2');
+  });
+
+  test('the highest installed minor is the one reported', () => {
+    const root = sdk([], ['android-37.0', 'android-37.10', 'android-37.2']);
+    const check = androidPlatformCheck({ ANDROID_HOME: root });
+    // Numeric, not lexicographic: `37.10` must beat `37.2`.
+    expect(check.detail).toContain('android-37.10');
+  });
+
+  test('a different API level does not satisfy it', () => {
     const root = sdk([], ['android-33', 'android-34']);
     const check = androidPlatformCheck({ ANDROID_HOME: root });
     expect(check.ok).toBe(false);
     expect(check.detail).toContain('android-33');
-    expect(check.remedy).toContain(REQUIRED_ANDROID_SDK);
+    expect(check.remedy).toContain(REQUIRED_ANDROID_PLATFORM_PACKAGE);
+    expect(check.remedy).not.toContain('"platforms;android-37"');
+  });
+
+  test('a preview directory that is not a platform is ignored', () => {
+    const root = sdk([], ['android-canary', 'android-Baklava']);
+    expect(androidPlatformCheck({ ANDROID_HOME: root }).ok).toBe(false);
   });
 });
 
