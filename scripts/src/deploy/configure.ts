@@ -184,7 +184,7 @@ export const inspectConfig = (
   }
 
   // Reported per environment through the same authority the deploy uses, so this
-  // report and `bun run deploy plan --env <env>` can never disagree about what is
+  // report and `bun run deploy:check --env <env>` can never disagree about what is
   // missing. Reporting the top-level single set instead would say "configured"
   // for a project whose environments are not — which is how provisioning appeared
   // to complete while every deploy still refused.
@@ -467,6 +467,9 @@ export const setConfig = (args: readonly string[], root: string = REPO_ROOT): nu
   const origin = valueAfter('--origin');
   const jobsWorkerName = valueAfter('--jobs-worker');
   const mediaBucketName = valueAfter('--media-bucket');
+  const encodeWorkflowName = valueAfter('--encode-workflow');
+  const maintenanceWorkflowName = valueAfter('--maintenance-workflow');
+  const containerImage = valueAfter('--image');
   const imageProtocol = valueAfter('--image-protocol');
   const containerProfile = valueAfter('--container-profile');
   const jobsProfile = valueAfter('--jobs-profile');
@@ -476,10 +479,39 @@ export const setConfig = (args: readonly string[], root: string = REPO_ROOT): nu
   const computeFlags = [
     ['--jobs-worker', jobsWorkerName],
     ['--media-bucket', mediaBucketName],
+    ['--encode-workflow', encodeWorkflowName],
+    ['--maintenance-workflow', maintenanceWorkflowName],
+    ['--image', containerImage],
     ['--image-protocol', imageProtocol],
     ['--container-profile', containerProfile],
     ['--jobs-profile', jobsProfile],
   ] as const;
+
+  // Refuse an unknown flag rather than ignoring it.
+  //
+  // Silently ignoring `--jobs-workr` produced a run that reported success, changed
+  // nothing, and left the operator believing the compute half was configured — the
+  // exact "succeeds while doing nothing" this repository treats as its worst outcome.
+  // A flag this command does not implement is a typo until proven otherwise.
+  const KNOWN = new Set([
+    '--env',
+    '--account',
+    '--worker',
+    '--origin',
+    '--mail-from',
+    '--native-api-origin',
+    ...computeFlags.map(([flag]) => flag),
+  ]);
+  const unknownFlag = args.find((arg) => arg.startsWith('--') && !KNOWN.has(arg));
+  if (unknownFlag !== undefined) {
+    process.stderr.write(
+      `Unknown flag "${unknownFlag}". Nothing has been changed.\n` +
+        `  This command writes: ${[...KNOWN].join(', ')}\n` +
+        '  An unrecognised flag is ignored by most tools and silently changes nothing\n' +
+        '  here; it is refused so a typo cannot read as a successful configuration.\n',
+    );
+    return 2;
+  }
 
   const nothingToWrite =
     account === undefined &&
@@ -497,7 +529,9 @@ export const setConfig = (args: readonly string[], root: string = REPO_ROOT): nu
         '  --env <env> --origin https://<host>  the public origin\n' +
         '  --env <env> --mail-from <address>   the verified sender\n' +
         '  --env <env> --native-api-origin https://<host>\n' +
-        '  --env <env> --jobs-worker <name> --media-bucket <name> --image-protocol <id>\n' +
+        '  --env <env> --jobs-worker <name> --media-bucket <name>\n' +
+        '  --env <env> --encode-workflow <name> --maintenance-workflow <name>\n' +
+        '  --env <env> --image <path-or-reference> --image-protocol <id>\n' +
         '  --env <env> --container-profile <name> --jobs-profile disabled|encode\n',
     );
     return 2;
@@ -579,6 +613,33 @@ export const setConfig = (args: readonly string[], root: string = REPO_ROOT): nu
     return 2;
   }
 
+  // Workflow identities follow the Worker-name shape Cloudflare accepts, because an
+  // unaccepted one fails at deploy time with an error naming neither the plan nor the
+  // cause. Same rule and same reason as `workerName`, which is why it lives here and
+  // not in the resolver.
+  const WORKFLOW_NAME = /^[a-z0-9][a-z0-9-]{0,62}$/;
+  for (const [flag, value] of [
+    ['--encode-workflow', encodeWorkflowName],
+    ['--maintenance-workflow', maintenanceWorkflowName],
+  ] as const) {
+    if (value !== undefined && !WORKFLOW_NAME.test(value)) {
+      process.stderr.write(
+        `"${value}" is not a valid Workflow name for ${flag}.\n` +
+          '  Lowercase letters, digits and dashes; must start with a letter or digit.\n' +
+          '  Nothing has been changed.\n',
+      );
+      return 2;
+    }
+  }
+
+  if (containerImage !== undefined && containerImage.trim() === '') {
+    process.stderr.write(
+      '--image takes a Dockerfile path or a pinned reference, not an empty string.\n' +
+        '  Nothing has been changed. Omit the flag to leave it unconfigured.\n',
+    );
+    return 2;
+  }
+
   if (
     mediaBucketName !== undefined &&
     !/^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$/.test(mediaBucketName)
@@ -642,6 +703,9 @@ export const setConfig = (args: readonly string[], root: string = REPO_ROOT): nu
       assign('nativeApiOrigin', nativeApiOrigin);
       assign('jobsWorkerName', jobsWorkerName);
       assign('mediaBucketName', mediaBucketName);
+      assign('encodeWorkflowName', encodeWorkflowName);
+      assign('maintenanceWorkflowName', maintenanceWorkflowName);
+      assign('containerImage', containerImage);
       assign('imageProtocol', imageProtocol);
       assign('containerProfile', containerProfile);
       assign('jobsProfile', jobsProfile);
@@ -661,6 +725,9 @@ export const setConfig = (args: readonly string[], root: string = REPO_ROOT): nu
     ['Native API origin', nativeApiOrigin],
     ['Jobs Worker', jobsWorkerName],
     ['Media bucket', mediaBucketName],
+    ['Encode workflow', encodeWorkflowName],
+    ['Maintenance workflow', maintenanceWorkflowName],
+    ['Image', containerImage],
     ['Image protocol', imageProtocol],
     ['Container profile', containerProfile],
     ['Jobs profile', jobsProfile],
@@ -730,6 +797,9 @@ export const main = (args: readonly string[]): number => {
     '--native-api-origin',
     '--jobs-worker',
     '--media-bucket',
+    '--encode-workflow',
+    '--maintenance-workflow',
+    '--image',
     '--image-protocol',
     '--container-profile',
     '--jobs-profile',

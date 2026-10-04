@@ -20,14 +20,19 @@
 import { spawnSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
-import { NATIVE_DIR } from '../shared/paths.ts';
+import { NATIVE_DIR, REPO_ROOT } from '../shared/paths.ts';
 import type { Check } from './doctor.ts';
 
 export const PROFILES = ['web', 'native', 'android', 'ios', 'compute'] as const;
 export type Profile = (typeof PROFILES)[number];
 
-/** Which doctor checks each profile asks about. */
-const PROFILE_CHECKS: Record<Profile, readonly string[]> = {
+/**
+ * The *core* doctor checks each profile draws on. The platform checks it adds are
+ * read off `profileChecks` itself by {@link profileCheckNames}, so a check that is
+ * added there cannot go missing from the header `setup` prints — which is how
+ * `docker-engine` came to run, decide the exit code, and never be named.
+ */
+const CORE_PROFILE_CHECKS: Record<Profile, readonly string[]> = {
   // The credential-free core. No Docker, no Xcode, no Android SDK, no cloud key.
   web: ['bun', 'pins', 'node', 'wrangler', 'config', 'playwright', 'chromium', 'sops'],
   // Desktop shell: Rust toolchain and, on Linux, the webview development files.
@@ -35,7 +40,7 @@ const PROFILE_CHECKS: Record<Profile, readonly string[]> = {
   android: ['bun', 'pins', 'node', 'rust', 'android-sdk', 'android-jdk', 'cargo-native'],
   ios: ['bun', 'pins', 'node', 'rust', 'xcode', 'apple-toolchain'],
   // Real containers, locally: a Docker-compatible engine is the only prerequisite.
-  compute: ['bun', 'pins', 'node', 'wrangler', 'config', 'docker', 'cargo-media'],
+  compute: ['bun', 'pins', 'node', 'wrangler', 'config', 'docker', 'docker-engine', 'cargo-media'],
 };
 
 export const isProfile = (value: unknown): value is Profile =>
@@ -95,23 +100,32 @@ export const profileChecks = (profile: Profile): Check[] => {
   }
 
   if (profile === 'native') {
-    const pkgConfig = probe('pkg-config', ['--version']);
-    const webview = pkgConfig === null ? null : probe('pkg-config', ['--exists', 'webkit2gtk-4.1']);
-    out.push({
-      name: 'webview',
-      severity: 'required',
-      ok: webview !== null,
-      detail: webview !== null ? 'webkit2gtk-4.1 found by pkg-config' : 'webkit2gtk-4.1 not found',
-      ...(webview !== null
-        ? {}
-        : {
-            remedy:
-              'Linux desktop builds need the WebKitGTK 4.1 development files:\n' +
-              '    Debian/Ubuntu: sudo apt-get install libwebkit2gtk-4.1-dev\n' +
-              '    Fedora:        sudo dnf install webkit2gtk4.1-devel\n' +
-              '  macOS and Windows need no extra package; `nix develop` supplies it on Linux.',
-          }),
-    });
+    // Linux only, and said so.
+    //
+    // The check asked `pkg-config` for `webkit2gtk-4.1` on every platform, so a macOS
+    // or Windows host — where the webview is part of the OS and no such package
+    // exists — reported a required capability it could never satisfy. The remedy text
+    // even said so, which made the failure read as a bug in the checker.
+    if (process.platform === 'linux') {
+      const webview = probe('pkg-config', ['--exists', 'webkit2gtk-4.1']);
+      out.push({
+        name: 'webview',
+        severity: 'required',
+        ok: webview !== null,
+        detail:
+          webview !== null ? 'webkit2gtk-4.1 found by pkg-config' : 'webkit2gtk-4.1 not found',
+        ...(webview !== null
+          ? {}
+          : {
+              remedy:
+                'Linux desktop builds need the WebKitGTK 4.1 development files:\n' +
+                '    Debian/Ubuntu: sudo apt-get install libwebkit2gtk-4.1-dev\n' +
+                '    Fedora:        sudo dnf install webkit2gtk4.1-devel\n' +
+                '  macOS and Windows need no such package: their webview ships with the OS.\n' +
+                '  `nix develop` supplies it on Linux.',
+            }),
+      });
+    }
     out.push({
       name: 'cargo-native',
       severity: 'required',
@@ -244,14 +258,20 @@ export const profileChecks = (profile: Profile): Check[] => {
         : {}),
     });
 
+    // From `REPO_ROOT`, not the working directory.
+    //
+    // `join('apps', 'backend', 'media', 'Cargo.toml')` is relative to wherever the
+    // process was started, so `bun run setup:doctor` from a subdirectory reported a
+    // missing crate in a repository that has it — and the remedy told the operator to
+    // restore a file that was never gone.
+    const mediaManifest = join(REPO_ROOT, 'apps', 'backend', 'media', 'Cargo.toml');
+    const mediaPresent = existsSync(mediaManifest);
     out.push({
       name: 'cargo-media',
       severity: 'required',
-      ok: existsSync(join('apps', 'backend', 'media', 'Cargo.toml')),
-      detail: 'apps/backend/media/Cargo.toml',
-      ...(existsSync(join('apps', 'backend', 'media', 'Cargo.toml'))
-        ? {}
-        : { remedy: 'Restore apps/backend/media from the template.' }),
+      ok: mediaPresent,
+      detail: mediaPresent ? mediaManifest : `${mediaManifest} is missing`,
+      ...(mediaPresent ? {} : { remedy: 'Restore apps/backend/media from the template.' }),
     });
   }
 
@@ -259,14 +279,27 @@ export const profileChecks = (profile: Profile): Check[] => {
 };
 
 /**
- * The checks a profile asks about, by name.
+ * The names of the checks `profileChecks` emits for a profile.
+ *
+ * Read off the checks themselves rather than a second hand-written list, so the
+ * header `setup` prints cannot name a check that does not run — or omit one that
+ * does.
+ */
+export const platformCheckNames = (profile: Profile): string[] =>
+  profileChecks(profile).map((check) => check.name);
+
+/**
+ * Every check a profile asks about: the core ones it draws on, plus the platform ones
+ * it adds.
  *
  * `web` deliberately does not include Docker, Rust, Xcode or the Android SDK, and
  * that omission is the product decision: the web lane is the one a new contributor
  * runs, and requiring four toolchains to install it is how a template stops being a
  * template.
  */
-export const checksForProfile = (profile: Profile): string[] => [...PROFILE_CHECKS[profile]];
+export const profileCheckNames = (profile: Profile): string[] => [
+  ...new Set([...CORE_PROFILE_CHECKS[profile], ...platformCheckNames(profile)]),
+];
 
 /**
  * The remedy for a profile whose prerequisites are missing, as one command.

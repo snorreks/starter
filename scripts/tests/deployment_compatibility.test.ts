@@ -9,7 +9,10 @@
 // changed.
 
 import { describe, expect, test } from 'bun:test';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { PROCESSOR_PROTOCOL_ID } from '@starter/schemas/jobs';
+import { verifyTinyJob } from '../src/deploy/apply.ts';
 import {
   CONTAINER_PROFILES,
   imageProtocolProblem,
@@ -19,6 +22,20 @@ import {
   workflowSerializationNote,
 } from '../src/deploy/compatibility.ts';
 import type { ResolvedTarget } from '../src/deploy/target.ts';
+import { REPO_ROOT } from '../src/shared/paths.ts';
+
+const computeTarget = (): ResolvedTarget => encodeTarget();
+
+/** The root `package.json` scripts, so a remedy naming a command can be checked. */
+const ROOT_SCRIPTS: string[] = Object.keys(
+  (
+    JSON.parse(
+      // Through `REPO_ROOT`, like every other repository path in this repository: a
+      // hand-counted `../../..` is silent and reads as a missing file.
+      readFileSync(join(REPO_ROOT, 'package.json'), 'utf8'),
+    ) as { scripts?: Record<string, string> }
+  ).scripts ?? {},
+);
 
 const encodeTarget = (overrides: Partial<ResolvedTarget['compute']> = {}): ResolvedTarget => ({
   environment: 'staging',
@@ -83,7 +100,30 @@ describe('an incoherent compute environment is refused before anything is mutate
     );
     expect(problem?.reason).toContain('--media-bucket');
     expect(problem?.reason).toContain('--image');
-    expect(problem?.remedy).toContain('--provision-compute');
+    // Every flag in the remedy must exist. It used to name `--provision-compute`,
+    // which no command implements, so the one command offered for an incoherent
+    // compute environment could not be typed.
+    for (const flag of [
+      '--jobs-worker',
+      '--media-bucket',
+      '--encode-workflow',
+      '--maintenance-workflow',
+      '--image ',
+      '--image-protocol',
+      '--container-profile',
+      '--jobs-profile encode',
+    ]) {
+      expect(problem?.remedy ?? '').toContain(flag);
+    }
+    expect(problem?.remedy ?? '').not.toContain('--provision-compute');
+
+    // Every command the remedy names must exist in package.json. A remedy naming a
+    // command that was never implemented is worse than no remedy, because it looks
+    // like one.
+    for (const command of (problem?.remedy ?? '').match(/bun run [a-z:-]+/g) ?? []) {
+      const name = command.replace('bun run ', '');
+      expect(ROOT_SCRIPTS).toContain(name);
+    }
     // Turning it off is offered too, because for a web-only environment that is the
     // honest configuration rather than an error to work around.
     expect(problem?.remedy).toContain('--jobs-profile disabled');
@@ -211,15 +251,111 @@ describe('image retention and what a rollback restores', () => {
   });
 });
 
+describe('the apply pipeline checks the protocol the last release recorded', () => {
+  /**
+   * A fetch stub that walks the whole verify path: admit, poll to succeeded, fetch
+   * output. Ordered by URL rather than by call count, because the order is the thing
+   * under test and a counter would encode the assumption being checked.
+   */
+  const walkToSuccess = (output: {
+    ok: boolean;
+    status: number;
+    bytes: number;
+  }): typeof globalThis.fetch =>
+    (async (url: string) => {
+      if (url.endsWith('/api/jobs')) {
+        return { ok: true, status: 202, json: async () => ({ id: 'job-1', status: 'pending' }) };
+      }
+      if (url.endsWith('/output')) {
+        return {
+          ok: output.ok,
+          status: output.status,
+          arrayBuffer: async () => new ArrayBuffer(output.bytes),
+        };
+      }
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({ id: 'job-1', status: 'succeeded', outputAvailable: true }),
+      };
+    }) as unknown as typeof globalThis.fetch;
+
+  test('an empty output is a failure with its own message, not "0 bytes fetched"', async () => {
+    // The distinction matters to whoever reads the release record: "0 bytes were
+    // fetched" reads as a successful fetch of nothing.
+    const result = await verifyTinyJob(
+      computeTarget(),
+      walkToSuccess({ ok: true, status: 200, bytes: 0 }),
+      { token: 'session-token' },
+    );
+
+    expect(result.ok).toBe(false);
+    expect(result.detail).toContain('was empty');
+    expect(result.detail).not.toContain('0 bytes');
+  });
+
+  test('a real output passes, and reports how much it fetched', async () => {
+    const result = await verifyTinyJob(
+      computeTarget(),
+      walkToSuccess({ ok: true, status: 200, bytes: 4096 }),
+      { token: 'session-token' },
+    );
+
+    expect(result.ok).toBe(true);
+    expect(result.detail).toContain('4096 bytes');
+  });
+
+  test('a network error while fetching the output fails the verification', async () => {
+    // It used to reject out of `apply` entirely, so a deploy that had already
+    // succeeded ended in a stack trace instead of a recorded failure.
+    const failing = (() =>
+      Promise.reject(new Error('connection reset'))) as unknown as typeof globalThis.fetch;
+
+    const result = await verifyTinyJob(computeTarget(), failing, { token: 'session-token' });
+    expect(result.ok).toBe(false);
+    expect(result.detail).toContain('connection reset');
+  });
+
+  test('a job that cannot be admitted fails the release', async () => {
+    const refusing = {
+      ok: false,
+      status: 429,
+      json: async () => ({ error: 'budget exceeded' }),
+    };
+
+    const result = await verifyTinyJob(
+      computeTarget(),
+      (async () => refusing) as unknown as typeof globalThis.fetch,
+      { token: 'session-token' },
+    );
+    expect(result.ok).toBe(false);
+    expect(result.detail).toContain('429');
+  });
+
+  test('a compute profile with no session token says what was and was not proved', async () => {
+    // No `--with-job` suggestion any more: no such flag exists, so the only remedy
+    // offered was a command that could not be run.
+    const result = await verifyTinyJob(computeTarget(), (async () => ({
+      ok: true,
+      status: 200,
+    })) as unknown as typeof globalThis.fetch);
+    expect(result.ok).toBe(true);
+    expect(result.detail).toContain('NOT the full proof');
+    expect(result.detail).not.toContain('--with-job');
+    expect(result.detail).toContain('cannot stand in for a user session');
+  });
+});
+
 describe('serialisation is a repository guarantee, not a provider one', () => {
   test('the note names the guarantee and the ways around it', () => {
     const note = workflowSerializationNote();
     expect(note).toContain('one repository');
     expect(note).toContain('NOT a provider-wide lock');
     // The three ways the guarantee does not hold, named so an operator does not have
-    // to discover them.
-    expect(note).toContain('laptop');
-    expect(note).toContain('another repository');
-    expect(note).toContain('account');
+    // to discover them. Asserted as whole clauses: a generic `account` substring also
+    // matches "Cloudflare account", so deleting the bypass clause would have passed.
+    expect(note).toContain('operator laptop');
+    expect(note).toContain('another repository pointed at the same account');
+    expect(note).toContain('a second account holder deploying by hand');
   });
 });

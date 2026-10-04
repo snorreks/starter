@@ -30,6 +30,7 @@
 import type { DeploymentEnvironment } from '@starter/schemas';
 import {
   DEPLOYMENT_CONFIG,
+  type EnvironmentTargets,
   JOBS_PROFILES,
   type JobsProfile,
   REQUIRED_REMOTE_SECRET_NAMES,
@@ -157,6 +158,35 @@ const parseOrigin = (
 };
 
 /**
+ * The destinations an override may retarget, and what sharing one costs.
+ *
+ * The image is absent: a Dockerfile is a build input both environments may use, and
+ * what runs differs by digest. `environmentIsolationProblem` compares digests
+ * separately.
+ */
+const OVERRIDABLE_DESTINATIONS: ReadonlyArray<[keyof EnvironmentTargets, string, string]> = [
+  ['workerName', 'Worker', 'A staging release would reach live traffic.'],
+  [
+    'jobsWorkerName',
+    'jobs Worker',
+    "Staging's maintenance sweep would operate on production jobs.",
+  ],
+  ['d1DatabaseId', 'D1 database', 'A staging migration would be a production migration.'],
+  ['mediaBucketName', 'R2 bucket', "Staging's retention sweep would delete production's output."],
+  [
+    'encodeWorkflowName',
+    'encode Workflow',
+    'Both environments would share one instance namespace.',
+  ],
+  [
+    'maintenanceWorkflowName',
+    'maintenance Workflow',
+    'One environment would consume the other maintenance run key.',
+  ],
+  ['origin', 'origin', "Staging would be verified against production's address, or the reverse."],
+];
+
+/**
  * Refuse two environments that would resolve to the same destination.
  *
  * The check is over the *configured* topology rather than the raw map, which is what
@@ -221,6 +251,60 @@ export const environmentIsolationProblem = (
    * Dockerfile, and what actually runs differs by digest — which is recorded per
    * release. A digest is compared instead, and only a digest, below.
    */
+  // Second pass, over the destinations this run will actually *use*.
+  //
+  // The pass above compares configuration, because the injected overrides are scoped
+  // to one environment and applying one value to both would make every CI plan refuse.
+  // That left a gap CodeRabbit correctly named: a staging override naming
+  // production's Worker escapes the configuration comparison entirely, and the
+  // mutation that follows deploys to production under a staging label.
+  //
+  // So the override is checked against the *other* environment's configured
+  // destinations instead. That is the comparison that matters: an override is
+  // allowed to differ from configuration — that is its purpose — but it is not
+  // allowed to land on a resource another environment already owns.
+  for (const environment of DEPLOYABLE_ENVIRONMENTS) {
+    const own = configuredTopologyFor(environment, values);
+    if (own === null) {
+      continue;
+    }
+    const effective = topologyFor(environment, values);
+    if (effective === null) {
+      continue;
+    }
+
+    for (const other of DEPLOYABLE_ENVIRONMENTS) {
+      if (other === environment) {
+        continue;
+      }
+      const otherConfigured = configuredTopologyFor(other, values);
+      if (otherConfigured === null) {
+        continue;
+      }
+
+      for (const [field, label, consequence] of OVERRIDABLE_DESTINATIONS) {
+        const mine = effective[field];
+        const theirs = otherConfigured[field];
+        if (mine === null || mine === undefined || mine !== theirs) {
+          continue;
+        }
+        // Only report it when the override actually *introduced* the collision;
+        // a collision already present in configuration is the first pass's business
+        // and has a different remedy.
+        if (own[field] === mine) {
+          continue;
+        }
+        return (
+          `The override for ${environment} resolves to the ${label} "${String(mine)}", which is ` +
+          `${other}'s configured ${label}. ` +
+          `${consequence}\n` +
+          '  Overrides exist to target something configuration did not describe; they do not ' +
+          'exist to reach another environment. Nothing has been changed.'
+        );
+      }
+    }
+  }
+
   const entries = [...resolved.entries()].filter(([, value]) =>
     Object.values(value).some((entry) => entry !== null),
   );

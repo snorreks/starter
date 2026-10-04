@@ -145,7 +145,7 @@
       "count": null,
       "recordedAt": "2026-10-03T22:05:00.000Z",
       "artifact": null,
-      "reason": "No Cloudflare account, credential, deployed runtime secret or verified mail sender is available in this environment, and PR I is explicitly barred from provisioning, deploying or writing remote secrets. The offline plan, the preflight checks and the apply pipeline are exercised by fixture tests instead."
+      "reason": "No Cloudflare account, credential, deployed runtime secret or verified mail sender is available here, and this change is reviewable code only: it provisions, deploys and installs nothing remotely. The offline plan, the preflight checks and the apply pipeline are exercised by fixture tests instead."
     },
     {
       "capability": "Live mail delivery (verification, sign-in, recovery)",
@@ -217,7 +217,7 @@
       "count": null,
       "recordedAt": "2026-10-03T22:05:00.000Z",
       "artifact": null,
-      "reason": "No Apple, Microsoft or Android signing input exists in this environment, and PR I publishes nothing."
+      "reason": "No Apple, Microsoft or Android signing input exists here, and this change publishes nothing."
     },
     {
       "capability": "Unit tests, every project (superseded figure)",

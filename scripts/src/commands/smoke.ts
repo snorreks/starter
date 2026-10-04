@@ -90,14 +90,27 @@ const run = async (args: readonly string[]): Promise<number> => {
     ...(maxSteps === undefined ? {} : { maxSteps }),
   });
 
+  // What was removed, from the report — not a fixed sentence.
+  //
+  // It used to name four directories and two workflows unconditionally, so a
+  // rehearsal that deleted nothing still claimed it had, and a reader checking the
+  // claim had nothing to check against. `removed` is empty when nothing was deleted,
+  // and the notice says so.
   if (withoutHeavy) {
-    process.stdout.write(
-      '\nHeavy examples removed from the copy: apps/frontend/native, apps/backend/media,\n' +
-        'the native workflows, the native:* scripts, the Biome overrides naming them and\n' +
-        'the Moon project ids for them. The web half is what the remaining steps prove.\n' +
-        'Note the first two steps: removing a workspace makes bun.lock stale, so the\n' +
-        'lockfile is regenerated and then re-checked with --frozen-lockfile.\n',
-    );
+    if (report.removed.length === 0) {
+      process.stdout.write(
+        '\n--without-heavy was requested but nothing was present to remove.\n' +
+          '  The rehearsal that follows is therefore the ordinary one.\n',
+      );
+    } else {
+      process.stdout.write(
+        `\nRemoved from the disposable copy (${report.removed.length} path(s)):\n` +
+          report.removed.map((path) => `  ${path}`).join('\n') +
+          '\nThe web half is what the remaining steps prove.\n' +
+          'Note the first two steps: removing a workspace makes bun.lock stale, so the\n' +
+          'lockfile is regenerated and then re-checked with --frozen-lockfile.\n',
+      );
+    }
   }
 
   for (const step of report.steps) {

@@ -6,10 +6,10 @@
 // implementation is shared either way.
 
 import {
-  checksForProfile,
   isProfile,
   PROFILES,
   type Profile,
+  profileCheckNames,
   profileChecks,
   profileRefusal,
 } from '../setup/profiles.ts';
@@ -104,30 +104,40 @@ export const setupCommand: Command = {
       return fail(`Unknown flag "${unknown[0]}".\n\n${SETUP_USAGE}`, EXIT.usage);
     }
 
-    const core = runSetup(parsed.rest);
-    if (parsed.profile === 'web') {
-      return core;
+    // Checked *before* anything is written.
+    //
+    // This ran `runSetup` first and only then evaluated the profile, so a refusal
+    // followed changes setup had already made — it wrote `.env`, installed
+    // dependencies and possibly downloaded a browser, then said the lane was
+    // unavailable. "Nothing was written" is the promise the message makes, and the
+    // order was what broke it.
+    if (parsed.profile !== 'web') {
+      const extra = profileChecks(parsed.profile);
+      const missing = extra
+        .filter((check) => !check.ok && check.severity === 'required')
+        .map((check) => check.name);
+
+      process.stdout.write(
+        `\nProfile: ${parsed.profile} (checks: ${profileCheckNames(parsed.profile).join(', ')})\n`,
+      );
+      for (const check of extra) {
+        process.stdout.write(`${statusMark(check)} ${check.name.padEnd(16)} ${check.detail}\n`);
+      }
+
+      if (missing.length > 0) {
+        process.stderr.write(`\n${profileRefusal(parsed.profile, missing)}\n`);
+        return EXIT.unavailable;
+      }
     }
 
     // A selected lane is *checked*, never partially prepared: setup installs the web
-    // prerequisites and stops there. Pretending it installed an SDK would be the
-    // "succeeds while doing nothing" this repository treats as the worst outcome.
-    const extra = profileChecks(parsed.profile);
-    const missing = extra.filter((check) => !check.ok).map((check) => check.name);
-
-    process.stdout.write(
-      `\nProfile: ${parsed.profile} (checks: ${checksForProfile(parsed.profile).join(', ')})\n`,
-    );
-    for (const check of extra) {
-      process.stdout.write(`${statusMark(check)} ${check.name.padEnd(16)} ${check.detail}\n`);
-    }
-
-    if (missing.length > 0) {
-      process.stderr.write(`\n${profileRefusal(parsed.profile, missing)}\n`);
-      return EXIT.unavailable;
-    }
-
-    return core;
+    // prerequisites and stops there. Pretending it installed an Android SDK would be
+    // the "succeeds while doing nothing" this repository treats as the worst outcome.
+    //
+    // The core result is returned as-is, so a failing core lane is not replaced by a
+    // profile answer — the two are different questions and the exit code should say
+    // which one failed.
+    return runSetup(parsed.rest);
   },
 };
 
@@ -165,10 +175,11 @@ export const doctorCommand: Command = {
       .filter((check) => !check.ok && check.severity === 'required')
       .map((check) => check.name);
 
-    if (!report.ok || missing.length > 0) {
-      process.stderr.write(
-        `\nMissing required capabilities: ${report.missingRequired.join(', ')}\n`,
-      );
+    if (missing.length > 0) {
+      // `missing`, not `report.missingRequired`. The latter only covers the core
+      // checks, so a profile whose prerequisites are absent printed an empty header
+      // above a list of the very things that were missing.
+      process.stderr.write(`\nMissing required capabilities: ${missing.join(', ')}\n`);
       for (const check of allChecks) {
         if (!check.ok && check.remedy) {
           process.stderr.write(`  ${check.name}: ${check.remedy}\n`);

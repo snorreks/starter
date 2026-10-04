@@ -165,11 +165,16 @@ jobs:
       # Proves the repository-level map is actually configured, with a message that
       # names the variable and its shape. A plan that fails here fails *before* the
       # apply job has claimed the concurrency group, which is the point.
+      # The variable's *name* is written literally rather than through `$VAR`,
+      # because `$STARTER_DEPLOYMENT_TARGETS` is empty in exactly the case this
+      # branch runs, so the expansion printed nothing and the operator was told
+      # "::error::: is not set on this repository."
       - name: Configuration is visible to a job with no environment
         run: |
           if [ -z "$STARTER_DEPLOYMENT_TARGETS" ]; then
-            echo "::error::$STARTER_DEPLOYMENT_TARGETS is not set on this repository."
-            echo "Add it under Settings -> Secrets and variables -> Actions -> Variables."
+            echo '::error::STARTER_DEPLOYMENT_TARGETS is not set on this repository.'
+            echo 'Add it under Settings -> Secrets and variables -> Actions -> Variables.'
+            echo 'It is the nonsecret, repository-scoped target map; secrets stay on the environment.'
             exit 3
           fi
 
@@ -241,13 +246,22 @@ jobs:
       # cannot catch on its own: an environment can require reviewers without saying
       # *what* is being reviewed. This refuses unless the checkout is the default
       # branch's head.
+      # `github.ref` arrives through `env:`, never as `${{ }}` inside the script.
+      #
+      # A `${{ }}` expression is substituted into the shell source *before* the shell
+      # runs, so a ref containing a metacharacter would execute before the comparison
+      # that was supposed to refuse it. Passing it through the environment keeps the
+      # comparison and the refusal intact, which is the whole point of the check.
       - name: Refuse an unreviewed revision
+        env:
+          DEPLOY_REF: ${{ github.ref }}
+          SOURCE_SHA: ${{ steps.source.outputs.sha }}
         run: |
-          if [ "${{ github.ref }}" != "refs/heads/main" ]; then
-            echo "::error::Refusing to deploy ${{ github.ref }}. A release may only publish the default branch."
+          if [ "$DEPLOY_REF" != "refs/heads/main" ]; then
+            echo "::error::Refusing to deploy $DEPLOY_REF. A release may only publish the default branch."
             exit 3
           fi
-          echo "Deploying ${{ steps.source.outputs.sha }} from the default branch."
+          echo "Deploying $SOURCE_SHA from the default branch."
 
       # In the environment, never in a step's `run:` line. A token echoed in a
       # command lands in the run log; this assignment never prints.
@@ -271,18 +285,23 @@ jobs:
       # with `--install` it also installs BETTER_AUTH_SECRET and RESEND_API_KEY by
       # value, on stdin, never in argv. Opt-in because it is the one step that
       # writes a credential, and an unattended run should not do that by surprise.
+      # The runtime secrets are supplied **only** when the operator asked to install
+      # them. This step also runs on a plain first deploy, and handing
+      # `BETTER_AUTH_SECRET` and `RESEND_API_KEY` to a process that was only going to
+      # create a database and a bucket gives every child of that process a credential
+      # it has no reason to hold. The Cloudflare token is always needed; the other two
+      # are not.
       - name: Provision
         if: ${{ inputs.first_deploy || inputs.install_secrets }}
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           DEPLOY_ENVIRONMENT: ${{ inputs.environment }}
-          # Runtime secrets. Distinct from the Cloudflare token above: these are read
-          # by the running Worker, and the token is not readable by it.
-          BETTER_AUTH_SECRET: ${{ secrets.BETTER_AUTH_SECRET }}
-          RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
+          INSTALL_SECRETS: ${{ inputs.install_secrets }}
+          BETTER_AUTH_SECRET: ${{ inputs.install_secrets && secrets.BETTER_AUTH_SECRET || '' }}
+          RESEND_API_KEY: ${{ inputs.install_secrets && secrets.RESEND_API_KEY || '' }}
         run: |
           bun run deploy:provision --env "$DEPLOY_ENVIRONMENT" --yes \
-            $([ "${{ inputs.install_secrets }}" = "true" ] && echo --install)
+            $([ "$INSTALL_SECRETS" = "true" ] && echo --install)
 
       # One command for build, schema, storage, image, jobs, web, verify and record,
       # in that order, with `--yes` supplied here and nowhere else. The same pipeline

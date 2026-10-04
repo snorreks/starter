@@ -102,6 +102,15 @@ export interface SmokeReport {
   /** Committed references to the old identity, as `path:line`. */
   identityReferences: string[];
   /**
+   * What the removal rehearsal actually deleted, as repository-relative paths.
+   *
+   * Reported rather than narrated. The command printed a fixed sentence naming four
+   * directories and two workflows whether or not they existed, so a rehearsal that
+   * removed nothing still claimed it had — and a reader checking the claim had no way
+   * to tell. Empty means nothing was removed.
+   */
+  removed: string[];
+  /**
    * The `HOME` a step's child process actually saw, or null when no step ran.
    *
    * Reported rather than assumed. `.smoke-home` is created by this module before
@@ -472,6 +481,14 @@ const NARRATED =
  *   * lines that already read as narrated, so this is idempotent.
  */
 /**
+ * A literal, quoted for use inside a regular expression alternation.
+ *
+ * Not `escapeRegExp` from somewhere: one call, and a path segment can contain a dot
+ * (`apps/backend/media/README.md`), which would otherwise match more than it names.
+ */
+const escapeForRegExp = (value: string): string => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+/**
  * The relative link targets on one line that no longer resolve.
  *
  * The guard checks *links*, not just bare paths: a README whose link target was
@@ -528,20 +545,34 @@ export const narrateRemovedReferences = (root: string, removed: readonly string[
         return line;
       }
 
-      const mentioned = [
-        ...needle.filter((candidate) => line.includes(candidate)),
-        ...brokenLinkTargets(root, file, line),
-      ];
-      if (mentioned.length === 0) {
+      const candidates = [
+        ...new Set([
+          ...needle.filter((candidate) => line.includes(candidate)),
+          ...brokenLinkTargets(root, file, line),
+        ]),
+      ].sort((left, right) => right.length - left.length);
+
+      const hits = candidates.filter((candidate) => line.includes(candidate));
+      if (hits.length === 0) {
         return line;
       }
       changed = true;
+
+      // One pass, longest candidate first, over a single alternation.
+      //
+      // Reducing with `String.replace` per candidate corrupted overlapping
+      // candidates: `apps/frontend/native` is a prefix of
+      // `apps/frontend/native/src-tauri`, so annotating the short one first inserted
+      // text *inside* the long one and the long one's own annotation then failed to
+      // match — leaving `apps/frontend/native (removed in this copy)/src-tauri`,
+      // which is neither path and matches neither exemption.
+      const pattern = new RegExp(
+        `(${hits.map((candidate) => escapeForRegExp(candidate)).join('|')})`,
+        'g',
+      );
       // Inserted after the path rather than appended, so the note stays in the same
       // cell/sentence and markdown tables and lists keep their shape.
-      return [...new Set(mentioned)].reduce(
-        (acc, candidate) => acc.replace(candidate, `${candidate} (removed in this copy)`),
-        line,
-      );
+      return line.replace(pattern, '$1 (removed in this copy)');
     });
 
     if (changed) {
@@ -647,10 +678,12 @@ export const runTemplateSmoke = (options: SmokeOptions = {}): SmokeReport => {
   const checkout = join(dir, 'starter');
   const steps: StepResult[] = [];
 
+  const removed: string[] = [];
+
   try {
     copyTemplateTree(root, checkout);
     if (options.withoutHeavyExamples === true) {
-      removeHeavyExamples(checkout);
+      removed.push(...removeHeavyExamples(checkout));
     }
     // `setup` writes into `$HOME`; give it one that exists and is disposable.
     mkdirSync(smokeHome(checkout), { recursive: true });
@@ -712,6 +745,7 @@ export const runTemplateSmoke = (options: SmokeOptions = {}): SmokeReport => {
       steps,
       ok: steps.length === Math.min(limit, plan.length) && steps.every((step) => step.ok),
       identityReferences: findIdentityReferences(root),
+      removed,
       reportedHome,
     };
   } finally {

@@ -167,6 +167,79 @@ describe('a row must be reproducible and identified', () => {
     }
   });
 
+  test('a manifest whose rows are not objects is refused, not thrown over', () => {
+    // A blind `as EvidenceManifest` cast trusted `rows` to be an array of rows, so
+    // `"rows": {}` produced a stack trace from a document a person hand-edits.
+    const dir = root();
+    try {
+      write(dir, { revision: 'f2374d1', rows: {} });
+      const result = readManifest(dir);
+      expect(result.ok).toBe(false);
+      if (!result.ok) {
+        expect(result.problems[0]).toContain('must be an array');
+      }
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test('a row that is not an object is named by index', () => {
+    const dir = root();
+    try {
+      write(dir, { revision: 'f2374d1', rows: [row(), 'not a row'] });
+      const result = readManifest(dir);
+      expect(result.ok).toBe(false);
+      if (!result.ok) {
+        expect(result.problems[0]).toContain('rows[1]');
+      }
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test('a manifest that is not an object at all is refused', () => {
+    const dir = root();
+    try {
+      write(dir, [1, 2, 3]);
+      const result = readManifest(dir);
+      expect(result.ok).toBe(false);
+      if (!result.ok) {
+        expect(result.problems[0]).toContain('must contain a JSON object');
+      }
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test('a fractional count is refused on a historical row too', () => {
+    // Only `observed` rows were checked, so a historical figure — the number a
+    // reader quotes when asking whether something regressed — could be any string.
+    const dir = root();
+    try {
+      write(dir, {
+        revision: 'f2374d1',
+        rows: [row({ capability: 'Older lane', kind: 'historical', count: 12.5 })],
+      });
+      const result = readManifest(dir);
+      expect(result.ok).toBe(false);
+      if (!result.ok) {
+        expect(result.problems[0]).toContain('count must be an integer');
+      }
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test('a count of null is accepted, because not every command reports one', () => {
+    const dir = root();
+    try {
+      write(dir, { revision: 'f2374d1', rows: [row({ count: null })] });
+      expect(readManifest(dir).ok).toBe(true);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   test('a missing manifest is reported as missing, not as "no rows, therefore fine"', () => {
     const dir = root();
     try {
@@ -214,6 +287,40 @@ describe('a stale matrix is caught, with the line that differs', () => {
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
+  });
+
+  test('a pipe in a result cannot restructure the table', () => {
+    // Every value is hand-edited prose. One `|` silently splits a cell, the column
+    // count stops matching the header, and the matrix renders as garbage nobody
+    // notices until they need to read it.
+    const rendered = renderCurrentMatrix({
+      revision: 'f2374d1',
+      rows: [row({ result: '1740 pass | 0 fail across 12 projects', capability: 'a | b' })],
+    });
+    const dataLine = rendered.split('\n').find((line) => line.includes('1740 pass')) ?? '';
+
+    expect(dataLine).toContain('1740 pass \\| 0 fail');
+    expect(dataLine).toContain('a \\| b');
+    // Six columns means five unescaped separators; every `|` that remains is one.
+    expect(dataLine.split(/(?<!\\)\|/).length).toBe(8);
+  });
+
+  test('a newline in a reason cannot end the table row', () => {
+    const rendered = renderCurrentMatrix({
+      revision: 'f2374d1',
+      rows: [row({ kind: 'not-run', count: null, reason: 'no account\none credential' })],
+    });
+    const after = rendered.split('| Capability |')[1] ?? '';
+    // The reason stays inside its own row rather than leaking onto the next line.
+    expect(after).toContain('no account one credential');
+  });
+
+  test('an artifact path is escaped like every other cell', () => {
+    const rendered = renderCurrentMatrix({
+      revision: 'f2374d1',
+      rows: [row({ artifact: 'docs/evidence/run|1.json' })],
+    });
+    expect(rendered).toContain('run\\|1.json');
   });
 
   test('the rendered block excludes historical rows', () => {

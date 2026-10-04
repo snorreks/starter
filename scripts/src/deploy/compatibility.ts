@@ -130,7 +130,11 @@ export const targetCompatibilityProblem = (target: ResolvedTarget): Compatibilit
         remedy:
           'A profile of "encode" with no image and no bucket is not a partial deployment: it\n' +
           '  admits jobs that can never complete. Either configure the compute half:\n' +
-          `    bun run deploy:configure -- --env ${target.environment} --provision-compute\n` +
+          `    bun run deploy:configure -- --env ${target.environment} \\\n` +
+          '        --jobs-worker <name> --media-bucket <name> \\\n' +
+          '        --encode-workflow <name> --maintenance-workflow <name> \\\n' +
+          '        --image ../media/Dockerfile --image-protocol sample-v1 \\\n' +
+          '        --container-profile basic --jobs-profile encode\n' +
           '  or turn it off, which is the honest state for a web-only environment:\n' +
           `    bun run deploy:configure -- --env ${target.environment} --jobs-profile disabled`,
       };
@@ -227,7 +231,7 @@ export const imageProtocolProblem = (
         'Deploying the new web Worker while the old protocol runs would start encodes against an\n' +
         '  image that rejects them, inside jobs accepted before this deploy began.\n' +
         `  Deploy the jobs Worker and its image first:\n` +
-        `    bun run deploy apply --env ${target.environment} --yes --only jobs\n` +
+        `    bun run deploy:apply --env ${target.environment} --yes --only jobs\n` +
         '  A rollback of the web Worker does not roll the image back; see docs/deployment.md.',
     };
   }

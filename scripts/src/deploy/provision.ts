@@ -106,35 +106,46 @@ export const secretInArgvProblem = (args: readonly string[]): string | null => {
 };
 
 /** Every resource the target binds, and the argv that creates it if absent. */
-export const provisionSteps = (
-  target: ResolvedTarget,
-): { name: string; description: string; create: string[]; exists: string[]; cwd: string }[] => {
-  const steps: {
-    name: string;
-    description: string;
-    create: string[];
-    exists: string[];
-    cwd: string;
-  }[] = [
+export interface ProvisionDefinition {
+  name: string;
+  description: string;
+  create: string[];
+  /** A read-only listing. A nonzero exit here means *cannot tell*, never *absent*. */
+  exists: string[];
+  /** How to answer "is it there?" from a successful read's output. */
+  present: (stdout: string) => boolean;
+  cwd: string;
+}
+
+export const provisionSteps = (target: ResolvedTarget): ProvisionDefinition[] => {
+  const steps: ProvisionDefinition[] = [
     {
       name: 'database',
       description: `D1 database ${target.d1DatabaseId}`,
-      // `--remote` because provisioning is about the deployed resource. A local
-      // database created here would satisfy the check and leave the deploy to fail.
-      exists: ['d1', 'info', target.d1DatabaseId, '--json'],
+      // A *list*, not `d1 info <id>`.
+      //
+      // `d1 info` reports a database that does not exist by exiting nonzero — the
+      // same signal it gives for a revoked token or the wrong account. An exit code
+      // cannot separate those, so "absent" could not be told from "cannot tell", and
+      // the second one creates a duplicate. Listing makes presence a question about
+      // the *data*, and a nonzero exit unambiguously means "could not tell".
+      exists: ['d1', 'list', '--json'],
+      present: (stdout) => databaseExists(stdout, target.d1DatabaseId),
       create: ['d1', 'create', `${target.project}-${target.environment}-db`, '--type', 'primary'],
       cwd: REPO_ROOT,
     },
   ];
 
-  if (target.compute.enabled && target.compute.mediaBucketName !== null) {
+  const bucket = target.compute.mediaBucketName;
+  if (target.compute.enabled && bucket !== null) {
     steps.push({
       name: 'bucket',
       description: `private R2 bucket ${target.compute.mediaBucketName}`,
       // Read-only, and the read is the whole idempotency check: a bucket that is
       // listed needs no create, and one that is not listed needs one.
       exists: ['r2', 'bucket', 'list', '--json'],
-      create: ['r2', 'bucket', 'create', target.compute.mediaBucketName],
+      present: (stdout) => bucketExists(stdout, bucket),
+      create: ['r2', 'bucket', 'create', bucket],
       cwd: REPO_ROOT,
     });
   }
@@ -167,6 +178,31 @@ const arrayFromWrangler = (parsed: unknown): unknown[] => {
     }
   }
   return [];
+};
+
+/**
+ * Whether a database id appears in `d1 list --json`.
+ *
+ * Same contract as {@link bucketExists}: parsed, never substring-matched, and
+ * unparseable output is "cannot tell" rather than "absent".
+ */
+export const databaseExists = (stdout: string, id: string): boolean => {
+  const entries = arrayFromWrangler(safeParse(stdout));
+  return entries.some((entry) => {
+    if (typeof entry !== 'object' || entry === null) {
+      return false;
+    }
+    const record = entry as Record<string, unknown>;
+    return record.uuid === id || record.database_id === id;
+  });
+};
+
+const safeParse = (stdout: string): unknown => {
+  try {
+    return JSON.parse(stdout);
+  } catch {
+    return null;
+  }
 };
 
 export const bucketExists = (stdout: string, name: string): boolean => {
@@ -264,6 +300,17 @@ export const provision = (
     run?: MutatingCommand;
     env?: NodeJS.ProcessEnv;
     root?: string;
+    /**
+     * Which half to run.
+     *
+     * `both` is the default and is what `deploy provision` uses. The split exists
+     * because `deploy secrets --install` used to run the *whole* provisioner: an
+     * operator refreshing one runtime secret also created a database, a bucket and
+     * uploaded the fixture. Those are separate authority — different reversibility,
+     * different bill, different thing to be surprised by — and a command named
+     * `secrets` must not perform them.
+     */
+    mode?: 'both' | 'resources' | 'secrets';
     /** Install runtime secrets. `false` records them as still missing. */
     installSecrets?: boolean;
     /** Where a secret's value comes from. `sops` is refused, with a remedy. */
@@ -279,7 +326,8 @@ export const provision = (
 
   // ── resources ──────────────────────────────────────────────────────────────
   const capture = options.capture;
-  const definitions = provisionSteps(target);
+  const mode = options.mode ?? 'both';
+  const definitions = mode === 'secrets' ? [] : provisionSteps(target);
 
   for (const definition of definitions) {
     const argv = [...definition.exists];
@@ -303,7 +351,7 @@ export const provision = (
       // preflight; provisioning cannot tell whether the resource exists, so it
       // says so instead of guessing and creating a duplicate.
       detail =
-        'Existence cannot be checked without a capture function. Run `bun run deploy preflight` first, ' +
+        'Existence cannot be checked without a capture function. Run `bun run deploy:preflight` first, ' +
         'which is read-only.';
       steps.push({
         name: definition.name,
@@ -315,12 +363,33 @@ export const provision = (
       return stop(definition.name);
     }
 
+    // Three answers, not two.
+    //
+    // This used to be `if (exists) skip else create`, which treats a *failed* read
+    // as an absent resource: a revoked token, a network blip or a wrong account all
+    // answered `!ok`, and the next line created a second database or a second bucket
+    // under a name that already exists. Both are real, billable, and invisible.
+    //
+    // "Could not tell" is now its own outcome, and it stops the run with the remedy.
     const listed = capture(definition.exists);
-    if (definition.name === 'bucket' && target.compute.mediaBucketName !== null) {
-      alreadyPresent = bucketExists(listed.stdout, target.compute.mediaBucketName);
-    } else {
-      alreadyPresent = listed.ok;
+    if (!listed.ok) {
+      detail =
+        `Could not read ${definition.description}, so this cannot tell whether it exists.\n` +
+        '  Refusing to create it: an unreadable resource is not an absent one, and a\n' +
+        '  duplicate database or bucket is a real cost under a name nobody was looking for.\n' +
+        '  Fix the credential or the network, then re-run:\n' +
+        `    bun run deploy:preflight --env ${target.environment}`;
+      steps.push({
+        name: definition.name,
+        description: definition.description,
+        outcome: 'failed',
+        detail,
+        argv,
+      });
+      return stop(definition.name);
     }
+
+    alreadyPresent = definition.present(listed.stdout);
 
     if (alreadyPresent) {
       steps.push({
@@ -347,7 +416,9 @@ export const provision = (
   }
 
   // ── fixture ────────────────────────────────────────────────────────────────
-  const fixture = fixtureUploadStep(target);
+  // Gated with the resources: uploading the fixture is a write, and
+  // `deploy secrets` must not perform one.
+  const fixture = mode === 'secrets' ? null : fixtureUploadStep(target);
   if (fixture !== null) {
     const built = join(root, fixture.source);
     if (!existsSync(built)) {
@@ -383,6 +454,23 @@ export const provision = (
   }
 
   // ── secrets ────────────────────────────────────────────────────────────────
+  if (mode === 'resources') {
+    // `deploy provision` without `--install` deliberately leaves the secrets alone and
+    // says so, so the report cannot be read as "this release can sign someone in".
+    steps.push({
+      name: 'secrets',
+      description: `install ${RUNTIME_SECRET_NAMES.join(', ')} on ${target.workerName}`,
+      outcome: 'skipped',
+      detail:
+        'not installed by this command. `deploy provision` creates resources; it does not\n' +
+        '  write credentials unless asked to:\n' +
+        `    bun run deploy:secrets --env ${target.environment} --yes --install\n` +
+        '  Nothing was installed.',
+      argv: [],
+    });
+    return { ok: true, steps, stoppedAt: null };
+  }
+
   if (options.secretSource === 'sops') {
     steps.push({
       name: 'secrets',
@@ -394,7 +482,7 @@ export const provision = (
         '  composition is to let the existing SOPS runner decrypt and export, and install\n' +
         '  from the environment:\n' +
         '    bun run secrets:exec --env BETTER_AUTH_SECRET=<ct> --env RESEND_API_KEY=<ct> -- \\\n' +
-        '      bun run deploy secrets --env ' +
+        '      bun run deploy:secrets --env ' +
         target.environment +
         ' --install\n' +
         '  Nothing was installed.',
@@ -411,7 +499,7 @@ export const provision = (
         outcome: 'skipped',
         detail:
           'not installed: pass --install-secrets with the value exported, or run\n' +
-          `    bun run deploy secrets --env ${target.environment}`,
+          `    bun run deploy:secrets --env ${target.environment} --yes --install`,
         argv: plan.argv,
       });
       continue;

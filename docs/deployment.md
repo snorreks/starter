@@ -163,12 +163,23 @@ whole environment rather than the web Worker alone:
 Every field is `null` in the committed template. A template cannot know a bucket name
 and a committed one would point a fresh clone at somebody else's account.
 
-**Where the values live, in precedence order:**
+**Where the values live, in precedence order, as `resolveDeploymentValues` actually
+folds them:**
 
-1. the gitignored overlay `.starter/deployment.local.json`, written by
-   `bun run deploy:configure`;
-2. repository-scoped environment variables, for CI;
-3. the committed module, which is only the floor.
+1. the **unsuffixed override variables** (`CLOUDFLARE_WORKER_NAME` and siblings) —
+   applied last, and only to `DEPLOY_ENVIRONMENT`, so a CI run can target something
+   configuration did not describe;
+2. the **repository-scoped map and per-field variables** (`STARTER_DEPLOYMENT_TARGETS`,
+   `STARTER_<ENV>_<FIELD>`), merged field by field into the per-environment entry;
+3. the **gitignored overlay** `.starter/deployment.local.json`, written by
+   `bun run deploy:configure` — outranked by CI on purpose, so a stale local file
+   cannot redirect a deployment;
+4. the **committed module** in `scripts/src/registry/app_registry.ts`, which is only
+   the floor.
+
+The order changed while fixing the CI variable layer and the doc did not follow. It is
+listed here in code order, because a precedence list that disagrees with the resolver
+is a list nobody can reason with.
 
 ### CI configuration: the repository map
 
@@ -556,37 +567,39 @@ declares what it needs; creating it is an operator step.
 
 ### CI injects rather than persists
 
-In CI the per-environment values arrive as environment variables (layer 3), which
-override the gitignored overlay. A developer's stale local file therefore cannot
-redirect a deployment — it is outranked, not ignored.
+CI configuration is **repository-scoped variables**, not environment-scoped ones,
+because the `plan` job deliberately declares no `environment:` and therefore cannot
+read environment-scoped configuration at all. The table below is what a repository
+must set; everything credential-bearing stays on the protected environment.
 
-They are read from **GitHub environment variables** (`vars`), not secrets, because
-they are all configuration. Only `CLOUDFLARE_API_TOKEN` is a secret.
+| Variable | GitHub | Scope | Notes |
+|---|---|---|---|
+| `STARTER_DEPLOYMENT_TARGETS` | `vars` | repository | **the whole nonsecret map**, JSON, keyed by environment. Validated by `EnvironmentTargetsSchema` before anything reads it |
+| `CLOUDFLARE_ACCOUNT_ID` | `vars` | repository | nonsecret; an account id is configuration, not a credential |
+| `STARTER_<ENV>_<FIELD>` | `vars` | repository | optional per-field override over the map, e.g. `STARTER_STAGING_MEDIA_BUCKET_NAME` |
+| `CLOUDFLARE_WORKER_NAME`, `CLOUDFLARE_JOBS_WORKER_NAME`, `CLOUDFLARE_D1_DATABASE_ID`, `CLOUDFLARE_MEDIA_BUCKET_NAME`, `CLOUDFLARE_PUBLIC_ORIGIN`, `CLOUDFLARE_MAIL_FROM`, `CLOUDFLARE_NATIVE_API_ORIGIN` | `vars` | repository | applied **only** when `DEPLOY_ENVIRONMENT` names that environment |
+| `DEPLOY_ENVIRONMENT` | workflow input | job | which environment this run deploys; it is what scopes the row above |
+| `CLOUDFLARE_API_TOKEN` | `secrets` | **environment** | the deployment credential. Never readable by the Worker |
+| `BETTER_AUTH_SECRET`, `RESEND_API_KEY` | `secrets` | **environment** | runtime secrets, read by the Worker. Passed to the provision step **only** when `install_secrets` is true |
 
-| Variable | GitHub | Scope |
-|---|---|---|
-| `CLOUDFLARE_ACCOUNT_ID` | `vars` | account |
-| `CLOUDFLARE_WORKER_NAME` | `vars` | the environment being deployed |
-| `CLOUDFLARE_D1_DATABASE_ID` | `vars` | the environment being deployed |
-| `CLOUDFLARE_PUBLIC_ORIGIN` | `vars` | the environment being deployed |
-| `CLOUDFLARE_API_TOKEN` | `secrets` | the environment being deployed |
+**They describe one environment, not all of them.** Copying a value into every
+environment entry was a live production-safety defect: a `CLOUDFLARE_D1_DATABASE_ID`
+present in both `staging` and `production` means the two environments are the same
+database, and a staging migration is then a production migration. Injected values are
+held separately and overlaid onto the environment being deployed only.
 
-The four nonsecret ones are declared once at workflow level, so they reach every
-step of both jobs: `plan`, `Credential` (preflight), `Apply` and `Summarise the
-release`. `plan` uses only the nonsecret four; `Apply` additionally receives the
-token.
+That scoping is what makes the isolation check meaningful. `environmentIsolationProblem`
+compares two things, and both are needed:
 
-**They describe one environment, not all of them.** Copying them into every
-environment entry was a live production-safety defect: a
-`CLOUDFLARE_D1_DATABASE_ID` present in both `staging` and `production` means the two
-environments are the same database, and a staging migration is then a production
-migration. Injected values are now held separately and overlaid onto the environment
-being deployed only.
+- **configured topology**, for both environments, which catches a shared Worker,
+  database, bucket or Workflow identity in configuration;
+- **the effective destination of the run** against the *other* environment's
+  configured destinations, which catches an override pointing at a resource another
+  environment owns. An override is allowed to differ from configuration — that is its
+  purpose — but it is not allowed to reach across.
 
-`environmentIsolationProblem` then compares the *resolved* topology of both
-environments and refuses when they name one Worker or one database — which also
-catches a project with no `environments` map, where both environments would resolve
-to the single set.
+Before that second check existed, a staging override naming production's Worker
+escaped the comparison entirely and deployed to production under a staging label.
 
 ### Where Wrangler reads the database from
 

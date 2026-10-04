@@ -3,7 +3,7 @@
 // The deployment CLI, as five separate phases.
 //
 //   bun run deploy plan      --env staging          # offline. No credential, no network.
-//   bun run deploy preflight --env staging          # authenticated, read-only.
+//   bun run deploy:preflight --env staging          # authenticated, read-only.
 //   bun run deploy apply     --env staging --yes    # build, migrate, deploy, verify, record.
 //   bun run deploy verify   --env staging           # ask the release what it is.
 //   bun run deploy status                           # what is recorded, and what is configured.
@@ -55,6 +55,7 @@ import {
   apply,
   deployStep,
   HEALTH_PATH,
+  jobsDeployStep,
   migrationStep,
   PHASES,
   type Phase,
@@ -177,7 +178,7 @@ export const parseDeployArgs = (argv: readonly string[]): ArgvResult => {
         errors.push(
           `Unknown phase "${token}". Phases: ${DEPLOY_PHASES.join(', ')}.\n` +
             '  The old `web` target word is gone: this project deploys as one Worker, so ' +
-            'there is one thing to name and `bun run deploy apply` is what replaces it.',
+            'there is one thing to name and `bun run deploy:apply` is what replaces it.',
         );
         continue;
       }
@@ -349,8 +350,8 @@ export const usageText = (): string =>
     'Phases:',
     '  plan        Print what would happen. Offline: no credential, no network, no change.',
     '  preflight   Authenticated and READ-ONLY: account, database, Worker, bucket, secrets.',
-    '  provision   Create what a first deploy needs: database, bucket, fixture, secrets.',
-    '  secrets     Report or install the runtime secrets. Requires --install to write.',
+    '  provision   Create what a first deploy needs: database, bucket, fixture.',
+    '  secrets     Install the runtime secrets, and only that. Requires --install to write.',
     '  apply       build -> schema -> storage -> image -> jobs -> web -> verify -> record.',
     '  verify      Fetch the release and report the identity it claims.',
     '  status      What is configured and what release is recorded. Read-only.',
@@ -359,7 +360,8 @@ export const usageText = (): string =>
     '  --env staging|production   Which environment. Default: staging.',
     '  --yes                      Required by `apply`. Nothing is mutated without it.',
     '  --only schema,jobs          Run a subset of `apply`. Default: every phase.',
-    '  --install                  secrets: write the values exported in the environment.',
+    '  --install                  secrets/provision: write the runtime secrets exported in the',
+    '                             environment. Never on argv — the value goes to stdin.',
     '  --json                     Machine-readable output.',
     '  --dry-run                  Same as `plan`.',
     '  --allow-new-worker         preflight: a first deploy has no Worker yet; accept that.',
@@ -422,6 +424,23 @@ export const planDeploy = (
       cwd: CLIENT_DIR,
       remote: true,
     },
+  ];
+
+  // The jobs Worker deploy, from the same builder `apply` executes. It used to be
+  // missing from the plan entirely, so a plan approved for a compute environment
+  // described three of the four things the pipeline changed.
+  const jobs = jobsDeployStep(target, revision.sha, options.root ?? REPO_ROOT);
+  if (jobs !== null) {
+    steps.push({
+      description: jobs.description,
+      command: 'wrangler',
+      args: jobs.args,
+      cwd: options.root ?? REPO_ROOT,
+      remote: true,
+    });
+  }
+
+  steps.push(
     {
       description: deployStep(target, revision.sha, null).description,
       command: 'wrangler',
@@ -443,7 +462,7 @@ export const planDeploy = (
       cwd: CLIENT_DIR,
       remote: true,
     },
-  ];
+  );
 
   notices.push(
     `Secrets required (names only, from the config): ${target.requiredSecretNames.join(', ')}.`,
@@ -474,8 +493,8 @@ export const planDeploy = (
 
   notices.push(
     `CLOUDFLARE_API_TOKEN is the deployment credential and is NOT a runtime secret. The Worker needs\n  ` +
-      `${target.requiredSecretNames.join(', ')}, installed by value:\n    bun run deploy secrets --env ` +
-      `${environment} --install\n  Scopes the token needs:\n${describeTokenScopes()}`,
+      `${target.requiredSecretNames.join(', ')}, installed by value and never in argv:\n    bun run deploy:secrets --env ` +
+      `${environment} --yes --install\n  Scopes the token needs:\n${describeTokenScopes()}`,
   );
   if (target.environment === 'production') {
     notices.push('A production apply changes live traffic.');
@@ -671,10 +690,10 @@ export const main = async (argv: readonly string[]): Promise<number> => {
     return fail(
       '--dry-run means "print the plan and change nothing", so it cannot be combined\n' +
         '  with the apply phase. Run:\n' +
-        '    bun run deploy plan --env ' +
+        '    bun run deploy:check --env ' +
         environment +
         '\n' +
-        '    bun run deploy apply --env ' +
+        '    bun run deploy:apply --env ' +
         environment +
         ' --yes    # to actually deploy',
       EXIT.usage,
@@ -749,16 +768,26 @@ export const main = async (argv: readonly string[]): Promise<number> => {
       return fail(
         `Refusing to run \`deploy ${phase}\` without --yes. Nothing has been changed.\n` +
           '  To see what it would touch first:\n' +
-          `    bun run deploy plan --env ${environment}\n` +
+          `    bun run deploy:check --env ${environment}\n` +
           '  To read the account without changing it:\n' +
-          `    bun run deploy preflight --env ${environment}`,
+          `    bun run deploy:preflight --env ${environment}`,
         EXIT.refused,
       );
+    }
+
+    // `deploy secrets` installs secrets and nothing else. Provisioning a database
+    // and uploading a fixture from a command named `secrets` is a second,
+    // unreversible thing to do by accident.
+    const mode = 'secrets';
+    let provisionMode: 'both' | 'resources' | 'secrets' = mode;
+    if (phase !== 'secrets') {
+      provisionMode = parsed.install ? 'both' : 'resources';
     }
 
     const result = provision(resolved.target, {
       capture: captureWrangler,
       env: process.env,
+      mode: provisionMode,
       installSecrets: parsed.install,
     });
 
@@ -807,7 +836,7 @@ export const main = async (argv: readonly string[]): Promise<number> => {
   if (!parsed.yes) {
     return fail(
       `Refusing to apply to ${resolved.target.environment} without --yes.\n` +
-        '  Nothing has been changed. Run `bun run deploy plan --env ' +
+        '  Nothing has been changed. Run `bun run deploy:check --env ' +
         environment +
         '` to see exactly what would happen.',
       EXIT.refused,

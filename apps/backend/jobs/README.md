@@ -54,10 +54,19 @@ Every identity it needs is resolved by one function, `resolveTarget(environment)
 `jobsWorkerName`, `mediaBucketName`, `encodeWorkflowName`, `maintenanceWorkflowName`,
 `containerImage`, `imageProtocol`, `containerProfile` and `jobsProfile`.
 
+`--jobs-profile encode` needs six more identities, and a partial set is refused
+rather than half-configured. All of them:
+
 ```bash
-bun run deploy:configure -- --env staging --jobs-worker starter-jobs-staging \
-  --media-bucket starter-media-staging --image-protocol sample-v1 \
-  --container-profile basic --jobs-profile encode
+bun run deploy:configure -- --env staging \\
+  --jobs-worker starter-jobs-staging \\
+  --media-bucket starter-media-staging \\
+  --encode-workflow starter-encode-staging \\
+  --maintenance-workflow starter-maintenance-staging \\
+  --image ../media/Dockerfile \\
+  --image-protocol sample-v1 \\
+  --container-profile basic \\
+  --jobs-profile encode
 ```
 
 `resolveTarget` refuses, before anything is mutated, when the profile is `encode` and

@@ -41,6 +41,7 @@ import {
   inspectArtifact,
   type ReadinessSmoke,
   type ReleaseRecord,
+  readReleaseRecord,
   type SmokeResult,
   sourceRevision,
   writeReleaseRecord,
@@ -241,6 +242,45 @@ export const migrationStep = (
     ok: true,
     args: plan.args,
     description: `Apply reviewed migrations to ${target.d1DatabaseId} (${target.environment})`,
+  };
+};
+
+/**
+ * The jobs Worker deploy argv, or `null` when this environment has no compute.
+ *
+ * Shared with the planner, and it has to be: `apply` deployed the jobs Worker and
+ * `planDeploy` did not mention it, so the plan a reviewer approved was missing one of
+ * the four things the pipeline changed. A dry run that renders different argv from the
+ * real run is a dry run that can lie, which is the whole claim being tested.
+ *
+ * `root` is a parameter rather than `REPO_ROOT` for the same reason `deployStep`'s
+ * callers take one: the config path must be resolved against the tree being deployed.
+ */
+export const jobsDeployStep = (
+  target: ResolvedTarget,
+  sourceSha: string,
+  root: string = REPO_ROOT,
+): { description: string; args: string[] } | null => {
+  const { compute } = target;
+  if (!compute.enabled || compute.jobsWorkerName === null) {
+    return null;
+  }
+
+  return {
+    description: `Deploy the jobs Worker ${compute.jobsWorkerName} and its Workflows`,
+    args: [
+      'deploy',
+      '--env',
+      target.environment,
+      '--name',
+      compute.jobsWorkerName,
+      '--config',
+      join(root, 'apps/backend/jobs/wrangler.jsonc'),
+      // The jobs Worker carries the *same* release identity as the web Worker. Two
+      // SHAs for one deployment would make "which code is live" unanswerable.
+      '--var',
+      `RELEASE:${sourceSha}`,
+    ],
   };
 };
 
@@ -664,7 +704,7 @@ export const apply = async (options: ApplyOptions): Promise<ApplyResult> => {
       const detail =
         `The private bucket ${target.compute.mediaBucketName} is not readable in this account, so ` +
         'the encode path has nowhere to read the fixture from or write output to.\n' +
-        `  bun run deploy provision --env ${target.environment}\n` +
+        `  bun run deploy:provision --env ${target.environment} --yes\n` +
         '  Nothing has been changed.';
       outcomes.push(bad('storage', detail));
       return stop('storage', detail);
@@ -688,7 +728,14 @@ export const apply = async (options: ApplyOptions): Promise<ApplyResult> => {
   if (!wants('image')) {
     outcomes.push(skipped('image'));
   } else if (target.compute.enabled) {
-    const incompatible = imageProtocolProblem(target, null);
+    // The *recorded* release, not `null`. Passing null meant "nothing has ever been
+    // deployed", which is true only on a first deploy; on every later one it skipped
+    // the one check that matters — a running image speaking another protocol — and
+    // the deploy went ahead over live Workflow instances.
+    const incompatible = imageProtocolProblem(
+      target,
+      lastComputeProtocol(options.root, target.environment),
+    );
     if (incompatible !== null) {
       outcomes.push(bad('image', `${incompatible.reason}\n  ${incompatible.remedy}`));
       return stop('image', incompatible.reason);
@@ -715,47 +762,36 @@ export const apply = async (options: ApplyOptions): Promise<ApplyResult> => {
   // that does not resolve yet.
   if (!wants('jobs')) {
     outcomes.push(skipped('jobs'));
-  } else if (target.compute.enabled && target.compute.jobsWorkerName !== null) {
-    const jobsArgs = [
-      'deploy',
-      '--env',
-      target.environment,
-      '--name',
-      target.compute.jobsWorkerName,
-      '--config',
-      join(root, 'apps/backend/jobs/wrangler.jsonc'),
-      // The jobs Worker carries the *same* release identity as the web Worker. A
-      // release record naming two SHAs for one deployment would make "which code is
-      // live" unanswerable.
-      '--var',
-      `RELEASE:${revision.sha}`,
-    ];
-    argv.push(jobsArgs);
-
-    const jobsCode = run('wrangler', jobsArgs, { cwd: root });
-    if (jobsCode !== 0) {
-      const detail =
-        `The jobs Worker deploy failed with exit code ${jobsCode}. The web Worker has NOT been ` +
-        'updated, so it still points at the previous Workflow definitions and the previous ' +
-        'image. See docs/deployment.md for the recovery order.';
-      outcomes.push(bad('jobs', detail));
-      return stop('jobs', detail);
-    }
-    components.push({
-      phase: 'jobs',
-      identity: target.compute.jobsWorkerName,
-      source: revision.sha,
-      protocol: target.compute.imageProtocol,
-    });
-    outcomes.push(
-      ok(
-        'jobs',
-        `${target.compute.jobsWorkerName} with ${target.compute.encodeWorkflowName} and ` +
-          `${target.compute.maintenanceWorkflowName}`,
-      ),
-    );
   } else {
-    outcomes.push(ok('jobs', 'no compute profile: this release has no jobs Worker'));
+    const step = jobsDeployStep(target, revision.sha, root);
+    if (step === null) {
+      outcomes.push(ok('jobs', 'no compute profile: this release has no jobs Worker'));
+    } else {
+      argv.push(step.args);
+
+      const jobsCode = run('wrangler', step.args, { cwd: root });
+      if (jobsCode !== 0) {
+        const detail =
+          `The jobs Worker deploy failed with exit code ${jobsCode}. The web Worker has NOT been ` +
+          'updated, so it still points at the previous Workflow definitions and the previous ' +
+          'image. See docs/deployment.md for the recovery order.';
+        outcomes.push(bad('jobs', detail));
+        return stop('jobs', detail);
+      }
+      components.push({
+        phase: 'jobs',
+        identity: target.compute.jobsWorkerName as string,
+        source: revision.sha,
+        protocol: target.compute.imageProtocol,
+      });
+      outcomes.push(
+        ok(
+          'jobs',
+          `${target.compute.jobsWorkerName} with ${target.compute.encodeWorkflowName} and ` +
+            `${target.compute.maintenanceWorkflowName}`,
+        ),
+      );
+    }
   }
 
   // -- web ----------------------------------------------------------------
@@ -838,6 +874,26 @@ export const apply = async (options: ApplyOptions): Promise<ApplyResult> => {
 };
 
 /**
+ * The image protocol the last recorded release ran, or `null`.
+ *
+ * `null` covers three states that mean the same thing to `imageProtocolProblem`:
+ * no release record, a web-only release with no compute half, and a release that
+ * predates the recorded identity. The third is the interesting one — it is why the
+ * function distinguishes "recorded none" from "recorded something else", rather than
+ * treating an absent value as compatible.
+ */
+const lastComputeProtocol = (
+  root: string | undefined,
+  environment: string,
+): { imageProtocol: string | null } | null => {
+  const record = readReleaseRecord(environment, root ?? REPO_ROOT);
+  if (record === null || record.compute === undefined || record.compute === null) {
+    return null;
+  }
+  return { imageProtocol: record.compute.imageProtocol };
+};
+
+/**
  * The one real encode a deployment has to be able to observe.
  *
  * Deliberately absent rather than faked when the compute profile is off: a
@@ -867,11 +923,12 @@ export const verifyTinyJob = async (
     return {
       ok: true,
       detail:
-        `the compute profile is on, so a real encode is expected, but no verification token is ` +
-        'available: only /health and /health/ready were established. NOT the full proof — ' +
-        'run `bun run deploy verify --env ' +
-        target.environment +
-        ' --with-job` as a signed-in user.',
+        'the compute profile is on, so a real encode is expected, but this run has no ' +
+        'runtime session token and therefore could not attempt one. Only /health and ' +
+        '/health/ready were established — this is NOT the full proof. A Cloudflare API ' +
+        'token authorises the tooling and cannot stand in for a user session, so proving ' +
+        'a real encode is a manual step, recorded as a `not-run` row in ' +
+        'docs/evidence/current.json.',
     };
   }
 
@@ -945,23 +1002,51 @@ export const verifyTinyJob = async (
     };
   }
 
-  const output = await doFetch(`${target.origin}/api/jobs/${encodeURIComponent(jobId)}/output`, {
-    headers: { authorization: `Bearer ${options.token}` },
-    signal: AbortSignal.timeout(timeoutMs),
-  });
+  // Bounded and caught.
+  //
+  // A rejected fetch or a body read that never finishes used to propagate out of
+  // `apply` entirely: the deploy had already succeeded, and the operator saw a stack
+  // trace instead of a failed release. Both outcomes now return a failed
+  // verification, which is what a verification is for.
+  let bytes: ArrayBuffer;
+  try {
+    const output = await doFetch(`${target.origin}/api/jobs/${encodeURIComponent(jobId)}/output`, {
+      headers: { authorization: `Bearer ${options.token}` },
+      signal: AbortSignal.timeout(timeoutMs),
+    });
 
-  if (!output.ok) {
+    if (!output.ok) {
+      return {
+        ok: false,
+        detail:
+          `The verification job ${jobId} reported success but its output answered ${String(output.status)}. ` +
+          'A successful status with no retrievable bytes is the failure this check exists for.',
+      };
+    }
+
+    bytes = await output.arrayBuffer();
+  } catch (error) {
     return {
       ok: false,
-      detail:
-        `The verification job ${jobId} reported success but its output answered ${String(output.status)}. ` +
-        'A successful status with no retrievable bytes is the failure this check exists for.',
+      detail: `The output of verification job ${jobId} could not be read: ${
+        error instanceof Error ? error.message : 'network error'
+      }. The release is live but its compute output is unproven.`,
     };
   }
 
-  const bytes = await output.arrayBuffer();
+  if (bytes.byteLength === 0) {
+    // Its own message. "0 bytes were fetched" reads as a successful fetch of nothing,
+    // which is the opposite of what an empty output means.
+    return {
+      ok: false,
+      detail:
+        `The output of verification job ${jobId} was empty. The job reported success and ` +
+        'produced no bytes, which is a failure rather than a result.',
+    };
+  }
+
   return {
-    ok: bytes.byteLength > 0,
+    ok: true,
     detail: `verification job ${jobId} succeeded and ${bytes.byteLength} bytes were fetched`,
   };
 };

@@ -543,6 +543,36 @@ describe('apply refuses and stops at the first failing step', () => {
  * with a success arm does not carry the field and `?.` on it is the kind of access
  * that silently stops asserting anything.
  */
+/**
+ * A read-only wrangler answer, chosen by which check is asking.
+ *
+ * A helper rather than a chain of ternaries inside each fixture: three fixtures grew
+ * a third `secret` arm, and a nested ternary four deep is a place a fourth arm gets
+ * forgotten — which is how a fixture that meant "everything passes" ends up answering
+ * `'[]'` for secrets and silently testing a failing release.
+ */
+const answering =
+  (
+    byCommand: Record<string, { ok: boolean; stdout: string; stderr?: string }>,
+    fallback: { ok: boolean; stdout: string; stderr?: string },
+  ) =>
+  (args: readonly string[]): { ok: boolean; stdout: string; stderr: string } => {
+    const answer = byCommand[args[0] ?? ''] ?? fallback;
+    return { ok: answer.ok, stdout: answer.stdout, stderr: answer.stderr ?? '' };
+  };
+
+/**
+ * What `wrangler secret list --json` answers for a Worker that has both secrets.
+ *
+ * Named once because three fixtures need it, and a fixture that forgot the `secret`
+ * arm used to read as "no secrets installed" — which, before the `ok` derivation fix,
+ * still reported a passing preflight.
+ */
+const INSTALLED_SECRETS = JSON.stringify([
+  { name: 'BETTER_AUTH_SECRET' },
+  { name: 'RESEND_API_KEY' },
+]);
+
 const remedyOf = (finding: PreflightFinding | undefined): string =>
   finding !== undefined && !finding.ok ? finding.remedy : '';
 
@@ -555,11 +585,7 @@ describe('preflight is read-only and refuses a mismatched destination', () => {
       return { ok: true, stdout: `{"uuid":"db-staging","account_id":"${account}"}`, stderr: '' };
     }
     if (args[0] === 'secret') {
-      return {
-        ok: true,
-        stdout: JSON.stringify([{ name: 'BETTER_AUTH_SECRET' }, { name: 'RESEND_API_KEY' }]),
-        stderr: '',
-      };
+      return { ok: true, stdout: INSTALLED_SECRETS, stderr: '' };
     }
     return { ok: true, stdout: '[]', stderr: '' };
   };
@@ -619,10 +645,13 @@ describe('preflight is read-only and refuses a mismatched destination', () => {
   test('a token with access to several accounts is not resolved to the first match', () => {
     const report = preflight(target(), {
       env: { CLOUDFLARE_API_TOKEN: 't' },
-      run: (args) =>
-        args[0] === 'whoami'
-          ? { ok: true, stdout: `${OTHER_ACCOUNT}\n${ACCOUNT}\n`, stderr: '' }
-          : { ok: true, stdout: `{"account_id":"${ACCOUNT}"}`, stderr: '' },
+      run: answering(
+        {
+          whoami: { ok: true, stdout: `${OTHER_ACCOUNT}\n${ACCOUNT}\n` },
+          secret: { ok: true, stdout: INSTALLED_SECRETS },
+        },
+        { ok: true, stdout: `{"account_id":"${ACCOUNT}"}` },
+      ),
     });
 
     expect(report.ok).toBe(true);
@@ -660,10 +689,17 @@ describe('preflight is read-only and refuses a mismatched destination', () => {
   });
 
   test('a missing Worker is a first-deploy fact only when the operator says so', () => {
-    const failing = (args: readonly string[]) =>
-      args[0] === 'whoami' || args[0] === 'd1'
-        ? { ok: true, stdout: ACCOUNT, stderr: '' }
-        : { ok: false, stdout: '', stderr: 'no such worker' };
+    // `secret list` still answers on a Worker that has never been deployed, so this
+    // fixture keeps the two apart: the Worker check fails, the secrets check does
+    // not, which is exactly the state `--allow-new-worker` describes.
+    const failing = answering(
+      {
+        whoami: { ok: true, stdout: ACCOUNT },
+        d1: { ok: true, stdout: ACCOUNT },
+        secret: { ok: true, stdout: INSTALLED_SECRETS },
+      },
+      { ok: false, stdout: '', stderr: 'no such worker' },
+    );
 
     const strict = preflight(target(), { env: { CLOUDFLARE_API_TOKEN: 't' }, run: failing });
     expect(strict.ok).toBe(false);
@@ -675,6 +711,42 @@ describe('preflight is read-only and refuses a mismatched destination', () => {
       allowMissingWorker: true,
     });
     expect(first.ok).toBe(true);
+  });
+
+  test('a release with no runtime secrets installed is refused, not reported as ok', () => {
+    // The control for `ok` being derived from the findings. Before the fix this
+    // returned `ok: true` with a failing `secrets` finding recorded, which is how a
+    // deployment with no `BETTER_AUTH_SECRET` passed preflight.
+    const withoutSecrets = preflight(target(), {
+      env: { CLOUDFLARE_API_TOKEN: 't' },
+      run: answering(
+        {
+          whoami: { ok: true, stdout: ACCOUNT },
+          // One secret present, one absent: the state this control is about.
+          secret: { ok: true, stdout: JSON.stringify([{ name: 'BETTER_AUTH_SECRET' }]) },
+        },
+        { ok: true, stdout: ACCOUNT },
+      ),
+    });
+
+    expect(withoutSecrets.ok).toBe(false);
+    const secrets = withoutSecrets.findings.find((finding) => finding.check === 'secrets');
+    expect(secrets?.ok).toBe(false);
+    expect(secrets?.detail).toContain('RESEND_API_KEY');
+    expect(remedyOf(secrets)).toContain('Nothing has been changed');
+  });
+
+  test('a check that passed but proved less does not fail the report', () => {
+    // `warn` is not `ok: false`. The mail check says sender-domain verification was
+    // NOT CHECKED; that must not stop an otherwise correct release, or every first
+    // deploy would need a provider this tooling cannot query.
+    const report = preflight(target(), {
+      env: { CLOUDFLARE_API_TOKEN: 't' },
+      run: whoami(ACCOUNT),
+    });
+
+    expect(report.ok).toBe(true);
+    expect(report.findings.find((finding) => finding.check === 'mail')?.warn).toBe(true);
   });
 
   test('no credential is reported without spawning anything', () => {

@@ -9,7 +9,7 @@
 // argv, a bucket that was created twice because the existence check did not fire,
 // or a run that reported success without installing anything.
 
-import { describe, expect, test } from 'bun:test';
+import { afterEach, describe, expect, test } from 'bun:test';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -33,6 +33,10 @@ const cleanup = (): void => {
     rmSync(dir, { recursive: true, force: true });
   }
 };
+
+// Registered rather than called at the end of each test: a failing assertion used to
+// skip the cleanup and leak a temporary tree into /tmp on every red run.
+afterEach(cleanup);
 
 const target = (overrides: Partial<ResolvedTarget> = {}): ResolvedTarget => ({
   environment: 'staging',
@@ -124,12 +128,40 @@ describe('a secret never reaches argv', () => {
 
     const installs = seen.filter((call) => call.args[0] === 'secret');
     expect(installs).toHaveLength(2);
+
+    // The exact payloads, in order, including the trailing newline `wrangler` needs to
+    // stop reading. Asserting "stdin is defined" would pass on any value at all,
+    // including an empty string and another secret's value.
+    expect(installs.map((call) => call.stdin)).toEqual(['super-secret-value\n', 're_realvalue\n']);
+    // Order matters: the names are in `RUNTIME_SECRET_NAMES` order.
+    expect(installs.map((call) => call.args[2])).toEqual(['BETTER_AUTH_SECRET', 'RESEND_API_KEY']);
+
     for (const call of installs) {
-      expect(call.stdin).toBeDefined();
       expect(call.args.join(' ')).not.toContain('super-secret-value');
       expect(call.args.join(' ')).not.toContain('re_realvalue');
     }
     expect(seen.map((call) => call.args.join(' ')).join('\n')).not.toContain('super-secret-value');
+  });
+
+  test("one secret's value never reaches another secret's stdin", () => {
+    // A swapped or concatenated payload is invisible to "the value was not in argv".
+    const seen: string[] = [];
+    provision(encodeTarget, {
+      root: tree(true),
+      capture: () => ({ ok: true, stdout: '[]', stderr: '' }),
+      env: { BETTER_AUTH_SECRET: 'first-value', RESEND_API_KEY: 'second-value' },
+      installSecrets: true,
+      run: (args, options) => {
+        if (args[0] === 'secret') {
+          seen.push(options.stdin ?? '');
+        }
+        return { ok: true, detail: 'ok' };
+      },
+    });
+
+    expect(seen).toEqual(['first-value\n', 'second-value\n']);
+    expect(seen[0]).not.toContain('second-value');
+    expect(seen[1]).not.toContain('first-value');
   });
 
   test('a rendered report cannot contain a value, because no step holds one', () => {
@@ -172,7 +204,6 @@ describe('the Cloudflare token is not a runtime secret', () => {
       result.steps.find((step) => step.name === 'secret:BETTER_AUTH_SECRET')?.detail ?? '';
     expect(detail).toContain('CLOUDFLARE_API_TOKEN authorises this tooling');
     expect(detail).toContain('not the runtime secret');
-    cleanup();
   });
 });
 
@@ -184,7 +215,7 @@ describe('provisioning is idempotent', () => {
       capture: (args) =>
         args[0] === 'r2'
           ? { ok: true, stdout: JSON.stringify([{ name: 'starter-media-staging' }]), stderr: '' }
-          : { ok: true, stdout: '{"uuid":"db-staging"}', stderr: '' },
+          : { ok: true, stdout: JSON.stringify([{ uuid: 'db-staging' }]), stderr: '' },
       env: {},
       run: (args) => {
         created_.push(args.join(' '));
@@ -199,18 +230,85 @@ describe('provisioning is idempotent', () => {
     // The only remaining call is the fixture upload, which overwrites identical
     // bytes and is therefore safe to repeat.
     expect(created_.every((line) => line.startsWith('r2 object put'))).toBe(true);
-    cleanup();
+  });
+
+  test('an unreadable resource is never treated as absent', () => {
+    // The control for the duplicate-resource bug. A revoked token, a network blip or
+    // the wrong account all answer `!ok`; treating that as "absent" created a second
+    // database or bucket under a name that already existed.
+    const attempted: string[][] = [];
+    const result = provision(encodeTarget, {
+      root: tree(true),
+      capture: () => ({ ok: false, stdout: '', stderr: 'authentication error' }),
+      env: {},
+      run: (args) => {
+        attempted.push([...args]);
+        return { ok: true, detail: 'ok' };
+      },
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.stoppedAt).toBe('database');
+    // Nothing was created. Not even the bucket that would have been checked second.
+    expect(attempted).toEqual([]);
+    const database = result.steps.find((step) => step.name === 'database');
+    expect(database?.detail).toContain('unreadable resource is not an absent one');
+    expect(database?.detail).toContain('bun run deploy:preflight --env staging');
+  });
+
+  test('a bucket that cannot be listed is not created either', () => {
+    const attempted: string[][] = [];
+    const result = provision(encodeTarget, {
+      root: tree(true),
+      capture: (args) =>
+        args[0] === 'r2'
+          ? { ok: false, stdout: '', stderr: 'bucket list refused' }
+          : { ok: true, stdout: JSON.stringify([{ uuid: 'db-staging' }]), stderr: '' },
+      env: {},
+      run: (args) => {
+        attempted.push([...args]);
+        return { ok: true, detail: 'ok' };
+      },
+    });
+
+    expect(result.stoppedAt).toBe('bucket');
+    expect(attempted).toEqual([]);
+  });
+
+  test('a resource the read positively does not find is created', () => {
+    // The distinction the two tests above make: an empty *successful* list means
+    // absent, and absent is the only thing that may create.
+    const attempted: string[][] = [];
+    const result = provision(encodeTarget, {
+      root: tree(true),
+      capture: (args) =>
+        args[0] === 'r2'
+          ? { ok: true, stdout: '[]', stderr: '' }
+          : { ok: true, stdout: '[]', stderr: '' },
+      env: {},
+      run: (args) => {
+        attempted.push([...args]);
+        return { ok: true, detail: 'ok' };
+      },
+    });
+
+    expect(result.ok).toBe(true);
+    expect(result.stoppedAt).toBeNull();
+    // Both creates ran, because both reads succeeded and found nothing.
+    expect(attempted.some((args) => args[0] === 'd1' && args[1] === 'create')).toBe(true);
+    expect(attempted.some((args) => args[0] === 'r2' && args[1] === 'bucket')).toBe(true);
   });
 
   test('a missing resource is created, and the failure of one stops the next', () => {
     const created_: string[] = [];
     const result = provision(encodeTarget, {
       root: tree(true),
-      // Neither resource exists yet, so both `exists` probes come back empty.
+      // Neither resource exists yet: both probes SUCCEED and report nothing, which is
+      // the only shape that may create.
       capture: (args) =>
         args[0] === 'r2'
           ? { ok: true, stdout: '[]', stderr: '' }
-          : { ok: false, stdout: '', stderr: 'not found' },
+          : { ok: true, stdout: '{"result":[]}', stderr: '' },
       env: {},
       run: (args) => {
         created_.push(args.join(' '));
@@ -223,7 +321,6 @@ describe('provisioning is idempotent', () => {
     // Everything before the failure ran; nothing after it did.
     expect(created_).toEqual(['d1 create starter-staging-db --type primary']);
     expect(result.steps.map((step) => step.name)).toEqual(['database']);
-    cleanup();
   });
 
   test('a bucket name that merely shares a prefix is not mistaken for the bucket', () => {
@@ -242,7 +339,7 @@ describe('provisioning is idempotent', () => {
   test('a web-only target provisions a database and nothing else', () => {
     const result = provision(target(), {
       root: tree(false),
-      capture: () => ({ ok: true, stdout: '{}', stderr: '' }),
+      capture: () => ({ ok: true, stdout: JSON.stringify([{ uuid: 'db-staging' }]), stderr: '' }),
       env: {},
       run: () => ({ ok: true, detail: 'ok' }),
     });
@@ -252,7 +349,6 @@ describe('provisioning is idempotent', () => {
       'secret:BETTER_AUTH_SECRET',
       'secret:RESEND_API_KEY',
     ]);
-    cleanup();
   });
 });
 
@@ -273,7 +369,6 @@ describe('the fixture upload is refused when the fixture was never built', () =>
     const fixture = result.steps.find((step) => step.name === 'fixture');
     expect(fixture?.detail).toContain('bun run --cwd apps/backend/media fixture');
     expect(fixture?.detail).toContain('Nothing was uploaded');
-    cleanup();
   });
 
   test('the fixture key is a constant, not something a caller supplies', () => {
@@ -297,10 +392,66 @@ describe('the token scopes come from the operations', () => {
     expect(describeTokenScopes()).toContain('R2: Edit');
   });
 
+  test('existence is read from a list, not from an exit code', () => {
+    // `d1 info <id>` reports a missing database by exiting nonzero — the same signal
+    // it gives for a revoked token. Presence has to be a question about the data, or
+    // "absent" cannot be told from "cannot tell".
+    const database = provisionSteps(encodeTarget).find((step) => step.name === 'database');
+    expect(database?.exists).toEqual(['d1', 'list', '--json']);
+    expect(database?.present(JSON.stringify([{ uuid: 'db-staging' }]))).toBe(true);
+    expect(database?.present(JSON.stringify([{ uuid: 'other' }]))).toBe(false);
+    // Unparseable output is "cannot tell", never "absent".
+    expect(database?.present('not json')).toBe(false);
+  });
+
   test('the resource steps name the same resources the target resolves', () => {
     const names = provisionSteps(encodeTarget).map((step) => step.name);
     expect(names).toEqual(['database', 'bucket']);
     expect(provisionSteps(target()).map((step) => step.name)).toEqual(['database']);
+  });
+});
+
+describe('the provision and secrets halves are separate authority', () => {
+  test('`deploy secrets` installs secrets and creates no resources', () => {
+    // An operator refreshing one runtime secret must not also create a database, a
+    // bucket and upload the fixture.
+    const attempted: string[][] = [];
+    const result = provision(encodeTarget, {
+      root: tree(true),
+      mode: 'secrets',
+      capture: () => ({ ok: true, stdout: '[]', stderr: '' }),
+      env: { BETTER_AUTH_SECRET: 'super-secret-value', RESEND_API_KEY: 're_realvalue' },
+      installSecrets: true,
+      run: (args) => {
+        attempted.push([...args]);
+        return { ok: true, detail: 'ok' };
+      },
+    });
+
+    expect(result.ok).toBe(true);
+    expect(result.steps.map((step) => step.name)).toEqual([
+      'secret:BETTER_AUTH_SECRET',
+      'secret:RESEND_API_KEY',
+    ]);
+    expect(attempted.every((args) => args[0] === 'secret')).toBe(true);
+  });
+
+  test('`deploy provision` without --install creates resources and says the secrets are absent', () => {
+    const result = provision(encodeTarget, {
+      root: tree(true),
+      mode: 'resources',
+      capture: (args) =>
+        args[0] === 'r2'
+          ? { ok: true, stdout: JSON.stringify([{ name: 'starter-media-staging' }]), stderr: '' }
+          : { ok: true, stdout: JSON.stringify([{ uuid: 'db-staging' }]), stderr: '' },
+      env: {},
+      run: () => ({ ok: true, detail: 'ok' }),
+    });
+
+    expect(result.ok).toBe(true);
+    const secrets = result.steps.find((step) => step.name === 'secrets');
+    expect(secrets?.outcome).toBe('skipped');
+    expect(secrets?.detail).toContain('--yes --install');
   });
 });
 
@@ -322,6 +473,5 @@ describe('SOPS is refused here, with the composition that works', () => {
     const detail = result.steps.find((step) => step.name === 'secrets')?.detail ?? '';
     expect(detail).toContain('bun run secrets:exec');
     expect(detail).toContain('Nothing was installed');
-    cleanup();
   });
 });

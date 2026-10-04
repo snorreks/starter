@@ -21,6 +21,7 @@
 // information, and a manifest that only remembers the latest run cannot answer
 // whether a lane regressed.
 
+import { spawnSync } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { REPO_ROOT } from '../shared/paths.ts';
@@ -81,6 +82,43 @@ export const currentRevision = (root: string = REPO_ROOT): string | null => {
   return match?.[1] ?? null;
 };
 
+/**
+ * Whether the manifest's revision is an ancestor of this checkout.
+ *
+ * CodeRabbit asked for the manifest's revision to *equal* HEAD, and that is
+ * impossible: the manifest records the revision the lanes ran against, and it is
+ * necessarily committed afterwards. Requiring equality would make the check fail on
+ * every commit and train people to ignore it — a check that is always red is a
+ * check nobody reads.
+ *
+ * What is worth catching is the case that matters: a manifest claiming a revision
+ * this branch does not contain. That is either a count copied from an unrelated
+ * branch, or a revert that removed the code the counts describe. Ancestry catches
+ * both and permits the legitimate "committed after the run" case.
+ *
+ * `null` when there is no repository — a fixture directory in a test — because
+ * "cannot check" must not read as "checked and fine" in production, but refusing a
+ * test fixture is not useful either. The command reports which it was.
+ */
+export const revisionIsReachable = (revision: string, root: string = REPO_ROOT): boolean | null => {
+  const gitDir = join(root, '.git');
+  if (!existsSync(gitDir)) {
+    return null;
+  }
+
+  const result = spawnSync('git', ['merge-base', '--is-ancestor', revision, 'HEAD'], {
+    cwd: root,
+    stdio: 'ignore',
+    timeout: 30_000,
+  });
+
+  if (result.error !== undefined) {
+    return null;
+  }
+  // 0 = ancestor, 1 = not an ancestor, anything else = could not tell.
+  return result.status === 0;
+};
+
 export type ManifestResult =
   | { ok: true; manifest: EvidenceManifest }
   | { ok: false; problems: string[] };
@@ -119,19 +157,39 @@ export const readManifest = (root: string = REPO_ROOT): ManifestResult => {
     };
   }
 
-  const manifest = parsed as EvidenceManifest;
+  // Shaped before it is read. A blind `as EvidenceManifest` cast makes `manifest.rows`
+  // trusted to be an array, so a manifest containing `"rows": {}` answers
+  // `Array.isArray` from the *cast type* and the loop below throws on a property of
+  // `null` — a stack trace from a document a person hand-edits.
+  if (!isRecord(parsed)) {
+    return {
+      ok: false,
+      problems: [`${EVIDENCE_MANIFEST_PATH} must contain a JSON object, not ${describe(parsed)}.`],
+    };
+  }
+
+  const manifest = parsed as unknown as EvidenceManifest;
   const problems: string[] = [];
 
   if (typeof manifest.revision !== 'string' || !/^[0-9a-f]{7,40}$/.test(manifest.revision)) {
     problems.push(`\`revision\` must be a git SHA; got ${JSON.stringify(manifest.revision)}.`);
   }
 
-  if (!Array.isArray(manifest.rows) || manifest.rows.length === 0) {
+  if (!Array.isArray(manifest.rows)) {
+    problems.push(
+      `\`rows\` must be an array; got ${describe(manifest.rows)}. An empty manifest proves nothing.`,
+    );
+  } else if (manifest.rows.length === 0) {
     problems.push('`rows` must be a non-empty array. An empty manifest proves nothing.');
   } else {
     const seen = new Set<string>();
-    for (const [index, row] of manifest.rows.entries()) {
-      const at = `rows[${index}] (${row?.capability ?? 'unnamed'})`;
+    for (const [index, candidate] of manifest.rows.entries()) {
+      if (!isRecord(candidate)) {
+        problems.push(`rows[${index}]: must be an object, not ${describe(candidate)}.`);
+        continue;
+      }
+      const row = candidate as unknown as EvidenceRow;
+      const at = `rows[${index}] (${typeof row.capability === 'string' ? row.capability : 'unnamed'})`;
       if (!(EVIDENCE_KINDS as readonly string[]).includes(row?.kind)) {
         problems.push(`${at}: kind must be one of ${EVIDENCE_KINDS.join(', ')}.`);
       }
@@ -149,8 +207,11 @@ export const readManifest = (root: string = REPO_ROOT): ManifestResult => {
         // important", which is the opposite of what it means.
         problems.push(`${at}: a not-run row must say why, and what command would run it.`);
       }
-      if (row?.kind === 'observed' && !Number.isInteger(row.count) && row.count !== null) {
-        problems.push(`${at}: an observed row's count must be an integer or null.`);
+      // Every kind, not only `observed`. A historical figure is just as much of a
+      // claim — it is the number a reader quotes when asking whether something
+      // regressed — so a fractional or string count there is a typo nobody sees.
+      if (row.count !== null && row.count !== undefined && !Number.isInteger(row.count)) {
+        problems.push(`${at}: count must be an integer or null; got ${JSON.stringify(row.count)}.`);
       }
       if (seen.has(row?.capability)) {
         problems.push(`${at}: duplicate capability; one row per capability per revision.`);
@@ -160,6 +221,20 @@ export const readManifest = (root: string = REPO_ROOT): ManifestResult => {
   }
 
   return problems.length === 0 ? { ok: true, manifest } : { ok: false, problems };
+};
+
+/** A non-null, non-array object — the only shape whose fields may be read. */
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === 'object' && value !== null && !Array.isArray(value);
+
+const describe = (value: unknown): string => {
+  if (value === null) {
+    return 'null';
+  }
+  if (Array.isArray(value)) {
+    return 'an array';
+  }
+  return `a ${typeof value}`;
 };
 
 /**
@@ -184,12 +259,42 @@ export const renderCurrentMatrix = (manifest: EvidenceManifest): string => {
     .map((row) => {
       const result =
         row.kind === 'not-run' ? `NOT RUN — ${row.reason ?? 'no reason recorded'}` : row.result;
-      const artifact = row.artifact === null ? '—' : `[${row.artifact}](${row.artifact})`;
-      return `| ${row.capability} | \`${row.command}\` | ${row.platform} | ${result} | ${row.recordedAt} | ${artifact} |`;
+      const link = cell(row.artifact);
+      const artifact = row.artifact === null ? '—' : `[${link}](${link})`;
+      // Leading and trailing pipes as explicit cells, so an unaffected row renders
+      // byte-identically to before the escaping was added and the diff of this change
+      // is the escaping, not a reformatting of every row.
+      return `| ${[
+        cell(row.capability),
+        `\`${cell(row.command)}\``,
+        cell(row.platform),
+        cell(result),
+        cell(row.recordedAt),
+        artifact,
+      ].join(' | ')} |`;
     });
 
   return [...header, ...body].join('\n');
 };
+
+/**
+ * One Markdown table cell.
+ *
+ * Escaped because every value here is hand-edited prose and a single `|` in a result
+ * silently restructures the whole table: the row stops being a row, the column count
+ * no longer matches the header, and the matrix renders as garbage nobody notices
+ * until they need to read it. A newline is worse — it ends the row and starts a
+ * table fragment.
+ *
+ * One function for every field rather than three that each cover their own, because a
+ * per-column escaper is one more thing to remember when a column is added.
+ */
+const cell = (value: unknown): string =>
+  String(value ?? '')
+    .replace(/\\/g, '\\\\')
+    .replace(/\|/g, '\\|')
+    .replace(/\r?\n/g, ' ')
+    .trim();
 
 /** The markers the generated block lives between, so the check can find it again. */
 export const MATRIX_BEGIN = '<!-- evidence:current:begin -->';

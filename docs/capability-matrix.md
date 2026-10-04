@@ -56,13 +56,13 @@ on the platform shown, by the command shown. A `not-run` row is present on purpo
 | CI workflow policy | `bun run workflows` | linux-x64 | ok across 4 workflows (ci, deploy, native, native-release) | 2026-10-03T21:45:00.000Z | — |
 | Fresh-template rehearsal | `bun run smoke` | linux-x64, fresh HOME, no credential | 10 of 10 steps ok: frozen install, setup, db:migrate, db:seed, build, check:bundle, typecheck, lint, guard, setup:doctor | 2026-10-03T21:30:00.000Z | — |
 | Downstream removal rehearsal (native app and Rust processor deleted from a disposable copy) | `bun run smoke --without-heavy` | linux-x64, fresh HOME, no credential | 11 of 11 steps ok. The copy regenerates and re-verifies bun.lock, and the web half still builds, typechecks, lints and passes all 8 guards. | 2026-10-03T21:35:00.000Z | — |
-| Provider deployment (Cloudflare staging and production) | `bun run deploy:apply --env staging --yes` | any | NOT RUN — No Cloudflare account, credential, deployed runtime secret or verified mail sender is available in this environment, and PR I is explicitly barred from provisioning, deploying or writing remote secrets. The offline plan, the preflight checks and the apply pipeline are exercised by fixture tests instead. | 2026-10-03T22:05:00.000Z | — |
+| Provider deployment (Cloudflare staging and production) | `bun run deploy:apply --env staging --yes` | any | NOT RUN — No Cloudflare account, credential, deployed runtime secret or verified mail sender is available here, and this change is reviewable code only: it provisions, deploys and installs nothing remotely. The offline plan, the preflight checks and the apply pipeline are exercised by fixture tests instead. | 2026-10-03T22:05:00.000Z | — |
 | Live mail delivery (verification, sign-in, recovery) | `bun run deploy verify --env staging` | any | NOT RUN — Sending real mail needs a verified Resend sender and a RESEND_API_KEY, neither of which exists here. Preflight reports the sender-domain check as explicitly NOT CHECKED rather than passing. | 2026-10-03T22:05:00.000Z | — |
 | Genuine scheduled maintenance firing | `the deployed maintenance run record in D1, carrying its cron schedule and scheduledTime` | any | NOT RUN — The local Workers runtime cannot deliver a cron event to a Workflow binding's `schedules`, so only the manual branch is exercised locally. Configuring a schedule is not a firing, and the release record says so explicitly. | 2026-10-03T22:05:00.000Z | — |
 | iOS build and simulator run | `bun run native:ios` | macOS with full Xcode | NOT RUN — This host is linux-x64 and has no Xcode. `bun run setup:doctor --profile ios` exits 3 and says so rather than reporting the lane as available. | 2026-10-03T22:05:00.000Z | — |
 | Android build and emulator run | `bun run native:android` | Android SDK + JDK + NDK | NOT RUN — No ANDROID_HOME and no javac on this host. `bun run setup:doctor --profile android` exits 3 and names both. | 2026-10-03T22:05:00.000Z | — |
 | Native desktop build and launch | `bun run native:build` | Linux with WebKitGTK 4.1 development files | NOT RUN — The Rust toolchain is present (1.98.1) but WebKitGTK 4.1 is not. `bun run setup:doctor --profile native` exits 3 and names the package. | 2026-10-03T22:05:00.000Z | — |
-| Signed and notarised distribution | `the native release workflows' signing lanes` | per-platform signing identities | NOT RUN — No Apple, Microsoft or Android signing input exists in this environment, and PR I publishes nothing. | 2026-10-03T22:05:00.000Z | — |
+| Signed and notarised distribution | `the native release workflows' signing lanes` | per-platform signing identities | NOT RUN — No Apple, Microsoft or Android signing input exists here, and this change publishes nothing. | 2026-10-03T22:05:00.000Z | — |
 <!-- evidence:current:end -->
 
 ## An earlier round's record, retained
@@ -177,7 +177,7 @@ Deliberately absent. Each is the operator's to supply.
 | SOPS recipients and keys | Recipients identify people, not projects |
 | A model provider credential | The agent tooling works without one |
 | A verified mail sender | `MAIL_FROM` is required by the resolver, but a *verified domain* is a fact about the mail provider's account that no offline check can establish |
-| A signed, notarised or store-published native build | PR I builds and publishes nothing; see the `not-run` rows above |
+| A signed, notarised or store-published native build | This change builds and publishes nothing; see the `not-run` rows above |
 
 ## Not run here
 

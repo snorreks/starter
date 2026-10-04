@@ -37,6 +37,7 @@ bun run deploy:configure -- --env production --worker your-app-web
 bun run deploy:configure -- --env staging    --origin https://staging.your-domain
 bun run deploy:configure -- --env production --origin https://your-domain
 bun run deploy:configure -- --env staging    --mail-from no-reply@your-verified-domain
+bun run deploy:configure -- --env production --mail-from no-reply@your-verified-domain
 bun run deploy:configure -- --env staging    --native-api-origin https://staging.your-domain
 
 # only if this deployment runs compute

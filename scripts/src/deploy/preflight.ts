@@ -340,7 +340,7 @@ export const preflight = (
       remedy:
         'This token cannot list them, or the Worker has no version yet.\n' +
         '  On a first deploy that is expected — install them with:\n' +
-        `    bun run deploy secrets --env ${target.environment}`,
+        `    bun run deploy:secrets --env ${target.environment} --yes --install`,
     });
   } else {
     const installed = new Set(installedSecretNames(secrets.stdout));
@@ -355,7 +355,7 @@ export const preflight = (
         remedy:
           '  Install them by value; they are not the deployment credential and never\n' +
           '  appear in argv:\n' +
-          `    bun run deploy secrets --env ${target.environment} --install\n` +
+          `    bun run deploy:secrets --env ${target.environment} --yes --install\n` +
           '  Then re-run this preflight. Nothing has been changed.',
       });
     } else {
@@ -379,7 +379,7 @@ export const preflight = (
         detail: `The R2 bucket ${target.compute.mediaBucketName} is not readable in this account.`,
         remedy:
           'It does not exist, it belongs to another account, or this token cannot read it.\n' +
-          `    bun run deploy provision --env ${target.environment}\n` +
+          `    bun run deploy:provision --env ${target.environment} --yes\n` +
           '  Nothing has been changed.',
       });
     } else {
@@ -408,7 +408,7 @@ export const preflight = (
           remedy:
             'Containers require the Workers Paid plan and an accepted container image.\n' +
             `  Deploy it once, then re-run this preflight:\n` +
-            `    bun run deploy apply --env ${target.environment} --yes --only jobs\n` +
+            `    bun run deploy:apply --env ${target.environment} --yes --only jobs\n` +
             '  Nothing has been changed.',
         });
       } else if (!containerEntitlementProven(deployments.stdout)) {
@@ -453,7 +453,17 @@ export const preflight = (
     warn: true,
   });
 
-  return { ok: true, findings, commands };
+  // Derived from the findings, not asserted.
+  //
+  // This returned a literal `true` while recording failing `secrets`, `bucket` and
+  // `container` findings — so a release whose runtime secrets were not installed
+  // passed preflight with `ok: true` and the failure only visible if a human read
+  // the findings. That is precisely the report shape this repository treats as
+  // worse than no report: a green line over a release nobody can sign in to.
+  //
+  // `warn` findings deliberately do not fail: they say the check could not establish
+  // the whole claim, which is a different answer from "the check failed".
+  return { ok: findings.every((finding) => finding.ok), findings, commands };
 };
 
 const firstLine = (text: string): string => text.trim().split('\n')[0] ?? '';

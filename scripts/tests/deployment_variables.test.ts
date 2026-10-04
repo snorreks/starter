@@ -12,6 +12,7 @@ import { afterEach, describe, expect, test } from 'bun:test';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { jobsDeployStep } from '../src/deploy/apply.ts';
 import { planDeploy } from '../src/deploy/deploy.ts';
 import type { ResolvedTarget } from '../src/deploy/target.ts';
 import { resolveTarget } from '../src/deploy/target.ts';
@@ -359,6 +360,50 @@ describe('the unsuffixed overrides apply to one environment, never to both', () 
     expect(resolved.target.workerName).toBe('ci-staging-ephemeral');
   });
 
+  test("an override may not land on another environment's configured destination", () => {
+    // The control for the security finding. `environmentIsolationProblem` compares
+    // *configured* topology, because the injected overrides are scoped to one
+    // environment — which left a gap: a staging override naming production's Worker
+    // escaped the comparison entirely and deployed to production under a staging label.
+    const values = resolveDeploymentValues(
+      {
+        [ACCOUNT_ID_VARIABLE]: ACCOUNT,
+        [ENVIRONMENT_MAP_VARIABLE]: repositoryMap(),
+        DEPLOY_ENVIRONMENT: 'staging',
+        // A staging run pointed at production's configured Worker.
+        CLOUDFLARE_WORKER_NAME: 'starter-production',
+      },
+      REPO_ROOT,
+    );
+
+    const staging = resolveTarget('staging', { values });
+    expect(staging.ok).toBe(false);
+    if (!staging.ok) {
+      expect(staging.reason).toContain('starter-production');
+      expect(staging.reason).toContain("production's configured Worker");
+      expect(staging.reason).toContain('Nothing has been changed');
+    }
+  });
+
+  test('the same override on an unclaimed Worker is still allowed', () => {
+    // The check must refuse *collisions*, not overrides. Otherwise the only way to
+    // deploy a fresh environment is to write it into the committed configuration.
+    const values = resolveDeploymentValues(
+      {
+        [ACCOUNT_ID_VARIABLE]: ACCOUNT,
+        [ENVIRONMENT_MAP_VARIABLE]: repositoryMap(),
+        DEPLOY_ENVIRONMENT: 'staging',
+        CLOUDFLARE_WORKER_NAME: 'staging-ephemeral',
+      },
+      REPO_ROOT,
+    );
+    const staging = resolveTarget('staging', { values });
+    expect(staging.ok).toBe(true);
+    if (staging.ok) {
+      expect(staging.target.workerName).toBe('staging-ephemeral');
+    }
+  });
+
   test('every override variable maps to a real target field', () => {
     // A table entry naming a field that does not exist would inject into a field
     // nobody reads, and the operator would believe the run was overridden.
@@ -515,6 +560,128 @@ describe('the compute half resolves from the same variables', () => {
     if (!shared.ok) {
       expect(shared.reason).toContain('pinned image digest');
     }
+  });
+});
+
+describe('the plan names everything the pipeline will change', () => {
+  const treeWithConfig = (): string => {
+    const dir = mkdtempSync(join(tmpdir(), 'starter-plan-'));
+    created.push(dir);
+    const client = join(dir, 'apps/frontend/client');
+    mkdirSync(join(client, '..', '..', 'backend/jobs'), { recursive: true });
+    mkdirSync(client, { recursive: true });
+    writeFileSync(
+      join(client, 'wrangler.jsonc'),
+      JSON.stringify({
+        name: 'starter',
+        d1_databases: [{ binding: 'DB', database_name: 'starter' }],
+        env: { staging: { d1_databases: [{ binding: 'DB', database_id: 'db-staging' }] } },
+      }),
+    );
+    return dir;
+  };
+
+  const encodeMap = (): string =>
+    JSON.stringify({
+      staging: {
+        workerName: 'starter-staging',
+        jobsWorkerName: 'starter-jobs-staging',
+        d1DatabaseId: 'db-staging',
+        mediaBucketName: 'starter-media-staging',
+        encodeWorkflowName: 'starter-encode-staging',
+        maintenanceWorkflowName: 'starter-maintenance-staging',
+        containerImage: '../media/Dockerfile',
+        imageProtocol: 'sample-v1',
+        containerProfile: 'basic',
+        jobsProfile: 'encode',
+        origin: 'https://staging.example',
+        mailFrom: 'noreply@staging.example',
+      },
+    });
+
+  test('a compute environment plans the jobs Worker deploy, not only the web one', () => {
+    // The plan is what an approval is given against. It used to describe a migration
+    // and a web deploy while `apply` also built an image and deployed a second Worker.
+    const root = treeWithConfig();
+    const plan = planDeploy('staging', {
+      values: resolveDeploymentValues(
+        { [ACCOUNT_ID_VARIABLE]: ACCOUNT, [ENVIRONMENT_MAP_VARIABLE]: encodeMap() },
+        root,
+      ),
+      hasCredential: false,
+      root,
+    });
+
+    expect(plan.ok).toBe(true);
+    if (!plan.ok) {
+      throw new Error(plan.reason);
+    }
+
+    const rendered = JSON.stringify(plan.steps.map((step) => step.args));
+    expect(rendered).toContain('starter-jobs-staging');
+    expect(rendered).toContain('starter-staging');
+    // The jobs Worker is deployed *before* the web Worker, because the web Worker
+    // binds its Workflows.
+    const jobsIndex = plan.steps.findIndex((step) => step.args.includes('starter-jobs-staging'));
+    const webIndex = plan.steps.findIndex((step) => step.args.includes('starter-staging'));
+    expect(jobsIndex).toBeGreaterThan(-1);
+    expect(jobsIndex).toBeLessThan(webIndex);
+  });
+
+  test('the plan argv is the argv apply executes', () => {
+    const root = treeWithConfig();
+    const target = resolveTarget('staging', {
+      values: resolveDeploymentValues(
+        { [ACCOUNT_ID_VARIABLE]: ACCOUNT, [ENVIRONMENT_MAP_VARIABLE]: encodeMap() },
+        root,
+      ),
+    });
+    expect(target.ok).toBe(true);
+    if (!target.ok) {
+      throw new Error(target.reason);
+    }
+
+    const step = jobsDeployStep(target.target, 'abc123', root);
+    expect(step?.args).toEqual([
+      'deploy',
+      '--env',
+      'staging',
+      '--name',
+      'starter-jobs-staging',
+      '--config',
+      join(root, 'apps/backend/jobs/wrangler.jsonc'),
+      '--var',
+      'RELEASE:abc123',
+    ]);
+  });
+
+  test('a web-only environment plans no jobs Worker at all', () => {
+    const root = treeWithConfig();
+    const plan = planDeploy('staging', {
+      values: resolveDeploymentValues(
+        {
+          [ACCOUNT_ID_VARIABLE]: ACCOUNT,
+          [ENVIRONMENT_MAP_VARIABLE]: JSON.stringify({
+            staging: {
+              workerName: 'starter-staging',
+              d1DatabaseId: 'db-staging',
+              origin: 'https://staging.example',
+              mailFrom: 'noreply@staging.example',
+              jobsProfile: 'disabled',
+            },
+          }),
+        },
+        root,
+      ),
+      hasCredential: false,
+      root,
+    });
+
+    expect(plan.ok).toBe(true);
+    if (!plan.ok) {
+      throw new Error(plan.reason);
+    }
+    expect(JSON.stringify(plan.steps)).not.toContain('starter-jobs');
   });
 });
 

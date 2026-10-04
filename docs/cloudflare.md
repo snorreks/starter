@@ -59,14 +59,31 @@ protocol is a source change with a golden fixture, not a configuration value, an
 accepting an arbitrary one here would mean an image rejecting every encode at the
 container boundary.
 
-### Provisioning is separate from configuring
+### Provisioning is separate from configuring, and from installing secrets
 
-`deploy:configure` records *names*. `bun run deploy provision --env <env> --yes`
-*creates* the resources: the D1 database, the private R2 bucket, and the sample
-fixture uploaded to it. It is idempotent — each step reads first and writes only when
-the resource is absent — and it is the only path that installs the runtime secrets,
-with the value on stdin and never in argv. The full table is in
-[deployment.md](deployment.md).
+Two different commands with two different kinds of write:
+
+| Command | Writes | Idempotent |
+|---|---|---|
+| `bun run deploy:configure …` | *names*, into the gitignored overlay | yes, read-modify-write |
+| `bun run deploy:provision --env <env> --yes` | the D1 database, the private R2 bucket, the sample fixture | yes |
+| `bun run deploy:provision --env <env> --yes --install` | the above **and** the runtime secrets | yes |
+| `bun run deploy:secrets --env <env> --yes --install` | **the runtime secrets only** | yes |
+
+`deploy secrets` installs nothing else. It used to run the whole provisioner, so
+refreshing one runtime secret also created a database, created a bucket and uploaded
+the fixture — separate authority, separate reversibility, separate bill, and none of
+it named in the command the operator typed.
+
+`deploy provision` without `--install` reports the secrets as **skipped** rather than
+passing them off as done, because "this release can sign someone in" is a different
+claim from "this release's resources exist".
+
+Existence is read from a **list**, not from an exit code: `d1 info <id>` reports a
+missing database by exiting nonzero, which is the same signal it gives for a revoked
+token or the wrong account. A read that cannot tell whether a resource exists stops
+the run rather than creating a duplicate. Secret values reach wrangler on **stdin**;
+argv carries names only. The full table is in [deployment.md](deployment.md).
 
 `--provision` creates the database **for one environment** and records its id in the
 gitignored `.starter/deployment.local.json` under `environments.<env>`, which is

@@ -89,7 +89,7 @@ describe('every token in argv must be accounted for', () => {
     if (parsed.ok) {
       return;
     }
-    expect(parsed.errors[0]).toContain('bun run deploy apply');
+    expect(parsed.errors[0]).toContain('bun run deploy:apply');
   });
 
   test('two phases are a conflict, not a silent last-one-wins', () => {

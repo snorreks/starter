@@ -253,7 +253,7 @@ export const parseEnvironmentMap = (raw: string | undefined): MapResult => {
             remedy:
               `${ENVIRONMENT_MAP_VARIABLE} is not a secret channel and is echoed into plans and\n` +
               '  release records. Store credentials as environment secrets and install them\n' +
-              '  with `bun run deploy secrets --env ' +
+              '  with `bun run deploy:secrets --env ' +
               environment +
               '`.',
             environment,
