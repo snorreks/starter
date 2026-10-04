@@ -419,9 +419,33 @@ jobs:
         # matches the code.
         run: |
           set -euo pipefail
-          echo no | avdmanager create avd -n starter-api34 -k 'system-images;android-34;google_apis;x86_64' --device pixel_6 --force
+          # One AVD home, exported, for both `avdmanager` and the emulator.
+          #
+          # The emulator searches `$ANDROID_AVD_HOME`, then `$ANDROID_SDK_HOME/avd`,
+          # then `$HOME/.android/avd` — and says so in its own error. Pinning it
+          # removes the possibility of the two disagreeing about where an AVD lives,
+          # which is exactly what happened: `avdmanager` wrote somewhere, the
+          # emulator looked elsewhere, and the launcher answered
+          # `ERROR | Unknown AVD name [starter-api34]`.
+          export ANDROID_AVD_HOME="$RUNNER_TEMP/avd"
+          mkdir -p "$ANDROID_AVD_HOME"
+          echo no | avdmanager create avd -n starter-api34 -k 'system-images;android-34;google_apis;x86_64' --force
+          # `avdmanager create` exited 0 having created nothing on the previous run —
+          # it printed `Auto-selecting single ABI x86_64` and stopped, with no
+          # `Created AVD` line, and the step carried on. So the creation is *checked*
+          # rather than assumed, and the check is the one the emulator's own error
+          # message recommends.
+          if ! "$ANDROID_HOME/emulator/emulator" -list-avds | grep -qx 'starter-api34'; then
+            echo "::error::avdmanager exited 0 but created no AVD named starter-api34"
+            echo "--- the emulator sees:"
+            "$ANDROID_HOME/emulator/emulator" -list-avds || true
+            echo "--- ANDROID_AVD_HOME=$ANDROID_AVD_HOME contains:"
+            ls -la "$ANDROID_AVD_HOME" || true
+            exit 1
+          fi
+          echo "created AVD: $("$ANDROID_HOME/emulator/emulator" -list-avds | grep -x 'starter-api34')"
           "$ANDROID_HOME/emulator/emulator" -avd starter-api34 -no-window -no-audio -no-boot-anim -gpu swiftshader_indirect \
-            >"$RUNNER_TEMP/emulator.log" 2>&1 &
+            -wipe-data >"$RUNNER_TEMP/emulator.log" 2>&1 &
           echo "emulator pid $!"
           if ! timeout 120 adb wait-for-device; then
             echo "::error::no Android device appeared within 120s of starting the emulator"
