@@ -411,14 +411,37 @@ jobs:
         # The launch is the part a browser viewport cannot stand in for: it is the
         # Android runtime's own window, its own back button and its own lifecycle.
         # `-no-window` still runs the real framework.
+        #
+        # Every wait is bounded, and the previous version of this step claimed to
+        # be while `adb wait-for-device` sat in front of it with no bound at all:
+        # a runner where the emulator never appears as a device blocks there
+        # forever, holding the job until GitHub's own timeout. The comment now
+        # matches the code.
         run: |
           set -euo pipefail
           echo no | avdmanager create avd -n starter-api34 -k 'system-images;android-34;google_apis;x86_64' --device pixel_6 --force
-          "$ANDROID_HOME/emulator/emulator" -avd starter-api34 -no-window -no-audio -no-boot-anim -gpu swiftshader_indirect &
-          adb wait-for-device
+          "$ANDROID_HOME/emulator/emulator" -avd starter-api34 -no-window -no-audio -no-boot-anim -gpu swiftshader_indirect \
+            >"$RUNNER_TEMP/emulator.log" 2>&1 &
+          echo "emulator pid $!"
+          if ! timeout 120 adb wait-for-device; then
+            echo "::error::no Android device appeared within 120s of starting the emulator"
+            tail -n 40 "$RUNNER_TEMP/emulator.log" || true
+            exit 1
+          fi
           # Bounded boot: an emulator that reports `boot_completed` late, or never,
-          # must fail here rather than in the install step four minutes later.
-          timeout 300 bash -c 'until [ "$(adb shell getprop sys.boot_completed 2>/dev/null | tr -d "\r")" = "1" ]; do sleep 5; done'
+          # must fail here rather than in the install step four minutes later. The
+          # log goes with it, because "it never booted" and "it booted and
+          # crashed" need different fixes.
+          if ! timeout 420 bash -c 'until [ "$(adb shell getprop sys.boot_completed 2>/dev/null | tr -d "\r")" = "1" ]; do sleep 5; done'; then
+            echo "::error::the emulator did not report sys.boot_completed within 420s"
+            adb devices || true
+            tail -n 40 "$RUNNER_TEMP/emulator.log" || true
+            exit 1
+          fi
+          # A booted emulator with no launcher is not usable, and the failure
+          # otherwise arrives as an `adb install` timeout naming nothing.
+          timeout 60 adb shell input keyevent KEYCODE_WAKEUP || true
+          echo "the emulator is booted"
 
       - name: Install and launch on the emulator
         run: |
