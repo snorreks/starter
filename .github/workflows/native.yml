@@ -344,46 +344,65 @@ jobs:
           echo "induced failure propagated with a nonzero exit status, and reached the linker"
 
       - name: Build the debug APK
+        # One ABI on purpose. A debug package is what a phone installs during
+        # development, it is built four times slower with all four, and the
+        # artifact name below claims the target it actually contains.
         run: bun run native:android -- build --debug --apk --target aarch64 --ci
 
       - name: Build the release AAB
+        # No `--target` here, and that is deliberate: an .aab carrying a single ABI
+        # is not a complete Play bundle. Gradle therefore groups the outputs under
+        # `universal`/`universalRelease`, which is why nothing below hardcodes an
+        # output path.
         run: bun run native:android -- build --aab --ci
 
-      - name: Verify the artifacts name themselves and contain the expected origin
-        run: |
-          set -euo pipefail
-          apk_dir=apps/frontend/native/src-tauri/gen/android/app/build/outputs/apk/debug
-          aab_dir=apps/frontend/native/src-tauri/gen/android/app/build/outputs/bundle/release
-          bun run --cwd apps/frontend/native check:artifacts -- \
-            -- "$apk_dir" "$aab_dir" --origin "$VITE_NATIVE_API_ORIGIN" \
-            --revision "$GITHUB_SHA" --platform android
-
-      - name: Rename the artifacts with the one naming authority
+      - name: Name the artifacts with the one naming authority
         id: artifact
         shell: bash
         run: |
           set -euo pipefail
-          mkdir -p "$RUNNER_TEMP/dist"
-          apk="$(find apps/frontend/native/src-tauri/gen/android/app/build/outputs/apk/debug -name '*.apk' | head -n 1)"
-          aab="$(find apps/frontend/native/src-tauri/gen/android/app/build/outputs/bundle/release -name '*.aab' | head -n 1)"
+          outputs=apps/frontend/native/src-tauri/gen/android/app/build/outputs
+          apk="$(find "$outputs" -name '*.apk' -type f | head -n 1)"
+          aab="$(find "$outputs" -name '*.aab' -type f | head -n 1)"
+          # Named, not assumed. The previous version of this step guessed
+          # `outputs/apk/debug` and `outputs/bundle/release`; Gradle actually wrote
+          # `apk/universal/debug/` and `bundle/universalRelease/`, so both `find`s
+          # came back empty and the verify step below was handed two paths that do
+          # not exist.
           if [ -z "$apk" ] || [ -z "$aab" ]; then
-            echo "::error::the Android build produced no .apk or no .aab"
+            echo "::error::the Android build produced no .apk or no .aab under $outputs"
+            find "$outputs" -maxdepth 3 -type d || true
             exit 1
           fi
-          for kind in apk aab; do
-            src="$(eval echo \$$kind)"
-            name="$(bun run --cwd apps/frontend/native check:artifacts -- --name android aarch64 "$kind" unsigned | tail -n 1)"
-            cp "$src" "$RUNNER_TEMP/dist/$name"
-            echo "$kind=$RUNNER_TEMP/dist/$name"
-          done
+          echo "found: $apk"
+          echo "found: $aab"
+          mkdir -p "$RUNNER_TEMP/dist"
+          # The APK is `aarch64` because the step above said so. The AAB is
+          # `universal` because it carries all four ABIs, and a name that said
+          # otherwise would be a lie the checker could not detect.
+          cp "$apk" "$RUNNER_TEMP/dist/$(bun run --cwd apps/frontend/native check:artifacts -- --name android aarch64 apk unsigned | tail -n 1)"
+          cp "$aab" "$RUNNER_TEMP/dist/$(bun run --cwd apps/frontend/native check:artifacts -- --name android universal aab unsigned | tail -n 1)"
           # Only what the upload step below reads. An output nothing consumes is
           # a claim about the run that nobody checks.
           echo "dist=$RUNNER_TEMP/dist" >> "$GITHUB_OUTPUT"
 
+      - name: Verify the artifacts name themselves and contain the expected origin
+        # After the rename, and on the renamed files. Gradle names its own output
+        # `app-universal-release.aab`, which says nothing about a target or a
+        # revision; the name this repository ships is the one that has to carry
+        # them, so that is the name that has to be checked. Running this first —
+        # against paths that did not exist — is what it did before.
+        run: |
+          set -euo pipefail
+          bun run --cwd apps/frontend/native check:artifacts -- \
+            -- "${{ steps.artifact.outputs.dist }}" \
+            --origin "$VITE_NATIVE_API_ORIGIN" \
+            --revision "$GITHUB_SHA" --platform android
+
       - name: Upload the unsigned Android packages
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: starter-android-aarch64-${{ github.sha }}-unsigned
+          name: starter-android-${{ github.sha }}-unsigned
           path: ${{ steps.artifact.outputs.dist }}
           retention-days: 7
           if-no-files-found: error
@@ -405,6 +424,11 @@ jobs:
         run: |
           set -euo pipefail
           apk="$(find "$RUNNER_TEMP/dist" -name '*.apk' | head -n 1)"
+          if [ -z "$apk" ]; then
+            echo "::error::no .apk in $RUNNER_TEMP/dist"
+            ls -la "$RUNNER_TEMP/dist"
+            exit 1
+          fi
           adb install -r "$apk"
           adb shell am start -n com.example.starter/.MainActivity
           sleep 10

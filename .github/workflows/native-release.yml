@@ -668,7 +668,9 @@ jobs:
           KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
         run: |
           set -euo pipefail
-          aab="$(find apps/frontend/native/src-tauri/gen/android/app/build/outputs/bundle/release -name '*.aab' | head -n 1)"
+          # Searched, not hardcoded: with every ABI built (as a release .aab must
+          # be) Gradle writes to `bundle/universalRelease/`, not `bundle/release/`.
+          aab="$(find apps/frontend/native/src-tauri/gen/android/app/build/outputs -name '*.aab' -type f | head -n 1)"
           test -n "$aab" || { echo '::error::no .aab was produced'; exit 1; }
           # `jarsigner -verify` reads the signature *inside* the bundle. An .aab
           # built without the signing config is a perfectly valid zip that carries
@@ -686,10 +688,16 @@ jobs:
           VITE_NATIVE_API_ORIGIN: ${{ needs.preflight.outputs.origin }}
         run: |
           set -euo pipefail
-          dir=apps/frontend/native/src-tauri/gen/android/app/build/outputs/bundle/release
+          dir="$(dirname "$(find apps/frontend/native/src-tauri/gen/android/app/build/outputs -name '*.aab' -type f | head -n 1)")"
+          if [ -z "$dir" ] || [ "$dir" = "." ]; then
+            echo "::error::no .aab was produced under gen/android/app/build/outputs"
+            exit 1
+          fi
           bun run --cwd apps/frontend/native check:artifacts -- \
             -- "$dir" --origin "$VITE_NATIVE_API_ORIGIN" --revision "$GITHUB_SHA" --platform android
           marker=$([ "$SIGN" = "true" ] && echo signed || echo unsigned)
+          # `universal` because this AAB carries every ABI; a single-ABI name would
+          # be a lie the checker could not detect.
           name="$(bun run --cwd apps/frontend/native check:artifacts -- --name android universal aab "$marker" | tail -n 1)"
           mkdir -p out
           # The Gradle output name is its own; `name` is what the artifact is
