@@ -20,7 +20,7 @@ import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { REPO_ROOT } from '../src/shared/paths.ts';
 import {
   committedFiles,
@@ -112,15 +112,21 @@ describe('the rehearsal cannot inherit this machine', () => {
     const report = runTemplateSmoke({ root, keep: true });
     try {
       // The *reported* HOME, not the existence of the directory. `runTemplateSmoke`
-      // creates `.smoke-home` itself before running any step, so the directory being
+      // creates the HOME itself before running any step, so the directory being
       // there proves only that the rehearsal made a directory — not that the child
       // process was pointed at it. A run whose env block lost `HOME` would still
       // pass the old assertion while inheriting the maintainer's home directory,
       // which is the entire risk.
-      expect(report.reportedHome).toBe(join(report.dir, '.smoke-home'));
+      //
+      // A *sibling* of the checkout, not a directory inside it: inside it, `install`
+      // fills it with a Bun package cache and the whole-repository guard then reports
+      // thousands of unclassified files under a directory no ownership rule covers.
+      expect(report.reportedHome).toBe(join(dirname(report.dir), 'smoke-home'));
+      expect(report.reportedHome).not.toBe(join(report.dir, '.smoke-home'));
       expect(report.reportedHome?.startsWith('/')).toBe(true);
     } finally {
       rmSync(report.dir, { recursive: true, force: true });
+      rmSync(join(dirname(report.dir), 'smoke-home'), { recursive: true, force: true });
     }
   });
 

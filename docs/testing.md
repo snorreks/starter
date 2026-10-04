@@ -374,6 +374,59 @@ A check that prints green because the step was unavailable is worse than one tha
 says it did not run. Nothing is uploaded anywhere, ever — screenshots can contain
 unreleased UI, and that is not a default the tool gets to choose.
 
+### Profiles: which lane's prerequisites, asked per lane
+
+```bash
+bun run setup:doctor -- --profile web        # the credential-free core. The only one setup requires.
+bun run setup:doctor -- --profile native     # + Rust and, on Linux, the WebKitGTK 4.1 headers
+bun run setup:doctor -- --profile android    # + an Android SDK, a JDK and an NDK
+bun run setup:doctor -- --profile ios        # macOS with the full Xcode. Cannot pass elsewhere.
+bun run setup:doctor -- --profile compute    # + a running Docker-compatible engine
+```
+
+A profile never relaxes a check; it changes which checks are asked at all. Exit **3**
+means *this host cannot run that lane* — a different answer from a broken repository,
+and reported as one, with the exact package or environment variable to install.
+
+The split exists because the flat version was wrong in both directions: requiring Rust
+and WebKitGTK for a web contributor makes the template unusable, and calling them
+optional lets `native:build` fail four minutes in with a linker error while doctor
+reported the host as fine.
+
+### The removal rehearsal
+
+```bash
+bun run smoke -- --without-heavy
+```
+
+The same fresh-checkout rehearsal with the native app and the Rust processor deleted
+from the **copy**, then the web half rebuilt, typechecked, linted and guarded. The
+template keeps both; the flag answers what a downstream project that keeps neither
+gets.
+
+Two findings came out of writing it, and both are recorded because a downstream
+project will hit them:
+
+- **Removing a workspace makes `bun.lock` stale**, and `--frozen-lockfile` correctly
+  refuses a stale lockfile rather than rewriting it. The rehearsal installs once
+  without the flag to regenerate, then re-runs it with the flag to prove the result is
+  clean.
+- **The whole-repository guard will refuse a document that names a removed path.**
+  Its own remedy — say in the same sentence that it was removed — is what the
+  rehearsal does, so the copy passes for the right reason rather than by being
+  skipped.
+
+### Evidence, and where the counts come from
+
+`docs/capability-matrix.md`'s current table is **generated** from
+`docs/evidence/current.json` and checked by `bun run evidence`, which CI runs. A row
+carries the revision it was observed on, the platform, the exact command, the count,
+the timestamp and the artifact; a `not-run` row carries the cause and the command
+that would run it. Historical rows are kept, dated, so a regression stays answerable.
+
+The point is that this file no longer advertises a count from a round two revisions
+old with nothing to tell a reader which one it was.
+
 ## Not run here
 
 Stated plainly rather than left to discover. See `docs/capability-matrix.md`.

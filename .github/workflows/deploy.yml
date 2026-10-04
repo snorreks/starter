@@ -5,34 +5,59 @@
 # decisions with different authority — so CI never deploys, and this file is the
 # only path that does.
 #
-# Everything about the shape here comes from one property:
+# ── Why the plan job is credential-free and configuration-complete ───────────────
 #
-#   **`concurrency` is keyed on the destination environment, and
-#   `cancel-in-progress` is false.**
+# GitHub only exposes **environment-scoped** variables and secrets to a job that
+# declares that environment. The `plan` job deliberately declares none, so it can be
+# reviewed by someone with no deploy authority — which also means it cannot read an
+# environment-scoped *variable*.
 #
-# Two applies to the same environment must never overlap. Overlapping them means
-# two builds racing to migrate one D1 database and then two deploys racing to
-# publish, and the loser wins silently. GitHub's *workflow-level* concurrency in
-# `ci.yml` is keyed on the ref and cancels in progress, which is right for tests
-# and wrong here: cancelling a run that is halfway through `d1 migrations apply`
-# leaves a schema that is ahead of the code running on it, with no record that
-# anything was in flight. So this is a **job-level** concurrency on the apply job
-# only — the plan and preflight jobs still cancel freely, because neither mutates.
+# That is the configuration this repository uses, and it is the whole reason
+# `scripts/src/deploy/variables.ts` exists:
 #
-# There is no lock file. A lock in this checkout serialises one developer's
-# machines and nothing else; two CI runs, or a CI run and an operator laptop, would
-# both take it and both proceed. The environment concurrency group is the only
-# serialisation here that is actually global.
+#   * the nonsecret target map (`STARTER_DEPLOYMENT_TARGETS`) is a **repository**
+#     variable, visible to every job including this one;
+#   * every credential stays an **environment** secret, reachable only by `apply`;
+#   * `scripts/tests/deployment_variables.test.ts` drives the scoping rule and proves
+#     a plan for staging and a plan for production are different documents.
 #
-# Credentials: one API token per environment, stored as a GitHub *environment*
-# secret, so a fork's pull request can never reach it (this workflow does not
-# trigger on `pull_request` at all) and staging's token is not readable while
-# selecting production. Cloudflare's scoped API tokens are the least-privilege
-# mechanism available here; an OAuth login would not exist on a runner.
+# An earlier version of this file read `CLOUDFLARE_WORKER_NAME` and friends from
+# repository variables and applied them to every environment. The result was that
+# `deploy plan` refused on every run with "staging and production both resolve to the
+# same Worker" — a check that was correct in principle and wrong in practice, because
+# the value it compared described one environment and had been given to two.
 #
-# The operator escape hatch — running `wrangler deploy` by hand — is documented in
-# docs/deployment.md as being *outside* this guarantee. It is a deliberate way to
-# publish without the queue, not a second supported path.
+# ── Why the apply job is restricted to a reviewed revision ──────────────────────
+#
+# `apply` holds a Cloudflare API token and a database. Anything that can reach it
+# can write production. So:
+#
+#   * it runs only from a revision on the default branch, named in `github.ref`;
+#   * it never runs from a pull request, and this workflow does not trigger on one
+#     at all — a fork's code gets no credential of any kind;
+#   * it declares `environment:`, so the environment's protection rules — reviewers,
+#     wait timers, branch restrictions — decide whether it may proceed, and that
+#     decision is made in the repository settings rather than in this file;
+#   * the revision it deploys is asserted against the merge commit below, so a run
+#     that somehow checked out something else fails before the migration.
+#
+# ── Serialisation ───────────────────────────────────────────────────────────────
+#
+# `concurrency` is keyed on the destination environment with
+# `cancel-in-progress: false`. Two applies to one environment must never overlap:
+# overlapping them means two builds racing to migrate one D1 database, and the loser
+# wins silently. Cancelling a run that is halfway through `d1 migrations apply`
+# leaves a schema ahead of the code running on it with no record that anything was in
+# flight, so cancellation is off.
+#
+# This is **not** a provider-wide lock. A `wrangler deploy` from a laptop, another
+# repository pointed at the same account, or a second account holder deploying by
+# hand all bypass it. docs/deployment.md says so, and
+# `scripts/src/deploy/compatibility.ts` carries the same statement in code.
+#
+# The operator escape hatch is documented in docs/deployment.md as being *outside*
+# this guarantee. It is a deliberate way to publish without the queue, not a second
+# supported path.
 
 name: Deploy
 
@@ -58,6 +83,11 @@ on:
         required: false
         default: false
         type: boolean
+      install_secrets:
+        description: 'Install the runtime secrets (BETTER_AUTH_SECRET, RESEND_API_KEY) from the environment.'
+        required: false
+        default: false
+        type: boolean
 
 # The floor. The token arrives as an environment secret rather than from this
 # block, and nothing here needs to write to the repository.
@@ -66,20 +96,44 @@ permissions:
 
 env:
   BUN_VERSION: '1.4.2'
-  # Nonsecret configuration, injected rather than persisted — there is no
-  # `.starter/deployment.local.json` in CI, because it is gitignored.
+  # ── repository-scoped, nonsecret ────────────────────────────────────────────
   #
-  # These are GitHub *variables* (`vars`), not secrets: an account id, a Worker
-  # name, a database id and a public hostname are all configuration. Only the API
-  # token is a secret.
+  # This is the whole nonsecret configuration a plan needs, and it is
+  # repository-scoped on purpose (see the header). `STARTER_DEPLOYMENT_TARGETS` is a
+  # JSON object keyed by environment:
+  #
+  #   {"staging":  {"workerName": "…", "d1DatabaseId": "…", "origin": "https://…", "mailFrom": "…"},
+  #    "production": {…}}
+  #
+  # Optional fields: jobsWorkerName, mediaBucketName, encodeWorkflowName,
+  # maintenanceWorkflowName, containerImage, imageProtocol, containerProfile,
+  # jobsProfile ("disabled" | "encode"), nativeApiOrigin. Unknown keys are refused
+  # by name rather than ignored, and a key that looks like a credential is refused
+  # outright — this value is echoed into plans and release records.
+  #
+  # `DEPLOY_ENVIRONMENT` says which environment *this run* is deploying. It is what
+  # scopes the unsuffixed override variables below to one environment; without it
+  # they are ignored rather than applied to both.
   #
   # `vars` can only be read into `env:`, not interpolated into a `run:` block — and
   # nothing below interpolates `${{ }}` into a script anyway, for the reason in the
   # commit message on the policy check.
+  STARTER_DEPLOYMENT_TARGETS: ${{ vars.STARTER_DEPLOYMENT_TARGETS }}
   CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+  DEPLOY_ENVIRONMENT: ${{ inputs.environment }}
+  # Optional per-field overrides, applied to `DEPLOY_ENVIRONMENT` only. Empty by
+  # default: the repository map is the source of truth and these exist for a run that
+  # must target something else.
   CLOUDFLARE_WORKER_NAME: ${{ vars.CLOUDFLARE_WORKER_NAME }}
+  CLOUDFLARE_JOBS_WORKER_NAME: ${{ vars.CLOUDFLARE_JOBS_WORKER_NAME }}
   CLOUDFLARE_D1_DATABASE_ID: ${{ vars.CLOUDFLARE_D1_DATABASE_ID }}
+  CLOUDFLARE_MEDIA_BUCKET_NAME: ${{ vars.CLOUDFLARE_MEDIA_BUCKET_NAME }}
   CLOUDFLARE_PUBLIC_ORIGIN: ${{ vars.CLOUDFLARE_PUBLIC_ORIGIN }}
+  CLOUDFLARE_MAIL_FROM: ${{ vars.CLOUDFLARE_MAIL_FROM }}
+  # The origin a packaged native build is compiled against. A signed binary cannot be
+  # re-pointed afterwards, so this is part of the target rather than a workflow
+  # detail — see docs/native.md.
+  CLOUDFLARE_NATIVE_API_ORIGIN: ${{ vars.CLOUDFLARE_NATIVE_API_ORIGIN }}
 
 jobs:
   # ── plan: offline ──────────────────────────────────────────────────────────
@@ -108,6 +162,17 @@ jobs:
       - name: Install
         run: bun install --frozen-lockfile
 
+      # Proves the repository-level map is actually configured, with a message that
+      # names the variable and its shape. A plan that fails here fails *before* the
+      # apply job has claimed the concurrency group, which is the point.
+      - name: Configuration is visible to a job with no environment
+        run: |
+          if [ -z "$STARTER_DEPLOYMENT_TARGETS" ]; then
+            echo "::error::$STARTER_DEPLOYMENT_TARGETS is not set on this repository."
+            echo "Add it under Settings -> Secrets and variables -> Actions -> Variables."
+            exit 3
+          fi
+
       # `deploy:check` is the same planner the CLI uses and needs no credential.
       # If it fails here, the operator learns before the apply job is queued
       # rather than after it has claimed the concurrency group.
@@ -116,8 +181,6 @@ jobs:
       # the script: an interpolated value is substituted into the command *before*
       # the shell runs, so a value containing a shell metacharacter would execute.
       - name: Plan
-        env:
-          DEPLOY_ENVIRONMENT: ${{ inputs.environment }}
         run: bun run deploy:check --env "$DEPLOY_ENVIRONMENT"
 
       - name: Guards
@@ -166,6 +229,26 @@ jobs:
       - name: Install
         run: bun install --frozen-lockfile
 
+      # The revision this run is about to publish. Named once, compared below, and
+      # recorded in the release record. A workflow_dispatch always resolves a ref on
+      # the default branch, but "always" is a property of the trigger rather than a
+      # guarantee about what was checked out.
+      - name: Record the source revision
+        id: source
+        run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+      # A deploy of an unreviewed revision is the one thing the protected environment
+      # cannot catch on its own: an environment can require reviewers without saying
+      # *what* is being reviewed. This refuses unless the checkout is the default
+      # branch's head.
+      - name: Refuse an unreviewed revision
+        run: |
+          if [ "${{ github.ref }}" != "refs/heads/main" ]; then
+            echo "::error::Refusing to deploy ${{ github.ref }}. A release may only publish the default branch."
+            exit 3
+          fi
+          echo "Deploying ${{ steps.source.outputs.sha }} from the default branch."
+
       # In the environment, never in a step's `run:` line. A token echoed in a
       # command lands in the run log; this assignment never prints.
       - name: Credential
@@ -183,16 +266,27 @@ jobs:
           bun run deploy:preflight --env "$DEPLOY_ENVIRONMENT" \
             $([ "$FIRST_DEPLOY" = yes ] && echo --allow-new-worker)
 
-      # The source SHA is recorded rather than re-derived later, so the release
-      # record names the commit this run actually built rather than whatever HEAD
-      # was when the record was written.
-      - name: Record the source revision
-        run: echo "SOURCE_REVISION=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
+      # Idempotent, so running it on every apply is cheaper than tracking whether it
+      # ran before. Creates the database, the private bucket and uploads the fixture;
+      # with `--install` it also installs BETTER_AUTH_SECRET and RESEND_API_KEY by
+      # value, on stdin, never in argv. Opt-in because it is the one step that
+      # writes a credential, and an unattended run should not do that by surprise.
+      - name: Provision
+        if: ${{ inputs.first_deploy || inputs.install_secrets }}
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          DEPLOY_ENVIRONMENT: ${{ inputs.environment }}
+          # Runtime secrets. Distinct from the Cloudflare token above: these are read
+          # by the running Worker, and the token is not readable by it.
+          BETTER_AUTH_SECRET: ${{ secrets.BETTER_AUTH_SECRET }}
+          RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
+        run: |
+          bun run deploy:provision --env "$DEPLOY_ENVIRONMENT" --yes \
+            $([ "${{ inputs.install_secrets }}" = "true" ] && echo --install)
 
-      # One command for build, migrate, deploy, verify and record, in that order,
-      # with `--yes` supplied here and nowhere else. The same pipeline the local
-      # CLI runs: there is no CI-only deployment path to keep in step. `apply`
-      # builds too, so this step is a preflight of the bundle rather than the build.
+      # One command for build, schema, storage, image, jobs, web, verify and record,
+      # in that order, with `--yes` supplied here and nowhere else. The same pipeline
+      # the local CLI runs: there is no CI-only deployment path to keep in step.
       - name: Apply
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
@@ -204,7 +298,10 @@ jobs:
 
       # The release record is the artifact of this workflow. Uploading it keeps the
       # provenance readable from the run page — by anyone reviewing a deploy months
-      # later — without needing a Cloudflare login or the operator's machine.
+      # later — without needing a Cloudflare login or the operator's machine. It
+      # names every mutated component, the image protocol and whether a schedule was
+      # configured; `if-no-files-found: error` because a missing record on a green run
+      # would be a deployment nobody can audit.
       - name: Upload the release record
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
@@ -216,7 +313,4 @@ jobs:
       # And the same record in the run summary, which is where someone lands first.
       - name: Summarise the release
         if: always()
-        env:
-          DEPLOY_ENVIRONMENT: ${{ inputs.environment }}
-        run: |
-          bun run deploy:status >> "$GITHUB_STEP_SUMMARY"
+        run: bun run deploy:status >> "$GITHUB_STEP_SUMMARY"

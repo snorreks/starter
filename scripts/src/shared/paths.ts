@@ -44,6 +44,9 @@ export const CLIENT_DIR = at('../../../apps/frontend/client');
  * Anything that honours a caller-supplied root resolves through this instead.
  */
 export const CLIENT_DIR_RELATIVE = 'apps/frontend/client';
+
+/** The static SvelteKit app and its Tauri shell. */
+export const NATIVE_DIR = at('../../../apps/frontend/native');
 export const E2E_DIR = at('../../../apps/e2e');
 export const DATABASE_DIR = at('../../../packages/backend/database');
 export const PI_DIR = at('../../../.pi');

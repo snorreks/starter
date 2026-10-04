@@ -30,15 +30,22 @@
 import type { DeploymentEnvironment } from '@starter/schemas';
 import {
   DEPLOYMENT_CONFIG,
+  JOBS_PROFILES,
+  type JobsProfile,
   REQUIRED_REMOTE_SECRET_NAMES,
   REQUIRED_REMOTE_VAR_NAMES,
 } from '../registry/app_registry.ts';
 import {
+  configuredTopologyFor,
   type DeploymentValues,
   effectiveDeploymentValues,
   topologyFor,
 } from '../registry/deployment_values.ts';
 import { CLIENT_DIR_RELATIVE } from '../shared/paths.ts';
+import { targetCompatibilityProblem } from './compatibility.ts';
+
+/** The jobs Worker's config, relative to the repository root. */
+export const JOBS_DIR_RELATIVE = 'apps/backend/jobs';
 
 /** The environments this project can deploy to. `local` is a runtime, not a target. */
 export const DEPLOYABLE_ENVIRONMENTS = ['staging', 'production'] as const;
@@ -63,6 +70,33 @@ export interface ResolvedTarget {
   origin: string;
   /** Canonical Wrangler input. Bindings and generated types are read from this. */
   wranglerConfig: string;
+  /** The jobs Worker's config. Same repository, a different resource. */
+  jobsWranglerConfig: string;
+  /**
+   * The compute half, resolved.
+   *
+   * A nested object rather than a dozen nullable fields, because the interesting
+   * state is "compute is off for this environment" and a flat shape expresses that
+   * as thirteen nulls, which is indistinguishable from a half-configured compute
+   * environment. `enabled` is the assertion; the fields are the evidence for it.
+   */
+  compute: {
+    enabled: boolean;
+    profile: JobsProfile;
+    jobsWorkerName: string | null;
+    mediaBucketName: string | null;
+    encodeWorkflowName: string | null;
+    maintenanceWorkflowName: string | null;
+    containerImage: string | null;
+    /** The protocol the deployed image is required to speak. */
+    imageProtocol: string | null;
+    /** The measured Cloudflare container profile. */
+    containerProfile: string | null;
+  };
+  /** The verified sender address. Configuration, and required. */
+  mailFrom: string;
+  /** The https origin a packaged native build targets. Nullable: not every project ships one. */
+  nativeApiOrigin: string | null;
   /** Secret *names* required, in documented apply order. Never values. */
   requiredSecretNames: readonly string[];
   /** Nonsecret var names required. Never values. */
@@ -123,9 +157,9 @@ const parseOrigin = (
 };
 
 /**
- * Refuse two environments that would resolve to the same Worker or database.
+ * Refuse two environments that would resolve to the same destination.
  *
- * The check is over the *resolved* topology rather than the raw map, which is what
+ * The check is over the *configured* topology rather than the raw map, which is what
  * makes it catch the case that matters. A project with no `environments` map has one
  * set of names, so `--env staging` and `--env production` resolve to the same Worker
  * and the same database — and a production release would then be a staging release.
@@ -135,23 +169,60 @@ const parseOrigin = (
  * the message names the resource that is actually shared rather than a key in a
  * file.
  *
- * Returns `null` when every deployable environment resolves to its own resources.
+ * It compares the *configured* topology, never the injected one. The injected
+ * values (`CLOUDFLARE_WORKER_NAME` and friends) describe the single environment a
+ * CI run is deploying; applying them to both environments and then comparing them
+ * proves only that the variable was set — and reports "staging and production
+ * share a Worker" on every run, including the ones with a correct configuration.
+ * That is a plan that always refuses, which is not a safety property.
+ *
+ * Every resource that must be distinct is compared, not just the two that existed
+ * when this was written. A shared bucket means staging's cleanup sweep deletes
+ * production's job output; a shared Workflow identity means staging's recovery pass
+ * and production's maintenance pass claim the same run key.
  */
 export const environmentIsolationProblem = (
   values: DeploymentValues = effectiveDeploymentValues(),
 ): string | null => {
-  const resolved = new Map<string, { worker: string | null; database: string | null }>();
+  interface Destinations {
+    worker: string | null;
+    jobsWorker: string | null;
+    database: string | null;
+    bucket: string | null;
+    encodeWorkflow: string | null;
+    maintenanceWorkflow: string | null;
+    image: string | null;
+  }
+
+  const resolved = new Map<string, Destinations>();
 
   for (const environment of DEPLOYABLE_ENVIRONMENTS) {
-    const topology = topologyFor(environment, values);
+    const topology = configuredTopologyFor(environment, values);
     resolved.set(environment, {
       worker: topology?.workerName ?? null,
+      jobsWorker: topology?.jobsWorkerName ?? null,
       database: topology?.d1DatabaseId ?? null,
+      bucket: topology?.mediaBucketName ?? null,
+      encodeWorkflow: topology?.encodeWorkflowName ?? null,
+      maintenanceWorkflow: topology?.maintenanceWorkflowName ?? null,
+      image: topology?.containerImage ?? null,
     });
   }
 
-  const entries = [...resolved.entries()].filter(
-    ([, value]) => value.worker !== null || value.database !== null,
+  /**
+   * Resources compared unconditionally.
+   *
+   * A Worker, a bucket, a database and a Workflow identity are one resource that
+   * two environments cannot both own, whatever their profiles. (With compute off
+   * in both, the compute fields are `null` and nothing matches anyway.)
+   *
+   * The *image* is deliberately excluded from that list: it is a build input, not
+   * a per-environment resource. Both environments legitimately build from one
+   * Dockerfile, and what actually runs differs by digest — which is recorded per
+   * release. A digest is compared instead, and only a digest, below.
+   */
+  const entries = [...resolved.entries()].filter(([, value]) =>
+    Object.values(value).some((entry) => entry !== null),
   );
 
   for (const [environment, value] of entries) {
@@ -160,17 +231,59 @@ export const environmentIsolationProblem = (
         continue;
       }
 
-      if (value.worker !== null && value.worker === otherValue.worker) {
+      const shared = (
+        field: keyof Destinations,
+        label: string,
+        consequence: string,
+      ): string | null => {
+        if (value[field] === null || value[field] !== otherValue[field]) {
+          return null;
+        }
         return (
-          `${environment} and ${other} both resolve to the Worker "${value.worker}". A Worker is ` +
-          'one resource per account, so the two environments are the same deployment.'
+          `${environment} and ${other} both resolve to the ${label} "${String(value[field])}". ` +
+          consequence
         );
+      };
+
+      const problem =
+        shared(
+          'worker',
+          'Worker',
+          'A Worker is one resource per account, so the two environments are the same deployment.',
+        ) ??
+        shared(
+          'jobsWorker',
+          'jobs Worker',
+          'A staging maintenance run would operate on production jobs.',
+        ) ??
+        shared('database', 'D1 database', 'A staging migration is then a production migration.') ??
+        shared(
+          'bucket',
+          'R2 bucket',
+          "Staging's retention sweep would delete production's job output.",
+        ) ??
+        shared(
+          'encodeWorkflow',
+          'encode Workflow',
+          "Both environments' jobs would share one instance namespace.",
+        ) ??
+        shared(
+          'maintenanceWorkflow',
+          'maintenance Workflow',
+          'One environment would consume the other maintenance run key.',
+        );
+
+      if (problem !== null) {
+        return problem;
       }
 
-      if (value.database !== null && value.database === otherValue.database) {
+      // The image is compared only between two *enabled* environments, and only
+      // when they name a digest rather than a build path.
+      if (value.image !== null && value.image === otherValue.image && value.image.startsWith('@')) {
         return (
-          `${environment} and ${other} both resolve to the D1 database ${value.database}. A shared ` +
-          'database means a staging migration is a production migration.'
+          `${environment} and ${other} both resolve to the pinned image digest "${value.image}". ` +
+          'A digest is one built artifact, so a rollback in one environment would replace the ' +
+          "other's image. Use a build path for both, and record the digest per release."
         );
       }
     }
@@ -204,6 +317,18 @@ export const resolveTarget = (
       `"${environment}" is not a deployable environment.`,
       `Environments: ${DEPLOYABLE_ENVIRONMENTS.join(', ')}. ` +
         '`local` is a runtime (`bun run dev`), not a deployment target.',
+    );
+  }
+
+  // A malformed CI map is refused before anything is inferred from it. Without this
+  // the typo is read as "no value configured", and the remedy an operator is given
+  // is for a problem they do not have.
+  const configuredProblems: Record<string, string[]> = values.configurationProblems ?? {};
+  const problems = [...(configuredProblems['*'] ?? []), ...(configuredProblems[environment] ?? [])];
+  if (problems.length > 0) {
+    return fail(
+      `The deployment configuration for ${environment} is malformed:\n  ${problems.join('\n  ')}`,
+      'Fix the value in the repository variable, then re-run the plan. Nothing has been changed.',
     );
   }
 
@@ -287,19 +412,58 @@ export const resolveTarget = (
     );
   }
 
+  const jobsProfile = topology.jobsProfile;
+  if (jobsProfile === null || !(JOBS_PROFILES as readonly string[]).includes(jobsProfile)) {
+    return fail(
+      `The jobs profile for ${environment} is ${
+        jobsProfile === null ? 'not configured' : `"${jobsProfile}"`
+      }.`,
+      `It must be one of: ${JOBS_PROFILES.join(', ')}. "disabled" is a real refusal that ` +
+        'leaves notes and auth working; "encode" admits jobs and therefore needs an image.\n' +
+        `  bun run deploy:configure -- --env ${environment} --jobs-profile <${JOBS_PROFILES.join('|')}>`,
+    );
+  }
+
+  const computeEnabled = jobsProfile === 'encode';
+
+  const resolvedTarget: ResolvedTarget = {
+    environment: environment as TargetEnvironment,
+    project: options.project ?? DEPLOYMENT_CONFIG.projectName,
+    accountId: accountId.toLowerCase(),
+    workerName,
+    d1DatabaseId: databaseId,
+    origin: parsed.origin,
+    wranglerConfig: `${CLIENT_DIR_RELATIVE}/wrangler.jsonc`,
+    jobsWranglerConfig: `${JOBS_DIR_RELATIVE}/wrangler.jsonc`,
+    compute: {
+      enabled: computeEnabled,
+      profile: jobsProfile as JobsProfile,
+      jobsWorkerName: topology.jobsWorkerName,
+      mediaBucketName: topology.mediaBucketName,
+      encodeWorkflowName: topology.encodeWorkflowName,
+      maintenanceWorkflowName: topology.maintenanceWorkflowName,
+      containerImage: topology.containerImage,
+      imageProtocol: topology.imageProtocol,
+      containerProfile: topology.containerProfile,
+    },
+    mailFrom: topology.mailFrom ?? '',
+    nativeApiOrigin: topology.nativeApiOrigin,
+    requiredSecretNames: options.requiredSecretNames ?? REQUIRED_REMOTE_SECRET_NAMES,
+    requiredVarNames: REQUIRED_REMOTE_VAR_NAMES,
+  };
+
+  // The target's own coherence, checked after the individual fields so the
+  // complaint names the resource that is missing rather than a later symptom.
+  // `targetCompatibilityProblem` imports this module's type only, so this is not
+  // a runtime cycle.
+  const incoherent = targetCompatibilityProblem(resolvedTarget);
+  if (incoherent !== null) {
+    return fail(incoherent.reason, incoherent.remedy);
+  }
+
   return {
     ok: true,
-    target: {
-      environment: environment as TargetEnvironment,
-      project: options.project ?? DEPLOYMENT_CONFIG.projectName,
-      accountId: accountId.toLowerCase(),
-      workerName,
-      d1DatabaseId: databaseId,
-      origin: parsed.origin,
-      wranglerConfig: `${CLIENT_DIR_RELATIVE}/wrangler.jsonc`,
-      requiredSecretNames: options.requiredSecretNames ?? REQUIRED_REMOTE_SECRET_NAMES,
-      requiredVarNames: REQUIRED_REMOTE_VAR_NAMES,
-    },
+    target: resolvedTarget,
   };
 };
 

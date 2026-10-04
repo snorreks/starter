@@ -13,8 +13,9 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import type { DeploymentEnvironment } from '@starter/schemas';
+import { PROCESSOR_PROTOCOL_ID } from '@starter/schemas/jobs';
 import { captureWrangler, hasCloudflareCredential, REPO_ROOT } from '../cloudflare/wrangler.ts';
-import { DEPLOYMENT_CONFIG } from '../registry/app_registry.ts';
+import { DEPLOYMENT_CONFIG, JOBS_PROFILES } from '../registry/app_registry.ts';
 import {
   type DeploymentValues,
   describeResolution,
@@ -25,6 +26,7 @@ import {
   resolveDeploymentValues,
 } from '../registry/deployment_values.ts';
 import { CLIENT_DIR_RELATIVE } from '../shared/paths.ts';
+import { CONTAINER_PROFILES } from './compatibility.ts';
 import {
   DEPLOYABLE_ENVIRONMENTS,
   environmentIsolationProblem,
@@ -463,11 +465,40 @@ export const setConfig = (args: readonly string[], root: string = REPO_ROOT): nu
   const account = valueAfter('--account');
   const workerName = valueAfter('--worker');
   const origin = valueAfter('--origin');
+  const jobsWorkerName = valueAfter('--jobs-worker');
+  const mediaBucketName = valueAfter('--media-bucket');
+  const imageProtocol = valueAfter('--image-protocol');
+  const containerProfile = valueAfter('--container-profile');
+  const jobsProfile = valueAfter('--jobs-profile');
+  const mailFrom = valueAfter('--mail-from');
+  const nativeApiOrigin = valueAfter('--native-api-origin');
 
-  if (account === undefined && workerName === undefined && origin === undefined) {
+  const computeFlags = [
+    ['--jobs-worker', jobsWorkerName],
+    ['--media-bucket', mediaBucketName],
+    ['--image-protocol', imageProtocol],
+    ['--container-profile', containerProfile],
+    ['--jobs-profile', jobsProfile],
+  ] as const;
+
+  const nothingToWrite =
+    account === undefined &&
+    workerName === undefined &&
+    origin === undefined &&
+    mailFrom === undefined &&
+    nativeApiOrigin === undefined &&
+    computeFlags.every(([, value]) => value === undefined);
+
+  if (nothingToWrite) {
     process.stderr.write(
-      'Nothing to write. Pass --account <32-hex>, --env <env> --worker <name>, or\n' +
-        '  --env <env> --origin https://<host>.\n',
+      'Nothing to write. Nonsecret configuration only; nothing here takes a secret.\n' +
+        '  --account <32-hex>\n' +
+        '  --env <env> --worker <name>          the web Worker\n' +
+        '  --env <env> --origin https://<host>  the public origin\n' +
+        '  --env <env> --mail-from <address>   the verified sender\n' +
+        '  --env <env> --native-api-origin https://<host>\n' +
+        '  --env <env> --jobs-worker <name> --media-bucket <name> --image-protocol <id>\n' +
+        '  --env <env> --container-profile <name> --jobs-profile disabled|encode\n',
     );
     return 2;
   }
@@ -500,6 +531,84 @@ export const setConfig = (args: readonly string[], root: string = REPO_ROOT): nu
     return 2;
   }
 
+  // Each compute flag is environment-scoped, for the same reason `--worker` is: a
+  // shared value across staging and production is a shared resource, and refusing
+  // here is cheaper than discovering it during a migration.
+  for (const [flag, value] of computeFlags) {
+    if (value !== undefined && environment === undefined) {
+      process.stderr.write(
+        `${flag} needs --env. Nothing has been changed.\n` +
+          '  A jobs Worker, a bucket, a profile and an image protocol are per\n' +
+          "  environment: staging's maintenance sweep deleting production's output is the\n" +
+          '  failure this separation exists to prevent.\n',
+      );
+      return 2;
+    }
+  }
+
+  if (jobsProfile !== undefined && !(JOBS_PROFILES as readonly string[]).includes(jobsProfile)) {
+    process.stderr.write(
+      `--jobs-profile must be one of: ${JOBS_PROFILES.join(', ')} (got "${jobsProfile}").\n` +
+        '  "disabled" is a real refusal that leaves notes and auth working; "encode"\n' +
+        '  admits jobs and therefore needs an image and a bucket.\n' +
+        '  Nothing has been changed.\n',
+    );
+    return 2;
+  }
+
+  if (
+    containerProfile !== undefined &&
+    !(CONTAINER_PROFILES as readonly string[]).includes(containerProfile)
+  ) {
+    process.stderr.write(
+      `--container-profile must be a profile the platform offers: ${CONTAINER_PROFILES.join(', ')}\n` +
+        `  (got "${containerProfile}"). apps/backend/media/README.md records the measurements\n` +
+        '  behind "basic". Nothing has been changed.\n',
+    );
+    return 2;
+  }
+
+  if (imageProtocol !== undefined && imageProtocol !== PROCESSOR_PROTOCOL_ID) {
+    // Not pedantry: a protocol this source does not implement is an image that
+    // rejects every encode at the container boundary, discovered as a failed job.
+    process.stderr.write(
+      `--image-protocol must be "${PROCESSOR_PROTOCOL_ID}", which is what this source speaks\n` +
+        `  (got "${imageProtocol}"). Changing the processor protocol is a source change with a\n` +
+        '  golden fixture, not a configuration value. Nothing has been changed.\n',
+    );
+    return 2;
+  }
+
+  if (
+    mediaBucketName !== undefined &&
+    !/^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$/.test(mediaBucketName)
+  ) {
+    process.stderr.write(
+      `"${mediaBucketName}" is not a valid R2 bucket name.\n` +
+        '  Lowercase letters, digits, dots and dashes; 3 to 63 characters.\n' +
+        '  Nothing has been changed.\n',
+    );
+    return 2;
+  }
+
+  if (mailFrom !== undefined && !/^[^@\s]+@[^@\s.]+(\.[^@\s.]+)+$/.test(mailFrom)) {
+    process.stderr.write(
+      `--mail-from must be an email address (got "${mailFrom}").\n` +
+        '  It must be on a domain your mail provider has verified, or delivery fails in\n' +
+        '  a way that reads as a deployment problem. Nothing has been changed.\n',
+    );
+    return 2;
+  }
+
+  if (nativeApiOrigin !== undefined && !/^https:\/\/[^/?#]+$/.test(nativeApiOrigin)) {
+    process.stderr.write(
+      `--native-api-origin must be an absolute https URL with no path (got "${nativeApiOrigin}").\n` +
+        '  It is compiled into a packaged binary and cannot be corrected after signing.\n' +
+        '  Nothing has been changed.\n',
+    );
+    return 2;
+  }
+
   if (account !== undefined && !/^[0-9a-f]{32}$/i.test(account)) {
     process.stderr.write(
       '--account needs a 32-character hex Cloudflare account id.\n' +
@@ -521,11 +630,22 @@ export const setConfig = (args: readonly string[], root: string = REPO_ROOT): nu
   writeLocalValues((current) => {
     const environments = { ...(current.environments ?? {}) };
     if (environment !== undefined) {
-      environments[environment] = {
-        ...(environments[environment] ?? {}),
-        ...(workerName === undefined ? {} : { workerName }),
-        ...(origin === undefined ? {} : { origin }),
+      const entry: Record<string, string | null> = { ...(environments[environment] ?? {}) };
+      const assign = (field: string, value: string | undefined): void => {
+        if (value !== undefined) {
+          entry[field] = value;
+        }
       };
+      assign('workerName', workerName);
+      assign('origin', origin);
+      assign('mailFrom', mailFrom);
+      assign('nativeApiOrigin', nativeApiOrigin);
+      assign('jobsWorkerName', jobsWorkerName);
+      assign('mediaBucketName', mediaBucketName);
+      assign('imageProtocol', imageProtocol);
+      assign('containerProfile', containerProfile);
+      assign('jobsProfile', jobsProfile);
+      environments[environment] = entry;
     }
     return {
       ...current,
@@ -534,16 +654,26 @@ export const setConfig = (args: readonly string[], root: string = REPO_ROOT): nu
     };
   }, root);
 
+  const written: [string, string | undefined][] = [
+    ['Worker name', workerName],
+    ['Origin', origin],
+    ['Mail from', mailFrom],
+    ['Native API origin', nativeApiOrigin],
+    ['Jobs Worker', jobsWorkerName],
+    ['Media bucket', mediaBucketName],
+    ['Image protocol', imageProtocol],
+    ['Container profile', containerProfile],
+    ['Jobs profile', jobsProfile],
+  ];
+  for (const [label, value] of written) {
+    if (value !== undefined) {
+      process.stdout.write(`${label} for ${environment}: ${value}\n`);
+    }
+  }
+
   if (account !== undefined) {
     process.stdout.write(`Account id written to ${LOCAL_DEPLOYMENT_FILE}.\n`);
   }
-  if (workerName !== undefined) {
-    process.stdout.write(`Worker name for ${environment}: ${workerName}\n`);
-  }
-  if (origin !== undefined) {
-    process.stdout.write(`Origin for ${environment}: ${origin}\n`);
-  }
-
   if (workerName !== undefined && origin === undefined && environment !== undefined) {
     process.stdout.write(
       `\nStill needed for ${environment}:\n` +
@@ -592,7 +722,19 @@ export const main = (args: readonly string[]): number => {
     });
   }
 
-  if (args.includes('--account') || args.includes('--worker') || args.includes('--origin')) {
+  const WRITE_FLAGS = [
+    '--account',
+    '--worker',
+    '--origin',
+    '--mail-from',
+    '--native-api-origin',
+    '--jobs-worker',
+    '--media-bucket',
+    '--image-protocol',
+    '--container-profile',
+    '--jobs-profile',
+  ];
+  if (WRITE_FLAGS.some((flag) => args.includes(flag))) {
     return setConfig(args, REPO_ROOT);
   }
 

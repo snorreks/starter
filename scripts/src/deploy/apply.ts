@@ -33,7 +33,9 @@ import { join } from 'node:path';
 import { captureWrangler, runWrangler } from '../cloudflare/wrangler.ts';
 import { planMigrate } from '../db/migrate.ts';
 import { CLIENT_DIR, REPO_ROOT } from '../shared/paths.ts';
+import { imageProtocolProblem } from './compatibility.ts';
 import { wranglerDatabaseId } from './configure.ts';
+import { bucketExists } from './provision.ts';
 import {
   type ArtifactCheck,
   inspectArtifact,
@@ -62,7 +64,50 @@ export const HEALTH_PATH = '/health';
  */
 export const READINESS_PATH = '/health/ready';
 
-export type Phase = 'build' | 'validate' | 'migrate' | 'deploy' | 'verify' | 'record';
+export type Phase =
+  | 'build'
+  | 'validate'
+  | 'schema'
+  | 'storage'
+  | 'image'
+  | 'jobs'
+  | 'web'
+  | 'verify'
+  | 'record';
+
+/**
+ * The pipeline's phases, in dependency order.
+ *
+ * The order is the design and each step exists because the one before it can
+ * succeed while producing something the next one must refuse:
+ *
+ *   schema  reviewed migrations, so new code never meets the old schema;
+ *   storage the private bucket and the fixture, because the encode Workflow
+ *           fetches the fixture and nothing else can be verified without it;
+ *   image   the container image, because the jobs Worker declares it as a build
+ *           input and a Worker whose image cannot be built fails at deploy time
+ *           with an opaque error;
+ *   jobs    the jobs Worker, its Workflows and its schedule — before the web
+ *           Worker, so the web Worker is never live pointing at a binding that
+ *           does not resolve yet;
+ *   web     the public origin last, because it is the only resource a user can
+ *           see and the one whose failure is visible;
+ *   verify  release identity, then readiness, then a real encode and download —
+ *           in that order, and each one capable of failing the release.
+ *
+ * `migrate` and `deploy` were the old names and are deliberately gone: they named
+ * two commands rather than four dependencies, so the plan a reviewer read did not
+ * match the order the pipeline ran.
+ */
+export const PHASES: readonly Phase[] = [
+  'schema',
+  'storage',
+  'image',
+  'jobs',
+  'web',
+  'verify',
+  'record',
+];
 
 export interface StepOutcome {
   phase: Phase;
@@ -77,8 +122,29 @@ export interface ApplyResult {
   /** Steps that ran, in order, as `wrangler <args…>`. The argv a review needs. */
   argv: string[][];
   record: ReleaseRecord | null;
+  /**
+   * Every component this run changed, whether or not the pipeline completed.
+   *
+   * Written even on a failure. "What did the last half-successful deploy actually
+   * do?" is the question an operator has at that moment, and a record that only
+   * exists on success answers it with silence.
+   */
+  components: MutatedComponent[];
   /** Present when the pipeline stopped early. */
   stoppedAt: Phase | null;
+}
+
+/** One mutated component, recorded so a partial failure is diagnosable. */
+export interface MutatedComponent {
+  phase: Phase;
+  /** What the thing is called at the provider. Never a value. */
+  identity: string;
+  /** What produced it: a source SHA, an artifact digest, an image digest. */
+  source: string;
+  /** Provider-side identity, when the provider reports one. */
+  providerId?: string | null;
+  /** The wire protocol, for a component that speaks one. */
+  protocol?: string | null;
 }
 
 export interface ApplyOptions {
@@ -98,6 +164,24 @@ export interface ApplyOptions {
   root?: string;
   /** Skip migrations. Explicit, and recorded in the release record. */
   skipMigrations?: boolean;
+  /**
+   * A runtime session token used to prove a real encode, when one is available.
+   *
+   * Optional on purpose. A release verification normally has a Cloudflare API token
+   * and no user session, so the tiny-job probe reports which half it established
+   * rather than pretending the whole thing passed. Never recorded, never printed.
+   */
+  verifyToken?: string | null;
+  /**
+   * Run a subset of the pipeline.
+   *
+   * `--only jobs` is the supported way to introduce compute into a live
+   * environment: the image and the Workflows have to exist and be speaking the same
+   * protocol *before* the web Worker is pointed at them. Running the whole pipeline
+   * again is not the answer, because it re-runs the migration and re-publishes the
+   * web Worker for no reason.
+   */
+  only?: readonly Phase[];
   now?: () => string;
 }
 
@@ -454,6 +538,7 @@ export const deploymentIdentity = (
  */
 export const apply = async (options: ApplyOptions): Promise<ApplyResult> => {
   const { target } = options;
+  const root = options.root ?? REPO_ROOT;
   // Both branches annotated rather than inferred: the fallback arrow has no
   // contextual type of its own, so without them `run` becomes a union of two
   // differently-typed callables and every call site below reports "not callable".
@@ -462,9 +547,24 @@ export const apply = async (options: ApplyOptions): Promise<ApplyResult> => {
   const inspect = options.inspect ?? ((): ArtifactCheck => inspectArtifact(BUILD_DIR));
   const doFetch = options.fetch ?? globalThis.fetch;
   const now = options.now ?? ((): string => new Date().toISOString());
+  const capture = options.capture ?? captureWrangler;
 
   const outcomes: StepOutcome[] = [];
   const argv: string[][] = [];
+  const components: MutatedComponent[] = [];
+
+  /**
+   * A phase the caller did not select.
+   *
+   * Reported as `ok` with the word *skipped*, never as absent. A release record
+   * that omits a phase is a record that does not say whether the step was skipped
+   * by request or forgotten by a bug, and those need different responses.
+   */
+  const skipped = (phase: Phase): StepOutcome =>
+    ok(phase, 'skipped by --only; this release did not touch it');
+
+  const wants = (phase: Phase): boolean =>
+    options.only === undefined || options.only.includes(phase);
 
   // `detail` is accepted and deliberately unused here: the reason is already in
   // `outcomes`, and printing it twice would give the same sentence two sources of
@@ -474,6 +574,7 @@ export const apply = async (options: ApplyOptions): Promise<ApplyResult> => {
     outcomes,
     argv,
     record: null,
+    components,
     stoppedAt: _phase,
   });
 
@@ -491,7 +592,12 @@ export const apply = async (options: ApplyOptions): Promise<ApplyResult> => {
     return stop('build', detail);
   }
 
-  // ── build ──────────────────────────────────────────────────────────────────
+  const revision = sourceRevision(options.root);
+
+  // -- build ---------------------------------------------------------------
+  // The artifact is produced here, from the source in this checkout, rather than
+  // assumed to exist. A `wrangler deploy` against a stale or absent build publishes
+  // whatever is on disk and reports success.
   if (options.build !== undefined) {
     const built = options.build();
     if (!built.ok) {
@@ -502,7 +608,10 @@ export const apply = async (options: ApplyOptions): Promise<ApplyResult> => {
     outcomes.push(ok('build', built.detail));
   }
 
-  // ── validate ───────────────────────────────────────────────────────────────
+  // -- validate ------------------------------------------------------------
+  // Read-only, and deliberately *before* the migration. A migration applied with no
+  // deployable artifact in hand leaves the schema ahead of the running code for no
+  // reason, and the remedy is to build — not to apply the schema and try again.
   const artifact = inspect();
   if (!artifact.ok) {
     const problems = artifact.problems.join(' ');
@@ -511,16 +620,22 @@ export const apply = async (options: ApplyOptions): Promise<ApplyResult> => {
   }
   outcomes.push(ok('validate', `${artifact.fileCount} files, digest ${artifact.digest}`));
 
-  // ── migrate ────────────────────────────────────────────────────────────────
-  if (options.skipMigrations === true) {
+  // -- schema --------------------------------------------------------------
+  // Where `migrate` was. Renamed to the dependency it satisfies, because the
+  // pipeline now has four phases and `deploy` no longer names one of them.
+  //
+  // Before the web deploy, so new code never meets the old schema.
+  if (!wants('schema')) {
+    outcomes.push(skipped('schema'));
+  } else if (options.skipMigrations === true) {
     outcomes.push(
-      ok('migrate', 'skipped by request; the schema is whatever the last apply left behind'),
+      ok('schema', 'skipped by request; the schema is whatever the last apply left behind'),
     );
   } else {
-    const migrated = migrate(target, argv, options.root ?? REPO_ROOT);
+    const migrated = migrate(target, argv, root);
     if (!migrated.ok) {
-      outcomes.push(bad('migrate', migrated.detail));
-      return stop('migrate', migrated.detail);
+      outcomes.push(bad('schema', migrated.detail));
+      return stop('schema', migrated.detail);
     }
     const code = run('wrangler', argv[argv.length - 1] as string[], { cwd: CLIENT_DIR });
     if (code !== 0) {
@@ -528,33 +643,131 @@ export const apply = async (options: ApplyOptions): Promise<ApplyResult> => {
         `Migration failed with exit code ${code}. The schema may be partly applied; ` +
         're-running `apply` is safe, because D1 records each migration in its journal ' +
         'and re-applies only what is missing.';
-      outcomes.push(bad('migrate', detail));
-      return stop('migrate', detail);
+      outcomes.push(bad('schema', detail));
+      return stop('schema', detail);
     }
-    outcomes.push(ok('migrate', migrated.detail));
+    components.push({ phase: 'schema', identity: target.d1DatabaseId, source: revision.sha });
+    outcomes.push(ok('schema', migrated.detail));
   }
 
-  // ── deploy ─────────────────────────────────────────────────────────────────
-  const revision = sourceRevision(options.root);
-  const deployArgs = [
-    'deploy',
-    '--env',
-    target.environment,
-    '--name',
-    target.workerName,
-    '--config',
-    join(CLIENT_DIR, 'wrangler.jsonc'),
-    // `RELEASE` is a git SHA: public information by construction, which is why it
-    // is safe as a var and why `/health` can report it. It is what lets a verify
-    // step prove *which* release is answering rather than merely that something is.
-    '--var',
-    `RELEASE:${revision.sha}`,
-    // The digest travels with the release as metadata. Wrangler records it, and it
-    // is what makes the recorded artifact independently checkable against the
-    // provider.
-    '--meta',
-    `source_sha=${revision.sha},artifact=${artifact.digest ?? 'unknown'}`,
-  ];
+  // -- storage ------------------------------------------------------------
+  // A dependency assertion rather than a second write path: `provision` created the
+  // bucket and uploaded the fixture, and re-uploading here would be a second way to
+  // write the same object. What the phase does is *prove* the dependency, so a
+  // pipeline that skipped provisioning fails here with a remedy instead of admitting
+  // a job whose fixture is missing.
+  if (!wants('storage')) {
+    outcomes.push(skipped('storage'));
+  } else if (target.compute.enabled && target.compute.mediaBucketName !== null) {
+    const listed = capture(['r2', 'bucket', 'list', '--json']);
+    if (!listed.ok || !bucketExists(listed.stdout, target.compute.mediaBucketName)) {
+      const detail =
+        `The private bucket ${target.compute.mediaBucketName} is not readable in this account, so ` +
+        'the encode path has nowhere to read the fixture from or write output to.\n' +
+        `  bun run deploy provision --env ${target.environment}\n` +
+        '  Nothing has been changed.';
+      outcomes.push(bad('storage', detail));
+      return stop('storage', detail);
+    }
+    components.push({
+      phase: 'storage',
+      identity: target.compute.mediaBucketName,
+      source: revision.sha,
+    });
+    outcomes.push(ok('storage', `private bucket ${target.compute.mediaBucketName} readable`));
+  } else {
+    outcomes.push(ok('storage', 'no compute profile: this release has no bucket to prepare'));
+  }
+
+  // -- image --------------------------------------------------------------
+  // The image is not uploaded separately. Cloudflare builds it from the Dockerfile
+  // the jobs Worker declares, and what runs is a digest the provider assigns —
+  // recorded per release rather than asserted here, because a build that has not
+  // happened cannot be named. What can be checked offline is the protocol, and it
+  // is checked before anything is mutated.
+  if (!wants('image')) {
+    outcomes.push(skipped('image'));
+  } else if (target.compute.enabled) {
+    const incompatible = imageProtocolProblem(target, null);
+    if (incompatible !== null) {
+      outcomes.push(bad('image', `${incompatible.reason}\n  ${incompatible.remedy}`));
+      return stop('image', incompatible.reason);
+    }
+    components.push({
+      phase: 'image',
+      identity: target.compute.containerImage ?? 'unconfigured',
+      source: revision.sha,
+      protocol: target.compute.imageProtocol,
+    });
+    outcomes.push(
+      ok(
+        'image',
+        `${target.compute.containerImage} must speak ${target.compute.imageProtocol ?? 'an unstated protocol'} ` +
+          `on profile ${target.compute.containerProfile ?? 'unstated'}`,
+      ),
+    );
+  } else {
+    outcomes.push(ok('image', 'no compute profile: this release builds no image'));
+  }
+
+  // -- jobs ---------------------------------------------------------------
+  // Before the web Worker, so the web Worker is never live pointing at a binding
+  // that does not resolve yet.
+  if (!wants('jobs')) {
+    outcomes.push(skipped('jobs'));
+  } else if (target.compute.enabled && target.compute.jobsWorkerName !== null) {
+    const jobsArgs = [
+      'deploy',
+      '--env',
+      target.environment,
+      '--name',
+      target.compute.jobsWorkerName,
+      '--config',
+      join(root, 'apps/backend/jobs/wrangler.jsonc'),
+      // The jobs Worker carries the *same* release identity as the web Worker. A
+      // release record naming two SHAs for one deployment would make "which code is
+      // live" unanswerable.
+      '--var',
+      `RELEASE:${revision.sha}`,
+    ];
+    argv.push(jobsArgs);
+
+    const jobsCode = run('wrangler', jobsArgs, { cwd: root });
+    if (jobsCode !== 0) {
+      const detail =
+        `The jobs Worker deploy failed with exit code ${jobsCode}. The web Worker has NOT been ` +
+        'updated, so it still points at the previous Workflow definitions and the previous ' +
+        'image. See docs/deployment.md for the recovery order.';
+      outcomes.push(bad('jobs', detail));
+      return stop('jobs', detail);
+    }
+    components.push({
+      phase: 'jobs',
+      identity: target.compute.jobsWorkerName,
+      source: revision.sha,
+      protocol: target.compute.imageProtocol,
+    });
+    outcomes.push(
+      ok(
+        'jobs',
+        `${target.compute.jobsWorkerName} with ${target.compute.encodeWorkflowName} and ` +
+          `${target.compute.maintenanceWorkflowName}`,
+      ),
+    );
+  } else {
+    outcomes.push(ok('jobs', 'no compute profile: this release has no jobs Worker'));
+  }
+
+  // -- web ----------------------------------------------------------------
+  if (!wants('web')) {
+    outcomes.push(skipped('web'));
+    // No record: nothing that verification covers was published, so a release
+    // record would describe a release that did not happen.
+    outcomes.push(ok('record', 'web Worker not selected; nothing was recorded'));
+    return { ok: true, outcomes, argv, record: null, components, stoppedAt: null };
+  }
+
+  const deployArgs = deployStep(target, revision.sha, artifact.digest).args;
   argv.push(deployArgs);
 
   const deployCode = run('wrangler', deployArgs, { cwd: CLIENT_DIR });
@@ -563,14 +776,17 @@ export const apply = async (options: ApplyOptions): Promise<ApplyResult> => {
       `Deploy failed with exit code ${deployCode}. The schema is ahead of the running ` +
       'code, which is why a rollback does not roll the schema back: see the recovery ' +
       'procedure in docs/deployment.md.';
-    outcomes.push(bad('deploy', detail));
-    return stop('deploy', detail);
+    outcomes.push(bad('web', detail));
+    return stop('web', detail);
   }
-  outcomes.push(ok('deploy', `${target.workerName} deployed to ${target.origin}`));
+  components.push({ phase: 'web', identity: target.workerName, source: revision.sha });
+  outcomes.push(ok('web', `${target.workerName} deployed to ${target.origin}`));
 
-  // ── verify ─────────────────────────────────────────────────────────────────
-  // The expected release is this run's own SHA: verification asks "is the thing I
-  // just published answering?", not "is anything answering?".
+  // -- verify -------------------------------------------------------------
+  // Three questions, in this order and each capable of failing the release:
+  // liveness identity, readiness, and — when the compute profile is on — a real
+  // tiny job whose output is fetched. `/health` alone proves neither of the other
+  // two: it reads configuration and never touches a binding.
   const smokeResult = await smoke(target, doFetch, { expectedRelease: revision.sha });
   if (!smokeResult.ok) {
     const detail =
@@ -581,10 +797,10 @@ export const apply = async (options: ApplyOptions): Promise<ApplyResult> => {
     // Still recorded. A failed verification is exactly the situation in which the
     // record matters most, and not writing it would lose the deployment id that
     // identifies what to roll back.
-    const record = buildRecord(target, artifact, smokeResult, now(), options);
+    const record = buildRecord(target, artifact, smokeResult, now(), options, components);
     writeReleaseRecord(record, options.root);
     outcomes.push(ok('record', 'recorded despite the failed verification'));
-    return { ok: false, outcomes, argv, record, stoppedAt: 'verify' };
+    return { ok: false, outcomes, argv, record, components, stoppedAt: 'verify' };
   }
   outcomes.push(
     ok(
@@ -594,12 +810,197 @@ export const apply = async (options: ApplyOptions): Promise<ApplyResult> => {
     ),
   );
 
-  // ── record ─────────────────────────────────────────────────────────────────
-  const record = buildRecord(target, artifact, smokeResult, now(), options);
+  const probe = await verifyTinyJob(target, doFetch, {
+    // `verifyToken` is the *runtime* credential a signed-in verification uses. It
+    // is optional and never recorded: with it, verification can prove a real encode;
+    // without it, verification says exactly which half it established.
+    token: options.verifyToken ?? null,
+  });
+  if (!probe.ok) {
+    const reason = probe.detail ?? 'the verification encode did not succeed';
+    outcomes.push(bad('verify', reason));
+    const failed = { ...smokeResult, ok: false, problem: reason };
+    const record = buildRecord(target, artifact, failed, now(), options, components);
+    writeReleaseRecord(record, options.root);
+    outcomes.push(ok('record', 'recorded despite the failed verification'));
+    return { ok: false, outcomes, argv, record, components, stoppedAt: 'verify' };
+  }
+  if (probe.detail !== null) {
+    outcomes.push(ok('verify', probe.detail));
+  }
+
+  // -- record -------------------------------------------------------------
+  const record = buildRecord(target, artifact, smokeResult, now(), options, components);
   writeReleaseRecord(record, options.root);
   outcomes.push(ok('record', `wrote ${target.environment} release record`));
 
-  return { ok: true, outcomes, argv, record, stoppedAt: null };
+  return { ok: true, outcomes, argv, record, components, stoppedAt: null };
+};
+
+/**
+ * The one real encode a deployment has to be able to observe.
+ *
+ * Deliberately absent rather than faked when the compute profile is off: a
+ * verification that reports "job skipped" as though it had passed is the exact
+ * shape of a check that succeeds while doing nothing. With the profile off there is
+ * no job to run, and the release record says so.
+ *
+ * With it on, this submits one admitted fixture, waits for a terminal state within
+ * a bounded budget, and fetches the output bytes. It needs an authenticated
+ * session, which a release verification does not have — so it is a *capability*
+ * probe reported honestly rather than a promise: when it cannot authenticate, it
+ * says which half it could establish.
+ */
+export const verifyTinyJob = async (
+  target: ResolvedTarget,
+  doFetch: typeof globalThis.fetch = globalThis.fetch,
+  options: { token?: string | null; timeoutMs?: number } = {},
+): Promise<{ ok: boolean; detail: string | null }> => {
+  if (!target.compute.enabled) {
+    return {
+      ok: true,
+      detail: null,
+    };
+  }
+
+  if (options.token === undefined || options.token === null || options.token === '') {
+    return {
+      ok: true,
+      detail:
+        `the compute profile is on, so a real encode is expected, but no verification token is ` +
+        'available: only /health and /health/ready were established. NOT the full proof — ' +
+        'run `bun run deploy verify --env ' +
+        target.environment +
+        ' --with-job` as a signed-in user.',
+    };
+  }
+
+  const timeoutMs = options.timeoutMs ?? JOB_VERIFY_TIMEOUT_MS;
+  const created = await requestJson(
+    doFetch,
+    `${target.origin}/api/jobs`,
+    {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', authorization: `Bearer ${options.token}` },
+      body: JSON.stringify({ fixture: 'sample-v1', preset: 'demo-180p-v1' }),
+      signal: AbortSignal.timeout(timeoutMs),
+    },
+    timeoutMs,
+  );
+
+  if (created.status !== 202) {
+    return {
+      ok: false,
+      detail:
+        `The release is healthy but a verification encode was not admitted: POST /api/jobs ` +
+        `answered ${String(created.status)}${created.problem === null ? '' : ` (${created.problem})`}. ` +
+        'A release whose compute path cannot admit a job is not verified.',
+    };
+  }
+
+  const jobId = readString(created.body, 'id');
+  if (jobId === null) {
+    return {
+      ok: false,
+      detail: 'POST /api/jobs answered 202 without a job id, so there is nothing to poll.',
+    };
+  }
+
+  const deadline = Date.now() + timeoutMs;
+  let status: string | null = null;
+
+  while (Date.now() < deadline) {
+    const polled = await requestJson(
+      doFetch,
+      `${target.origin}/api/jobs/${encodeURIComponent(jobId)}`,
+      {
+        headers: { authorization: `Bearer ${options.token}` },
+        signal: AbortSignal.timeout(10_000),
+      },
+      10_000,
+    );
+
+    if (polled.problem !== null || polled.status !== 200) {
+      return {
+        ok: false,
+        detail: `The verification job ${jobId} could not be read: ${polled.problem ?? `status ${String(polled.status)}`}.`,
+      };
+    }
+
+    status = readString(polled.body, 'status');
+
+    if (status === 'succeeded' || status === 'failed') {
+      break;
+    }
+
+    await new Promise((resolve) => setTimeout(resolve, JOB_POLL_INTERVAL_MS));
+  }
+
+  if (status !== 'succeeded') {
+    return {
+      ok: false,
+      detail:
+        `The verification job ${jobId} ended as "${status ?? 'still pending'}" after ${timeoutMs}ms. ` +
+        'A release that cannot complete one tiny encode is not verified.',
+    };
+  }
+
+  const output = await doFetch(`${target.origin}/api/jobs/${encodeURIComponent(jobId)}/output`, {
+    headers: { authorization: `Bearer ${options.token}` },
+    signal: AbortSignal.timeout(timeoutMs),
+  });
+
+  if (!output.ok) {
+    return {
+      ok: false,
+      detail:
+        `The verification job ${jobId} reported success but its output answered ${String(output.status)}. ` +
+        'A successful status with no retrievable bytes is the failure this check exists for.',
+    };
+  }
+
+  const bytes = await output.arrayBuffer();
+  return {
+    ok: bytes.byteLength > 0,
+    detail: `verification job ${jobId} succeeded and ${bytes.byteLength} bytes were fetched`,
+  };
+};
+
+/** How long one verification encode may take before the release is not verified. */
+export const JOB_VERIFY_TIMEOUT_MS = 180_000;
+
+/** How often the verification job is polled. Bounded; not a busy loop. */
+export const JOB_POLL_INTERVAL_MS = 3_000;
+
+const requestJson = async (
+  doFetch: typeof globalThis.fetch,
+  url: string,
+  init: RequestInit,
+  timeoutMs: number,
+): Promise<{ status: number; body: Record<string, unknown> | null; problem: string | null }> => {
+  let response: Response;
+  try {
+    response = await doFetch(url, init);
+  } catch (error) {
+    return {
+      status: 0,
+      body: null,
+      problem: error instanceof Error ? error.message : 'network error',
+    };
+  }
+
+  let body: Record<string, unknown> | null = null;
+  try {
+    const parsed: unknown = await response.json();
+    if (parsed !== null && typeof parsed === 'object' && !Array.isArray(parsed)) {
+      body = parsed as Record<string, unknown>;
+    }
+  } catch {
+    body = null;
+  }
+
+  void timeoutMs;
+  return { status: response.status, body, problem: null };
 };
 
 const buildRecord = (
@@ -608,6 +1009,7 @@ const buildRecord = (
   smokeResult: SmokeResult,
   recordedAt: string,
   options: ApplyOptions,
+  components: readonly MutatedComponent[],
 ): ReleaseRecord => {
   const revision = sourceRevision(options.root);
   // Asked for only after a successful deploy: `deployments list` on a Worker that
@@ -629,6 +1031,23 @@ const buildRecord = (
     recordedAt,
     smoke: smokeResult,
     skipMigrations: options.skipMigrations === true,
+    components: components.map((component) => ({ ...component })),
+    compute: target.compute.enabled
+      ? {
+          enabled: true,
+          jobsWorkerName: target.compute.jobsWorkerName,
+          mediaBucketName: target.compute.mediaBucketName,
+          encodeWorkflowName: target.compute.encodeWorkflowName,
+          maintenanceWorkflowName: target.compute.maintenanceWorkflowName,
+          imageProtocol: target.compute.imageProtocol,
+          containerProfile: target.compute.containerProfile,
+          // What the committed jobs configuration declares, which is the only
+          // offline answer available. Whether a run has actually happened is a
+          // question about D1, not about this record.
+          scheduleConfigured: true,
+        }
+      : null,
+    nativeApiOrigin: target.nativeApiOrigin,
   };
 };
 
@@ -637,6 +1056,15 @@ export const renderApply = (result: ApplyResult): string => {
   const lines = [''];
   for (const outcome of result.outcomes) {
     lines.push(`  ${outcome.ok ? 'ok  ' : 'FAIL'} ${outcome.phase.padEnd(8)} ${outcome.detail}`);
+  }
+  if (result.components.length > 0) {
+    lines.push('', 'Mutated:');
+    for (const component of result.components) {
+      lines.push(
+        `  ${component.phase.padEnd(8)} ${component.identity}` +
+          `${component.protocol === undefined || component.protocol === null ? '' : ` [${component.protocol}]`}`,
+      );
+    }
   }
   if (result.stoppedAt !== null) {
     lines.push('', `Stopped at: ${result.stoppedAt}. See the detail above for what to do next.`);

@@ -241,6 +241,49 @@ export interface ReleaseRecord {
    * it.
    */
   skipMigrations: boolean;
+  /**
+   * Every component this release changed, in the order the pipeline changed it.
+   *
+   * The record answers "what is actually deployed?" only if it names all of it. A
+   * record naming the web Worker and not the jobs Worker is the record that makes a
+   * jobs rollout invisible to the person reading it months later — and this
+   * deployment has two Workers, one bucket, one database and possibly one image.
+   */
+  components?: Array<{
+    phase: string;
+    identity: string;
+    source: string;
+    providerId?: string | null;
+    protocol?: string | null;
+  }>;
+  /**
+   * The compute half as it was released, or `null` when the profile is off.
+   *
+   * `null` and "absent" are the same thing here, and that is deliberate: a
+   * web-only release has no compute identity to report, and inventing an empty
+   * object would read as a compute environment whose image was not recorded.
+   */
+  compute?: {
+    enabled: boolean;
+    jobsWorkerName: string | null;
+    mediaBucketName: string | null;
+    encodeWorkflowName: string | null;
+    maintenanceWorkflowName: string | null;
+    /** The wire protocol this release's jobs Worker and image were built against. */
+    imageProtocol: string | null;
+    containerProfile: string | null;
+    /**
+     * Whether a scheduled maintenance run was *configured*.
+     *
+     * Not whether one *happened*. Those are different claims and conflating them is
+     * how a deployment comes to be reported as "the scheduler works" when all that
+     * exists is a cron expression. An actual run is evidenced by a maintenance run
+     * record in D1 carrying its schedule and scheduled time.
+     */
+    scheduleConfigured: boolean;
+  } | null;
+  /** The native API origin this release's clients target. Null when none ships. */
+  nativeApiOrigin?: string | null;
 }
 
 export const releaseRecordPath = (environment: string, root: string = REPO_ROOT): string =>

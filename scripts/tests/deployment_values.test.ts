@@ -23,8 +23,9 @@ import {
   setConfig,
   writeLocalValues,
 } from '../src/deploy/configure.ts';
-import { DEPLOYMENT_CONFIG } from '../src/registry/app_registry.ts';
+import { DEPLOYMENT_CONFIG, targets } from '../src/registry/app_registry.ts';
 import {
+  type DeploymentValues,
   describeResolution,
   effectiveDeploymentValues,
   LOCAL_DEPLOYMENT_FILE,
@@ -120,7 +121,14 @@ describe('resolveDeploymentValues', () => {
       [LOCAL_DEPLOYMENT_FILE]: local({ d1DatabaseId: 'local-db' }),
     });
 
-    const values = resolveDeploymentValues({ CLOUDFLARE_D1_DATABASE_ID: 'ci-db' }, root);
+    // `DEPLOY_ENVIRONMENT` is what says *which* environment the run is deploying.
+    // Without it the unsuffixed overrides are deliberately ignored — they describe
+    // one environment and applying them to both is how a plan comes to believe
+    // staging and production share a Worker.
+    const values = resolveDeploymentValues(
+      { DEPLOY_ENVIRONMENT: 'staging', CLOUDFLARE_D1_DATABASE_ID: 'ci-db' },
+      root,
+    );
     expect(values.d1DatabaseId).toBe('ci-db');
   });
 
@@ -183,7 +191,12 @@ describe('resolveDeploymentValues', () => {
         },
       }),
     });
-    setDeploymentValues(resolveDeploymentValues({ CLOUDFLARE_D1_DATABASE_ID: 'ci-db' }, root));
+    setDeploymentValues(
+      resolveDeploymentValues(
+        { DEPLOY_ENVIRONMENT: 'staging', CLOUDFLARE_D1_DATABASE_ID: 'ci-db' },
+        root,
+      ),
+    );
     expect(targetsFor('staging')?.d1DatabaseId).toBe('ci-db');
     expect(targetsFor('staging')?.workerName).toBe('staging-api');
     expect(targetsFor('production')).toBeNull();
@@ -435,11 +448,12 @@ describe('targetsFor', () => {
   // With one set, `--env staging` and `--env production` produced identical plans —
   // the flag changed a notice and nothing else.
 
-  const base = {
+  const base: DeploymentValues = {
     workerName: 'single-web',
     d1DatabaseId: 'single-db',
     r2BucketNames: { uploads: null },
     customDomain: null,
+    jobsProfile: 'disabled',
     accountId: 'a'.repeat(32),
   };
 
@@ -458,16 +472,16 @@ describe('targetsFor', () => {
     setDeploymentValues({
       ...base,
       environments: {
-        staging: {
+        staging: targets({
           workerName: 'web-staging',
           d1DatabaseId: 'db-staging',
           origin: 'https://web-staging.example',
-        },
-        production: {
+        }),
+        production: targets({
           workerName: 'web-prod',
           d1DatabaseId: 'db-prod',
           origin: 'https://web-prod.example',
-        },
+        }),
       },
     });
 
@@ -486,11 +500,11 @@ describe('targetsFor', () => {
     setDeploymentValues({
       ...base,
       environments: {
-        staging: {
+        staging: targets({
           workerName: 'web-staging',
           d1DatabaseId: 'db-staging',
           origin: 'https://web-staging.example',
-        },
+        }),
       },
     });
 
@@ -505,16 +519,16 @@ describe('targetsFor', () => {
     setDeploymentValues({
       ...base,
       environments: {
-        staging: {
+        staging: targets({
           workerName: 'web-staging',
           d1DatabaseId: null,
           origin: null,
-        },
-        production: {
+        }),
+        production: targets({
           workerName: 'web-prod',
           d1DatabaseId: 'db-prod',
           origin: 'https://web-prod.example',
-        },
+        }),
       },
     });
 
@@ -766,11 +780,15 @@ describe('environment configuration consumers', () => {
               workerName: 'staging-web',
               d1DatabaseId: 'staging-db',
               origin: 'https://staging.example',
+              mailFrom: 'noreply@staging.example',
+              jobsProfile: 'disabled',
             },
             production: {
               workerName: 'production-web',
               d1DatabaseId: 'production-db',
               origin: 'https://app.example',
+              mailFrom: 'noreply@app.example',
+              jobsProfile: 'disabled',
             },
           },
         }),

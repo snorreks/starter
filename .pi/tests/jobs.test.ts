@@ -19,8 +19,8 @@ import { afterAll, describe, expect, spyOn, test } from 'bun:test';
 import { spawn } from 'node:child_process';
 import * as fs from 'node:fs';
 import { join, relative } from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { setTimeout as sleep } from 'node:timers/promises';
+import { fileURLToPath } from 'node:url';
 import {
   JOB_TOKEN_ENV,
   type JobSnapshot,

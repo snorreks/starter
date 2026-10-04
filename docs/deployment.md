@@ -57,7 +57,7 @@ data.
 |---|---|---|
 | 1 | `scripts/src/registry/app_registry.ts` | Project identity, required secret *names*, required var names. Resource ids are `null`. |
 | 2 | `.starter/deployment.local.json` (gitignored) | Account id, per-environment Worker name, D1 id, public origin. |
-| 3 | Environment variables | `CLOUDFLARE_ACCOUNT_ID`, `CLOUDFLARE_WORKER_NAME`, `CLOUDFLARE_D1_DATABASE_ID`, `CLOUDFLARE_PUBLIC_ORIGIN`. |
+| 3 | Environment variables | `CLOUDFLARE_ACCOUNT_ID`; `STARTER_DEPLOYMENT_TARGETS` (the repository map); the per-field `STARTER_<ENV>_<FIELD>` overrides; and the unsuffixed `CLOUDFLARE_*` overrides, which apply only to `DEPLOY_ENVIRONMENT`. |
 
 Read order is 3, then 2, then 1. `describeResolution(field)` names the layer that
 answered, so a report never has to guess.
@@ -87,10 +87,16 @@ channel and never appear here.
    `--env local` are both errors; `local` is a runtime (`bun run dev`), not a
    destination.
 2. A required value is `null`. A template ships nothing provisioned, on purpose.
-3. **Two environments name the same Worker or the same D1 database.** A shared
-   database makes a staging migration a production migration, and a shared Worker
-   name makes the two environments literally the same deployment.
+3. **Two environments name the same Worker, jobs Worker, database, R2 bucket or
+   Workflow identity.** A shared database makes a staging migration a production
+   migration; a shared Worker makes the two environments literally the same
+   deployment; a shared bucket means staging's retention sweep deletes production's
+   job output. The *image* is deliberately excluded — a Dockerfile is a build input,
+   both environments may use one, and what runs differs by digest. Two environments
+   pinned to the same **digest** *are* refused.
 4. The origin is not an absolute `https://` URL with no path, query or fragment.
+5. The compute half contradicts itself, or `MAIL_FROM` is absent. See
+   [What is refused before anything is mutated](#what-is-refused-before-anything-is-mutated).
 
 ### Setting it up
 
@@ -98,9 +104,19 @@ channel and never appear here.
 bun run deploy:configure -- --account <32-hex>
 bun run deploy:configure -- --env staging --worker starter-web-staging
 bun run deploy:configure -- --env staging --origin https://starter-web-staging.<subdomain>.workers.dev
+bun run deploy:configure -- --env staging --mail-from no-reply@your-verified-domain
 bun run deploy:configure -- --env staging --provision     # creates the D1 database
+
+# compute, per environment and all or nothing
+bun run deploy:configure -- --env staging --jobs-worker starter-jobs-staging \
+  --media-bucket starter-media-staging --image-protocol sample-v1 \
+  --container-profile basic --jobs-profile encode
+
 bun run deploy:configure -- --check                      # report, never provision
 ```
+
+Nothing here takes a secret. Every flag above is configuration: a resource name, a
+public hostname, a sender address, a protocol id.
 
 `--worker` and `--origin` both require `--env`. Writing them without one is refused:
 that is how a value ends up in the shared fallback both environments read.
@@ -125,10 +141,138 @@ plan is rendered — `secretInArgvProblem` in `scripts/src/deploy/credentials.ts
 No report anywhere in this path prints a token, its length, its prefix or its hash.
 A preflight report gets pasted into tickets and CI summaries.
 
+## Configuring an environment
+
+Everything a deployment touches is resolved by one function,
+`resolveTarget(environment)` in `scripts/src/deploy/target.ts`, and it covers the
+whole environment rather than the web Worker alone:
+
+| Field | What it names |
+|---|---|
+| `workerName` | the public web Worker |
+| `jobsWorkerName` | the compute Worker. No public route; reached through a binding |
+| `d1DatabaseId` | the environment-isolated database both Workers bind |
+| `mediaBucketName` | the **private** R2 bucket: fixture in, job output out |
+| `encodeWorkflowName`, `maintenanceWorkflowName` | the two Workflow identities |
+| `containerImage`, `imageProtocol`, `containerProfile` | what runs the encode, what it speaks, and on which measured profile |
+| `origin` | the absolute https address verification is made against |
+| `mailFrom` | the verified sender |
+| `nativeApiOrigin` | the https origin a packaged native build is compiled against |
+| `jobsProfile` | `disabled` or `encode`. A refusal, not a gap |
+
+Every field is `null` in the committed template. A template cannot know a bucket name
+and a committed one would point a fresh clone at somebody else's account.
+
+**Where the values live, in precedence order:**
+
+1. the gitignored overlay `.starter/deployment.local.json`, written by
+   `bun run deploy:configure`;
+2. repository-scoped environment variables, for CI;
+3. the committed module, which is only the floor.
+
+### CI configuration: the repository map
+
+GitHub exposes **environment-scoped** variables only to a job that declares that
+environment. The `plan` job in `.github/workflows/deploy.yml` deliberately declares
+none, so it can be reviewed by someone with no deploy authority — which also means
+it cannot read an environment-scoped *variable*.
+
+So the nonsecret configuration is a **repository** variable, and the credentials stay
+environment-scoped:
+
+```
+STARTER_DEPLOYMENT_TARGETS   (repository variable, JSON)
+  {"staging":  {"workerName": "…", "d1DatabaseId": "…", "origin": "https://…",
+                "mailFrom": "…", "jobsProfile": "disabled"},
+   "production": {…}}
+```
+
+Per-field overrides (`STARTER_STAGING_MEDIA_BUCKET_NAME`, …) are honoured over the
+map, and the whole map is validated by `EnvironmentTargetsSchema` before any of it
+reaches `resolveTarget`: an unknown key is **refused by name** rather than ignored,
+and a key that looks like a credential is refused outright, because this value is
+echoed into plans and into the release record.
+
+`scripts/tests/deployment_variables.test.ts` drives GitHub's scoping rule as data and
+asserts that a plan job sees the repository map and no secret, while an apply job
+sees both.
+
+### The unsuffixed overrides, and why they are scoped
+
+`CLOUDFLARE_WORKER_NAME`, `CLOUDFLARE_D1_DATABASE_ID` and friends describe *the
+environment this run is deploying*. They are applied **only** when `DEPLOY_ENVIRONMENT`
+names that environment, and only on top of that environment's entry.
+
+This is a fix, and the bug it removes was live. Applying one unsuffixed variable to
+both environments and then comparing them made `environmentIsolationProblem` prove
+that staging and production shared a Worker — so `deploy plan` **refused on every
+CI run**, including correct configurations. `environmentIsolationProblem` now
+compares the *configured* topology (`configuredTopologyFor`), never the injected
+override.
+
+### What is refused before anything is mutated
+
+- an environment name that is not `staging` or `production` (`local` is a runtime);
+- two environments resolving to the same Worker, jobs Worker, database, bucket or
+  Workflow identity;
+- two environments pinned to the same image **digest** (the same build path is fine —
+  it is an input, not a resource);
+- a jobs profile of `encode` with no image, bucket or protocol;
+- a container profile the platform does not offer;
+- a configured image protocol this source does not implement;
+- an origin that is not an absolute https URL with no path, query or fragment;
+- a `MAIL_FROM` that is absent, and a native API origin that is not an absolute
+  https URL.
+
+## Provisioning and secret installation
+
+`bun run deploy provision --env <env> --yes` creates what a first deploy needs, and
+is **idempotent**: each step reads first and writes only when the resource is absent.
+A second run reports `already` and changes nothing, which is why it is safe before
+every apply rather than once by hand.
+
+| Step | Read | Write |
+|---|---|---|
+| database | `d1 info <id>` | `d1 create` |
+| bucket | `r2 bucket list --json` | `r2 bucket create` |
+| fixture | file present on disk | `r2 object put …/jobs/fixtures/sample-v1.mp4 --remote` |
+| secrets | the environment | `secret put <NAME>` **on stdin** |
+
+Bucket existence is parsed from JSON, not matched as a substring: `grep`-ing a list
+for `starter-media` would also match `starter-media-staging-old` and skip the create,
+leaving the encode path writing to a bucket that does not exist.
+
+**A secret value never appears in argv, in a log line or in an artifact.** The argv
+carries the *name*; the value goes to the child's stdin. `secretInArgvProblem` in
+`scripts/src/deploy/provision.ts` refuses any value-shaped argument, and
+`scripts/tests/deployment_provision.test.ts` asserts that the rendered report and the
+recorded argv contain no value — by construction, since no step holds one.
+
+The Cloudflare API token is **not** a runtime secret. It authorises this tooling and is
+never readable by the Worker; `BETTER_AUTH_SECRET` and `RESEND_API_KEY` are read by the
+running application. Provisioning refuses rather than substituting one for the other.
+
+`--source sops` is refused, with a remedy, rather than implemented: `bun run
+secrets:exec` already decrypts and exports, and installing from the environment
+afterwards is the composition that keeps one decrypt path.
+
+### Token scopes, derived from the operations
+
+| Permission | Needed by |
+|---|---|
+| `Account Settings: Read` | `wrangler whoami` — the account check |
+| `Workers Scripts: Edit` | the web and jobs Worker deploys |
+| `D1: Edit` | `wrangler d1 migrations apply`, `d1 execute` |
+| `R2: Edit` | `wrangler r2 bucket create` and the fixture upload |
+
+Each entry names the call that needs it, so a new step without a scope is a visible
+omission rather than a 403 nobody can explain. `bun run deploy plan` prints the table.
+
 ## The apply pipeline
 
-`apply` runs five steps in a fixed order, stopping at the first failure and naming
-which one.
+`apply` runs its phases in dependency order, stopping at the first failure and naming
+which one. **The jobs Worker is deployed before the web Worker**, so the public origin
+is never live pointing at a binding that does not resolve.
 
 1. **Build.** The artifact is produced from this checkout, not assumed to exist.
    `bun run deploy apply` runs `bun run build` and `bun run check:bundle` itself;
@@ -138,14 +282,23 @@ which one.
 2. **Validate.** `_worker.js` present, files present, digest taken. `wrangler deploy`
    against a directory without `_worker.js` publishes a static site whose every route
    404s — and reports success.
-3. **Migrate.** To the named database for this environment, before the deploy, so the
-   new code never meets the old schema. The plan comes from the same `migrationStep`
-   `plan` renders, and the database id Wrangler would actually reach is compared
-   against the validated one first — both commands name the binding `DB`, so the argv
-   alone cannot tell two databases apart.
-4. **Deploy.** The target resolved by `resolveTarget`, named explicitly with `--name`,
+3. **Schema.** Reviewed migrations to the named database for this environment, before
+   any deploy, so new code never meets the old schema. The plan comes from the same
+   `migrationStep` `plan` renders, and the database id Wrangler would actually reach
+   is compared against the validated one first — both commands name the binding `DB`,
+   so the argv alone cannot tell two databases apart.
+4. **Storage.** An assertion, not a second write: the private bucket is proven
+   readable, because a pipeline that skipped provisioning would otherwise admit a job
+   whose fixture is missing. `provision` is the only thing that writes the bucket.
+5. **Image.** The protocol check that can run offline, before anything is mutated.
+   Cloudflare builds the image from the Dockerfile the jobs Worker declares; what runs
+   is a digest the provider assigns, recorded per release.
+6. **Jobs.** The jobs Worker, its Workflows and its schedule, carrying the **same**
+   `--var RELEASE:<sha>` as the web Worker. Two SHAs for one deployment would make
+   "which code is live" unanswerable.
+7. **Web.** The target resolved by `resolveTarget`, named explicitly with `--name`,
    carrying `--var RELEASE:<sha>` and `--meta source_sha=…,artifact=…`.
-5. **Verify.** Two probes, and both must pass.
+8. **Verify.** Three questions, each capable of failing the release:
    - `GET <origin>/health`, and the `release` it reports compared against **this run's
      own SHA**. A `200` is not enough: the previous release still serving while a new
      one propagates is exactly the state in which a deploy reports done and the site
@@ -159,9 +312,41 @@ which one.
    Each probe is bounded by its own timeout, so an origin that accepts the connection
    and never answers cannot hold the job open, and a slow readiness probe cannot
    consume the liveness budget.
-6. **Record.** Source SHA, artifact digest, destination, provider identity, smoke
-   result and whether migrations were skipped, in
+
+   - **One real encode and one real download**, when the compute profile is on and a
+     verification token is available: `POST /api/jobs`, poll to a terminal state
+     within a bounded budget, then `GET /api/jobs/:id/output`. A job that reports
+     `succeeded` while its output answers non-2xx is a **failed** release.
+
+   A release verification normally has a Cloudflare token and no user session, so the
+   tiny-job probe reports **which half it established** rather than pretending the
+   whole thing passed: "the compute profile is on, so a real encode is expected, but
+   no verification token is available". With the profile off there is no job at all,
+   and the record says so instead of reporting a skip as a pass.
+9. **Record.** Source SHA, artifact digest, destination, provider identity, smoke
+   result, whether migrations were skipped, and **every mutated component** — phase,
+   identity, source SHA and, for the compute half, the image protocol — in
    `.starter/releases/<environment>.json`.
+
+### Partial state is recorded, not summarised away
+
+A failure at any phase records every component this run had already changed. "What
+did the last half-successful deploy actually do?" is the question an operator has at
+that moment, and a record that only exists on success answers it with silence.
+
+The pipeline is resumable by re-running it: migrations are journalled by D1,
+provisioning is idempotent, and `--only schema,jobs,web` runs a subset. `--only jobs`
+is the supported way to introduce compute into a live environment — the image and the
+Workflows must exist and be speaking the same protocol *before* the web Worker is
+pointed at them.
+
+### Schedule configured is not schedule fired
+
+The release record carries `compute.scheduleConfigured`, which is read from the
+committed jobs configuration. It is **not** evidence that maintenance ran. Genuine
+scheduler evidence is a maintenance run record in D1 carrying its cron slot and
+`scheduledTime`, and this repository has none — see
+[capability-matrix.md](capability-matrix.md).
 
 ### Migrations are reviewed or they are not applied
 
@@ -185,6 +370,15 @@ mistake with the worst outcome.
 A rollback replaces the running Worker with an older one. The database is untouched.
 If the older code does not understand the newer schema, it fails at runtime — and
 the deploy that "rolled back" made it worse.
+
+A **Worker rollback does not undo R2 output** either. Encoded media written by the
+newer release stays, and anything that reads it — a download link, a retention
+sweep, a second user's copy — is unaffected by which Worker answers. Expiring it is a
+forward operation, not a rollback.
+
+And a Worker rollback does not roll back the **image**. `apps/backend/media` is
+versioned by Cloudflare alongside the Worker, separately. See
+[Compute, rollback and what a release is not transactional with](#rollback-image-retention-and-active-workflows).
 
 **Recovery procedure, in order:**
 
@@ -237,6 +431,92 @@ A lock in a checkout serialises one developer's machines and nothing else. Two C
 runs, or a CI run and an operator laptop, would both take it and both proceed. The
 GitHub environment concurrency group is the only serialisation here that is actually
 global, and it is the only one that is claimed.
+
+### This is a repository guarantee, not a provider lock
+
+Workflow serialisation, image retention and rollback each need saying plainly,
+because "the apply job held a concurrency group" is easy to over-read.
+
+`workflowSerializationNote()` in `scripts/src/deploy/compatibility.ts` carries the
+same statement in code, and `scripts/tests/deployment_compatibility.test.ts` asserts
+that it names all three ways around the guarantee: an operator's laptop, another
+repository pointed at the same account, and a second account holder deploying by
+hand. None of them takes the concurrency group.
+
+## Rollback, image retention and active Workflows
+
+A Cloudflare deployment versions **code** and leaves everything else alone. Three
+things a deploy changed are not part of a Worker version: the **schema**, the
+**stored media**, and any **running Workflow instance**. So "roll back" restores
+exactly one of the four things that changed.
+
+### The compatibility rule
+
+Before the image phase, and offline, `deploy` compares the configured image protocol
+against the one this source implements and against the one the last release recorded:
+
+| Situation | What happens |
+|---|---|
+| No previous release | nothing is running; nothing to refuse |
+| Recorded protocol matches | proceed |
+| Recorded protocol differs | **refused**, with `--only jobs` as the phased remedy |
+| Previous release recorded none | **refused** as unproven, not treated as compatible |
+
+The last row is the important one. "The image was built from this repository" is an
+assumption for a release predating the recorded identity, and it is the assumption
+that lets a protocol change reach production unnoticed. The refusal says to deploy
+once with the profile on so the release records its identity, then re-apply.
+
+### Why the mismatch is refused rather than warned
+
+A protocol change reaches running instances, not only new ones. A Workflow instance
+started by the previous release holds the image reference it was started with; a
+submit job during the deploy window would send an encode the new image rejects. That
+failure appears **inside a job that was accepted before the deploy started**, which
+is the worst place to discover it — it looks like a scheduler or retry bug.
+
+### Retention
+
+`RETAINED_PREVIOUS_IMAGES = 2`: the current image plus two previous ones stay
+available for a supported rollback. One is the common mistake — publishing image
+N+1 then garbage-collecting N-1 means the documented rollback stops being available
+exactly when somebody needs it. "All" is unbounded cost on a path this template
+demonstrates rather than operates.
+
+`rollbackImagePlan(releases)` reports the current digest, the retained ones, and
+whether the history has outgrown the retention, from the recorded release history
+rather than a provider query — so `plan` can print it offline.
+
+### What a rollback does not do
+
+- **It does not undo a migration.** See
+  [Code rollback is not schema rollback](#code-rollback-is-not-schema-rollback); the
+  remedy is always a forward migration.
+- **It does not delete R2 output.** The bytes stay. Expiring them is a forward
+  operation, and the maintenance sweep is what does it.
+- **It does not restore the previous image.** Rolling back the web Worker leaves the
+  jobs Worker, its Workflows and the image where they are. Rolling *those* back is a
+  separate, explicit deploy.
+
+## Secret-bearing jobs publish a reviewed revision
+
+`.github/workflows/deploy.yml` holds the only job with a Cloudflare token and a
+database. The restrictions are structural:
+
+- `workflow_dispatch` only, and the workflow does not trigger on `pull_request` at
+  all — a fork's code gets no credential of any kind;
+- the `apply` job refuses unless `github.ref` is `refs/heads/main`, so an
+  environment that requires reviewers cannot be tricked into reviewing something
+  other than the default branch's head;
+- the revision is recorded once and carried into the release record, so the record
+  names the commit this run actually built;
+- `environment:` supplies both the secrets **and** the environment's protection
+  rules — reviewers, wait timers, branch restrictions — which live in repository
+  settings, not in the YAML.
+
+The `plan` job has no `environment:` and therefore no secrets. That is why the
+nonsecret configuration is repository-scoped; see
+[CI configuration: the repository map](#ci-configuration-the-repository-map).
 
 ### Direct `wrangler deploy` is an escape hatch, outside that guarantee
 
@@ -385,6 +665,22 @@ server code reaches a client chunk.
   "sourceSha": "…", "artifactDigest": "sha256:…",
   "deploymentId": "…", "versionId": "…",
   "recordedAt": "2026-…",
+  "skipMigrations": false,
+  "components": [
+    { "phase": "schema", "identity": "<d1 uuid>",   "source": "<sha>" },
+    { "phase": "storage", "identity": "starter-media-staging", "source": "<sha>" },
+    { "phase": "image",   "identity": "../media/Dockerfile",   "source": "<sha>", "protocol": "sample-v1" },
+    { "phase": "jobs",    "identity": "starter-jobs-staging",  "source": "<sha>", "protocol": "sample-v1" },
+    { "phase": "web",     "identity": "starter-web-staging",   "source": "<sha>" }
+  ],
+  "compute": {
+    "enabled": true,
+    "jobsWorkerName": "…", "mediaBucketName": "…",
+    "encodeWorkflowName": "…", "maintenanceWorkflowName": "…",
+    "imageProtocol": "sample-v1", "containerProfile": "basic",
+    "scheduleConfigured": true
+  },
+  "nativeApiOrigin": "https://…",
   "smoke": {
     "ok": true, "path": "/health", "status": 200, "reportedRelease": "…", "problem": null,
     "readiness": { "path": "/health/ready", "ok": true, "status": 200, "problem": null }
@@ -404,6 +700,12 @@ what shipped; it does not decide whether to deploy. Deciding that is `--yes`. A 
 whose invalidation is a correctness problem eventually decides wrongly, and a cache
 that concludes "nothing changed" publishes nothing at all.
 
+`components` is the answer to "what did the last half-successful deploy actually
+change?", and it is written on failure as well as on success. `compute` is `null` for
+a web-only release rather than an empty object, because an empty object reads as a
+compute environment whose image was not recorded. `scheduleConfigured` says a cron
+expression is committed — it is **not** evidence that maintenance ever ran.
+
 `smoke` keeps the status and the reported release id, plus the readiness answer as
 `readiness: { path, ok, status, problem }`. `readiness` is `null` when liveness failed
 first and readiness was therefore never asked: a record claiming readiness was checked
@@ -413,11 +715,20 @@ Neither probe's body is kept — the record outlives the deployment and gets pas
 tickets, and a body is whatever the origin chose to return. That applies to the
 readiness report too, whose `detail` fields name database internals.
 
-## R2 — the future private-upload choice
+## R2 — two buckets, only one of them exists
 
-**Not implemented.** Nothing in this repository reads or writes an R2 bucket.
-`DEPLOYMENT_CONFIG.r2BucketNames.uploads` is `null` and `deploy:configure` cannot
-create a bucket; there is no command, no route and no binding.
+There are two distinct R2 uses in this repository and they must not be confused.
+
+**The private media bucket is implemented.** It is `mediaBucketName` on the resolved
+target, bound as `MEDIA` by the jobs Worker, created by
+`bun run deploy provision --env <env> --yes` and uploaded to with the generated
+sample fixture. It is private: no `preview_bucket_name`, no public access, and **no
+key ever reaches the container** — bytes leave through the Durable Object port and
+come back through the Worker. `apps/backend/jobs/README.md` and
+[compute.md](compute.md) describe it.
+
+**User uploads are not implemented.** `DEPLOYMENT_CONFIG.r2BucketNames.uploads` is
+`null`, there is no route and no binding, and `deploy:configure` cannot create one.
 
 If you add uploads, R2 is the right bucket, and it needs these four things:
 
@@ -438,18 +749,21 @@ If you add uploads, R2 is the right bucket, and it needs these four things:
 
 Until all four exist, the field stays `null`.
 
-## Queues and Workflows — not chosen
+## Queues are not chosen; Workflows are
 
-**Not implemented, and not planned for this workload.**
+**Workflows are used.** `apps/backend/jobs` exports `EncodeWorkflow` and
+`MaintenanceWorkflow`, and the web Worker reaches the encode one through a binding.
+See [compute.md](compute.md) for what that example does and does not demonstrate.
 
-They are the right tool when a unit of work is *worth queueing*: minutes long,
-retried, rate-limited against an external system, or needing many concurrent
-identical jobs. Nothing in this application has that shape. Registration and sign-in
-are interactive and must answer within a request; sending a verification mail is one
-HTTP call to Resend. Putting either behind a queue would add a failure mode — a
-verification mail that arrives in four minutes — without removing one.
+**Workers Queues are not used, and not planned for this workload.** A queue is the
+right tool when a unit of work is *worth queueing*: minutes long, retried,
+rate-limited against an external system, or needing many concurrent identical jobs.
+The job path has that shape; nothing else in this application does. Registration and
+sign-in are interactive and must answer within a request, and sending a verification
+mail is one HTTP call to Resend — putting either behind a queue would add a failure
+mode (a verification mail that arrives in four minutes) without removing one.
 
-If a background workload appears, Workers Queues is the first choice (D1-backed, no
+If a second background workload appears, Queues is the first choice (D1-backed, no
 new account resource) and Workflows is for multi-step durable orchestration. Adding
 either means writing down which workload justifies it.
 

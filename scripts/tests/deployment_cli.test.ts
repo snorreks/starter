@@ -16,6 +16,7 @@ import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { DEPLOY_PHASES, parseDeployArgs, planDeploy, renderPlan } from '../src/deploy/deploy.ts';
+import { targets } from '../src/registry/app_registry.ts';
 import type { DeploymentValues } from '../src/registry/deployment_values.ts';
 
 const ACCOUNT = 'abcdef0123456789abcdef0123456789';
@@ -26,17 +27,22 @@ const configured = (): DeploymentValues => ({
   d1DatabaseId: null,
   r2BucketNames: { uploads: null },
   customDomain: null,
+  jobsProfile: 'disabled',
   environments: {
-    staging: {
+    staging: targets({
       workerName: 'starter-staging',
       d1DatabaseId: 'db-staging',
       origin: 'https://starter-staging.example',
-    },
-    production: {
+      mailFrom: 'noreply@starter.example',
+      jobsProfile: 'disabled',
+    }),
+    production: targets({
       workerName: 'starter-production',
       d1DatabaseId: 'db-production',
       origin: 'https://starter.example',
-    },
+      mailFrom: 'noreply@starter.example',
+      jobsProfile: 'disabled',
+    }),
   },
 });
 
@@ -291,6 +297,7 @@ describe('the offline plan names one destination and the commands for it', () =>
       d1DatabaseId: null,
       r2BucketNames: { uploads: null },
       customDomain: null,
+      jobsProfile: 'disabled',
     };
     const plan = planDeploy('staging', { values: empty });
 

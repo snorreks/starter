@@ -22,6 +22,7 @@ import {
   type ResolvedTarget,
   resolveTarget,
 } from '../src/deploy/target.ts';
+import { targets } from '../src/registry/app_registry.ts';
 import type { DeploymentValues } from '../src/registry/deployment_values.ts';
 
 const ACCOUNT = 'abcdef0123456789abcdef0123456789';
@@ -34,17 +35,22 @@ const configured = (overrides: Partial<DeploymentValues> = {}): DeploymentValues
   d1DatabaseId: null,
   r2BucketNames: { uploads: null },
   customDomain: null,
+  jobsProfile: 'disabled',
   environments: {
-    staging: {
+    staging: targets({
       workerName: 'starter-staging',
       d1DatabaseId: 'db-staging',
       origin: 'https://starter-staging.example.workers.dev',
-    },
-    production: {
+      mailFrom: 'noreply@starter.example',
+      jobsProfile: 'disabled',
+    }),
+    production: targets({
       workerName: 'starter-production',
       d1DatabaseId: 'db-production',
       origin: 'https://starter.example',
-    },
+      mailFrom: 'noreply@starter.example',
+      jobsProfile: 'disabled',
+    }),
   },
   ...overrides,
 });
@@ -245,6 +251,8 @@ describe('staging and production may not share a resource', () => {
             workerName: 'starter-staging',
             d1DatabaseId: 'db-production',
             origin: 'https://starter.example',
+            mailFrom: 'noreply@starter.example',
+            jobsProfile: 'disabled',
           },
         } as never,
       }),
@@ -266,6 +274,8 @@ describe('staging and production may not share a resource', () => {
             workerName: 'starter-production',
             d1DatabaseId: 'db-staging',
             origin: 'https://starter.example',
+            mailFrom: 'noreply@starter.example',
+            jobsProfile: 'disabled',
           },
         } as never,
       }),
@@ -285,6 +295,8 @@ describe('staging and production may not share a resource', () => {
             workerName: 'starter-production',
             d1DatabaseId: 'db-staging',
             origin: 'https://starter.example',
+            mailFrom: 'noreply@starter.example',
+            jobsProfile: 'disabled',
           },
         } as never,
       }),

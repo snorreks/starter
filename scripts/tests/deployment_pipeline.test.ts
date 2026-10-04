@@ -63,6 +63,20 @@ const target = (overrides: Partial<ResolvedTarget> = {}): ResolvedTarget => ({
   d1DatabaseId: 'db-staging',
   origin: 'https://starter-staging.example',
   wranglerConfig: 'apps/frontend/client/wrangler.jsonc',
+  jobsWranglerConfig: 'apps/backend/jobs/wrangler.jsonc',
+  compute: {
+    enabled: false,
+    profile: 'disabled',
+    jobsWorkerName: null,
+    mediaBucketName: null,
+    encodeWorkflowName: null,
+    maintenanceWorkflowName: null,
+    containerImage: null,
+    imageProtocol: null,
+    containerProfile: null,
+  },
+  mailFrom: 'noreply@starter.example',
+  nativeApiOrigin: null,
   requiredSecretNames: ['BETTER_AUTH_SECRET', 'RESEND_API_KEY'],
   requiredVarNames: ['DEPLOYMENT_ENV', 'BETTER_AUTH_URL', 'MAIL_FROM', 'RELEASE'],
   ...overrides,
@@ -376,7 +390,7 @@ describe('apply refuses and stops at the first failing step', () => {
     });
 
     expect(result.ok).toBe(false);
-    expect(result.stoppedAt).toBe('migrate');
+    expect(result.stoppedAt).toBe('schema');
     expect(spawns.calls).toHaveLength(1);
     expect(spawns.calls[0]?.args[0]).toBe('d1');
   });
@@ -394,7 +408,7 @@ describe('apply refuses and stops at the first failing step', () => {
       root: fixtureRoot('db-staging'),
     });
 
-    const migrate = result.outcomes.find((outcome) => outcome.phase === 'migrate');
+    const migrate = result.outcomes.find((outcome) => outcome.phase === 'schema');
     expect(migrate?.detail).toContain('partly applied');
     expect(migrate?.detail).toContain('re-running `apply` is safe');
   });
@@ -413,10 +427,10 @@ describe('apply refuses and stops at the first failing step', () => {
     });
 
     expect(result.ok).toBe(false);
-    expect(result.stoppedAt).toBe('deploy');
+    expect(result.stoppedAt).toBe('web');
     expect(spawns.calls).toHaveLength(2);
 
-    const deploy = result.outcomes.find((outcome) => outcome.phase === 'deploy');
+    const deploy = result.outcomes.find((outcome) => outcome.phase === 'web');
     expect(deploy?.detail).toContain('schema is ahead of the running code');
     expect(deploy?.detail).toContain('docs/deployment.md');
   });
@@ -540,6 +554,13 @@ describe('preflight is read-only and refuses a mismatched destination', () => {
     if (args[0] === 'd1') {
       return { ok: true, stdout: `{"uuid":"db-staging","account_id":"${account}"}`, stderr: '' };
     }
+    if (args[0] === 'secret') {
+      return {
+        ok: true,
+        stdout: JSON.stringify([{ name: 'BETTER_AUTH_SECRET' }, { name: 'RESEND_API_KEY' }]),
+        stderr: '',
+      };
+    }
     return { ok: true, stdout: '[]', stderr: '' };
   };
 
@@ -555,12 +576,17 @@ describe('preflight is read-only and refuses a mismatched destination', () => {
       },
     });
 
+    // Asserted on the command list itself so a future edit that makes a check
+    // mutating fails here rather than becoming an action taken during a check.
+    // `secret list` is here because the check that a release is able to confirm an
+    // account is read-only too: it reports *names*, never values.
     for (const args of seen) {
-      expect(['whoami', 'd1', 'deployments']).toContain(args[0]);
+      expect(['whoami', 'd1', 'deployments', 'secret']).toContain(args[0]);
     }
-    expect(seen.map((args) => args[0])).toEqual(['whoami', 'd1', 'deployments']);
+    expect(seen.map((args) => args[0])).toEqual(['whoami', 'd1', 'deployments', 'secret']);
     expect(seen[2]).toContain('deployments');
     expect(seen[2]).toContain('list');
+    expect(seen[3]).toEqual(['secret', 'list', '--name', 'starter-staging', '--json']);
   });
 
   test('a matching account and resources pass', () => {
@@ -569,7 +595,11 @@ describe('preflight is read-only and refuses a mismatched destination', () => {
       run: whoami(ACCOUNT),
     });
     expect(report.ok).toBe(true);
-    expect(report.findings.filter((finding) => finding.ok)).toHaveLength(1);
+    // The worker, the secrets and the mail report. `mail` is a *warning*: a sender
+    // is configured, but sender-domain verification is a fact about the mail
+    // provider that no read-only Cloudflare call can establish.
+    expect(report.findings.filter((finding) => finding.ok)).toHaveLength(3);
+    expect(report.findings.find((finding) => finding.check === 'mail')?.warn).toBe(true);
   });
 
   test('a token for another account is refused before anything is touched', () => {

@@ -33,14 +33,22 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { DeploymentEnvironment } from '@starter/schemas';
+import {
+  DEPLOY_ENVIRONMENT_VARIABLE,
+  deployOverridesFor,
+  readRepositoryLayer,
+} from '../deploy/variables.ts';
 import { REPO_ROOT } from '../shared/paths.ts';
 import {
   DEPLOYMENT_CONFIG,
   type DeploymentConfig,
+  ENVIRONMENT_TARGET_FIELDS,
   type EnvironmentTargets,
+  type JobsProfile,
+  nullTargets,
 } from './app_registry.ts';
 
-export type { EnvironmentTargets };
+export type { EnvironmentTargets, JobsProfile };
 
 /** The gitignored overlay. One file, one shape, documented in docs/cloudflare.md. */
 export const LOCAL_DEPLOYMENT_FILE = '.starter/deployment.local.json';
@@ -51,6 +59,19 @@ export interface DeploymentValues {
   r2BucketNames: { uploads: string | null };
   customDomain: string | null;
   accountId: string | null;
+  /**
+   * The compute profile for the single-set fallback, mirroring the committed
+   * default of `disabled`.
+   *
+   * `disabled` is the answer for a template that has provisioned nothing, and it
+   * is a *refusal* rather than an absence: with it, `deploy plan` describes a
+   * web-only release and `apply` never builds an image. Defaulting to it is
+   * therefore the conservative direction — the alternative default would have a
+   * fresh clone plan a container build for an account it has no access to.
+   *
+   * Anything else has to be said out loud, per environment.
+   */
+  jobsProfile: JobsProfile;
   /**
    * Per-environment targets, or absent when the project has only ever had one
    * environment.
@@ -84,6 +105,24 @@ export interface DeploymentValues {
    * leftover top-level value.
    */
   injected?: Partial<EnvironmentTargets>;
+  /**
+   * Which environment `injected` describes, or `null` when nothing was injected.
+   *
+   * Load-bearing, and absent until the CI override layer was scoped. An injected
+   * value describes *the environment this run is deploying*; applied to every
+   * environment it describes all of them at once, which is the opposite — and it
+   * made `topologyFor('production')` answer with staging's Worker during a staging
+   * run, so a production plan printed staging's destination.
+   */
+  injectedEnvironment?: DeploymentEnvironment | null;
+  /**
+   * Refusals from the CI variable layer, per environment.
+   *
+   * Carried rather than swallowed so `resolveTarget` can name a *mistyped field*
+   * instead of reporting "No Worker name is configured" for a map that has one.
+   * `null` key means the map itself is malformed and every environment is affected.
+   */
+  configurationProblems?: Partial<Record<DeploymentEnvironment, string[]>>;
 }
 
 /**
@@ -121,7 +160,18 @@ const NULL_VALUES: DeploymentValues = {
   r2BucketNames: { uploads: null },
   customDomain: null,
   accountId: null,
+  jobsProfile: 'disabled',
 };
+
+/**
+ * Every environment target field, as a record of `null`.
+ *
+ * One constructor rather than thirteen literals, because a field added to
+ * {@link ENVIRONMENT_TARGET_FIELDS} and forgotten here would be `undefined` in a
+ * partial entry — which is indistinguishable from "not set" everywhere except in
+ * the one place it matters: a value that silently falls back to the single set.
+ */
+export { nullTargets };
 
 /** A string that is actually usable. Empty and whitespace are "not set". */
 const usable = (value: unknown): string | null =>
@@ -184,6 +234,12 @@ const readLocalFile = (root: string): Partial<DeploymentValues> => {
   // is not an object is skipped, so one typo cannot make a whole plan `undefined`
   // and silently fall back to the single set — which is the no-op this shape exists
   // to prevent.
+  //
+  // Every known field is read, including the ones this layer did not have when the
+  // shape was first written. An unknown key is *dropped* here on purpose: the file
+  // is hand-edited, and refusing to read it because of a comment-shaped key would
+  // make the tool unusable. The strict check belongs where the value is
+  // machine-supplied — `variables.ts`, against `EnvironmentTargetsSchema`.
   const environments = raw.environments;
   if (typeof environments === 'object' && environments !== null) {
     const parsed: Partial<Record<DeploymentEnvironment, EnvironmentTargets>> = {};
@@ -196,11 +252,18 @@ const readLocalFile = (root: string): Partial<DeploymentValues> => {
         continue;
       }
 
-      parsed[name] = {
-        workerName: usable(entry.workerName),
-        d1DatabaseId: usable(entry.d1DatabaseId),
-        origin: usable(entry.origin),
-      };
+      const targets = nullTargets();
+      for (const field of ENVIRONMENT_TARGET_FIELDS) {
+        const raw_field = entry[field];
+        if (raw_field === undefined) {
+          continue;
+        }
+        // `null` is preserved as "not provisioned for this field", which is
+        // different from the key being absent: an explicit null is a decision, and
+        // it must not fall back to the single set either.
+        targets[field] = usable(raw_field);
+      }
+      parsed[name] = targets;
     }
     if (Object.keys(parsed).length > 0) {
       out.environments = parsed as Record<DeploymentEnvironment, EnvironmentTargets>;
@@ -228,6 +291,7 @@ export const resolveDeploymentValues = (
     r2BucketNames: { ...NULL_VALUES.r2BucketNames, ...DEPLOYMENT_CONFIG.r2BucketNames },
     customDomain: DEPLOYMENT_CONFIG.customDomain,
     accountId: DEPLOYMENT_CONFIG.accountId,
+    jobsProfile: NULL_VALUES.jobsProfile,
   };
 
   // Layer 2: the gitignored local file.
@@ -259,10 +323,14 @@ export const resolveDeploymentValues = (
   // and a staging migration is then a production migration. The values describe
   // *one* environment — the one being deployed — and a set that described all of
   // them at once would be saying they are the same.
+  //
+  // Which one is decided by `DEPLOY_ENVIRONMENT`, not by guessing: the same
+  // unsuffixed variable applied to both environments is exactly the shared-
+  // destination configuration this layer refuses. See `deploy/variables.ts`.
   const injected: Partial<EnvironmentTargets> = {};
-  const take = (name: keyof EnvironmentTargets, value: string | null): void => {
+  const take = (field: keyof EnvironmentTargets, value: string | null): void => {
     if (value !== null) {
-      injected[name] = value;
+      injected[field] = value;
     }
   };
 
@@ -270,24 +338,68 @@ export const resolveDeploymentValues = (
   if (fromEnv !== null) {
     merged.accountId = fromEnv;
   }
-  const workerFromEnv = usable(env.CLOUDFLARE_WORKER_NAME);
-  if (workerFromEnv !== null) {
+
+  const repositoryLayer = readRepositoryLayer(env);
+
+  // Recorded before the values are merged, so a malformed entry cannot be read as
+  // "not configured" — the two have completely different remedies.
+  if (repositoryLayer.problems.length > 0) {
+    const byEnvironment: Record<string, string[]> = {};
+    for (const problem of repositoryLayer.problems) {
+      const key = problem.environment ?? '*';
+      const existing = byEnvironment[key] ?? [];
+      existing.push(`${problem.message}\n  ${problem.remedy}`);
+      byEnvironment[key] = existing;
+    }
+    merged.configurationProblems = byEnvironment as Partial<
+      Record<DeploymentEnvironment, string[]>
+    >;
+  }
+
+  if (Object.keys(repositoryLayer.map).length > 0) {
+    // Merged field by field into whatever layer 2 already said, so a repository
+    // variable overrides a checked-in overlay entry for that field alone and
+    // leaves the rest of the environment alone. Overwriting the whole entry would
+    // make one CI variable erase a hand-configured origin.
+    const environments: Partial<Record<DeploymentEnvironment, EnvironmentTargets>> = {
+      ...(merged.environments ?? {}),
+    };
+    for (const [name, entry] of Object.entries(repositoryLayer.map)) {
+      const environment = name as DeploymentEnvironment;
+      const existing = environments[environment] ?? nullTargets();
+      const merged_entry = nullTargets();
+      for (const field of ENVIRONMENT_TARGET_FIELDS) {
+        merged_entry[field] = entry[field] ?? existing[field] ?? null;
+      }
+      environments[environment] = merged_entry;
+    }
+    merged.environments = environments;
+  }
+
+  for (const [field, value] of Object.entries(
+    deployOverridesFor(env[DEPLOY_ENVIRONMENT_VARIABLE], env),
+  )) {
+    const typed = field as keyof EnvironmentTargets;
+    take(typed, usable(value));
+  }
+
+  // Kept so a report can name the single field whose layer is not per-environment:
+  // the account, which every environment shares.
+  const workerFromEnv = injected.workerName;
+  if (workerFromEnv !== null && workerFromEnv !== undefined) {
     merged.workerName = workerFromEnv;
-    take('workerName', workerFromEnv);
   }
-  const d1FromEnv = usable(env.CLOUDFLARE_D1_DATABASE_ID);
-  if (d1FromEnv !== null) {
-    merged.d1DatabaseId = d1FromEnv;
-    take('d1DatabaseId', d1FromEnv);
+  if (injected.d1DatabaseId !== undefined) {
+    merged.d1DatabaseId = injected.d1DatabaseId;
   }
-  const originFromEnv = usable(env.CLOUDFLARE_PUBLIC_ORIGIN);
-  if (originFromEnv !== null) {
-    merged.customDomain = originFromEnv;
-    take('origin', originFromEnv);
+  if (injected.origin !== undefined) {
+    merged.customDomain = injected.origin;
   }
 
   if (Object.keys(injected).length > 0) {
     merged.injected = injected;
+    const named = env[DEPLOY_ENVIRONMENT_VARIABLE];
+    merged.injectedEnvironment = named === 'staging' || named === 'production' ? named : null;
   }
 
   return merged;
@@ -422,11 +534,17 @@ export const topologyFor = (
   environment: DeploymentEnvironment,
   values: DeploymentValues = effectiveDeploymentValues(),
 ): EnvironmentTargets | null => {
-  const fallback: EnvironmentTargets = {
-    workerName: values.workerName,
-    d1DatabaseId: values.d1DatabaseId,
-    origin: values.customDomain,
-  };
+  // The single-set fallback. It carries the web Worker, database and origin — the
+  // three fields that predate the compute half — and *nothing* else: the jobs
+  // Worker, the bucket, the workflows and the image have no single-set meaning,
+  // because a project that has never described two environments has still never
+  // said which image it trusts. Inventing those here is how a web-only
+  // configuration would quietly grow a container it cannot build.
+  const fallback = nullTargets();
+  fallback.workerName = values.workerName;
+  fallback.d1DatabaseId = values.d1DatabaseId;
+  fallback.origin = values.customDomain;
+  fallback.jobsProfile = values.jobsProfile;
 
   // An environment the project does not describe has no topology. Refused rather
   // than defaulted, because serving a production request with staging names is the
@@ -441,16 +559,37 @@ export const topologyFor = (
   // A stale local file naming production's database cannot be overridden into
   // staging by a CI variable, and a CI variable for staging cannot silently become
   // production's configuration.
+  //
+  // Field-by-field rather than three assignments, because a fifth and sixth field
+  // arrived later and a hand-written list is how one of them gets forgotten.
   const injected = values.injected;
-  if (injected === undefined) {
+  if (injected === undefined || values.injectedEnvironment !== environment) {
     return base;
   }
 
-  return {
-    workerName: injected.workerName ?? base.workerName,
-    d1DatabaseId: injected.d1DatabaseId ?? base.d1DatabaseId,
-    origin: injected.origin ?? base.origin,
-  };
+  const resolved = nullTargets();
+  for (const field of ENVIRONMENT_TARGET_FIELDS) {
+    resolved[field] = injected[field] ?? base[field] ?? null;
+  }
+  return resolved;
+};
+
+/**
+ * The configured topology with any per-run override removed.
+ *
+ * This is the *configured* answer, and `environmentIsolationProblem` compares it
+ * rather than `topologyFor`. The distinction is the whole reason CI could ever plan:
+ * an injected `CLOUDFLARE_WORKER_NAME` describes the environment being deployed
+ * and only that environment, so applying it to both and then comparing them proves
+ * nothing except that the variable was set — and reported it as "staging and
+ * production share a Worker", which is what the plan job did on every run.
+ */
+export const configuredTopologyFor = (
+  environment: DeploymentEnvironment,
+  values: DeploymentValues = effectiveDeploymentValues(),
+): EnvironmentTargets | null => {
+  const { injected: _injected, ...configured } = values;
+  return topologyFor(environment, configured);
 };
 
 /** Alias kept for existing callers; `topologyFor` is the name that says what it is. */

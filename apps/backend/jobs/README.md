@@ -47,8 +47,35 @@ The compute profile is `JOBS_PROFILE`. It is `disabled` at the top level and
 that declare the schedule, so "compute is on" and "maintenance runs hourly" are one
 configuration decision rather than two.
 
-Resource ids are not committed. `bun run deploy:configure` writes them, and
-`bun run deploy:check` reports what is still unset.
+### Deploying this Worker
+
+Every identity it needs is resolved by one function, `resolveTarget(environment)` in
+`scripts/src/deploy/target.ts`, and it covers this Worker as well as the web one:
+`jobsWorkerName`, `mediaBucketName`, `encodeWorkflowName`, `maintenanceWorkflowName`,
+`containerImage`, `imageProtocol`, `containerProfile` and `jobsProfile`.
+
+```bash
+bun run deploy:configure -- --env staging --jobs-worker starter-jobs-staging \
+  --media-bucket starter-media-staging --image-protocol sample-v1 \
+  --container-profile basic --jobs-profile encode
+```
+
+`resolveTarget` refuses, before anything is mutated, when the profile is `encode` and
+the image, bucket or protocol is missing — a profile that admits jobs which can never
+complete is worse than one that does not offer them. And it refuses when two
+environments resolve to the same jobs Worker, bucket or Workflow identity: staging's
+maintenance sweep would then delete production's output.
+
+Resource ids are not committed. `bun run deploy:configure` writes them into the
+gitignored overlay, `bun run deploy:check` reports what is still unset, and CI reads
+the same values from a **repository**-scoped variable because its plan job has no
+environment and therefore no secrets.
+
+This Worker is deployed **before** the web Worker, so the public origin is never live
+pointing at a binding that does not resolve. `--only jobs` runs exactly that part.
+See [docs/deployment.md](../../../docs/deployment.md) for the ordering, the release
+record and the rollback limits, and [docs/compute.md](../../../docs/compute.md) for
+what this example demonstrates and when it is the wrong tool.
 
 ## Commands
 

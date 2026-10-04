@@ -37,7 +37,12 @@
 
 import { spawnSync } from 'node:child_process';
 import { isDeploymentEnvironment } from '@starter/schemas';
-import { runWrangler, setProcessRunner, wranglerAvailable } from '../cloudflare/wrangler.ts';
+import {
+  captureWrangler,
+  runWrangler,
+  setProcessRunner,
+  wranglerAvailable,
+} from '../cloudflare/wrangler.ts';
 import {
   type DeploymentValues,
   effectiveDeploymentValues,
@@ -51,11 +56,14 @@ import {
   deployStep,
   HEALTH_PATH,
   migrationStep,
+  PHASES,
+  type Phase,
   READINESS_PATH,
   renderApply,
 } from './apply.ts';
 import { hasApiToken, secretInArgvProblem } from './credentials.ts';
 import { preflight, renderPreflight } from './preflight.ts';
+import { describeTokenScopes, provision, renderProvision } from './provision.ts';
 import {
   type ReleaseRecord,
   readReleaseRecord,
@@ -70,7 +78,15 @@ import {
   suggestOrigin,
 } from './target.ts';
 
-export const DEPLOY_PHASES = ['plan', 'preflight', 'apply', 'verify', 'status'] as const;
+export const DEPLOY_PHASES = [
+  'plan',
+  'preflight',
+  'provision',
+  'secrets',
+  'apply',
+  'verify',
+  'status',
+] as const;
 export type DeployPhase = (typeof DEPLOY_PHASES)[number];
 
 export interface Step {
@@ -89,13 +105,14 @@ export type Plan =
 
 export { EXIT } from '../shared/command.ts';
 
-const VALUE_FLAGS = new Set(['--env']);
+const VALUE_FLAGS = new Set(['--env', '--only']);
 const BOOLEAN_FLAGS = new Set([
   '--yes',
   '--dry-run',
   '--json',
   '--allow-new-worker',
   '--skip-migrations',
+  '--install',
   '--help',
   '-h',
 ]);
@@ -110,6 +127,10 @@ export type ArgvResult =
       dryRun: boolean;
       allowNewWorker: boolean;
       skipMigrations: boolean;
+      /** `provision`/`apply` with this set run a subset of the pipeline. */
+      only: Phase[] | null;
+      /** `secrets`: install the runtime secrets by value. */
+      install: boolean;
       help: boolean;
     }
   | { ok: false; errors: string[] };
@@ -140,6 +161,8 @@ export const parseDeployArgs = (argv: readonly string[]): ArgvResult => {
   let dryRun = false;
   let allowNewWorker = false;
   let skipMigrations = false;
+  let only: string | null = null;
+  let install = false;
   let help = false;
 
   for (let index = 0; index < argv.length; index += 1) {
@@ -168,7 +191,16 @@ export const parseDeployArgs = (argv: readonly string[]): ArgvResult => {
       index += 1;
 
       if (value === undefined) {
-        errors.push('--env needs a value: staging or production.');
+        errors.push(
+          token === '--env'
+            ? '--env needs a value: staging or production.'
+            : `--only needs a value: ${PHASES.join(', ')}.`,
+        );
+        continue;
+      }
+
+      if (token === '--only') {
+        only = value;
         continue;
       }
 
@@ -214,6 +246,9 @@ export const parseDeployArgs = (argv: readonly string[]): ArgvResult => {
       }
       if (token === '--skip-migrations') {
         skipMigrations = true;
+      }
+      if (token === '--install') {
+        install = true;
       }
       if (token === '--help' || token === '-h') {
         help = true;
@@ -265,6 +300,30 @@ export const parseDeployArgs = (argv: readonly string[]): ArgvResult => {
     };
   }
 
+  // `--only` is validated here rather than at the call site, so a typo is refused
+  // before anything runs rather than silently selecting a phase that does not
+  // exist and quietly running everything else.
+  let selected: Phase[] | null = null;
+  if (only !== null) {
+    const requested = only
+      .split(',')
+      .map((name) => name.trim())
+      .filter((name) => name !== '');
+    const unknown = requested.filter((name) => !(PHASES as readonly string[]).includes(name));
+    if (requested.length === 0 || unknown.length > 0) {
+      return {
+        ok: false,
+        errors: [
+          `--only takes a comma-separated list of phases. Unknown: ${
+            unknown.length === 0 ? '(none given)' : unknown.join(', ')
+          }.`,
+          `Valid phases: ${PHASES.join(', ')}.`,
+        ],
+      };
+    }
+    selected = requested as Phase[];
+  }
+
   return {
     ok: true,
     // Defaulting to `apply` preserves `bun run deploy -- --env staging --yes`, which
@@ -277,6 +336,8 @@ export const parseDeployArgs = (argv: readonly string[]): ArgvResult => {
     dryRun,
     allowNewWorker,
     skipMigrations,
+    only: selected,
+    install,
     help,
   };
 };
@@ -287,14 +348,18 @@ export const usageText = (): string =>
     '',
     'Phases:',
     '  plan        Print what would happen. Offline: no credential, no network, no change.',
-    '  preflight   Authenticated and READ-ONLY: account, database and Worker exist and match.',
-    '  apply       build -> migrate -> deploy -> verify -> record. Requires --yes.',
+    '  preflight   Authenticated and READ-ONLY: account, database, Worker, bucket, secrets.',
+    '  provision   Create what a first deploy needs: database, bucket, fixture, secrets.',
+    '  secrets     Report or install the runtime secrets. Requires --install to write.',
+    '  apply       build -> schema -> storage -> image -> jobs -> web -> verify -> record.',
     '  verify      Fetch the release and report the identity it claims.',
     '  status      What is configured and what release is recorded. Read-only.',
     '',
     'Flags:',
     '  --env staging|production   Which environment. Default: staging.',
     '  --yes                      Required by `apply`. Nothing is mutated without it.',
+    '  --only schema,jobs          Run a subset of `apply`. Default: every phase.',
+    '  --install                  secrets: write the values exported in the environment.',
     '  --json                     Machine-readable output.',
     '  --dry-run                  Same as `plan`.',
     '  --allow-new-worker         preflight: a first deploy has no Worker yet; accept that.',
@@ -388,8 +453,29 @@ export const planDeploy = (
       "wrangler.jsonc's environment vars, never through the secret channel.",
   );
   notices.push(
-    'A code rollback does not roll back the schema. See the recovery procedure in ' +
-      'docs/deployment.md before rolling back an environment whose migrations ran.',
+    'A code rollback does not roll back the schema, and it does not undo R2 output. See the ' +
+      'recovery procedure in docs/deployment.md before rolling back an environment whose ' +
+      'migrations ran.',
+  );
+
+  if (target.compute.enabled) {
+    notices.push(
+      `Compute profile "encode": jobs Worker ${target.compute.jobsWorkerName ?? '(unset)'}, bucket ` +
+        `${target.compute.mediaBucketName ?? '(unset)'}, image ${target.compute.containerImage ?? '(unset)'} ` +
+        `speaking ${target.compute.imageProtocol ?? '(unset)'}. The jobs Worker is deployed before ` +
+        'the web Worker, so the public origin is never live pointing at an unresolved binding.',
+    );
+  } else {
+    notices.push(
+      'The compute profile is "disabled": this release has no image, no jobs Worker and no ' +
+        'scheduled maintenance. That is a real refusal, not a gap — notes and auth are unaffected.',
+    );
+  }
+
+  notices.push(
+    `CLOUDFLARE_API_TOKEN is the deployment credential and is NOT a runtime secret. The Worker needs\n  ` +
+      `${target.requiredSecretNames.join(', ')}, installed by value:\n    bun run deploy secrets --env ` +
+      `${environment} --install\n  Scopes the token needs:\n${describeTokenScopes()}`,
   );
   if (target.environment === 'production') {
     notices.push('A production apply changes live traffic.');
@@ -415,6 +501,7 @@ export const planDeploy = (
  */
 export const renderPlan = (plan: Extract<Plan, { ok: true }>): string => {
   const target = plan.target;
+  const compute = target.compute;
   const lines = [
     `Deploy plan (${target.environment})`,
     '',
@@ -423,10 +510,23 @@ export const renderPlan = (plan: Extract<Plan, { ok: true }>): string => {
     `  worker      ${target.workerName}`,
     `  database    ${target.d1DatabaseId}`,
     `  origin      ${target.origin}`,
+    `  mail from   ${target.mailFrom}`,
+    `  native api  ${target.nativeApiOrigin ?? '(this project ships no packaged client)'}`,
     `  config      ${target.wranglerConfig}`,
-    '',
-    'Commands:',
+    `  jobs config ${target.jobsWranglerConfig}`,
+    `  compute     ${compute.enabled ? 'encode' : 'disabled'}`,
   ];
+
+  if (compute.enabled) {
+    lines.push(
+      `  jobs worker ${compute.jobsWorkerName ?? '(unset)'}`,
+      `  bucket      ${compute.mediaBucketName ?? '(unset)'}`,
+      `  workflows   ${compute.encodeWorkflowName ?? '(unset)'} + ${compute.maintenanceWorkflowName ?? '(unset)'}`,
+      `  image       ${compute.containerImage ?? '(unset)'} [${compute.imageProtocol ?? 'unstated'}] on ${compute.containerProfile ?? 'unstated'}`,
+    );
+  }
+
+  lines.push('', 'Commands:');
 
   for (const [index, step] of plan.steps.entries()) {
     lines.push(`  ${index + 1}. ${step.description}`);
@@ -532,6 +632,18 @@ const runStatus = (json: boolean): number => {
  * without spawning anything.
  */
 export const main = async (argv: readonly string[]): Promise<number> => {
+  // Before anything else, and before parsing.
+  //
+  // It used to run *after* `parseDeployArgs`, which meant the usage error for an
+  // unknown flag quoted the token back: `bun run deploy apply --var
+  // BETTER_AUTH_SECRET:hunter2` printed the value it was refusing. A refusal that
+  // echoes the secret it is refusing is the worst of both, so the check runs first
+  // and the parser never sees the token.
+  const leak = secretInArgvProblem(argv);
+  if (leak !== null) {
+    return fail(leak, EXIT.refused);
+  }
+
   const parsed = parseDeployArgs(argv);
 
   if (!parsed.ok) {
@@ -541,13 +653,6 @@ export const main = async (argv: readonly string[]): Promise<number> => {
   if (parsed.help || wantsHelp(argv)) {
     process.stdout.write(`${usageText()}\n`);
     return EXIT.ok;
-  }
-
-  // Refused before anything is built, so an argv that would leak a credential
-  // cannot reach the point of leaking it — not even in a dry run that renders it.
-  const leak = secretInArgvProblem(argv);
-  if (leak !== null) {
-    return fail(leak, EXIT.refused);
   }
 
   // `status` is the one phase with no environment: it reports both.
@@ -621,6 +726,46 @@ export const main = async (argv: readonly string[]): Promise<number> => {
     return report.ok ? EXIT.ok : EXIT.failed;
   }
 
+  // -- provision / secrets ---------------------------------------------------
+  //
+  // Mutating, so `--yes` gates it exactly as it gates `apply`. Provisioning is
+  // idempotent, which is why it is safe to run before every apply rather than once
+  // by hand: a second run reports `already` and changes nothing.
+  //
+  // `secrets --install` is the one path that writes a runtime credential, and the
+  // value reaches wrangler on stdin. `--yes` is required either way, so a flag
+  // typo cannot become a write.
+  if (phase === 'provision' || phase === 'secrets') {
+    const resolved = resolveTarget(environment, { values: readValues() });
+    if (!resolved.ok) {
+      return fail(`${resolved.reason}\n${resolved.remedy}`, EXIT.failed);
+    }
+
+    if (!wranglerAvailable()) {
+      return fail('wrangler is not available. Run `bun install` first.', EXIT.unavailable);
+    }
+
+    if (!parsed.yes) {
+      return fail(
+        `Refusing to run \`deploy ${phase}\` without --yes. Nothing has been changed.\n` +
+          '  To see what it would touch first:\n' +
+          `    bun run deploy plan --env ${environment}\n` +
+          '  To read the account without changing it:\n' +
+          `    bun run deploy preflight --env ${environment}`,
+        EXIT.refused,
+      );
+    }
+
+    const result = provision(resolved.target, {
+      capture: captureWrangler,
+      env: process.env,
+      installSecrets: parsed.install,
+    });
+
+    process.stdout.write(`${renderProvision(result)}\n`);
+    return result.ok ? EXIT.ok : EXIT.failed;
+  }
+
   // ── verify ─────────────────────────────────────────────────────────────────
   if (phase === 'verify') {
     const resolved = resolveTarget(environment, { values: readValues() });
@@ -677,6 +822,7 @@ export const main = async (argv: readonly string[]): Promise<number> => {
     target: resolved.target,
     consented: true,
     skipMigrations: parsed.skipMigrations,
+    only: parsed.only ?? undefined,
     // The artifact is built here, from this checkout, rather than taken from
     // whatever `.svelte-kit/` happens to hold. Without this the deploy publishes
     // a previous run's bytes whenever they are newer than the source, and the

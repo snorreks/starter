@@ -13,6 +13,7 @@ Start here. Nothing below is required reading before running a command — the
 | understand a past decision | [first-round-review.md](first-round-review.md) |
 | change the architecture | [architecture.md](architecture.md) |
 | deploy it | [deployment.md](deployment.md) |
+| run a real encode, or decide whether to leave Cloudflare | [compute.md](compute.md) |
 | change accounts, sessions or mail | [auth.md](auth.md) |
 | build or understand the desktop client | [native.md](native.md) |
 
@@ -24,8 +25,11 @@ Start here. Nothing below is required reading before running a command — the
 - [cloudflare.md](cloudflare.md) — Workers, D1, credentials, and the Worker's
   deployment-mode binding
 - [deployment.md](deployment.md) — the one configuration and deployment path: the
-  validated authority, the pipeline, migrations, concurrency, health, and the
-  recovery procedure
+  resolved target, the CI variable model, provisioning, secret installation, the
+  ordered pipeline, migrations, concurrency, health, rollback and image retention
+- [compute.md](compute.md) — what the shipped compute example does and does not do,
+  when Cloud Run Jobs is the right answer instead and what that would still need,
+  and when managed Cloudflare Stream replaces the container
 - [logs.md](logs.md) — the `bun run logs` family and what each refusal means
 - [secrets.md](secrets.md) — SOPS: the operations, and what each one refuses
 - [lint.md](lint.md) — Biome, the whole-repository guards, and what each refuses
@@ -42,6 +46,10 @@ Start here. Nothing below is required reading before running a command — the
 
 ## Reference
 
+- [evidence/current.json](evidence/current.json) — the machine-readable record every
+  count in [capability-matrix.md](capability-matrix.md) is derived from. Checked by
+  `bun run evidence`; `bun run evidence --write` regenerates the matrix's current
+  table from it
 - [guides/sveltekit-3-subpaths.md](guides/sveltekit-3-subpaths.md) — why `#lib` and
   the workspace packages are aliased where they are
 - [contracts/README.md](contracts/README.md) — the written-brief workflow, and why
@@ -50,7 +58,9 @@ Start here. Nothing below is required reading before running a command — the
 ## Conventions in these documents
 
 - **Counts and results are derived, not asserted.** A number here should be one you
-  got from running the command.
+  got from running the command, and the current matrix is generated from
+  `docs/evidence/current.json` rather than typed. Hand-editing a count makes
+  `bun run evidence` fail.
 - **"Not implemented" is stated as such**, with the exit code and what to run
   instead. A command that prints advice and exits 0 is a bug, and the docs say so
   where it happens.

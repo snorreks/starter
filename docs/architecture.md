@@ -448,6 +448,9 @@ index. `check_bundle.test.ts` locks that in with a negative control.
 | `bun run test:browser` | Real Svelte in Chromium. | The Worker. |
 | `bun run test:compute` | The built jobs Worker runs real Workflows, a real Durable Object, real local D1/R2 and real FFmpeg. | Cloudflare's managed container runtime, or a natural cron firing — see [testing.md](testing.md). |
 | `bun run guard` | The invariants in this document still hold, over the resolved module graph. | Anything about a build this checkout did not make. |
+| `bun run deploy:check --env staging` | The offline plan names every resource an apply would touch, per environment, with no credential and no network. | That any of it exists, or that the account is the right one. |
+| `bun run deploy:preflight --env staging` | The account, the database, the Worker, the bucket and the **names** of installed secrets, read-only. | Container entitlement (reported as unproven), and mail sender verification (reported as NOT CHECKED). |
+| `bun run evidence` | The capability matrix and the evidence manifest agree. | Anything about a run that has not happened — those are `not-run` rows, with a reason. |
 
 The dev modes exist because one mode would have to be wrong about something: `vite
 dev` runs the server code in Node, where `cloudflare:workers` is a stub and an
@@ -468,8 +471,28 @@ subpath means you are not a browser" could be bypassed without anyone changing a
 that looked like a boundary. `bun run guard` now reports such an import as
 `package-exports`, names the map, and lists what it does publish.
 
+## One deployment target, not one Worker
+
+A deployment here is **four** resources that can change independently: the web Worker,
+the jobs Worker, the D1 schema, and the container image — plus the R2 objects they
+write. `resolveTarget(environment)` in `scripts/src/deploy/target.ts` resolves all of
+them together, and every command that can reach a remote resource resolves its
+destination through it.
+
+That is a boundary decision, not a convenience. A plan that printed one Worker and one
+database while `apply` went on to build an image and deploy a second Worker is not the
+document an approval is given against, and the order is chosen so the *public* origin
+is published last — the public origin is the only resource a user can see, and the one
+whose failure is visible.
+
+The consequence for rollback is in [deployment.md](deployment.md): a Worker rollback
+restores **code** and nothing else. The schema is forward-only, the encoded media stays
+where it is, and the image and the Workflows are a separate deploy.
+
 ## See also
 
+- [deployment.md](deployment.md) — the resolved target, the pipeline order, and what a rollback does not undo
+- [compute.md](compute.md) — what the second Worker demonstrates, and when to leave Cloudflare
 - [testing.md](testing.md) — what each lane can and cannot tell you
 - [cloudflare.md](cloudflare.md) — deploy, D1, credentials, and what was verified
 - [capability-matrix.md](capability-matrix.md) — verified, fixture-verified, or not run
