@@ -362,6 +362,7 @@ A fourth dated section. This round extended the shell to Android and iOS and did
 | Artifact naming and origin verification | Real ZIP containers written by the test and read by the shipped reader, with a CRC check and a deliberately corrupted fixture | `bun run --cwd apps/frontend/native test` | same |
 | The marker is mandatory, every directory is checked, and a namespace URI is not a deployment | `--name`, `parseArgs`, `NEVER_AN_API_HOST` | same | same |
 | Rust formatting | `cargo fmt --check` | `cargo fmt --check` in `apps/frontend/native/src-tauri` | clean |
+| An iOS simulator app is actually produced | CI, `ios` job, `macos-15` with Xcode 26.3, `aarch64-sim` — `tauri ios build` reported `Finished 1 iOS Bundle at: …/gen/apple/build/arm64-sim/Starter.app` | `bun run native:ios -- build --target aarch64-sim --ci` | **built** |
 | The iOS dependency graph type-checks | `cargo check --locked --target aarch64-apple-ios-sim`, reproduced **and fixed** on this host after CI reported `E0425: cannot find function mach_task_self` from `num_threads` | `cargo check --locked --target aarch64-apple-ios-sim -p num_threads` | **compiles** after `cargo update -p libc --precise 0.2.189` |
 | The `libc` pin cannot drift silently | `scripts/tests/cargo_ios_pins.test.ts`: a lockfile carrying `num_threads` on `libc 0.2.190` is refused with the reason and the remedy; the media crate is shown unaffected | `bun test ./tests/cargo_ios_pins.test.ts` (cwd `scripts`) | 6 pass, 0 fail |
 

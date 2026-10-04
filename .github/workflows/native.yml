@@ -523,15 +523,29 @@ jobs:
       - name: The launcher propagates a build failure
         # Same induction as the Android lane and the same reason: a wrapper that
         # returned 0 here would make the successful build below meaningless.
+        #
+        # `CC=/nonexistent/cc` was the first attempt and it does **not** work: every
+        # C build script is already cached by the time this runs, so nothing
+        # invokes a compiler and the build succeeds — which this step correctly
+        # reported as a failure of its own premise. The linker is the reliable
+        # lever, because producing a binary requires running it. A fresh
+        # `CARGO_TARGET_DIR` means cargo cannot reuse anything and *has* to link.
         run: |
           set -uo pipefail
-          if CC=/nonexistent/cc bun run native:ios -- build --target aarch64-sim --ci \
+          if CARGO_TARGET_DIR="$RUNNER_TEMP/induced-target" \
+             CARGO_TARGET_AARCH64_APPLE_IOS_SIM_LINKER="$RUNNER_TEMP/no-such-linker" \
+             bun run native:ios -- build --target aarch64-sim --ci \
              >"$RUNNER_TEMP/induced-failure.log" 2>&1; then
-            echo "::error::an iOS build with an unusable C compiler reported success"
+            echo "::error::an iOS build with an unusable linker reported success"
             tail -n 40 "$RUNNER_TEMP/induced-failure.log"
             exit 1
           fi
-          echo "induced failure propagated with a nonzero exit status, as required"
+          if ! grep -q "no-such-linker" "$RUNNER_TEMP/induced-failure.log"; then
+            echo "::error::the build failed without reaching the linker, so this proved nothing"
+            tail -n 40 "$RUNNER_TEMP/induced-failure.log"
+            exit 1
+          fi
+          echo "induced failure propagated with a nonzero exit status, and reached the linker"
 
       - name: Build for the simulator
         run: bun run native:ios -- build --target aarch64-sim --ci
