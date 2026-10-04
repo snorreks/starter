@@ -562,10 +562,21 @@ jobs:
             exit 1
           fi
           mkdir -p "$RUNNER_TEMP/dist"
+          # Named here, and NOT through `check:artifacts --name`.
+          #
+          # That helper names *distribution* artifacts and its extension set is
+          # apk/aab/ipa. A simulator build produces an `.app` **directory** that is
+          # never uploaded anywhere, and this lane previously stripped `.ipa` off
+          # its name — producing a directory the next step's `find -name '*.app'`
+          # could not match, so `simctl install` was handed an empty path and
+          # aborted with `NSInternalInconsistencyException: installURL`. Squeezing a
+          # local bundle into the store-artifact scheme would also teach the
+          # artifact checker to accept a local build as a distributable one.
+          name="starter-ios-aarch64-sim-${GITHUB_SHA::12}-unsigned.app"
           # A directory, so `ditto` rather than `cp -r`: `cp` does not preserve
           # the symlinks inside a built bundle's Frameworks, and the resulting
           # archive installs and then crashes on launch.
-          ditto "$app" "$RUNNER_TEMP/dist/$(bun run --cwd apps/frontend/native check:artifacts -- --name ios aarch64-sim ipa unsigned | tail -n 1 | sed 's/\.ipa$//')"
+          ditto "$app" "$RUNNER_TEMP/dist/$name"
           echo "dir=$RUNNER_TEMP/dist" >> "$GITHUB_OUTPUT"
 
       - name: Install and launch on a simulator
@@ -576,6 +587,15 @@ jobs:
           xcrun simctl boot "$device" || true
           xcrun simctl bootstatus "$device" -b
           app="$(find "$RUNNER_TEMP/dist" -maxdepth 1 -name '*.app' | head -n 1)"
+          # `simctl install ""` aborts inside CoreSimulator with an
+          # `installURL` inconsistency exception that names neither the path nor
+          # this step. An empty path is a naming mistake upstream, and saying so
+          # here is the difference between a diagnosis and a mystery.
+          if [ -z "$app" ]; then
+            echo "::error::no .app in $RUNNER_TEMP/dist — the locate step named it something else"
+            ls -la "$RUNNER_TEMP/dist"
+            exit 1
+          fi
           xcrun simctl install "$device" "$app"
           xcrun simctl launch "$device" com.example.starter
           sleep 10
