@@ -29,11 +29,12 @@
 // dev-only relaxation that is keyed on the build mode cannot survive into a
 // packaged app, because the packaged app is not a dev build.
 
-import { resolveApiOrigin, resolveClientId } from '@starter/schemas/native';
+import { DEV_API_HOST_ENV, resolveApiOrigin, resolveClientId } from '@starter/schemas/native';
 
 export {
   DEFAULT_CLIENT_ID,
   DEFAULT_DEV_API_ORIGIN,
+  DEV_API_HOST_ENV,
   NativeConfigError,
   resolveApiOrigin,
   resolveClientId,
@@ -59,7 +60,16 @@ export interface NativeConfig {
 }
 
 export const nativeConfig: NativeConfig = {
-  apiOrigin: resolveApiOrigin({ raw: readEnv('VITE_NATIVE_API_ORIGIN'), dev: isDevBuild }),
+  apiOrigin: resolveApiOrigin({
+    raw: readEnv('VITE_NATIVE_API_ORIGIN'),
+    dev: isDevBuild,
+    // The development machine's address, for a phone that cannot see the
+    // developer's loopback. Read only when this bundle is a dev build, and
+    // refused outright by `resolveApiOrigin` when it is not — so the same
+    // environment that makes `native android dev --host …` work cannot point a
+    // packaged build at one machine on one network.
+    devHost: isDevBuild ? readEnv(DEV_API_HOST_ENV) : undefined,
+  }),
   clientId: resolveClientId(readEnv('VITE_NATIVE_CLIENT_ID')),
   dev: isDevBuild,
 };

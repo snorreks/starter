@@ -8,6 +8,7 @@
     "dev": "vite dev",
     "build": "vite build",
     "check:bundle": "bun scripts/check_bundle.ts",
+    "check:artifacts": "bun scripts/check_artifacts.ts",
     "prepare": "svelte-kit sync",
     "lint": "biome lint src",
     "format": "biome format src",

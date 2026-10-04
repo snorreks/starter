@@ -188,7 +188,7 @@ describe('the command itself', () => {
       process.stdout.write = original;
     }
 
-    expect(written.join('')).toContain('native <doctor|dev|build>');
+    expect(written.join('')).toContain('native <doctor|dev|build|android|ios>');
   });
 
   test('no subcommand is a usage error, not a no-op', async () => {
@@ -196,7 +196,10 @@ describe('the command itself', () => {
     process.stderr.write = (() => true) as typeof process.stderr.write;
     try {
       expect(await nativeCommand.run([])).toBe(2);
-      expect(await nativeCommand.run(['android'])).toBe(2);
+      // `android` and `ios` *are* subcommands now, so they are no longer the
+      // probe for an unknown name. `native_cli.test.ts`'s sibling
+      // `native_mobile.test.ts` asserts what they do.
+      expect(await nativeCommand.run(['tizen'])).toBe(2);
     } finally {
       process.stderr.write = original;
     }

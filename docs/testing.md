@@ -216,6 +216,8 @@ prerequisite: see `docs/capability-matrix.md`.
 | Worker | `bun run test:worker` | Does the built Worker route, authenticate and authorize correctly in workerd? |
 | E2E | `bun run e2e` | Does the whole path work, through a build and a browser? |
 | Compute | `bun run test:compute` | Does the durable half actually run — Workflows, a Durable Object, real D1/R2 and real FFmpeg? |
+| Native desktop | `.github/workflows/native.yml` `rust` + `desktop` jobs | Does the shell format, lint, unit-test and compile on Linux, macOS and Windows? |
+| Native mobile | `.github/workflows/native.yml` `android` + `ios` jobs | Do the Android and iOS builds run the pinned CLIs, and does the app install and launch on an emulator and a simulator? |
 
 Counts are derived by running the lanes, not recorded here except in
 [capability-matrix.md](capability-matrix.md), which records what a given round
@@ -228,6 +230,31 @@ bun run test:all          # each lane prints its own count
 `test:all` deliberately does **not** include the compute lane: that one needs a
 Docker engine, and folding it in would make the credential-free, engine-free lanes
 fail on a machine that has neither. It is invoked by name.
+
+The two native lanes are the same idea with more prerequisites: an Android SDK, an
+NDK, a JDK and KVM for the first, macOS with full Xcode for the second. They are
+workflows rather than `bun run` scripts because a lane that needs a macOS runner
+cannot be a command a contributor runs on Linux — `bun run native:ios …` there
+exits 3 and says so.
+
+What each mobile job *proves* is deliberately narrow and written into its own job
+summary, because "mobile passes" is not a claim anybody should accept:
+
+| Step | What it proves | What it does not |
+|---|---|---|
+| `native:doctor -- --platform android` | This host has the SDK, NDK, JDK and rustup targets this build needs | That Gradle will link |
+| `init --ci` | The generated project was produced without a prompt | Anything about the produced app |
+| induced failure with `CARGO_TARGET_…_LINKER` | The wrapper returns the CLI's nonzero status instead of 0 | — |
+| `check:artifacts` | The package names its target and revision, and contains the expected API origin and no other | That the app runs |
+| `adb install` + `am start` + `dumpsys` | An app installed and is resumed, on a real Android runtime | That it is signed, or that it works |
+| `KEYCODE_BACK` ×2 | The system back key is delivered and the shell survives it | What the app did with it |
+| `xcrun simctl install` + `launch` | An app installed and is running, on a real iOS simulator | That it is signed, or that it works |
+
+None of these is the authenticated path. There is no deployment in this template,
+so the steps that need one are **not run** and say so in the run summary — a lane
+that printed a green "sign-in verified" without an API would be the exact
+successful no-op this repository refuses. `docs/capability-matrix.md` records the
+same split per revision.
 
 ### Unit
 
@@ -357,6 +384,11 @@ Stated plainly rather than left to discover. See `docs/capability-matrix.md`.
   on this host can launch; a lane that cannot start must be reported, not skipped
   quietly.
 - **Live Cloudflare.** A deployment or a provisioned resource id was never used.
+- **Android and iOS.** No SDK, no JDK, no NDK and no Xcode on this host, so no
+  `.apk`, `.aab`, `.ipa` or `.xcarchive` was produced and no emulator or simulator
+  was started. The argv planning, the refusals, the committed-configuration
+  negative controls, the lifecycle state machine and the artifact checker all ran;
+  the vendor toolchains did not.
 
 ## Rate limits and the clock
 

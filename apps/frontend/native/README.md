@@ -7,7 +7,7 @@ A **static SvelteKit application** plus a **Tauri shell**, in one package:
 | Half | What it is | Where it runs |
 |---|---|---|
 | `src/**` | A SvelteKit app built by `@sveltejs/adapter-static` into `build/` | Inside the Tauri webview, and in a plain browser during `native:dev` |
-| `src-tauri/**` | A Rust crate — one window, three plugins, one command | As a desktop process on Linux, macOS and Windows |
+| `src-tauri/**` | A Rust crate — one window, three plugins, one command | As a desktop process on Linux, macOS and Windows, and as an Android or iOS app |
 
 It exists because a desktop client has a different answer to "how do I reach the
 API" and "where does my credential live" than a browser does, and neither answer
@@ -48,6 +48,8 @@ prerequisites and name them: run `bun run native:doctor`.
 | `VITE_NATIVE_API_ORIGIN` | build time | Absolute **https** origin of the deployed API. A packaged build with no value **refuses to build**, and it refuses at the *build* rather than at the first request — there is no default, because a client pointed at a loopback port starts successfully and then signs nobody in. The launcher and Vite read the same value through `@starter/schemas/native`, and the launcher's value also generates the CSP's `connect-src`. |
 | `VITE_NATIVE_CLIENT_ID` | build time | The device-authorization client id. **Public**, and documented as such in `src/lib/runtime/config.ts`: it is compiled into a binary anybody can unpack, so treating it as a secret is how a template grows a client secret nobody can rotate. |
 | `NATIVE_DEV_PORT` | run time | The dev server the shell loads. Default `1420`. Deliberately not `PORT`, which the web app already owns. |
+| `NATIVE_DEV_HOST` | run time | Address the dev server binds. `127.0.0.1` by default; a phone needs `0.0.0.0`, which is set for you by `--host`. |
+| `VITE_NATIVE_DEV_API_HOST` | build time | The development machine's address, for a phone whose `localhost` is the phone. Set by `native … dev --host <address>`, read by `resolveApiOrigin`, and **refused** in a packaged build — see `docs/native.md`. |
 
 Validation of the origin is a unit-tested function, not a convention:
 `src/lib/runtime/config.test.ts` refuses a path, a query, a non-http scheme, a
@@ -65,8 +67,20 @@ desktop toolchain.
 | `bun run native:dev` | root | `tauri dev`: the static app plus the shell. Defaults to the loopback dev origin when `VITE_NATIVE_API_ORIGIN` is unset. |
 | `bun run native:build` | root | `tauri build`: a release binary. **Requires `VITE_NATIVE_API_ORIGIN`** — the launcher resolves it and refuses to start without one. |
 | `bun run native:build -- --no-bundle` | root | The binary without an installer: the honest scope for a machine with no signing credentials. |
+| `bun run native:doctor -- --platform android` | root | The Android prerequisites: SDK, compileSdk platform, NDK, JDK, `adb`, rustup targets. Exit 3 when one is missing. |
+| `bun run native:doctor -- --platform ios` | root | The iOS prerequisites: macOS, full Xcode, `xcode-select`, rustup targets. Exit 3 on any other host. |
+| `bun run native:android -- init --ci` | root | `tauri android init`: writes the generated Gradle project into the gitignored `src-tauri/gen/android/`. |
+| `bun run native:android -- build --debug --apk --target aarch64 --ci` | root | A debug APK. `--target` takes an **ABI**, never a Rust triple. |
+| `bun run native:android -- build --aab --ci` | root | A release bundle. |
+| `bun run native:android -- run --release` | root | Install and launch on a connected device or emulator. |
+| `bun run native:android -- dev --host <ip> "<device>"` | root | Development on a physical phone: the dev server and the API origin both move to `<ip>`. |
+| `bun run native:ios -- init --ci` | root | `tauri ios init`. **macOS with full Xcode only**; elsewhere this exits 3. |
+| `bun run native:ios -- build --target aarch64-sim --ci` | root | A simulator build. The CLI's default target is the *device*, so a simulator lane must say so. |
+| `bun run native:ios -- build --export-method app-store-connect --archive-only --ci` | root | A signed archive for App Store Connect. |
 | `bun run build` | `apps/frontend/native` | The static frontend only |
 | `bun run check:bundle` | `apps/frontend/native` | Asserts the built bundle has no server code, and the web bundle has no native imports |
+| `bun run check:artifacts -- <dir> --origin <url> --revision <sha> --platform android\|ios` | `apps/frontend/native` | Asserts every `.apk`/`.aab`/`.ipa` names its target and revision, says whether it is signed, and contains the expected API origin and no other |
+| `bun run check:artifacts -- --name <platform> <target> <ext> <signed\|unsigned>` | `apps/frontend/native` | Prints the one spelling of an artifact name, so a workflow renames with the same function that later checks it |
 | `bun run test` | `apps/frontend/native` | Unit lane: config, transport (JSON **and** byte path), vault, URL allowance, window activity, bundle control |
 | `cargo fmt --check`, `cargo clippy --locked --all-targets -- -D warnings`, `cargo test --locked` | `apps/frontend/native/src-tauri` | The Rust shell |
 
@@ -78,11 +92,22 @@ desktop toolchain.
 | Bundle separation | `bun run --cwd apps/frontend/native check:bundle` | `apps/frontend/native/scripts/check_bundle.test.ts`, and the command itself |
 | Unit | `bun run --cwd apps/frontend/native test` | Bun's own summary |
 | Rust | `cargo fmt/clippy/test` in `src-tauri` | `cargo test`'s own summary; the crate has a real unit test |
-| Desktop binaries | `.github/workflows/native.yml` | The artifact step fails when no binary was produced |
+| Desktop binaries | `.github/workflows/native.yml` `desktop` | The artifact step fails when no binary was produced |
+| Mobile argv and refusals | `bun run --cwd scripts test` (`tests/native_mobile.test.ts`) | Asserted on a machine with no SDK: exact argv, wrong flags, iOS on Linux |
+| Committed mobile config | `bun run --cwd scripts test` (`tests/mobile_platform_config.test.ts`) | No cleartext/ATS exception, no `infoPlist`, no window minimum |
+| Lifecycle | `bun run --cwd apps/frontend/native test` (`app_lifecycle.test.ts`) | Suspend, resume, offline, disposal, on a real `EventTarget` |
+| Artifacts | `bun run --cwd apps/frontend/native test` (`check_artifacts.test.ts`) | Real ZIP containers, a corrupted fixture, a wrong origin, a wrong revision |
+| Android APK/AAB + emulator launch | `.github/workflows/native.yml` `android` | `adb install` + `am start` + `dumpsys`; the induced-failure step proves exit codes propagate |
+| iOS simulator build + launch | `.github/workflows/native.yml` `ios` on `macos-14` | `xcrun simctl install` + `launch` |
+| Signed artifacts | `.github/workflows/native-release.yml` | `preflight` fails naming any unset secret before a build starts |
 
-What is **not** claimed: that the packaged app was launched. CI builds the binary
-on three platforms and does not run it — see `docs/native.md` for why, and for what
-would be needed to.
+What is **not** claimed here: that the **desktop** packaged app was launched. CI
+builds the binary on three platforms and does not run it. The mobile jobs *do*
+launch — an Android emulator and an iOS simulator — and they say so in their own
+job summaries. Neither lane is credited with an authenticated sign-in: this
+template ships no deployment, so the steps that need one are recorded as **not
+run** rather than skipped silently. `docs/capability-matrix.md` keeps the split per
+revision.
 
 ## Boundaries
 
