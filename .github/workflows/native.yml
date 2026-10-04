@@ -444,8 +444,37 @@ jobs:
             exit 1
           fi
           echo "created AVD: $("$ANDROID_HOME/emulator/emulator" -list-avds | grep -x 'starter-api34')"
-          "$ANDROID_HOME/emulator/emulator" -avd starter-api34 -no-window -no-audio -no-boot-anim -gpu swiftshader_indirect \
-            -wipe-data >"$RUNNER_TEMP/emulator.log" 2>&1 &
+
+          # Hardware acceleration, and the one thing on this runner that decides
+          # whether an x86_64 emulator can run at all:
+          #
+          #     ERROR | x86_64 emulation currently requires hardware acceleration!
+          #     ProbeKVM: This user doesn't have permissions to use KVM (/dev/kvm).
+          #
+          # `/dev/kvm` exists and is group-owned by `kvm`; the runner user is
+          # simply not a member. Named here because it is a prerequisite of the
+          # *host*, not of the project: a runner without nested virtualization
+          # cannot boot this AVD however the workflow is written.
+          if [ ! -e /dev/kvm ]; then
+            echo "::error::/dev/kvm does not exist on this runner: an x86_64 emulator needs hardware"
+            echo "  virtualization. Re-run on a hosted runner, or on a self-hosted one with nested"
+            echo "  virtualization enabled. The AVD above is created and correct; there is simply"
+            echo "  nothing to run it on."
+            exit 1
+          fi
+          sudo groupadd -r kvm 2>/dev/null || true
+          sudo usermod -aG kvm "$USER"
+          sudo chown root:kvm /dev/kvm
+          sudo chmod 0660 /dev/kvm
+          echo "groups now: $(id -nG)"
+
+          # `usermod -aG` does not affect processes that already exist, and this
+          # step's shell is one of them — so joining the group and then launching
+          # the emulator normally would leave it with the *old* supplementary
+          # groups and the identical KVM error. `sg` starts a new session with the
+          # group, which takes effect immediately.
+          sg kvm -c "$ANDROID_HOME/emulator/emulator -avd starter-api34 -no-window -no-audio -no-boot-anim -gpu swiftshader_indirect -wipe-data" \
+            >"$RUNNER_TEMP/emulator.log" 2>&1 &
           echo "emulator pid $!"
           if ! timeout 120 adb wait-for-device; then
             echo "::error::no Android device appeared within 120s of starting the emulator"
