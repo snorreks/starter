@@ -11,6 +11,22 @@
 # drifting resolver is how a desktop build starts failing for reasons unrelated to
 # the change under review, and `Cargo.lock` is committed and used with `--locked`.
 #
+# ONE pin is not in this manifest because it is transitive: `libc` is held at
+# 0.2.189 by the lockfile rather than here. `libc 0.2.190` gated
+# `mach_task_self()` behind `#[cfg(target_os = "macos")]`, and the unmaintained
+# `num_threads 0.1.7` calls exactly that function for `target_os = "ios"` —
+# reached through `time`, which `cookie`, `plist`, `tauri-codegen` and
+# `tauri-plugin-log` all need. `num_threads` has had no release since 0.1.7, so
+# there is no upgrade path and the lockfile is the only lever:
+#
+#     cargo update -p libc --precise 0.2.189
+#
+# `scripts/tests/cargo_ios_pins.test.ts` fails the build when `libc` climbs back
+# above it, because a lockfile pin is durable only until somebody runs
+# `cargo update`. Without that test the next routine update restores a broken iOS
+# build, and the symptom is a CI error naming a crate this repository does not
+# depend on.
+#
 # No updater, no signing keys, no sidecars. An updater needs an endpoint and a
 # keypair that belong to whoever ships the app; a sidecar is a binary the template
 # author chose. Both are the adopter's, and `docs/native.md` says how to add them.

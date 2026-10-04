@@ -260,6 +260,44 @@ The generated Gradle project is **not committed**. `tauri android init` writes
 build product of `tauri.conf.json` and `Cargo.toml`, and a hand-edited copy of one
 is a file that disagrees with its own source the next time either changes.
 
+## One transitive pin, and why it cannot be upgraded
+
+`libc` is held at **0.2.189** in `apps/frontend/native/src-tauri/Cargo.lock`, and
+that is the only pin in this repository that is not an `=` in a `Cargo.toml`.
+
+`libc 0.2.190` gated `mach_task_self()` behind `#[cfg(target_os = "macos")]` — the
+source says "Prohibited on iOS/tvOS/watchOS/visionOS". The unmaintained
+`num_threads 0.1.7` routes `target_os = "ios"` to `apple.rs`, which calls exactly
+that function, so the shell does not compile for `aarch64-apple-ios`:
+
+```
+error[E0425]: cannot find function `mach_task_self` in crate `libc`
+   --> num_threads-0.1.7/src/apple.rs:34
+error: could not compile `num_threads` (lib) due to 1 previous error
+```
+
+There is no upgrade path, which is why this is a pin rather than a wait:
+
+- `num_threads` has had **no release since 0.1.7** (checked against the registry).
+- `time` depends on it unconditionally, and `time` is reached by `cookie`,
+  `plist`, `tauri-codegen` and `tauri-plugin-log`.
+- `0.2.189` is the last release before the regression, and it satisfies
+  `rustix`'s `^0.2.182`, so the whole tree resolves there.
+
+```bash
+cargo update -p libc --precise 0.2.189   # the only command that restores this
+```
+
+`scripts/tests/cargo_ios_pins.test.ts` is what keeps it pinned. A lockfile pin is
+durable only until somebody runs `cargo update`; without the test, the next
+routine update restores a broken iOS build and the symptom is a CI error naming a
+crate this repository does not depend on.
+
+The rule is conditional on `num_threads` being in the tree, not on a path list.
+`apps/backend/media` carries `libc 0.2.190` today and is **fine** — nothing in its
+tree reaches `num_threads` — and a rule that pinned every Rust crate would push an
+unnecessary downgrade onto the one that has no problem.
+
 ## iOS prerequisites
 
 ```bash

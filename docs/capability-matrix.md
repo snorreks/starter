@@ -362,6 +362,8 @@ A fourth dated section. This round extended the shell to Android and iOS and did
 | Artifact naming and origin verification | Real ZIP containers written by the test and read by the shipped reader, with a CRC check and a deliberately corrupted fixture | `bun run --cwd apps/frontend/native test` | same |
 | The marker is mandatory, every directory is checked, and a namespace URI is not a deployment | `--name`, `parseArgs`, `NEVER_AN_API_HOST` | same | same |
 | Rust formatting | `cargo fmt --check` | `cargo fmt --check` in `apps/frontend/native/src-tauri` | clean |
+| The iOS dependency graph type-checks | `cargo check --locked --target aarch64-apple-ios-sim`, reproduced **and fixed** on this host after CI reported `E0425: cannot find function mach_task_self` from `num_threads` | `cargo check --locked --target aarch64-apple-ios-sim -p num_threads` | **compiles** after `cargo update -p libc --precise 0.2.189` |
+| The `libc` pin cannot drift silently | `scripts/tests/cargo_ios_pins.test.ts`: a lockfile carrying `num_threads` on `libc 0.2.190` is refused with the reason and the remedy; the media crate is shown unaffected | `bun test ./tests/cargo_ios_pins.test.ts` (cwd `scripts`) | 6 pass, 0 fail |
 
 **NOT RUN here, with the reason.** This host is Linux with no Android SDK, no JDK,
 no `pkg-config` and no Xcode, so *every* row that needs a vendor toolchain or a
@@ -370,6 +372,8 @@ device is a row that CI owns:
 | Capability | Why it was not run | Exact command that runs it |
 |---|---|---|
 | `cargo check` / `cargo test` / `cargo clippy` on `src-tauri` | No WebKitGTK 4.1 and no `pkg-config`; the dependency chain cannot link. `cargo` 1.98.1 was installed for this round, and `cargo fmt --check` does pass. | `cargo test --locked` in `apps/frontend/native/src-tauri` |
+| A whole-crate `cargo check --target aarch64-apple-ios-sim` | Gets past `num_threads` and stops at `objc2-exception-helper`, whose build script needs a real `SDKROOT`. That is the missing-Xcode prerequisite, not a defect — this host has no Xcode. | the `ios` job in `.github/workflows/native.yml`, on `macos-15` |
+| Android APK/AAB build and emulator launch | The platform package that CI was asking for did not exist; it now installs `platforms;android-37.2`. Whether AGP accepts the template's `compileSdk = 37` against that installed minor version is **not** something this host can answer — there is no Android SDK here. | the `android` job in `.github/workflows/native.yml` |
 | Android debug APK | No `ANDROID_HOME`, no JDK. | `bun run native:android -- build --debug --apk --target aarch64 --ci` |
 | Android release AAB | Same. | `bun run native:android -- build --aab --ci` |
 | Android install + launch on an emulator | Same, plus no KVM. | `.github/workflows/native.yml`, `android` job: `adb install -r`, `am start -n com.example.starter/.MainActivity` |
