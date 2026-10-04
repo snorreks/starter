@@ -38,6 +38,18 @@ for a batch runner, sharing one encoding core. It is not part of `bun run test`,
 `lint` or `typecheck`: the web lanes stay free of a Rust toolchain and of FFmpeg,
 and the compute lane names its own prerequisites.
 
+`/jobs` is the second demo screen, and it is the one with a lifecycle: a signed-in
+user asks for one synthetic sample to be encoded, and the screen shows the job's
+real state (`pending`, `running`, `succeeded`, `failed`), whether its result is
+still downloadable, and what the maintenance schedule last did — with the run's
+trigger, because a hand-triggered sweep is not the schedule firing. Both hosts
+render it from `@starter/features`; the native one fetches the result through its
+bearer transport and plays it from a Blob, so no credential ever reaches a URL.
+The compute profile is **off** by default (`JOBS_PROFILE` is absent, which means
+`disabled`), so a fresh checkout renders the "switched off here" state and notes
+and auth keep working. `bun run test:compute` is the lane that proves a real
+encode, and it needs Docker.
+
 Nothing is provisioned. There are no Cloudflare resource ids, no signing keys, no
 domains, and no tokens anywhere in the repository — see
 [docs/starter-extraction.md](docs/starter-extraction.md).

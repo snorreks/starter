@@ -13,7 +13,13 @@ import { Database } from 'bun:sqlite';
 import { beforeEach, describe, expect, test } from 'bun:test';
 import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import type { WorkflowDispatchPort } from '@starter/jobs';
+import type {
+  MaintenanceReport,
+  MaintenanceRun,
+  MaintenanceRunRequest,
+  WorkflowDispatchPort,
+} from '@starter/jobs';
+import { createMaintenanceRunRepository } from '@starter/jobs';
 import { databaseMigrationsDir } from '../../../tests/database_paths.ts';
 import { GET as outputRoute } from '../../routes/api/jobs/[id]/output/+server.ts';
 import {
@@ -541,5 +547,122 @@ describe('toJobDto', () => {
       toJobDto(record({ status: 'pending', output: null, outputKey: null }) as never, T0)
         .outputAvailable,
     ).toBe(false);
+  });
+});
+
+/**
+ * The scheduler evidence read.
+ *
+ * On the same real SQLite engine with the committed migrations, and through the
+ * real maintenance-run repository — the rows under test are written by the same
+ * `begin`/`complete` statements a scheduled firing uses, so this cannot pass
+ * against a shape the scheduler would never produce.
+ */
+describe('the latest maintenance run, through the service', () => {
+  const runs = () =>
+    createMaintenanceRunRepository(asJobsDatabase(sqlite) as never, { now: () => now });
+
+  const sweep = async (
+    request: MaintenanceRunRequest,
+    report?: Partial<MaintenanceReport>,
+  ): Promise<MaintenanceRun> => {
+    const claimed = await runs().begin(request, now);
+    if (!claimed.ok) {
+      throw new Error(`run could not be claimed: ${claimed.reason}`);
+    }
+    await runs().complete(claimed.run.runKey, {
+      // The report carries the slot and the cutoff the run was claimed with; the
+      // counts below are the rows it reported deleting.
+      runKey: claimed.run.runKey,
+      cutoffAt: now,
+      expiredSessions: 3,
+      idleRateLimits: 1,
+      artifactsQueued: 0,
+      artifactsRetired: 2,
+      pendingDispatches: 0,
+      ...report,
+    });
+    return (await runs().get(claimed.run.runKey)) as MaintenanceRun;
+  };
+
+  test('a deployment that has never swept says so, and does not invent a run', async () => {
+    const outcome = await serviceWith().latestMaintenance();
+
+    expect(outcome.ok).toBe(true);
+    if (!outcome.ok) {
+      return;
+    }
+    // The distinction the design asks for by name: "nothing has run" is not
+    // "the last run failed", and a screen cannot tell them apart if the empty
+    // case is reported as a failed run.
+    expect(outcome.latest.latest).toBeNull();
+    expect(outcome.latest.latestScheduled).toBeNull();
+    expect(outcome.latest.schedule).toBe('17 * * * *');
+    expect(outcome.latest.serverTime).toBe(now);
+  });
+
+  test('a manual run is never reported as a scheduled firing', async () => {
+    // The dishonest case, deliberately constructed: the only run on record was
+    // started by hand. `latest` is that run, and `latestScheduled` is null, so no
+    // screen can render "the schedule fired" from this deployment.
+    const manual = await sweep({ trigger: 'manual', requestId: 'req-1' });
+
+    const outcome = await serviceWith().latestMaintenance();
+    expect(outcome.ok).toBe(true);
+    if (!outcome.ok) {
+      return;
+    }
+    expect(outcome.latest.latest?.trigger).toBe('manual');
+    expect(outcome.latest.latest?.slot).toBeNull();
+    expect(outcome.latest.latestScheduled).toBeNull();
+    expect(outcome.latest.latest?.counts.expiredSessions).toBe(3);
+    expect(manual.status).toBe('succeeded');
+  });
+
+  test('a scheduled run is reported with its slot, and a later manual run does not hide it', async () => {
+    const scheduled = await sweep({ trigger: 'scheduled', scheduledTimeMs: T0 - HOUR });
+    // A later run. Run rows record `started_at` to the second, so two sweeps
+    // inside one second tie and the answer depends on the run key rather than on
+    // time — the clock has to move for "newest" to mean anything.
+    now = T0 + 1_000;
+    await sweep({ trigger: 'manual', requestId: 'req-2' });
+
+    const outcome = await serviceWith().latestMaintenance();
+    expect(outcome.ok).toBe(true);
+    if (!outcome.ok) {
+      return;
+    }
+    expect(outcome.latest.latest?.trigger).toBe('manual');
+    expect(outcome.latest.latestScheduled?.trigger).toBe('scheduled');
+    expect(outcome.latest.latestScheduled?.scheduledTime).toBe(scheduled.scheduledTime);
+    expect(outcome.latest.latestScheduled?.slot).toBe(scheduled.slot);
+  });
+
+  test('the DTO carries no run key, so a manual request id cannot reach a client', async () => {
+    await sweep({ trigger: 'manual', requestId: 'req-private' });
+
+    const outcome = await serviceWith().latestMaintenance();
+    expect(outcome.ok).toBe(true);
+    if (!outcome.ok) {
+      return;
+    }
+    expect(Object.keys(outcome.latest.latest ?? {}).sort()).toEqual([
+      'completedAt',
+      'counts',
+      'errorCode',
+      'scheduledTime',
+      'slot',
+      'startedAt',
+      'status',
+      'trigger',
+    ]);
+  });
+
+  test('the disabled profile reports no schedule rather than a fabricated one', async () => {
+    await sweep({ trigger: 'scheduled', scheduledTimeMs: T0 - HOUR });
+
+    const outcome = await serviceWith(JOBS_PROFILE_DISABLED).latestMaintenance();
+    expect(outcome.ok).toBe(false);
+    expect(outcome.ok ? null : outcome.code).toBe('jobs_profile_disabled');
   });
 });

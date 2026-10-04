@@ -64,6 +64,17 @@ unnecessarily.
 `capture_evidence.ts` produces screenshots. Vision inspection of them reports as
 **SKIPPED** with a reason, never as a pass.
 
+The captured screens are `landing`, `login`, `login-error`, `notes-empty`,
+`notes-populated` and `jobs-disabled`. Each is a state this deployment actually
+reaches: `jobs-disabled` is the jobs screen as signed-in user sees it with the
+template's shipped profile, which is **off**, so that is the honest screenshot
+rather than a fabricated "Encoded" row. A fixture that only signs in would
+photograph `/notes` under another screen's name — the capture harness navigates
+first and prepares afterwards, so the fixture has to land where it says it does.
+
+It needs a running server on the port `playwright.config.ts` chose for this
+checkout, and says so by name when there is not one.
+
 ## Boundaries and documentation
 
 May import `@starter/*` packages. It reaches `scripts/src/shared/*` by relative

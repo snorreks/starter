@@ -23,6 +23,12 @@
 // TypeBox schema at the contract boundary — see `dto.ts`. Casting a body to `T`
 // inside the transport would move the one place a wrong shape can enter the
 // application into the one place that has no schema to check it against.
+//
+// One method is *not* JSON, and says so in its own type: `fetchBytes` is how a
+// feature asks for bytes rather than a document. It exists on a separate
+// `ArtifactTransport` interface because `request<T>` is a JSON transport by
+// contract — pointed at an MP4 it would either throw or hand back a truncated
+// string that reads as success. See `ArtifactTransport`.
 
 import type { ApiError } from '@starter/schemas/auth';
 import { AppError, BaseClass, errorTypeForStatus } from '@starter/utils';
@@ -56,6 +62,49 @@ export interface TransportRequestOptions {
  */
 export interface ApiTransport {
   request<T>(path: string, options?: TransportRequestOptions): Promise<T>;
+}
+
+/**
+ * A transport that can also return *bytes*.
+ *
+ * A separate interface rather than a method on `ApiTransport`, and the reason is
+ * that `request<T>` is a JSON transport: it parses the response body as text and
+ * then as JSON. Pointed at an MP4 it produces a `TypeError` or, worse, a truncated
+ * string that looks like a successful answer. Rather than teach every JSON call
+ * site about binary responses, the byte path is a distinct capability a feature
+ * asks for by type — so a host that cannot serve one cannot construct the feature.
+ */
+export interface ArtifactTransport extends ApiTransport {
+  /**
+   * Fetch binary bytes.
+   *
+   * `range` is a bounded, already-validated slice; there is no unbounded "give me
+   * everything" form beyond omitting it, and the caller owns the ceiling.
+   */
+  fetchBytes(path: string, options?: ArtifactRequestOptions): Promise<ArtifactBytes>;
+}
+
+/** One byte fetch, and only what varies about one. */
+export interface ArtifactRequestOptions {
+  readonly signal?: AbortSignal;
+  /** Inclusive on both ends, per RFC 9110. */
+  readonly range?: { startInclusive: number; endInclusive: number };
+  /**
+   * Extra headers for this call, merged over the transport's own.
+   *
+   * Present because a decorator has to be able to add a credential to a byte
+   * request the same way it adds one to a JSON request — a native shell's bearer
+   * token is a header, and this is the only place a byte request can carry one.
+   */
+  readonly headers?: Readonly<Record<string, string>>;
+}
+
+export interface ArtifactBytes {
+  readonly bytes: Uint8Array;
+  /** What the server said it is. Not trusted for anything but the file name. */
+  readonly contentType: string;
+  /** The server's own `content-length`, or null when it sent none. */
+  readonly contentLength: number | null;
 }
 
 /**
@@ -137,7 +186,7 @@ const parseBody = async (response: Response): Promise<unknown> => {
  * "not recoverable" from data rather than from a status-code switch at each call
  * site, and a host-specific transport does not have to re-derive the mapping.
  */
-export class HttpTransport extends BaseClass implements ApiTransport {
+export class HttpTransport extends BaseClass implements ArtifactTransport {
   readonly #baseUrl: string;
   readonly #fetch: FetchLike;
   readonly #credentials: RequestCredentials | undefined;
@@ -197,4 +246,84 @@ export class HttpTransport extends BaseClass implements ApiTransport {
 
     return parsed as T;
   }
+
+  /**
+   * The byte path.
+   *
+   * Deliberately not built on `request()`: that method's contract ends at JSON.
+   * This one calls `fetch` itself and therefore owns three things `request()`
+   * cannot: the `Range` header, the binary body, and the fact that a **failed**
+   * response is still a JSON error envelope that must be turned into an
+   * `AppError` the same way a failed JSON call would be.
+   *
+   * A refusal therefore looks identical to every other refusal in the
+   * application: 410 for an aged-out artifact and 404 for somebody else's job
+   * both arrive as an `AppError` with the server's `message`, and neither
+   * arrives as bytes.
+   */
+  async fetchBytes(path: string, options: ArtifactRequestOptions = {}): Promise<ArtifactBytes> {
+    const url = `${this.#baseUrl}${path.startsWith('/') ? path : `/${path}`}`;
+    this.debug('fetchBytes', path);
+
+    let response: Response;
+    try {
+      // Built by hand rather than through `buildHeaders`: that helper's second
+      // argument is a *call's* options, and this request has none of the JSON
+      // ones. Merge order is the same as everywhere else — the transport's
+      // defaults, then this call's — so a decorator can add a credential here.
+      const headers = new Headers({
+        accept: 'application/octet-stream',
+        ...this.#headers,
+        ...options.headers,
+      });
+      if (options.range !== undefined) {
+        headers.set('range', `bytes=${options.range.startInclusive}-${options.range.endInclusive}`);
+      }
+
+      response = await this.#fetch(url, {
+        method: 'GET',
+        headers,
+        ...(this.#credentials === undefined ? {} : { credentials: this.#credentials }),
+        ...(options.signal === undefined ? {} : { signal: options.signal }),
+      });
+    } catch (error) {
+      if (error instanceof DOMException && error.name === 'AbortError') {
+        throw new AppError('aborted', 'The request was cancelled.', { cause: error });
+      }
+      throw new AppError('network', 'Could not reach the server.', { cause: error });
+    }
+
+    if (!response.ok) {
+      // The body here is the same `{ error, message }` envelope every other
+      // route returns, and it is read as text rather than parsed as JSON: a 503
+      // from a proxy is HTML, and `parseBody` would turn that into a confusing
+      // "not JSON" error instead of the server's actual message.
+      const text = await response.text();
+      const payload = safeJson(text) as Partial<ApiError> | undefined;
+      throw new AppError(
+        errorTypeForStatus(response.status),
+        payload?.message ?? 'The request failed.',
+        {
+          status: response.status,
+          cause: payload,
+        },
+      );
+    }
+
+    const buffer = await response.arrayBuffer();
+    const declared = response.headers.get('content-length');
+    return {
+      bytes: new Uint8Array(buffer),
+      contentType: response.headers.get('content-type') ?? 'application/octet-stream',
+      contentLength: declared === null ? null : Number(declared),
+    };
+  }
 }
+
+const safeJson = (text: string): unknown => {
+  try {
+    return JSON.parse(text);
+  } catch {
+    return undefined;
+  }
+};

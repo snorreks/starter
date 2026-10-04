@@ -10,6 +10,9 @@
 export type { TransportMethod, TransportRequestOptions } from './api_transport.ts';
 export {
   type ApiTransport,
+  type ArtifactBytes,
+  type ArtifactRequestOptions,
+  type ArtifactTransport,
   type FetchLike,
   HttpTransport,
   type HttpTransportOptions,

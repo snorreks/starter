@@ -14,10 +14,35 @@ and the public authenticated API. There is no second API service and no proxy.
 | `src/routes/**/+server.ts` | server | API adapters: bound body, validated, mapped to a response. |
 | `src/routes/**/+page.svelte` | browser | Presentation. Excluded from the server permission set on purpose. |
 
-The notes screen and the account screen themselves live in
+The notes screen, the account screen and the sample-encode screen themselves live in
 `packages/frontend/features`, because two hosts render them; this application is
 the composition root for one of them. See that package's README for the contracts
 it requires.
+
+### `/jobs`, and the one capability this app may not have
+
+`/jobs` renders the shared jobs screen. Its server load calls
+`locals.container.jobs` **directly** — not `fetch('/api/jobs')` — for the same
+reason `notes/+page.server.ts` calls the notes service: a server load that
+HTTP-fetches its own origin is a second, differently authenticated path to the same
+data.
+
+The load also asks about the deployment mode before it reads. `JOBS_PROFILE` is
+absent in this repository's default `wrangler.jsonc`, and its absence *means*
+`disabled`; in that case the load reports the capability and the page renders "jobs
+are switched off here" from the HTML, without making a request it already knows the
+answer to. `bun run e2e` asserts both halves: the state renders, and the page issues
+**no** `/api/jobs` request at all.
+
+Two endpoints back it, both owner-checked and both closed DTOs:
+
+| Endpoint | Answers |
+|---|---|
+| `GET /api/jobs`, `POST /api/jobs`, `GET /api/jobs/:id`, `GET /api/jobs/:id/output` | the owner's jobs, admission, and a streamed artifact |
+| `GET /api/jobs/maintenance` | the latest maintenance run and the latest **scheduled** run, separately |
+
+Two fields rather than one on the maintenance read, because collapsing them is how a
+manual trigger gets reported as a natural scheduled firing.
 
 The plane boundary is enforced twice — Biome's import rules and `bun run guard` —
 because a convention nobody checks is a comment.

@@ -59,6 +59,8 @@ async function signOut(): Promise<void> {
     <a class="shell__brand" href="/">Starter</a>
     <nav class="shell__nav" aria-label="Primary">
       {#if user}
+        <a class="shell__link" href="/notes" data-testid="native-notes-link">Notes</a>
+        <a class="shell__link" href="/jobs" data-testid="native-jobs-link">Jobs</a>
         <span class="shell__user" data-testid="native-current-user">{user.email}</span>
         <button type="button" class="ui-button ui-button--secondary" onclick={signOut} data-testid="native-sign-out">
           Sign out
@@ -112,6 +114,16 @@ async function signOut(): Promise<void> {
   .shell__user {
     font-size: var(--font-size-sm);
     color: var(--color-text-muted);
+  }
+
+  .shell__link {
+    font-size: var(--font-size-sm);
+    color: var(--color-text);
+    text-decoration: none;
+  }
+
+  .shell__link:hover {
+    text-decoration: underline;
   }
 
   .shell__main {

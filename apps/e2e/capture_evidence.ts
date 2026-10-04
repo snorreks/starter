@@ -39,6 +39,22 @@ import {
  * Each one is a state a user actually reaches. A screenshot of a route that only
  * renders in a test would give false confidence.
  */
+/**
+ * Sign in, then land on the screen being captured.
+ *
+ * `signIn` ends on `/notes`, because that is where its callers want to be. The
+ * capture harness navigates to the screen *first* and prepares afterwards, so a
+ * fixture that only signs in would photograph `/notes` under another screen's
+ * name — a file that exists, looks plausible, and shows the wrong page.
+ */
+function signInThen(path: string, heading: string): (page: Page) => Promise<void> {
+  return async (page: Page): Promise<void> => {
+    await signIn(page);
+    await page.goto(`${appBaseUrl}${path}`);
+    await page.getByRole('heading', { name: heading }).waitFor();
+  };
+}
+
 const SCREENS: readonly { name: string; path: string; prepare?: (page: Page) => Promise<void> }[] =
   [
     { name: 'landing', path: '/' },
@@ -53,6 +69,12 @@ const SCREENS: readonly { name: string; path: string; prepare?: (page: Page) => 
         await seedNotes(page);
       },
     },
+    // The jobs screen, signed in and with the template's shipped profile — which
+    // is switched off. So this screenshot is of the *disabled* state, which is the
+    // state this deployment actually reaches and the only one that can honestly be
+    // captured without a compute profile. A screenshot of a fabricated "Encoded"
+    // row would be a screenshot of something no deployment shows.
+    { name: 'jobs-disabled', path: '/jobs', prepare: signInThen('/jobs', 'Sample encode') },
   ];
 
 async function signIn(page: Page): Promise<void> {

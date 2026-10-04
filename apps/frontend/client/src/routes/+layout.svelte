@@ -73,6 +73,8 @@ async function signOut(): Promise<void> {
 
     <nav class="shell__nav" aria-label="Primary">
       {#if user}
+        <a class="shell__link" href="/notes" data-testid="notes-link">Notes</a>
+        <a class="shell__link" href="/jobs" data-testid="jobs-link">Jobs</a>
         <span class="shell__user" data-testid="current-user">{user.email}</span>
         <button type="button" class="ui-button ui-button--secondary" onclick={signOut}>
           Sign out
@@ -102,6 +104,10 @@ async function signOut(): Promise<void> {
     align-items: center;
     justify-content: space-between;
     gap: var(--space-4);
+    /* Wraps rather than overflowing. A sign-in address and a row of navigation
+       links are both wide, and a phone-sized window must not scroll sideways to
+       reach either of them. */
+    flex-wrap: wrap;
     padding: var(--space-3) var(--space-5);
     border-bottom: 1px solid var(--color-border);
     background: var(--color-surface);
@@ -118,11 +124,25 @@ async function signOut(): Promise<void> {
     display: flex;
     align-items: center;
     gap: var(--space-3);
+    flex-wrap: wrap;
   }
 
   .shell__user {
+    /* A long address is the widest thing in the bar; it may break, not push. */
+    min-width: 0;
+    overflow-wrap: anywhere;
     font-size: var(--font-size-sm);
     color: var(--color-text-muted);
+  }
+
+  .shell__link {
+    font-size: var(--font-size-sm);
+    color: var(--color-text);
+    text-decoration: none;
+  }
+
+  .shell__link:hover {
+    text-decoration: underline;
   }
 
   .shell__main {
