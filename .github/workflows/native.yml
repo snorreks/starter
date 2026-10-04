@@ -497,6 +497,7 @@ jobs:
           echo "the emulator is booted"
 
       - name: Install and launch on the emulator
+        id: launch
         run: |
           set -euo pipefail
           apk="$(find "$RUNNER_TEMP/dist" -name '*.apk' | head -n 1)"
@@ -506,16 +507,51 @@ jobs:
             exit 1
           fi
           adb install -r "$apk"
-          adb shell am start -n com.example.starter/.MainActivity
+
+          # **Ask Android which package and which activity**, rather than naming
+          # them.
+          #
+          # This step hardcoded `com.example.starter/.MainActivity` and the APK
+          # installed cleanly — then `am start` answered `Activity class
+          # {com.example.starter/com.example.starter.MainActivity} does not
+          # exist`. The reason is `bundle.android.debugApplicationIdSuffix:
+          # ".debug"` in `tauri.conf.json`: the debug build installs as
+          # `com.example.starter.debug`, precisely so it can sit beside a release
+          # build on one phone. A hardcoded base id launches nothing at all, and
+          # the error names a class that does exist — in the *other* package.
+          package="$(adb shell pm list packages | tr -d '\r' | sed -n 's/^package:\(com\.example\.starter.*\)$/\1/p' | head -n 1)"
+          if [ -z "$package" ]; then
+            echo "::error::the APK installed but no com.example.starter* package is registered"
+            adb shell pm list packages | tr -d '\r' | grep -i starter || true
+            exit 1
+          fi
+          echo "installed as: $package"
+
+          # `resolve-activity` is the platform's own answer, so the launcher
+          # activity is whatever the manifest declares rather than a name typed
+          # here. `-c LAUNCHER` is what picks the entry point out of several.
+          activity="$(adb shell cmd package resolve-activity --brief -c android.intent.category.LAUNCHER "$package" | tr -d '\r' | tail -n 1)"
+          case "$activity" in
+            */*) echo "launcher activity: $activity" ;;
+            *)
+              echo "::error::Android reports no launcher activity for $package"
+              echo "$activity"
+              exit 1
+              ;;
+          esac
+
+          adb shell am start -W -n "$activity"
           sleep 10
           # The activity is running: a launch that fails leaves no resumed window.
-          if ! adb shell dumpsys activity activities | grep -q 'com.example.starter/.MainActivity'; then
-            echo "::error::the app was installed but no activity is resumed"
+          if ! adb shell dumpsys activity activities | grep -q "$activity"; then
+            echo "::error::the app was installed but $activity is not resumed"
             adb shell dumpsys activity activities | head -n 60
             adb logcat -d -s chromium:* AndroidRuntime:E | tail -n 60 || true
             exit 1
           fi
-          echo "the app is installed and its activity is resumed on an Android ${ANDROID_API:-34} emulator"
+          echo "the app is installed and $activity is resumed on an Android ${ANDROID_API:-34} emulator"
+          echo "package=$package" >> "$GITHUB_OUTPUT"
+          echo "activity=$activity" >> "$GITHUB_OUTPUT"
 
       - name: The Android back button navigates the app and does not kill it
         run: |
@@ -525,9 +561,15 @@ jobs:
           # press from a deep link returns to the previous screen instead.
           adb shell input keyevent KEYCODE_BACK
           sleep 3
+          # The package is the resolved one, for the same reason as above: the
+          # debug build is `com.example.starter.debug`.
           adb shell input keyevent KEYCODE_BACK
           sleep 3
-          echo "KEYCODE_BACK delivered twice without the shell hanging"
+          if ! adb shell pm list packages | tr -d '\r' | grep -q "^package:${{ steps.launch.outputs.package }}$"; then
+            echo "::error::the app is no longer registered after two back presses"
+            exit 1
+          fi
+          echo "KEYCODE_BACK delivered twice; ${{ steps.launch.outputs.package }} is still installed"
 
       - name: Record what this run did and did not prove
         run: |
