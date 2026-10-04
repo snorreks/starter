@@ -289,24 +289,62 @@ const ORIGIN_PATTERN = /https?:\/\/[a-z0-9.-]+(?::\d{1,5})?/gi;
 /**
  * Hosts that are never an API origin, however they appear in a bundle.
  *
- * XML namespace URIs are identifiers, not locations. `http://www.w3.org/…`
- * appears in every SvelteKit or Tauri bundle that ships an SVG namespace or a
- * `viewBox`, and reporting it would make this check fail on every correct build
- * — which is the shortest route to somebody deleting the check.
+ * These are identifiers, not locations:
  *
- * `example.com` and its subdomains are reserved by RFC 2606 for exactly this:
- * documentation and fixtures. A bundle carrying one is a fixture, and a fixture
- * is not somebody's real deployment.
+ *   * `www.w3.org` — an SVG namespace or a `viewBox`, in every bundle that ships
+ *     one.
+ *   * `schema.tauri.app` — the `$schema` of the **embedded `tauri.conf.json`**.
+ *     CI found this one: the Tauri CLI copies the config into the app's assets,
+ *     so every APK and AAB carries it. It is the schema of the file, in the same
+ *     way `www.w3.org` is the schema of an SVG.
+ *   * `example.com` and subdomains — reserved by RFC 2606 for documentation and
+ *     fixtures.
+ *
+ * Excluding a real deployment from this list would defeat the check, so it is
+ * named rather than pattern-matched and tested from both sides: each entry has a
+ * case that must be ignored and a case that must still be reported.
  */
-const NEVER_AN_API_HOST = new Set(['www.w3.org', 'example.com']);
+const NEVER_AN_API_HOST = new Set(['www.w3.org', 'schema.tauri.app']);
 
-/** Is this host a documentation or namespace host rather than a deployment? */
-const isNonApiHost = (candidate: string): boolean => {
-  const host = new URL(candidate).hostname;
-  if (NEVER_AN_API_HOST.has(host)) {
-    return true;
+/**
+ * Loopback: the development `devUrl` the config carries, and nothing else.
+ *
+ * Stored bare. `new URL('http://[::1]:5173').hostname` is `'[::1]'` — brackets
+ * included — so an IPv6 entry kept without them would never match, and the IPv6
+ * loopback would be reported as a foreign deployment.
+ */
+const LOOPBACK_HOSTS = new Set(['127.0.0.1', 'localhost', '::1']);
+
+/**
+ * Is this URL something other than a deployment this client might call?
+ *
+ * `expected` is passed in rather than assumed, because a development build *can*
+ * legitimately be configured against loopback — and that origin must still be
+ * found, not excluded.
+ */
+export const isForeignOrigin = (candidate: string, expected: string): boolean => {
+  if (candidate === expected) {
+    return false;
   }
-  return host === 'example.com' || host.endsWith('.example.com');
+  let host: string;
+  try {
+    host = new URL(candidate).hostname.replace(/^\[|\]$/g, '');
+  } catch {
+    return false;
+  }
+  if (NEVER_AN_API_HOST.has(host)) {
+    return false;
+  }
+  if (host === 'example.com' || host.endsWith('.example.com')) {
+    return false;
+  }
+  // A packaged app cannot reach the developer's machine, and `tauri.conf.json`
+  // carries `build.devUrl` — `http://127.0.0.1:1420` — into every artifact by
+  // design. It is a *development* address, not the one the client calls.
+  if (LOOPBACK_HOSTS.has(host)) {
+    return false;
+  }
+  return true;
 };
 
 export interface VerifyOptions {
@@ -443,11 +481,9 @@ const scanContainer = (
       if (candidate.startsWith('http://ipc.localhost') || candidate.startsWith('http://asset.localhost')) {
         continue;
       }
-      // Namespace URIs and RFC 2606 documentation hosts. See NEVER_AN_API_HOST.
-      if (isNonApiHost(candidate)) {
-        continue;
+      if (isForeignOrigin(candidate, expected)) {
+        foreign.add(candidate);
       }
-      foreign.add(candidate);
     }
   }
 

@@ -15,6 +15,7 @@ import { join } from 'node:path';
 import { afterAll, describe, expect, test } from 'bun:test';
 import {
   artifactName,
+  isForeignOrigin,
   parseArgs,
   parseArtifactName,
   readZip,
@@ -236,7 +237,9 @@ describe('origin verification reads the bytes', () => {
           data:
             'const ns = "http://www.w3.org/2000/svg"; ' +
             'const docs = "https://example.com/api"; ' +
-            'const sub = "http://cdn.example.com/assets";',
+            'const sub = "http://cdn.example.com/assets"; ' +
+            'const schema = "https://schema.tauri.app/config/2"; ' +
+            'const devUrl = "http://127.0.0.1:1420";',
         },
       ]),
     );
@@ -425,5 +428,63 @@ describe('argument parsing', () => {
     expect(parsed.failure).toBeNull();
     expect(parsed.dirs).toEqual(['android', 'aarch64', 'apk', 'unsigned']);
     expect(parsed.flags.size).toBe(0);
+  });
+});
+
+describe('what counts as a foreign origin', () => {
+  const expected = 'https://api.example.test';
+
+  test('another deployment is reported, whatever it is called', () => {
+    // The whole point of the check. `.test` is not RFC 2606, and a real host is
+    // not a documentation host.
+    for (const host of [
+      'https://staging.example.test',
+      'https://api.prod.invalid',
+      'https://someone-elses-api.example.org',
+    ]) {
+      expect(isForeignOrigin(host, expected)).toBe(true);
+    }
+  });
+
+  test('the expected origin is never foreign to itself', () => {
+    expect(isForeignOrigin(expected, expected)).toBe(false);
+  });
+
+  test('loopback is only ignored because a packaged app cannot reach it', () => {
+    // And it is ignored *only* when it is not the expected origin — a development
+    // build legitimately targets loopback, and that must still be found.
+    for (const loopback of ['http://127.0.0.1:1420', 'http://localhost:5173', 'http://[::1]:5173']) {
+      expect(isForeignOrigin(loopback, expected)).toBe(false);
+      expect(isForeignOrigin(loopback, loopback)).toBe(false);
+    }
+  });
+
+  test('a loopback-looking name is not loopback', () => {
+    // `127.0.0.1.evil.invalid` is an ordinary DNS name somebody controls. Note
+    // the `.example.com` forms are deliberately *not* here: they really are
+    // RFC 2606 documentation hosts, and the rule below already and correctly
+    // treats them as such.
+    expect(isForeignOrigin('http://127.0.0.1.evil.invalid', expected)).toBe(true);
+    expect(isForeignOrigin('http://localhost.evil.invalid', expected)).toBe(true);
+    // And the documentation rule covers those, lookalike or not.
+    expect(isForeignOrigin('http://127.0.0.1.example.com', expected)).toBe(false);
+  });
+
+  test('the identifier hosts are named, not pattern-matched', () => {
+    for (const identifier of [
+      'http://www.w3.org/2000/svg',
+      'https://schema.tauri.app/config/2',
+      'https://example.com/anything',
+    ]) {
+      expect(isForeignOrigin(identifier, expected)).toBe(false);
+    }
+    // …and a lookalike is still caught.
+    expect(isForeignOrigin('https://schema.tauri.app.evil.invalid/config', expected)).toBe(true);
+    expect(isForeignOrigin('https://www.w3.org.evil.invalid/', expected)).toBe(true);
+  });
+
+  test('a development origin on a LAN is still reported', () => {
+    // The dev-only LAN allowance is exactly the case this must not blind itself to.
+    expect(isForeignOrigin('http://192.168.1.20:8787', expected)).toBe(true);
   });
 });

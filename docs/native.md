@@ -416,13 +416,34 @@ It refuses an artifact whose name does not carry its target, revision **and
 signing marker**, one from a different revision or a different platform, a
 directory with no package in it, a package with no frontend in it, a package that
 does not contain the expected origin, and — the one that catches a real mistake —
-a package containing a *second* origin. Namespace URIs (`http://www.w3.org/…`)
-and RFC 2606 documentation hosts are excluded, because a check that fires on them
-fails on every correct build and is the shortest route to deleting it.
+a package containing a **second** deployment.
 
-Every directory on the command line is checked, and the results are combined.
-`bun run native:android -- build --apk` and `… --aab` produce two directories, and
-checking only the first would certify a release bundle nobody read. The reader is a small ZIP implementation with a CRC check, not a
+The exclusions are named, because CI found all three of them by shipping real
+artifacts:
+
+| Excluded | Why it is in a correct bundle |
+|---|---|
+| `http://www.w3.org/…` | An SVG namespace or a `viewBox`. |
+| `https://schema.tauri.app` | The `$schema` of the **embedded `tauri.conf.json`** — the Tauri CLI copies the config into the app's assets. |
+| `http://127.0.0.1:1420` | That same config's `build.devUrl`. A packaged app cannot reach the developer's machine. |
+| `*.example.com` | RFC 2606 documentation hosts. |
+
+A check that fires on any of those fails on every correct build, and the fix
+everybody reaches for is deleting it. Each exclusion is named rather than
+pattern-matched and tested from both sides — `schema.tauri.app.evil.invalid` and
+`127.0.0.1.evil.invalid` are still reported — so it cannot become a hole somebody
+walks a real deployment through.
+
+**What this does not prove.** A grep cannot tell *which* URL in a bundle is the one
+the client calls. The strong version reads the packaged CSP's `connect-src` and
+asserts it names exactly one remote origin; that is not implemented, and it is the
+obvious next control.
+
+Every directory on the command line is checked, and the results are combined —
+`--apk` and `--aab` produce two, and checking only the first would certify a
+release bundle nobody read. And the check runs **after** the rename, on the names
+this repository ships: Gradle's own output is `app-universal-release.aab`, which
+says nothing about a target or a revision. The reader is a small ZIP implementation with a CRC check, not a
 shelled-out `unzip`: `unzip` is absent from a Nix dev shell half the time, and a
 verification step that skips when its tool is missing is worse than no
 verification.
