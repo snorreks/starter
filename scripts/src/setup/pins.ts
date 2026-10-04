@@ -110,7 +110,11 @@ export const checkMirrors = (root = REPO_ROOT): MirrorDrift[] => {
   }
 
   // Workflow-level env values are literal mirrors of the toolchain pin.
-  for (const mirror of ['.github/workflows/ci.yml', '.github/workflows/native.yml']) {
+  for (const mirror of [
+    '.github/workflows/ci.yml',
+    '.github/workflows/native.yml',
+    '.github/workflows/native-release.yml',
+  ]) {
     const workflowFile = join(root, mirror);
     if (!existsSync(workflowFile)) {
       continue;

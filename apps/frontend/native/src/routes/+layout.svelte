@@ -25,7 +25,8 @@ import {
   nativeNavigation,
   sessionState,
 } from '#lib/composition/session.ts';
-import { browserLifecycleEvents, createAppLifecycle } from '#lib/platform/app_lifecycle.ts';
+import { browserLifecycleEvents } from '#lib/platform/app_lifecycle.ts';
+import { createAppLifecycleViewModel } from '#lib/viewmodels/app_lifecycle_view_model.ts';
 
 type Props = { children: Snippet };
 let { children }: Props = $props();
@@ -35,10 +36,9 @@ let signOutError = $state('');
 /**
  * True while the OS has taken the window away or the device has no network.
  *
- * Shown, not acted on. The recovery is a single tap rather than an automatic
- * retry, for two reasons that are both about correctness rather than taste: a
- * retry of a request that may have been received duplicates it, and a phone that
- * regains connectivity in a lift would otherwise hammer a server it cannot reach.
+ * Rendered, not acted on, and *decided* elsewhere: the ViewModel owns when a
+ * refresh is safe and what a phase means. This is the line that draws the answer
+ * it gives back. See `#lib/viewmodels/app_lifecycle_view_model.ts`.
  */
 let unreachable = $state(false);
 
@@ -53,26 +53,28 @@ onMount(() => {
   // Suspend, resume and connectivity. A phone is the first platform here where
   // the page outlives several minutes of inattention, and the interesting events
   // are the ones that fire while nothing is on screen.
-  const events = browserLifecycleEvents();
-  const lifecycle =
-    events === null
-      ? null
-      : createAppLifecycle({
-          events,
-          onChange: (phase) => {
-            unreachable = phase !== 'active';
-            // Coming back is the one moment a refresh is safe and correct: the
-            // session may have been revoked on another device, and the list on
-            // screen may be hours old.
-            if (phase === 'active') {
-              void authSessionService.refresh();
-            }
-          },
-        });
+  //
+  // The View owns the listeners and the markup. It does not decide when a
+  // refresh is safe: that is the ViewModel's, and the session service is
+  // injected into it from this composition root rather than imported by it.
+  const viewModel = createAppLifecycleViewModel({
+    events: browserLifecycleEvents(),
+    refreshSession: () => {
+      void authSessionService.refresh();
+    },
+  });
+
+  // Subscribe before start, so an app restored already-suspended renders its
+  // state immediately instead of waiting for a transition that may not come.
+  const unsubscribePhase = viewModel.subscribe(() => {
+    unreachable = viewModel.unreachable();
+  });
+  const stop = viewModel.start();
 
   return () => {
     unsubscribe();
-    lifecycle?.dispose();
+    unsubscribePhase();
+    stop();
   };
 });
 

@@ -212,12 +212,23 @@ export interface ArtifactNameInput {
 
 export const artifactName = (input: ArtifactNameInput): string => {
   const revision = input.revision.slice(0, 12);
-  const marker = input.signed ? '' : '-unsigned';
-  return `starter-${input.platform}-${input.target}-${revision}${marker}.${input.extension}`;
+  // The marker is always present. `signed` by omission would make an artifact
+  // that somebody renamed by hand indistinguishable from one this function
+  // produced, and the parser could not tell "signed" from "nobody said".
+  return `starter-${input.platform}-${input.target}-${revision}-${
+    input.signed ? 'signed' : 'unsigned'
+  }.${input.extension}`;
 };
 
+/**
+ * The signing marker is a required group, not an optional one.
+ *
+ * With `?` on the group, a name with no marker parsed as *signed* — so a file
+ * named by a script that never thought about signing would be read as a signed
+ * release artifact by the very check that exists to tell the two apart.
+ */
 const NAME_PATTERN =
-  /^starter-(?<platform>[a-z]+)-(?<target>[a-z0-9_-]+)-(?<revision>[0-9a-f]{7,40})(?<signing>-unsigned|-signed)?\.(?<extension>apk|aab|ipa)$/;
+  /^starter-(?<platform>[a-z]+)-(?<target>[a-z0-9_-]+)-(?<revision>[0-9a-f]{7,40})-(?<signing>signed|unsigned)\.(?<extension>apk|aab|ipa)$/;
 
 export interface ParsedArtifactName {
   readonly platform: string;
@@ -238,10 +249,9 @@ export const parseArtifactName = (name: string): ParsedArtifactName | null => {
     platform: groups['platform'] ?? '',
     target: groups['target'] ?? '',
     revision: groups['revision'] ?? '',
-    // Absent marker means signed: a release lane that produced a signed artifact
-    // says so positively, and a name with no marker at all is refused above
-    // rather than read as either. This branch exists only for `-signed`.
-    signed: groups['signing'] !== '-unsigned',
+    // The marker is required by the pattern above, so this reads what the name
+    // says rather than inferring it from its absence.
+    signed: groups['signing'] === 'signed',
     extension: (groups['extension'] ?? 'apk') as ArtifactExtension,
   };
 };
@@ -275,6 +285,29 @@ export interface ArtifactProblem {
 
 /** Absolute `http(s)://host[:port]` strings, which is what an API origin is. */
 const ORIGIN_PATTERN = /https?:\/\/[a-z0-9.-]+(?::\d{1,5})?/gi;
+
+/**
+ * Hosts that are never an API origin, however they appear in a bundle.
+ *
+ * XML namespace URIs are identifiers, not locations. `http://www.w3.org/…`
+ * appears in every SvelteKit or Tauri bundle that ships an SVG namespace or a
+ * `viewBox`, and reporting it would make this check fail on every correct build
+ * — which is the shortest route to somebody deleting the check.
+ *
+ * `example.com` and its subdomains are reserved by RFC 2606 for exactly this:
+ * documentation and fixtures. A bundle carrying one is a fixture, and a fixture
+ * is not somebody's real deployment.
+ */
+const NEVER_AN_API_HOST = new Set(['www.w3.org', 'example.com']);
+
+/** Is this host a documentation or namespace host rather than a deployment? */
+const isNonApiHost = (candidate: string): boolean => {
+  const host = new URL(candidate).hostname;
+  if (NEVER_AN_API_HOST.has(host)) {
+    return true;
+  }
+  return host === 'example.com' || host.endsWith('.example.com');
+};
 
 export interface VerifyOptions {
   readonly dir: string;
@@ -327,8 +360,9 @@ export const verifyArtifacts = (options: VerifyOptions): ArtifactProblem[] => {
         message: `"${candidate}" does not say what it is.`,
         remedy:
           'Rename it with artifactName(): product, platform, target, the first 12 ' +
-          'characters of the source revision, and `unsigned` when it is not signed. ' +
-          'A file nobody can attribute to a target is not a release artifact.',
+          'characters of the source revision, and the literal `-signed` or ' +
+          '`-unsigned`. A file nobody can attribute to a target, or whose signing ' +
+          'state nothing states, is not a release artifact.',
       });
       continue;
     }
@@ -409,6 +443,10 @@ const scanContainer = (
       if (candidate.startsWith('http://ipc.localhost') || candidate.startsWith('http://asset.localhost')) {
         continue;
       }
+      // Namespace URIs and RFC 2606 documentation hosts. See NEVER_AN_API_HOST.
+      if (isNonApiHost(candidate)) {
+        continue;
+      }
       foreign.add(candidate);
     }
   }
@@ -438,11 +476,12 @@ const scanContainer = (
 
 // ── Entry point ──────────────────────────────────────────────────────────────
 
-const USAGE = `check:artifacts <dir> --origin <url> --revision <sha> --platform <android|ios>
+const USAGE = `check:artifacts <dir> [<dir> …] --origin <url> --revision <sha> --platform <android|ios>
 check:artifacts --name <platform> <target> <apk|aab|ipa> <signed|unsigned>
 
-Verifies that every .apk/.aab/.ipa in <dir> names its platform, target and source
-revision, says whether it is signed, and actually contains the expected API origin.
+Verifies that every .apk/.aab/.ipa in each <dir> names its platform, target and
+source revision, says whether it is signed, and actually contains the expected
+API origin.
 
 \`--name\` prints the one spelling of a file name, so a workflow renames the
 artifact with the same function that checks it. Two implementations of a naming
@@ -452,15 +491,67 @@ scheme is how a lane starts uploading files nothing can attribute.
     -- src-tauri/gen/android/app/build/outputs/apk/release \\
     --origin "\${VITE_NATIVE_API_ORIGIN}" --revision "\${GITHUB_SHA}" --platform android`;
 
-export const main = (args: readonly string[]): number => {
-  const positional = args.filter((arg) => !arg.startsWith('--'));
-  const flag = (name: string): string | undefined => {
-    const at = args.indexOf(`--${name}`);
-    return at === -1 ? undefined : args[at + 1];
-  };
+/**
+ * Split argv into directories and flags.
+ *
+ * A naive `filter((arg) => !arg.startsWith('--'))` treats every flag *value* as a
+ * directory — `--origin https://api.example.test` yields one "directory" that is
+ * a URL — and then checks the wrong one while reporting success about it. So the
+ * flags that take a value consume it here, and `--` is dropped rather than being
+ * handed to a path resolver as a file called `--`.
+ */
+const VALUE_FLAGS: readonly string[] = ['--origin', '--revision', '--platform'];
 
-  const nameAt = args.indexOf('--name');
-  if (nameAt !== -1) {
+export const parseArgs = (
+  args: readonly string[],
+): { dirs: string[]; flags: Map<string, string>; failure: string | null } => {
+  const dirs: string[] = [];
+  const flags = new Map<string, string>();
+  let naming = false;
+
+  for (let index = 0; index < args.length; index += 1) {
+    const arg = args[index] ?? '';
+
+    if (arg === '--') {
+      continue;
+    }
+    if (naming || !arg.startsWith('--')) {
+      dirs.push(arg);
+      continue;
+    }
+    if (arg === '--name') {
+      // Everything after this is the name's own positional arguments, not
+      // directories to scan.
+      naming = true;
+      continue;
+    }
+
+    if (!VALUE_FLAGS.includes(arg)) {
+      return { dirs, flags, failure: `Unknown flag "${arg}".` };
+    }
+    const value = args[index + 1] ?? '';
+    if (value.length === 0 || value.startsWith('--')) {
+      return { dirs, flags, failure: `${arg} needs a value.` };
+    }
+    index += 1;
+    flags.set(arg, value);
+  }
+
+  return { dirs, flags, failure: null };
+};
+
+export const main = (args: readonly string[]): number => {
+  const parsed = parseArgs(args);
+
+  if (parsed.failure !== null) {
+    process.stderr.write(`${parsed.failure}\n\n${USAGE}\n`);
+    return 2;
+  }
+  const positional = parsed.dirs;
+  const flag = (name: string): string | undefined => parsed.flags.get(name);
+
+  if (args.includes('--name')) {
+    const nameAt = args.indexOf('--name');
     const [platform, target, extension, signing] = args
       .slice(nameAt + 1)
       .filter((arg) => !arg.startsWith('--'));
@@ -491,12 +582,16 @@ export const main = (args: readonly string[]): number => {
     return 0;
   }
 
-  const dir = positional[0];
-  const expectedOrigin = flag('origin');
-  const revision = flag('revision');
-  const platform = flag('platform');
+  const expectedOrigin = flag('--origin');
+  const revision = flag('--revision');
+  const platform = flag('--platform');
 
-  if (dir === undefined || expectedOrigin === undefined || revision === undefined || platform === undefined) {
+  if (
+    positional.length === 0 ||
+    expectedOrigin === undefined ||
+    revision === undefined ||
+    platform === undefined
+  ) {
     process.stderr.write(`${USAGE}\n`);
     return 2;
   }
@@ -505,18 +600,20 @@ export const main = (args: readonly string[]): number => {
     return 2;
   }
 
-  const problems = verifyArtifacts({
-    dir,
-    expectedOrigin,
-    revision,
-    platform,
-  });
+  // Every directory, combined. One lane's `apk/debug` and `bundle/release` are
+  // the same claim about the same build, and checking only the first is how a
+  // release `.aab` with the wrong origin ships next to a verified `.apk`.
+  const problems = positional.flatMap((dir) =>
+    verifyArtifacts({ dir, expectedOrigin, revision, platform }),
+  );
 
   if (problems.length === 0) {
-    process.stdout.write(`artifacts ok: ${expectedOrigin} in every artifact under ${dir}\n`);
+    process.stdout.write(
+      `artifacts ok: ${expectedOrigin} in every artifact under ${positional.join(', ')}\n`,
+    );
     return 0;
   }
-  process.stderr.write(`artifact check failed for ${dir}\n`);
+  process.stderr.write(`artifact check failed for ${positional.join(', ')}\n`);
   for (const problem of problems) {
     process.stderr.write(`  [${problem.code}] ${problem.message}\n      ${problem.remedy}\n`);
   }

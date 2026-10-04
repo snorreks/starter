@@ -323,6 +323,50 @@ describe('the vocabulary comes from the CLI, and only from the CLI', () => {
   });
 });
 
+describe('a flag with no usable value is refused', () => {
+  test('--target with nothing after it, or another flag, is not forwarded', () => {
+    // `--host ''` would reach the CLI as "ask the user", and `--target --apk`
+    // would consume the next *flag* as an ABI and report "not a known target" —
+    // a diagnosis with nothing to do with what was typed.
+    for (const args of [
+      ['build', '--target'],
+      ['build', '--target', ''],
+      ['build', '--target', '--aab'],
+    ]) {
+      const parsed = parseMobileArgs('android', args);
+      expect(parsed.ok).toBe(false);
+      if (!parsed.ok) {
+        expect(parsed.message).toBe('--target needs a value.');
+        expect(parsed.remedy).toContain('rather than forwarded as an empty string');
+      }
+    }
+  });
+
+  test('a value that only looks blank is still a value', () => {
+    // A device name may legitimately contain spaces. Only emptiness and a leading
+    // `--` are refusals.
+    const parsed = parseMobileArgs('android', ['dev', 'Pixel 8 Pro']);
+    expect(parsed.ok).toBe(true);
+  });
+
+  test('--host, --export-method, --build-number, --port and --features behave alike', () => {
+    for (const [platform, flag] of [
+      ['android', '--features'],
+      ['android', '--host'],
+      ['ios', '--export-method'],
+      ['ios', '--build-number'],
+      ['ios', '--port'],
+      ['ios', '--additional-watch-folders'],
+    ] as const) {
+      const parsed = parseMobileArgs(platform, ['build', flag]);
+      // `--host` is dev-only and `--additional-watch-folders` is dev-only, so on
+      // `build` those are refused for being wrong *for this subcommand*. Either
+      // way the command must not be forwarded.
+      expect(parsed.ok).toBe(false);
+    }
+  });
+});
+
 describe('a second --config is refused rather than merged last', () => {
   test('it would replace the CSP this launcher writes, silently', () => {
     const parsed = parseMobileArgs('android', ['build', '--config', '{"app":{}}']);

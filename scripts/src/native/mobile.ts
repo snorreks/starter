@@ -536,6 +536,8 @@ export interface MobileParseFailure {
   readonly remedy: string;
 }
 
+/** A missing value, as a distinct shape so `null` never means "the value was null". */
+
 /**
  * Parse `native <platform> <mode> [flags]`.
  *
@@ -635,30 +637,69 @@ export const parseMobileArgs = (
       };
     }
 
-    // Reads the next argument and steps past it. A closure rather than an
-    // expression so `index` moves in a statement: Biome's `noAssignInExpressions`
-    // is right that `rest[(index += 1)]` is hard to read, and a rule that is
-    // right often enough is a rule worth obeying everywhere.
-    const value = (): string => {
+    /**
+     * Reads the next argument and steps past it, or `undefined` when there is
+     * nothing usable there.
+     *
+     * Refusing rather than substituting `''` is the point. `--host` with nothing
+     * after it would otherwise become `--host ''`, which the CLI accepts and reads
+     * as "ask the user", and `--target --apk` would consume the next *flag* as an
+     * ABI and report "not a known target" — a reason that has nothing to do with
+     * what the operator typed.
+     */
+    const value = (): string | undefined => {
       const next = rest[index + 1] ?? '';
+      if (next.trim().length === 0 || next.startsWith('--')) {
+        return undefined;
+      }
       index += 1;
       return next;
     };
 
+    const required = (read: () => string | undefined): string | MobileParseFailure => {
+      const outcome = read();
+      return (
+        outcome ?? {
+          ok: false,
+          message: `${arg} needs a value.`,
+          remedy:
+            `\`tauri ${platform} ${mode}\` reads ${arg}'s value from the next argument. ` +
+            'A missing one, an empty one, or another flag in its place is refused here ' +
+            'rather than forwarded as an empty string the CLI would interpret.',
+        }
+      );
+    };
+
     switch (arg) {
-      case '--target':
-        parsed.targets = [...(parsed.targets ?? []), value()];
+      case '--target': {
+        const target = required(value);
+        if (typeof target !== 'string') {
+          return target;
+        }
+        parsed.targets = [...(parsed.targets ?? []), target];
         break;
-      case '--features':
-        parsed.features = value()
-          .split(',')
-          .filter((entry) => entry.length > 0);
+      }
+      case '--features': {
+        const features = required(value);
+        if (typeof features !== 'string') {
+          return features;
+        }
+        parsed.features = features.split(',').filter((entry) => entry.length > 0);
         break;
-      case '--host':
-        parsed.host = value();
+      }
+      case '--host': {
+        const host = required(value);
+        if (typeof host !== 'string') {
+          return host;
+        }
+        parsed.host = host;
         break;
+      }
       case '--export-method': {
-        const method = value();
+        const method = required(value);
+        if (typeof method !== 'string') {
+          return method;
+        }
         if (!(IOS_EXPORT_METHODS as readonly string[]).includes(method)) {
           return {
             ok: false,
@@ -670,7 +711,10 @@ export const parseMobileArgs = (
         break;
       }
       case '--build-number': {
-        const raw = value();
+        const raw = required(value);
+        if (typeof raw !== 'string') {
+          return raw;
+        }
         const buildNumber = Number(raw);
         if (!/^\d+$/.test(raw) || !Number.isSafeInteger(buildNumber) || buildNumber < 1) {
           return {
@@ -727,11 +771,19 @@ export const parseMobileArgs = (
       case '--exit-on-panic':
         parsed.exitOnPanic = true;
         break;
-      case '--additional-watch-folders':
-        parsed.additionalWatchFolders = [...(parsed.additionalWatchFolders ?? []), value()];
+      case '--additional-watch-folders': {
+        const folder = required(value);
+        if (typeof folder !== 'string') {
+          return folder;
+        }
+        parsed.additionalWatchFolders = [...(parsed.additionalWatchFolders ?? []), folder];
         break;
+      }
       case '--port': {
-        const raw = value();
+        const raw = required(value);
+        if (typeof raw !== 'string') {
+          return raw;
+        }
         const port = Number(raw);
         if (!/^\d+$/.test(raw) || port < 1 || port > 65_535) {
           return {

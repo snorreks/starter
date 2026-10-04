@@ -69,6 +69,24 @@ describe('the API origin a packaged build talks to', () => {
     ).toThrow(/only for/);
   });
 
+  test('a device host cannot carry a scheme that is not http or https', () => {
+    // `URL` accepts `file:`, `ws:` and `data:`, and `.origin` is the string
+    // `"null"` for the first two — so without this check a device host would
+    // return `"null"` and produce a client that addresses nothing.
+    // `file://host` rather than `file:///etc/passwd`: the latter is refused a
+    // line earlier for carrying a path, which is a different and also correct
+    // message. This test is about the scheme.
+    for (const raw of ['file://host', 'ws://127.0.0.1:5173', 'ftp://example.test']) {
+      expect(() => resolveApiOrigin({ raw, dev: true, devHost: '192.168.1.20' })).toThrow(
+        NativeConfigError,
+      );
+    }
+    // And the message names the scheme, not just the host.
+    expect(() =>
+      resolveApiOrigin({ raw: 'file://host', dev: true, devHost: '192.168.1.20' }),
+    ).toThrow(/Only http and https/);
+  });
+
   test('a device host must be a bare host, so it cannot smuggle a port or a path', () => {
     for (const host of ['http://192.168.1.20', '192.168.1.20:5173', 'host/path', '-bad']) {
       expect(() =>

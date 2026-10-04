@@ -15,6 +15,7 @@ import { join } from 'node:path';
 import { afterAll, describe, expect, test } from 'bun:test';
 import {
   artifactName,
+  parseArgs,
   parseArtifactName,
   readZip,
   verifyArtifacts,
@@ -96,7 +97,7 @@ describe('artifact names carry their provenance', () => {
     ).toBe(`starter-android-aarch64-${REVISION.slice(0, 12)}-unsigned.apk`);
   });
 
-  test('a signed artifact says so by omission, and an unsigned one never omits it', () => {
+  test('a signed artifact says so, in the name', () => {
     const signed = artifactName({
       platform: 'ios',
       target: 'aarch64',
@@ -104,8 +105,16 @@ describe('artifact names carry their provenance', () => {
       extension: 'ipa',
       signed: true,
     });
-    expect(signed).toBe(`starter-ios-aarch64-${REVISION.slice(0, 12)}.ipa`);
+    expect(signed).toBe(`starter-ios-aarch64-${REVISION.slice(0, 12)}-signed.ipa`);
     expect(parseArtifactName(signed)?.signed).toBe(true);
+  });
+
+  test('a name with no signing marker is refused, not read as signed', () => {
+    // The failure this prevents: an optional marker group parses an absent marker
+    // as "not -unsigned", so a file nobody thought about signing is read as a
+    // signed release artifact by the check that exists to tell them apart.
+    expect(parseArtifactName(`starter-android-aarch64-${REVISION.slice(0, 12)}.apk`)).toBeNull();
+    expect(parseArtifactName(`starter-ios-aarch64-${REVISION.slice(0, 12)}.ipa`)).toBeNull();
   });
 
   test('a name that does not say what it is is refused', () => {
@@ -114,6 +123,7 @@ describe('artifact names carry their provenance', () => {
       'starter.apk',
       `starter-android-${REVISION.slice(0, 12)}.apk`,
       `starter-android-aarch64-${REVISION.slice(0, 12)}-unsigned.zip`,
+      `starter-android-aarch64-${REVISION.slice(0, 12)}-maybe-signed.apk`,
     ]) {
       expect(parseArtifactName(name)).toBeNull();
     }
@@ -205,6 +215,62 @@ describe('origin verification reads the bytes', () => {
     expect(
       verifyArtifacts({ dir, expectedOrigin: ORIGIN, revision: REVISION, platform: 'android' }),
     ).toEqual([]);
+  });
+
+  test('a namespace URI and a documentation host are not a leaked deployment', () => {
+    // Every real bundle carries `http://www.w3.org/…` from an SVG namespace or a
+    // `viewBox`. A checker that fires on it fails on correct code, and the fix
+    // everybody reaches for is deleting the checker.
+    const name = artifactName({
+      platform: 'android',
+      target: 'aarch64',
+      revision: REVISION,
+      extension: 'apk',
+      signed: false,
+    });
+    const dir = place(
+      name,
+      apkWith([
+        {
+          name: 'assets/namespace.js',
+          data:
+            'const ns = "http://www.w3.org/2000/svg"; ' +
+            'const docs = "https://example.com/api"; ' +
+            'const sub = "http://cdn.example.com/assets";',
+        },
+      ]),
+    );
+
+    expect(
+      verifyArtifacts({ dir, expectedOrigin: ORIGIN, revision: REVISION, platform: 'android' }),
+    ).toEqual([]);
+  });
+
+  test('a real second origin is still a foreign origin', () => {
+    // `.test` is not RFC 2606, so this host is *not* excluded — and the allowance
+    // for documentation hosts must not become a hole somebody walks a real
+    // deployment through.
+    const name = artifactName({
+      platform: 'android',
+      target: 'aarch64',
+      revision: REVISION,
+      extension: 'apk',
+      signed: false,
+    });
+    const dir = place(
+      name,
+      apkWith([{ name: 'assets/other.js', data: 'const api="https://staging.example.test";' }]),
+    );
+
+    const problems = verifyArtifacts({
+      dir,
+      expectedOrigin: ORIGIN,
+      revision: REVISION,
+      platform: 'android',
+    });
+
+    expect(problems.map((problem) => problem.code)).toEqual(['foreign_origin']);
+    expect(problems[0]?.message).toContain('staging.example.test');
   });
 
   test('an artifact from another revision fails: a restored cache is not this build', () => {
@@ -299,5 +365,65 @@ describe('the fixture archives are real files', () => {
     const entries = readZip(readFileSync(join(dir, name)));
 
     expect(entries.some((entry) => entry.name === 'assets/index.html')).toBe(true);
+  });
+});
+
+describe('argument parsing', () => {
+  test('a flag value is not mistaken for a directory', () => {
+    // The failure this prevents: `filter((arg) => !arg.startsWith('--'))` treats
+    // `--origin https://api.example.test` as one directory, so the check runs
+    // against a URL, finds nothing, and reports success.
+    const parsed = parseArgs([
+      '--',
+      'build/apk',
+      '--origin',
+      'https://api.example.test',
+      '--revision',
+      REVISION,
+      '--platform',
+      'android',
+    ]);
+
+    expect(parsed.failure).toBeNull();
+    expect(parsed.dirs).toEqual(['build/apk']);
+    expect(parsed.flags.get('--origin')).toBe('https://api.example.test');
+    expect(parsed.flags.get('--platform')).toBe('android');
+  });
+
+  test('several directories are all directories', () => {
+    const parsed = parseArgs([
+      'apk/debug',
+      'bundle/release',
+      '--origin',
+      'https://api.example.test',
+      '--revision',
+      REVISION,
+      '--platform',
+      'android',
+    ]);
+
+    expect(parsed.dirs).toEqual(['apk/debug', 'bundle/release']);
+  });
+
+  test('a flag with no value is refused rather than reading the next flag', () => {
+    for (const args of [
+      ['apk', '--origin', '--revision', REVISION, '--platform', 'android'],
+      ['apk', '--origin', '', '--revision', REVISION, '--platform', 'android'],
+      ['apk', '--origin', '--revision', REVISION, '--platform', 'android'],
+    ]) {
+      expect(parseArgs(args).failure).toBe('--origin needs a value.');
+    }
+  });
+
+  test('an unknown flag is refused and named', () => {
+    expect(parseArgs(['apk', '--orign', 'https://x.test']).failure).toContain('--orign');
+  });
+
+  test('--name takes its arguments positionally and not as directories to scan', () => {
+    const parsed = parseArgs(['--name', 'android', 'aarch64', 'apk', 'unsigned']);
+
+    expect(parsed.failure).toBeNull();
+    expect(parsed.dirs).toEqual(['android', 'aarch64', 'apk', 'unsigned']);
+    expect(parsed.flags.size).toBe(0);
   });
 });

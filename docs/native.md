@@ -301,7 +301,13 @@ merge with `--config`. This template does not ship one.
 ## What a phone does while you are not looking
 
 `src/lib/platform/app_lifecycle.ts` turns the platform's own events into three
-states, and nothing else:
+states, `src/lib/viewmodels/app_lifecycle_view_model.ts` decides what each state
+*means* — including the only moment a refresh is automatic — and `+layout.svelte`
+owns the listeners and the markup. The split is the View -> ViewModel -> Services
+rule applied to a platform concern: the View never asks *whether* it may refresh,
+so a second screen cannot get that answer wrong a different way.
+
+Three states, and nothing else:
 
 | Phase | Cause | What the app does |
 |---|---|---|
@@ -342,7 +348,7 @@ Every mobile artifact is named by one function, `artifactName` in
 `apps/frontend/native/scripts/check_artifacts.ts`:
 
 ```
-starter-<platform>-<target>-<first 12 of the source revision>[-unsigned].<apk|aab|ipa>
+starter-<platform>-<target>-<first 12 of the source revision>-<signed|unsigned>.<apk|aab|ipa>
 ```
 
 and then **verified**, not just renamed:
@@ -353,11 +359,17 @@ bun run --cwd apps/frontend/native check:artifacts -- \
      --origin "$VITE_NATIVE_API_ORIGIN" --revision "$GITHUB_SHA" --platform android
 ```
 
-It refuses an artifact whose name does not carry its target and revision, one from
-a different revision or a different platform, a directory with no package in it, a
-package with no frontend in it, a package that does not contain the expected
-origin, and — the one that catches a real mistake — a package containing a
-*second* origin. The reader is a small ZIP implementation with a CRC check, not a
+It refuses an artifact whose name does not carry its target, revision **and
+signing marker**, one from a different revision or a different platform, a
+directory with no package in it, a package with no frontend in it, a package that
+does not contain the expected origin, and — the one that catches a real mistake —
+a package containing a *second* origin. Namespace URIs (`http://www.w3.org/…`)
+and RFC 2606 documentation hosts are excluded, because a check that fires on them
+fails on every correct build and is the shortest route to deleting it.
+
+Every directory on the command line is checked, and the results are combined.
+`bun run native:android -- build --apk` and `… --aab` produce two directories, and
+checking only the first would certify a release bundle nobody read. The reader is a small ZIP implementation with a CRC check, not a
 shelled-out `unzip`: `unzip` is absent from a Nix dev shell half the time, and a
 verification step that skips when its tool is missing is worse than no
 verification.

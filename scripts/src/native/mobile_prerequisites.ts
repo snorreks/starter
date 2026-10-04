@@ -172,23 +172,35 @@ export const androidPlatformCheck = (env: MobileEnvironment): Check => {
 /**
  * The NDK.
  *
- * `NDK_HOME` first, then the highest directory under `$ANDROID_HOME/ndk`, which
- * is what the CLI itself does — it sorts the installed versions and takes the
- * last. The version is compared, because an SDK carrying NDK r22 links nothing
- * this shell needs and says so as `undefined reference` from inside a linker.
+ * `NDK_HOME` first, then `ANDROID_NDK_HOME`, then the installed directories under
+ * `$ANDROID_HOME/ndk` — the first two in that order because an empty variable is
+ * an *absence of input*, not a value, and `??` alone would accept `''` as a set
+ * variable and then fall through to "no NDK" while the operator believes they
+ * configured one.
+ *
+ * The version is compared numerically. `readdirSync().sort()` is lexicographic,
+ * and the pinned CLI's own `read_dir(android_home/ndk); sort()` has the same
+ * property — which is why this checks membership of the required version rather
+ * than taking the last entry, and why it reports the whole list when the required
+ * one is not among them. An SDK carrying NDK r22 links nothing this shell needs,
+ * and says so as `undefined reference` from inside a linker.
  */
 export const androidNdkCheck = (env: MobileEnvironment): Check => {
-  const declared = env.NDK_HOME?.trim() ?? env.ANDROID_NDK_HOME?.trim();
+  const ndkHome = env.NDK_HOME?.trim();
+  const legacyNdkHome = env.ANDROID_NDK_HOME?.trim();
+  const declared = ndkHome !== undefined && ndkHome.length > 0 ? ndkHome : legacyNdkHome;
+  const declaredIn = ndkHome !== undefined && ndkHome.length > 0 ? 'NDK_HOME' : 'ANDROID_NDK_HOME';
+
   if (declared !== undefined && declared.length > 0) {
     if (!existsSync(declared)) {
       return missing(
         'android ndk',
-        `NDK_HOME=${declared} does not exist`,
-        'Point NDK_HOME at an installed NDK, or unset it and let the CLI find ' +
+        `${declaredIn}=${declared} does not exist`,
+        `Point ${declaredIn} at an installed NDK, or unset it and let the CLI find ` +
           `$ANDROID_HOME/ndk. The pinned CLI wants ${REQUIRED_NDK_VERSION}.`,
       );
     }
-    return ok('android ndk', `${declared} (NDK_HOME)`);
+    return ok('android ndk', `${declared} (${declaredIn})`);
   }
 
   const root = androidSdkRoot(env);
@@ -201,19 +213,28 @@ export const androidNdkCheck = (env: MobileEnvironment): Check => {
   }
   let versions: string[] = [];
   try {
-    versions = readdirSync(join(root, 'ndk')).sort();
+    versions = readdirSync(join(root, 'ndk'));
   } catch {
     versions = [];
   }
   if (versions.length === 0) {
     return missing(
       'android ndk',
-      'no NDK under $ANDROID_HOME/ndk and NDK_HOME is unset',
+      'no NDK under $ANDROID_HOME/ndk, and neither NDK_HOME nor ANDROID_NDK_HOME is set',
       `\`sdkmanager "ndk;${REQUIRED_NDK_VERSION}"\`, or set NDK_HOME to an installed one.`,
     );
   }
-  const newest = versions[versions.length - 1] ?? '';
-  return ok('android ndk', `${newest} (${versions.join(', ')})`);
+  // Membership, not "the newest one": lexicographic order puts `9.0.0` after
+  // `29.0.13846066`, and the required version may legitimately not be the highest
+  // one an SDK happens to carry.
+  return versions.includes(REQUIRED_NDK_VERSION)
+    ? ok('android ndk', `${REQUIRED_NDK_VERSION} (installed: ${versions.join(', ')})`)
+    : missing(
+        'android ndk',
+        `installed: ${versions.join(', ')}; ${REQUIRED_NDK_VERSION} is not among them`,
+        `The pinned CLI wants NDK ${REQUIRED_NDK_VERSION}. ` +
+          `\`sdkmanager "ndk;${REQUIRED_NDK_VERSION}"\`, or point NDK_HOME at it.`,
+      );
 };
 
 export const javaCheck = (env: MobileEnvironment): Check => {

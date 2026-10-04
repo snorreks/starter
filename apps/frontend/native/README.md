@@ -79,7 +79,7 @@ desktop toolchain.
 | `bun run native:ios -- build --export-method app-store-connect --archive-only --ci` | root | A signed archive for App Store Connect. |
 | `bun run build` | `apps/frontend/native` | The static frontend only |
 | `bun run check:bundle` | `apps/frontend/native` | Asserts the built bundle has no server code, and the web bundle has no native imports |
-| `bun run check:artifacts -- <dir> --origin <url> --revision <sha> --platform android\|ios` | `apps/frontend/native` | Asserts every `.apk`/`.aab`/`.ipa` names its target and revision, says whether it is signed, and contains the expected API origin and no other |
+| `bun run check:artifacts -- <dir> [<dir> …] --origin <url> --revision <sha> --platform android\|ios` | `apps/frontend/native` | Asserts every `.apk`/`.aab`/`.ipa` in **every** directory names its target, revision and signing marker, and contains the expected API origin and no other |
 | `bun run check:artifacts -- --name <platform> <target> <ext> <signed\|unsigned>` | `apps/frontend/native` | Prints the one spelling of an artifact name, so a workflow renames with the same function that later checks it |
 | `bun run test` | `apps/frontend/native` | Unit lane: config, transport (JSON **and** byte path), vault, URL allowance, window activity, bundle control |
 | `cargo fmt --check`, `cargo clippy --locked --all-targets -- -D warnings`, `cargo test --locked` | `apps/frontend/native/src-tauri` | The Rust shell |
@@ -96,6 +96,7 @@ desktop toolchain.
 | Mobile argv and refusals | `bun run --cwd scripts test` (`tests/native_mobile.test.ts`) | Asserted on a machine with no SDK: exact argv, wrong flags, iOS on Linux |
 | Committed mobile config | `bun run --cwd scripts test` (`tests/mobile_platform_config.test.ts`) | No cleartext/ATS exception, no `infoPlist`, no window minimum |
 | Lifecycle | `bun run --cwd apps/frontend/native test` (`app_lifecycle.test.ts`) | Suspend, resume, offline, disposal, on a real `EventTarget` |
+| Lifecycle decision | `bun run --cwd apps/frontend/native test` (`app_lifecycle_view_model.test.ts`) | When a refresh is automatic, and what is rendered while it is not |
 | Artifacts | `bun run --cwd apps/frontend/native test` (`check_artifacts.test.ts`) | Real ZIP containers, a corrupted fixture, a wrong origin, a wrong revision |
 | Android APK/AAB + emulator launch | `.github/workflows/native.yml` `android` | `adb install` + `am start` + `dumpsys`; the induced-failure step proves exit codes propagate |
 | iOS simulator build + launch | `.github/workflows/native.yml` `ios` on `macos-14` | `xcrun simctl install` + `launch` |

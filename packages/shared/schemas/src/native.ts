@@ -119,6 +119,17 @@ export const resolveApiOrigin = ({ raw, dev, devHost }: ResolveOriginOptions): s
           'VITE_NATIVE_API_ORIGIN.',
       );
     }
+    // The scheme is checked before the host is moved. `URL` accepts `file:`,
+    // `ws:` and `data:`, and `origin` is `"null"` for the first two — so a
+    // non-http origin would otherwise sail through a branch whose whole job is to
+    // produce a reachable https/http origin.
+    if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') {
+      throw new NativeConfigError(
+        `VITE_NATIVE_API_ORIGIN="${value}" uses ${parsed.protocol}//. Only http and ` +
+          'https are API origins, and this is the branch that would have returned ' +
+          'whatever `URL.origin` produced for anything else.',
+      );
+    }
     // Rebuilt rather than string-replaced: `URL` refuses to move a host without
     // rewriting the default-port rule, and a hand-built string here is how a
     // device ends up pointed at `http://127.0.0.1:5173` with the host appended.

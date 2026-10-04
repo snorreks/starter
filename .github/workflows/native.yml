@@ -305,27 +305,29 @@ jobs:
         run: bun run --cwd apps/frontend/native check:bundle
 
       - name: The launcher propagates a build failure
-        # An induced failure, deliberately. `CARGO_TARGET_…_LINKER` pointing at
-        # nothing makes cargo fail several minutes in; the point is that the
-        # wrapper above returns *that* exit status rather than 0. A launcher that
-        # reported success here would make every later step in this job a lie.
-        # Nothing tracked is modified: the bad linker is an environment variable.
+        # An induced failure, deliberately. The bad linker is an environment
+        # variable, so nothing tracked is modified, and `CARGO_TARGET_DIR` points
+        # at a fresh directory so cargo has to relink from source rather than
+        # reusing an incremental artifact and never reaching the linker at all.
+        # The point is that the wrapper returns *that* exit status rather than 0;
+        # a launcher that reported success here would make every later step in
+        # this job a lie.
         run: |
           set -uo pipefail
-          bun run native:android -- build --debug --apk --target aarch64 --ci \
-            >"$RUNNER_TEMP/induced.log" 2>&1 &
-          launcher_pid=$!
-          # Start a real build, then break the toolchain it is about to use.
-          wait "$launcher_pid" || true
-          echo "The induced failure below is expected and is the test:"
-          if CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER="$RUNNER_TEMP/no-such-linker" \
+          if CARGO_TARGET_DIR="$RUNNER_TEMP/induced-target" \
+             CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER="$RUNNER_TEMP/no-such-linker" \
              bun run native:android -- build --debug --apk --target aarch64 --ci \
              >"$RUNNER_TEMP/induced-failure.log" 2>&1; then
             echo "::error::an Android build with an unusable linker reported success"
             tail -n 40 "$RUNNER_TEMP/induced-failure.log"
             exit 1
           fi
-          echo "induced failure propagated with a nonzero exit status, as required"
+          if ! grep -q "no-such-linker" "$RUNNER_TEMP/induced-failure.log"; then
+            echo "::error::the build failed without reaching the linker, so this proved nothing"
+            tail -n 40 "$RUNNER_TEMP/induced-failure.log"
+            exit 1
+          fi
+          echo "induced failure propagated with a nonzero exit status, and reached the linker"
 
       - name: Build the debug APK
         run: bun run native:android -- build --debug --apk --target aarch64 --ci
@@ -360,16 +362,15 @@ jobs:
             cp "$src" "$RUNNER_TEMP/dist/$name"
             echo "$kind=$RUNNER_TEMP/dist/$name"
           done
-          {
-            echo "apk=$RUNNER_TEMP/dist"
-            echo "sha=$(git rev-parse HEAD)"
-          } >> "$GITHUB_OUTPUT"
+          # Only what the upload step below reads. An output nothing consumes is
+          # a claim about the run that nobody checks.
+          echo "dist=$RUNNER_TEMP/dist" >> "$GITHUB_OUTPUT"
 
       - name: Upload the unsigned Android packages
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: starter-android-aarch64-${{ github.sha }}-unsigned
-          path: ${{ steps.artifact.outputs.apk }}
+          path: ${{ steps.artifact.outputs.dist }}
           retention-days: 7
           if-no-files-found: error
 

@@ -355,7 +355,11 @@ A fourth dated section. This round extended the shell to Android and iOS and did
 | Android pins are the CLI's constants | `SDK_VERSION = 37`, `NDK_VERSION = 29.0.13846066` read from the pinned CLI source | `bun test ./tests/native_mobile.test.ts` | same |
 | A device host cannot survive into a packaged build | `resolveApiOrigin({ dev: false, devHost })` throws; `dev` comes from the subcommand | `bun run --cwd apps/frontend/native test` | 77 pass, 0 fail |
 | Lifecycle: suspend, resume, offline, disposal | A real `EventTarget`, no phone | same | same |
+| The lifecycle decision | The ViewModel's rule, not the layout's: refresh only on the transition *into* `active` | same | same |
+| A flag with no value, or another flag in its place | `--target`, `--target --aab`, `--host` with nothing after each | `bun test ./tests/native_mobile.test.ts` (cwd `scripts`) | 29 pass, 0 fail |
+| Android prerequisites, driven with a fake environment | Empty `NDK_HOME` falling through to `ANDROID_NDK_HOME`; an SDK carrying r22 not satisfying NDK 29 | `bun test ./tests/mobile_prerequisites.test.ts` (cwd `scripts`) | 12 pass, 0 fail |
 | Artifact naming and origin verification | Real ZIP containers written by the test and read by the shipped reader, with a CRC check and a deliberately corrupted fixture | `bun run --cwd apps/frontend/native test` | same |
+| The marker is mandatory, every directory is checked, and a namespace URI is not a deployment | `--name`, `parseArgs`, `NEVER_AN_API_HOST` | same | same |
 | Rust formatting | `cargo fmt --check` | `cargo fmt --check` in `apps/frontend/native/src-tauri` | clean |
 
 **NOT RUN here, with the reason.** This host is Linux with no Android SDK, no JDK,
