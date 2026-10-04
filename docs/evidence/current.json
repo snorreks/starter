@@ -1,12 +1,12 @@
 {
-  "revision": "1c2dcb9799b52370c64109a355ba53b9dd445a60",
+  "revision": "e777b18a9794c76e31f55a00c00009ff1513527a",
   "note": "The revision the lanes were executed against. The two files that render this manifest \u2014 docs/evidence/current.json and the generated block inside docs/capability-matrix.md \u2014 are the only files permitted to differ from it, because they are written after the runs.",
   "platform": "linux-x64 (nix develop, Bun 1.4.2, Node v22.23.3, wrangler 4.142.0)",
   "rows": [
     {
       "capability": "Frozen install",
       "kind": "observed",
-      "revision": "1c2dcb9799b52370c64109a355ba53b9dd445a60",
+      "revision": "e777b18a9794c76e31f55a00c00009ff1513527a",
       "command": "bun install --frozen-lockfile",
       "platform": "linux-x64",
       "result": "300 packages installed, lockfile accepted unmodified",
@@ -17,18 +17,18 @@
     {
       "capability": "Unit tests, every project",
       "kind": "observed",
-      "revision": "1c2dcb9799b52370c64109a355ba53b9dd445a60",
+      "revision": "e777b18a9794c76e31f55a00c00009ff1513527a",
       "command": "bun run test",
       "platform": "linux-x64",
-      "result": "1755 pass, 0 fail across 12 projects (database 11, schemas 86, platform 31, logger 71, features 105, native 112, jobs 98, jobs-worker 40, utils 73, client 187, scripts 721, pi 224)",
-      "count": 1755,
+      "result": "1793 pass, 0 fail across 12 projects (database 11, schemas 86, platform 31, logger 71, features 105, native 112, jobs 98, jobs-worker 40, utils 73, client 187, scripts 755, pi 224)",
+      "count": 1793,
       "recordedAt": "2026-10-03T21:52:00.000Z",
       "artifact": null
     },
     {
       "capability": "Browser lane (real Svelte, real Chromium)",
       "kind": "observed",
-      "revision": "1c2dcb9799b52370c64109a355ba53b9dd445a60",
+      "revision": "e777b18a9794c76e31f55a00c00009ff1513527a",
       "command": "bun run test:browser",
       "platform": "linux-x64",
       "result": "22 passed across 2 files",
@@ -39,7 +39,7 @@
     {
       "capability": "Worker lane (built bundle in real workerd, real local D1)",
       "kind": "observed",
-      "revision": "1c2dcb9799b52370c64109a355ba53b9dd445a60",
+      "revision": "e777b18a9794c76e31f55a00c00009ff1513527a",
       "command": "bun run test:worker",
       "platform": "linux-x64",
       "result": "85 pass, 0 fail",
@@ -50,7 +50,7 @@
     {
       "capability": "End to end (built client and built Worker, one origin)",
       "kind": "observed",
-      "revision": "1c2dcb9799b52370c64109a355ba53b9dd445a60",
+      "revision": "e777b18a9794c76e31f55a00c00009ff1513527a",
       "command": "bun run e2e",
       "platform": "linux-x64",
       "result": "33 passed, 0 failed",
@@ -61,7 +61,7 @@
     {
       "capability": "Compute lane (real Workflows, emulated D1/R2, real FFmpeg container in Docker)",
       "kind": "observed",
-      "revision": "1c2dcb9799b52370c64109a355ba53b9dd445a60",
+      "revision": "e777b18a9794c76e31f55a00c00009ff1513527a",
       "command": "bun run test:compute",
       "platform": "linux-x64, docker 5.8.7",
       "result": "17 pass, 0 fail. The processor ran as a real container started by the lane harness; Cloudflare's managed container lifecycle is NOT covered here (the local runtime has no ctx.container).",
@@ -72,7 +72,7 @@
     {
       "capability": "Typecheck, every project",
       "kind": "observed",
-      "revision": "1c2dcb9799b52370c64109a355ba53b9dd445a60",
+      "revision": "e777b18a9794c76e31f55a00c00009ff1513527a",
       "command": "bun run typecheck",
       "platform": "linux-x64",
       "result": "15 tasks completed, 0 errors, 0 warnings",
@@ -83,7 +83,7 @@
     {
       "capability": "Lint (Biome, verified not applied)",
       "kind": "observed",
-      "revision": "1c2dcb9799b52370c64109a355ba53b9dd445a60",
+      "revision": "e777b18a9794c76e31f55a00c00009ff1513527a",
       "command": "bun run lint",
       "platform": "linux-x64",
       "result": "15 tasks completed, clean",
@@ -94,7 +94,7 @@
     {
       "capability": "Whole-repository guards",
       "kind": "observed",
-      "revision": "1c2dcb9799b52370c64109a355ba53b9dd445a60",
+      "revision": "e777b18a9794c76e31f55a00c00009ff1513527a",
       "command": "bun run guard",
       "platform": "linux-x64",
       "result": "8 of 8 guards passed, 0 violations",
@@ -105,7 +105,7 @@
     {
       "capability": "CI workflow policy",
       "kind": "observed",
-      "revision": "1c2dcb9799b52370c64109a355ba53b9dd445a60",
+      "revision": "e777b18a9794c76e31f55a00c00009ff1513527a",
       "command": "bun run workflows",
       "platform": "linux-x64",
       "result": "ok across 4 workflows (ci, deploy, native, native-release)",
@@ -116,7 +116,7 @@
     {
       "capability": "Fresh-template rehearsal",
       "kind": "observed",
-      "revision": "1c2dcb9799b52370c64109a355ba53b9dd445a60",
+      "revision": "e777b18a9794c76e31f55a00c00009ff1513527a",
       "command": "bun run smoke",
       "platform": "linux-x64, fresh HOME, no credential",
       "result": "10 of 10 steps ok: frozen install, setup, db:migrate, db:seed, build, check:bundle, typecheck, lint, guard, setup:doctor",
@@ -127,7 +127,7 @@
     {
       "capability": "Downstream removal rehearsal (native app and Rust processor deleted from a disposable copy)",
       "kind": "observed",
-      "revision": "1c2dcb9799b52370c64109a355ba53b9dd445a60",
+      "revision": "e777b18a9794c76e31f55a00c00009ff1513527a",
       "command": "bun run smoke --without-heavy",
       "platform": "linux-x64, fresh HOME, no credential",
       "result": "11 of 11 steps ok. The copy regenerates and re-verifies bun.lock, and the web half still builds, typechecks, lints and passes all 8 guards.",
@@ -138,7 +138,7 @@
     {
       "capability": "Provider deployment (Cloudflare staging and production)",
       "kind": "not-run",
-      "revision": "1c2dcb9799b52370c64109a355ba53b9dd445a60",
+      "revision": "e777b18a9794c76e31f55a00c00009ff1513527a",
       "command": "bun run deploy:apply --env staging --yes",
       "platform": "any",
       "result": "NOT RUN",
@@ -150,7 +150,7 @@
     {
       "capability": "Live mail delivery (verification, sign-in, recovery)",
       "kind": "not-run",
-      "revision": "1c2dcb9799b52370c64109a355ba53b9dd445a60",
+      "revision": "e777b18a9794c76e31f55a00c00009ff1513527a",
       "command": "bun run deploy verify --env staging",
       "platform": "any",
       "result": "NOT RUN",
@@ -162,7 +162,7 @@
     {
       "capability": "Genuine scheduled maintenance firing",
       "kind": "not-run",
-      "revision": "1c2dcb9799b52370c64109a355ba53b9dd445a60",
+      "revision": "e777b18a9794c76e31f55a00c00009ff1513527a",
       "command": "the deployed maintenance run record in D1, carrying its cron schedule and scheduledTime",
       "platform": "any",
       "result": "NOT RUN",
@@ -174,7 +174,7 @@
     {
       "capability": "iOS build and simulator run",
       "kind": "not-run",
-      "revision": "1c2dcb9799b52370c64109a355ba53b9dd445a60",
+      "revision": "e777b18a9794c76e31f55a00c00009ff1513527a",
       "command": "bun run native:ios",
       "platform": "macOS with full Xcode",
       "result": "NOT RUN",
@@ -186,7 +186,7 @@
     {
       "capability": "Android build and emulator run",
       "kind": "not-run",
-      "revision": "1c2dcb9799b52370c64109a355ba53b9dd445a60",
+      "revision": "e777b18a9794c76e31f55a00c00009ff1513527a",
       "command": "bun run native:android",
       "platform": "Android SDK + JDK + NDK",
       "result": "NOT RUN",
@@ -198,7 +198,7 @@
     {
       "capability": "Native desktop build and launch",
       "kind": "not-run",
-      "revision": "1c2dcb9799b52370c64109a355ba53b9dd445a60",
+      "revision": "e777b18a9794c76e31f55a00c00009ff1513527a",
       "command": "bun run native:build",
       "platform": "Linux with WebKitGTK 4.1 development files",
       "result": "NOT RUN",
@@ -210,7 +210,7 @@
     {
       "capability": "Signed and notarised distribution",
       "kind": "not-run",
-      "revision": "1c2dcb9799b52370c64109a355ba53b9dd445a60",
+      "revision": "e777b18a9794c76e31f55a00c00009ff1513527a",
       "command": "the native release workflows' signing lanes",
       "platform": "per-platform signing identities",
       "result": "NOT RUN",
