@@ -33,7 +33,7 @@
 // shell, and the fallback is what the shell serves for a path with no page of its
 // own.
 
-import { assertNativeCsp, resolveApiOrigin } from '@starter/schemas/native';
+import { assertNativeCsp, DEV_API_HOST_ENV, resolveApiOrigin } from '@starter/schemas/native';
 import adapter from '@sveltejs/adapter-static';
 import { sveltekit } from '@sveltejs/kit/vite';
 import { vitePreprocess } from '@sveltejs/vite-plugin-svelte';
@@ -46,9 +46,14 @@ export default defineConfig(({ command, mode }) => {
   // SvelteKit sync loads this config too. Validate when serving/building, so
   // type generation does not require a deployment origin.
   const validateOrigin = (): void => {
+    const dev = command === 'serve';
     const apiOrigin = resolveApiOrigin({
       raw: env.VITE_NATIVE_API_ORIGIN,
-      dev: command === 'serve',
+      dev,
+      // Only ever read for a dev build. `resolveApiOrigin` refuses the pair in a
+      // packaged one, so a stale `VITE_NATIVE_DEV_API_HOST` cannot bake a LAN
+      // address into a release bundle.
+      devHost: dev ? env[DEV_API_HOST_ENV] : undefined,
     });
     if (process.env.TAURI_CONFIG !== undefined) {
       const config = JSON.parse(process.env.TAURI_CONFIG) as {

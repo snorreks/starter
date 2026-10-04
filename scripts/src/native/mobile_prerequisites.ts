@@ -1,0 +1,488 @@
+// scripts/src/native/mobile_prerequisites.ts
+//
+// What this host must have before `native android …` or `native ios …` can run.
+//
+// Separate from `doctor.ts` because the answer is different in kind. The desktop
+// doctor asks "can I compile and link a window on this machine"; the mobile
+// question is "does this machine have the vendor's SDK, and is it the version the
+// pinned CLI wants". Those are separate toolchains on separate runners, and a
+// combined report that listed them together would have every contributor on Linux
+// reading N/A lines for four things they will never install.
+//
+// Every check runs the tool and reads what it reports. `which java` proves a file
+// exists; `java -version` proves it loads and that it is a JDK rather than a JRE —
+// the difference that bites on a fresh runner image, where a JRE is present and
+// Gradle fails four minutes later with a message about a compiler.
+//
+// Nothing here installs anything and nothing here prompts. The Tauri CLI will
+// offer to download an SDK interactively; a CI lane that accepted that prompt
+// would have a build that depends on a TTY, so `--ci` is the only spelling the
+// workflow uses and the SDK is provisioned as a step with a named version.
+
+import { spawnSync } from 'node:child_process';
+import { existsSync, readdirSync } from 'node:fs';
+import { join } from 'node:path';
+import type { Check, Severity } from '../setup/doctor.ts';
+import {
+  ANDROID_TARGET_TRIPLES,
+  type AndroidTarget,
+  IOS_TARGET_TRIPLES,
+  type IosTarget,
+  REQUIRED_ANDROID_API_LEVEL,
+  REQUIRED_ANDROID_PLATFORM_PACKAGE,
+  REQUIRED_NDK_VERSION,
+} from './mobile.ts';
+import { hostPlatform } from './platform.ts';
+
+/**
+ * The environment these checks read.
+ *
+ * An index signature rather than a fixed list, so `process.env` is assignable
+ * without a cast: `ProcessEnv` is itself a string dictionary, and a narrower type
+ * would have forced every caller through `as unknown as`. The names actually read
+ * are `ANDROID_HOME`, `ANDROID_SDK_ROOT`, `NDK_HOME`, `ANDROID_NDK_HOME`,
+ * `JAVA_HOME` and `PATH`.
+ */
+export interface MobileEnvironment {
+  readonly [name: string]: string | undefined;
+}
+
+const MAX_BYTES = 1_000_000;
+
+/** Run a command, take its first line of output. Null means it did not run. */
+const probe = (
+  command: string,
+  args: readonly string[] = ['--version'],
+  env: NodeJS.ProcessEnv = process.env,
+): string | null => {
+  const result = spawnSync(command, [...args], {
+    encoding: 'utf8',
+    env,
+    timeout: 30_000,
+    maxBuffer: MAX_BYTES,
+  });
+  if (result.error !== undefined || result.status !== 0) {
+    return null;
+  }
+  const first = (result.stdout ?? '') + (result.stderr ?? '');
+  return first.split('\n')[0]?.trim() ?? '';
+};
+
+const ok = (name: string, detail: string, severity: Severity = 'required'): Check => ({
+  name,
+  severity,
+  ok: true,
+  detail,
+});
+
+const missing = (name: string, detail: string, remedy: string): Check => ({
+  name,
+  severity: 'required',
+  ok: false,
+  detail,
+  remedy,
+});
+
+const absent = (name: string, detail: string, remedy: string): Check => ({
+  name,
+  severity: 'optional',
+  ok: false,
+  detail,
+  remedy,
+});
+
+// ── Android ──────────────────────────────────────────────────────────────────
+
+/**
+ * Where the SDK is.
+ *
+ * `ANDROID_HOME` first, then `ANDROID_SDK_ROOT`. The pinned CLI prefers
+ * `ANDROID_HOME` and only falls back, and it says `ANDROID_SDK_ROOT` is
+ * deprecated — so this reports which one it found rather than "the Android SDK",
+ * because "the Android SDK is set but the CLI ignores your variable" is a real
+ * and confusing state.
+ */
+export const androidSdkRoot = (env: MobileEnvironment): string | undefined => {
+  const home = env.ANDROID_HOME?.trim();
+  if (home !== undefined && home.length > 0) {
+    return home;
+  }
+  const legacy = env.ANDROID_SDK_ROOT?.trim();
+  return legacy !== undefined && legacy.length > 0 ? legacy : undefined;
+};
+
+export const androidSdkCheck = (env: MobileEnvironment): Check => {
+  const root = androidSdkRoot(env);
+  if (root === undefined) {
+    return missing(
+      'android sdk',
+      'ANDROID_HOME and ANDROID_SDK_ROOT are both unset',
+      'Install the Android SDK (https://developer.android.com/studio) and export ' +
+        'ANDROID_HOME. On CI, `android-actions/setup-android` writes it.',
+    );
+  }
+  if (!existsSync(root)) {
+    return missing(
+      'android sdk',
+      `ANDROID_HOME=${root} does not exist`,
+      'Point ANDROID_HOME at a real SDK directory. A path that is not there fails later ' +
+        'inside Gradle, naming a package rather than the variable.',
+    );
+  }
+  return ok('android sdk', `${root}${env.ANDROID_HOME ? '' : ' (via ANDROID_SDK_ROOT)'}`);
+};
+
+/**
+ * The installed platform, and whether it is the API level the pinned CLI needs.
+ *
+ * `compileSdk = 37` is a constant in the CLI's own Gradle template, not a
+ * preference. What it is *not* is a directory name: Android publishes platform
+ * packages under minor-versioned names and unpacks them into
+ * `platforms/android-<major>.<minor>/`, so a correctly provisioned SDK carries
+ * `android-37.2` and no `android-37` at all. This check therefore compares the
+ * **API major level**, which is the thing Gradle resolves `compileSdk = 37` to.
+ *
+ * The two bugs this replaces, both of which reported the same wrong thing:
+ * asking for `platforms;android-37`, which `sdkmanager` refuses with "Failed to
+ * find package"; and matching `/^android-\d+$/`, which never matches `android-37.2`
+ * — so a correctly installed SDK read as having no platform at all.
+ */
+export const androidPlatformCheck = (env: MobileEnvironment): Check => {
+  const name = `android platform ${REQUIRED_ANDROID_API_LEVEL}`;
+  const install = `\`sdkmanager "${REQUIRED_ANDROID_PLATFORM_PACKAGE}"\``;
+
+  const root = androidSdkRoot(env);
+  if (root === undefined || !existsSync(root)) {
+    return absent(name, 'no SDK to look in', `Install it with ${install}.`);
+  }
+  const platforms = join(root, 'platforms');
+  let found: string[] = [];
+  try {
+    found = readdirSync(platforms).filter((entry) => /^android-\d+(\.\d+)?$/.test(entry));
+  } catch {
+    return absent(name, 'no platforms/ directory in the SDK', `Install it with ${install}.`);
+  }
+
+  // Highest minor of the required major, so `37.2` beats `37.0` and an SDK that
+  // somehow carries several is reported at the one it would actually use.
+  const matching = found
+    .filter((entry) => apiLevelOf(entry) === REQUIRED_ANDROID_API_LEVEL)
+    .sort(compareVersions);
+
+  return matching.length > 0
+    ? ok(name, `${matching[matching.length - 1]} (installed: ${found.join(', ')})`)
+    : absent(
+        name,
+        found.length === 0 ? 'none installed' : `installed: ${found.join(', ')}`,
+        `The pinned Tauri CLI compiles against API ${REQUIRED_ANDROID_API_LEVEL}. ${install}.`,
+      );
+};
+
+/** The API level of an installed platform directory: `android-37.2` → `37`. */
+export const apiLevelOf = (directory: string): string =>
+  /^android-(\d+)/.exec(directory)?.[1] ?? '';
+
+/** Numeric version comparison, so `37.10` sorts after `37.2`. */
+const compareVersions = (left: string, right: string): number => {
+  const parts = (value: string): number[] =>
+    value
+      .split('.')
+      .map((part) => Number(part.replace(/^android-/, '')))
+      .map((part) => (Number.isFinite(part) ? part : 0));
+  const a = parts(left);
+  const b = parts(right);
+  for (let index = 0; index < Math.max(a.length, b.length); index += 1) {
+    const difference = (a[index] ?? 0) - (b[index] ?? 0);
+    if (difference !== 0) {
+      return difference;
+    }
+  }
+  return 0;
+};
+
+/**
+ * The NDK.
+ *
+ * `NDK_HOME` first, then `ANDROID_NDK_HOME`, then the installed directories under
+ * `$ANDROID_HOME/ndk` — the first two in that order because an empty variable is
+ * an *absence of input*, not a value, and `??` alone would accept `''` as a set
+ * variable and then fall through to "no NDK" while the operator believes they
+ * configured one.
+ *
+ * The version is compared numerically. `readdirSync().sort()` is lexicographic,
+ * and the pinned CLI's own `read_dir(android_home/ndk); sort()` has the same
+ * property — which is why this checks membership of the required version rather
+ * than taking the last entry, and why it reports the whole list when the required
+ * one is not among them. An SDK carrying NDK r22 links nothing this shell needs,
+ * and says so as `undefined reference` from inside a linker.
+ */
+export const androidNdkCheck = (env: MobileEnvironment): Check => {
+  const ndkHome = env.NDK_HOME?.trim();
+  const legacyNdkHome = env.ANDROID_NDK_HOME?.trim();
+  const declared = ndkHome !== undefined && ndkHome.length > 0 ? ndkHome : legacyNdkHome;
+  const declaredIn = ndkHome !== undefined && ndkHome.length > 0 ? 'NDK_HOME' : 'ANDROID_NDK_HOME';
+
+  if (declared !== undefined && declared.length > 0) {
+    if (!existsSync(declared)) {
+      return missing(
+        'android ndk',
+        `${declaredIn}=${declared} does not exist`,
+        `Point ${declaredIn} at an installed NDK, or unset it and let the CLI find ` +
+          `$ANDROID_HOME/ndk. The pinned CLI wants ${REQUIRED_NDK_VERSION}.`,
+      );
+    }
+    return ok('android ndk', `${declared} (${declaredIn})`);
+  }
+
+  const root = androidSdkRoot(env);
+  if (root === undefined) {
+    return absent(
+      'android ndk',
+      'no SDK to look in',
+      `Install it with \`sdkmanager "ndk;${REQUIRED_NDK_VERSION}"\`, or set NDK_HOME.`,
+    );
+  }
+  let versions: string[] = [];
+  try {
+    versions = readdirSync(join(root, 'ndk'));
+  } catch {
+    versions = [];
+  }
+  if (versions.length === 0) {
+    return missing(
+      'android ndk',
+      'no NDK under $ANDROID_HOME/ndk, and neither NDK_HOME nor ANDROID_NDK_HOME is set',
+      `\`sdkmanager "ndk;${REQUIRED_NDK_VERSION}"\`, or set NDK_HOME to an installed one.`,
+    );
+  }
+  // Membership, not "the newest one": lexicographic order puts `9.0.0` after
+  // `29.0.13846066`, and the required version may legitimately not be the highest
+  // one an SDK happens to carry.
+  return versions.includes(REQUIRED_NDK_VERSION)
+    ? ok('android ndk', `${REQUIRED_NDK_VERSION} (installed: ${versions.join(', ')})`)
+    : missing(
+        'android ndk',
+        `installed: ${versions.join(', ')}; ${REQUIRED_NDK_VERSION} is not among them`,
+        `The pinned CLI wants NDK ${REQUIRED_NDK_VERSION}. ` +
+          `\`sdkmanager "ndk;${REQUIRED_NDK_VERSION}"\`, or point NDK_HOME at it.`,
+      );
+};
+
+export const javaCheck = (env: MobileEnvironment): Check => {
+  const home = env.JAVA_HOME?.trim();
+  if (home !== undefined && home.length > 0) {
+    const binary = join(home, 'bin', 'java');
+    if (!existsSync(binary)) {
+      return missing(
+        'jdk',
+        `JAVA_HOME=${home} has no bin/java`,
+        'Point JAVA_HOME at a JDK 17 or newer. Gradle compiles the Android module, so a ' +
+          'JRE is not enough even though `java -version` succeeds.',
+      );
+    }
+  }
+  const reported = probe('java', ['-version']);
+  return reported === null
+    ? missing(
+        'jdk',
+        'java is not on PATH and JAVA_HOME is unusable',
+        "Install a JDK 17+ (Temurin, Zulu or the distribution's package) and set JAVA_HOME.",
+      )
+    : ok('jdk', reported);
+};
+
+/**
+ * `adb`, reported as optional.
+ *
+ * Optional because the APK does not need it: `tauri android build` produces a
+ * package with the SDK alone, and `adb` is what turns a package into something
+ * installed on a device. A lane that only builds should not fail because it
+ * cannot install; a lane that installs will fail when it gets there, naming the
+ * missing tool.
+ */
+export const adbCheck = (): Check => {
+  const reported = probe('adb', ['version']);
+  return reported === null
+    ? absent(
+        'adb',
+        'not on PATH',
+        'Part of `platform-tools`. Needed to install and launch on a device or ' +
+          'emulator; not needed to produce an APK.',
+      )
+    : ok('adb', reported);
+};
+
+/**
+ * The rustup targets the ABIs need.
+ *
+ * The default lane builds `aarch64` only, because that is the ABI of every
+ * current phone and the Apple-silicon-independent one; the other three are opt-in
+ * and are listed when they are missing rather than reported as failures. A missing
+ * target is a ten-second `rustup target add`, and the CLI runs it for you during
+ * `init` unless `--skip-targets-install` is passed.
+ */
+export const androidTargetCheck = (
+  env: MobileEnvironment,
+  targets: readonly AndroidTarget[],
+): Check => {
+  const installed = rustupTargets(env);
+  if (installed === null) {
+    return absent(
+      'rust android targets',
+      'rustup is not on PATH',
+      'Install the pinned toolchain from apps/frontend/native/src-tauri/rust-toolchain.toml. ' +
+        '`tauri android init` installs the targets itself unless --skip-targets-install.',
+    );
+  }
+  const missingTargets = targets
+    .map((target) => ANDROID_TARGET_TRIPLES[target])
+    .filter((triple) => !installed.includes(triple));
+  const wanted = targets.map((target) => ANDROID_TARGET_TRIPLES[target]).join(', ');
+  return missingTargets.length === 0
+    ? ok('rust android targets', wanted)
+    : absent(
+        'rust android targets',
+        `missing: ${missingTargets.join(', ')}`,
+        `\`rustup target add ${missingTargets.join(' ')}\`.`,
+      );
+};
+
+/**
+ * The targets rustup reports, or null when rustup is not installed.
+ *
+ * One process, not two: the first line is enough to prove rustup ran, and then the
+ * whole list is what is wanted, so this reads stdout once.
+ */
+export const rustupTargets = (env: MobileEnvironment): string[] | null => {
+  const result = spawnSync('rustup', ['target', 'list', '--installed'], {
+    encoding: 'utf8',
+    env: { ...process.env, ...env } as NodeJS.ProcessEnv,
+    timeout: 30_000,
+    maxBuffer: MAX_BYTES,
+  });
+  if (result.error !== undefined || result.status !== 0) {
+    return null;
+  }
+  return (result.stdout ?? '')
+    .split('\n')
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0);
+};
+
+// ── iOS ──────────────────────────────────────────────────────────────────────
+
+export const xcodeCheck = (): Check => {
+  if (hostPlatform() !== 'macos') {
+    return missing(
+      'xcode',
+      `the iOS toolchain exists only on macOS; this host is ${hostPlatform()}`,
+      'Run this on macOS with full Xcode selected (`xcode-select -s /Applications/Xcode.app`). ' +
+        'The `ios` job in .github/workflows/native.yml runs on macos-14. A Linux build cannot ' +
+        'be credited with an iOS build, however many Rust targets it has installed.',
+    );
+  }
+  const reported = probe('xcodebuild', ['-version']);
+  if (reported === null) {
+    return missing(
+      'xcode',
+      'xcodebuild is not on PATH',
+      'Install Xcode and select it: `xcode-select -s /Applications/Xcode.app`. ' +
+        'The command line tools alone cannot build an app.',
+    );
+  }
+  return ok('xcode', reported);
+};
+
+export const xcodeSelectCheck = (): Check => {
+  const reported = probe('xcode-select', ['-p']);
+  return reported === null
+    ? missing(
+        'xcode developer dir',
+        'xcode-select -p failed',
+        "`xcode-select -s /Applications/Xcode.app` (or your team's path).",
+      )
+    : ok('xcode developer dir', reported);
+};
+
+export const iosTargetCheck = (env: MobileEnvironment, targets: readonly IosTarget[]): Check => {
+  const installed = rustupTargets(env);
+  if (installed === null) {
+    return absent(
+      'rust ios targets',
+      'rustup is not on PATH',
+      'Install the pinned toolchain from apps/frontend/native/src-tauri/rust-toolchain.toml.',
+    );
+  }
+  const wanted = targets.map((target) => IOS_TARGET_TRIPLES[target]);
+  const missingTargets = wanted.filter((triple) => !installed.includes(triple));
+  return missingTargets.length === 0
+    ? ok('rust ios targets', wanted.join(', '))
+    : absent(
+        'rust ios targets',
+        `missing: ${missingTargets.join(', ')}`,
+        `\`rustup target add ${missingTargets.join(' ')}\``,
+      );
+};
+
+export interface MobileReport {
+  readonly platform: 'android' | 'ios';
+  readonly checks: Check[];
+  readonly ok: boolean;
+  readonly missingRequired: string[];
+  readonly unavailable: string[];
+}
+
+export const inspectAndroid = (
+  env: MobileEnvironment = process.env,
+  targets: readonly AndroidTarget[] = ['aarch64'],
+): MobileReport =>
+  buildReport('android', [
+    androidSdkCheck(env),
+    androidPlatformCheck(env),
+    androidNdkCheck(env),
+    javaCheck(env),
+    adbCheck(),
+    androidTargetCheck(env, targets),
+  ]);
+
+export const inspectIos = (
+  env: MobileEnvironment = process.env,
+  targets: readonly IosTarget[] = ['aarch64-sim'],
+): MobileReport =>
+  buildReport('ios', [xcodeCheck(), xcodeSelectCheck(), iosTargetCheck(env, targets)]);
+
+const buildReport = (platform: 'android' | 'ios', checks: Check[]): MobileReport => ({
+  platform,
+  checks,
+  ok: checks.every((check) => check.ok || check.severity === 'optional'),
+  missingRequired: checks
+    .filter((check) => check.severity === 'required' && !check.ok)
+    .map((check) => check.name),
+  unavailable: checks
+    .filter((check) => check.severity === 'optional' && !check.ok)
+    .map((check) => check.name),
+});
+
+export const renderMobileReport = (report: MobileReport): string => {
+  const lines = report.checks.map((check) => {
+    // `ok` / `N/A` / `MISS`, spelled out rather than nested: the three-way choice
+    // is the whole point of this column and a nested ternary hides which one is
+    // which at a glance.
+    let mark = 'MISS';
+    if (check.ok) {
+      mark = 'ok  ';
+    } else if (check.severity === 'optional') {
+      mark = 'N/A ';
+    }
+    const detail = check.ok ? check.detail : `${check.detail} — ${check.remedy ?? 'no remedy'}`;
+    return `  ${mark} ${check.name.padEnd(22)} ${detail}`;
+  });
+  const optional =
+    report.unavailable.length === 0
+      ? ''
+      : ` Optional and unavailable here: ${report.unavailable.join(', ')}.`;
+  const verdict = report.ok
+    ? `Ready.${optional}`
+    : `Not ready. Missing: ${report.missingRequired.join(', ')}.`;
+  return [`Native ${report.platform} capability:`, ...lines, '', verdict].join('\n');
+};

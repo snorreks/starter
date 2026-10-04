@@ -39,6 +39,8 @@
     "native:doctor": "bun run scripts/src/cli.ts native doctor",
     "native:dev": "bun run scripts/src/cli.ts native dev",
     "native:build": "bun run scripts/src/cli.ts native build",
+    "native:android": "bun run scripts/src/cli.ts native android",
+    "native:ios": "bun run scripts/src/cli.ts native ios",
     "logs:local": "bun run scripts/src/cli.ts logs web --mode local --follow",
     "db:generate": "moon run database:db-generate",
     "db:migrate": "bun run scripts/src/cli.ts db migrate --local",

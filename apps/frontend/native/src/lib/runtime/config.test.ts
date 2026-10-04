@@ -40,10 +40,63 @@ describe('the API origin a packaged build talks to', () => {
       'http://localhost:5173',
     );
     expect(resolveApiOrigin({ raw: 'http://[::1]:5173', dev: true })).toBe('http://[::1]:5173');
-    // A development build pointed at a colleague's machine over plain http is
-    // the case the dev-only relaxation must not cover.
+    // A plain-http LAN address is refused unless it was *named* as the device
+    // host. A phone's own address is not the developer's machine, and an origin
+    // that silently became a neighbour's is how a bearer token ends up on the
+    // next machine over.
     expect(() => resolveApiOrigin({ raw: 'http://192.168.1.20:8787', dev: true })).toThrow(
-      NativeConfigError,
+      /--host/,
+    );
+  });
+
+  test('naming the device host moves the origin onto the machine, keeping the port', () => {
+    expect(
+      resolveApiOrigin({ raw: 'http://127.0.0.1:5173', dev: true, devHost: '192.168.1.20' }),
+    ).toBe('http://192.168.1.20:5173');
+    // And it works for an https origin too, which is the case a developer with a
+    // tunnel, or a real development deployment, is in.
+    expect(
+      resolveApiOrigin({ raw: 'https://api.example.test', dev: true, devHost: 'devbox.local' }),
+    ).toBe('https://devbox.local');
+  });
+
+  test('a device host in a packaged build is refused, and says why', () => {
+    // This is the whole boundary: a bundle compiled with one machine's address on
+    // it points every user at that machine, and nothing about the artifact would
+    // show it.
+    expect(() =>
+      resolveApiOrigin({ raw: 'https://api.example.test', dev: false, devHost: '192.168.1.20' }),
+    ).toThrow(/only for/);
+  });
+
+  test('a device host cannot carry a scheme that is not http or https', () => {
+    // `URL` accepts `file:`, `ws:` and `data:`, and `.origin` is the string
+    // `"null"` for the first two — so without this check a device host would
+    // return `"null"` and produce a client that addresses nothing.
+    // `file://host` rather than `file:///etc/passwd`: the latter is refused a
+    // line earlier for carrying a path, which is a different and also correct
+    // message. This test is about the scheme.
+    for (const raw of ['file://host', 'ws://127.0.0.1:5173', 'ftp://example.test']) {
+      expect(() => resolveApiOrigin({ raw, dev: true, devHost: '192.168.1.20' })).toThrow(
+        NativeConfigError,
+      );
+    }
+    // And the message names the scheme, not just the host.
+    expect(() =>
+      resolveApiOrigin({ raw: 'file://host', dev: true, devHost: '192.168.1.20' }),
+    ).toThrow(/Only http and https/);
+  });
+
+  test('a device host must be a bare host, so it cannot smuggle a port or a path', () => {
+    for (const host of ['http://192.168.1.20', '192.168.1.20:5173', 'host/path', '-bad']) {
+      expect(() =>
+        resolveApiOrigin({ raw: 'http://127.0.0.1:5173', dev: true, devHost: host }),
+      ).toThrow(NativeConfigError);
+    }
+    // Empty is "not configured", so it falls back to the loopback rule above
+    // rather than being an error of its own.
+    expect(resolveApiOrigin({ raw: 'http://127.0.0.1:5173', dev: true, devHost: '' })).toBe(
+      'http://127.0.0.1:5173',
     );
   });
 

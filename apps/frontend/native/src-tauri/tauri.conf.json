@@ -16,8 +16,6 @@
         "title": "Starter",
         "width": 1000,
         "height": 720,
-        "minWidth": 360,
-        "minHeight": 400,
         "resizable": true
       }
     ],
@@ -35,6 +33,15 @@
       "icons/icon.ico",
       "icons/icon.icns",
       "icons/icon.png"
-    ]
+    ],
+    "android": {
+      "minSdkVersion": 24,
+      "versionCode": 1,
+      "debugApplicationIdSuffix": ".debug"
+    },
+    "iOS": {
+      "minimumSystemVersion": "16.0",
+      "bundleVersion": "1"
+    }
   }
 }

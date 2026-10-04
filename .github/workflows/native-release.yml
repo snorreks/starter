@@ -1,0 +1,932 @@
+# The native release lane.
+#
+# Separate from `.github/workflows/native.yml` on purpose, and for one reason
+# rather than for tidiness:
+#
+#   * `native.yml` runs on `pull_request`. A job that references `secrets.*` in a
+#     workflow that runs pull-request code is refused by `bun run workflows`,
+#     because a fork cannot supply a secret and the step then fails there and
+#     passes on branches — a credentialed lane that behaves differently depending
+#     on who opened the pull request is not a credentialed lane.
+#   * This file has no `pull_request` trigger. It runs on `workflow_dispatch`,
+#     against a revision the operator chose, and it is the only place signing
+#     material exists.
+#
+# So: one authority per kind of authority. `native.yml` proves the shell compiles
+# and launches without a credential; this file is the one that would produce
+# something you install, and it says so in its name and its artifact names.
+#
+# What this file deliberately does NOT do:
+#
+#   * **Upload to a store.** No `google-play`, no `xcrun altool`, no App Store
+#     Connect API key. Producing an artifact that a human then uploads keeps a
+#     store credential out of CI entirely, and a store upload is a different
+#     authority with a different rollback story.
+#   * **Claim a capability it could not perform.** Every signing input is checked
+#     in `preflight` before any build starts. If an input is absent the job fails
+#     naming the variable, or — when `sign` was not requested — the artifact is
+#     named `unsigned` and the job summary says the signed capability was not
+#     performed. There is no path here that reports success without having done
+#     the thing.
+#
+# Per-platform requirements are genuinely different, which is why they are three
+# different jobs rather than one matrix with conditionals:
+#
+#   Windows  a code-signing certificate (`.pfx` + password). No notarization.
+#   macOS    a Developer ID Application certificate (`.p12` + password), a
+#            development team, a notarization credential, and the two-step
+#            `notarytool` submit/staple dance.
+#   Linux    no signing identity exists. The deliverable is a package, and the
+#            package's signature is its maintainer's — so this job produces one
+#            and says the rest is not its business.
+#   Android  a keystore, key alias and two passwords, or an unsigned `.aab`.
+#   iOS      a development team, a distribution certificate, a provisioning
+#            profile, and macOS with full Xcode. A Linux runner is not an option
+#            at any level of credential: the `ios` subcommand is not compiled into
+#            a non-macOS Tauri CLI.
+
+name: Native release
+
+on:
+  workflow_dispatch:
+    inputs:
+      api_origin:
+        description: 'Absolute https origin the packaged clients are compiled against'
+        required: true
+        type: string
+      targets:
+        description: 'Which platforms to produce artifacts for'
+        required: true
+        # GitHub rejects a `default` that is not one of `options`, so the
+        # full-release combination has to be *listed* as well as chosen. Omitting
+        # it makes the workflow unrunnable with its own default.
+        default: 'windows,macos,linux,android,ios'
+        type: choice
+        options:
+          - 'windows,macos,linux,android,ios'
+          - 'windows,macos,linux'
+          - 'android,ios'
+          - windows
+          - macos
+          - linux
+          - android
+          - ios
+      sign:
+        description: 'Sign and notarize with the repository secrets. False produces unsigned artifacts and says so.'
+        required: true
+        default: false
+        type: boolean
+
+concurrency:
+  # Not cancelled. Two releases half-finished at once is worse than a queue: the
+  # second one to finish uploads under the same version and the first one's
+  # record of what it produced is no longer true.
+  group: native-release
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  BUN_VERSION: '1.4.2'
+
+jobs:
+  # ── Preflight ──────────────────────────────────────────────────────────────
+  #
+  # Runs first and is the whole reason this file is not just `native.yml` with
+  # secrets attached. A signing input that is missing has to be named before a
+  # fifteen-minute build produces an unsigned artifact somebody might install,
+  # not discovered afterwards.
+  preflight:
+    name: Report required inputs before building anything
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      origin: ${{ steps.config.outputs.origin }}
+      sign: ${{ steps.config.outputs.sign }}
+    steps:
+      - name: Record the requested configuration and what is missing
+        id: config
+        env:
+          API_ORIGIN: ${{ inputs.api_origin }}
+          TARGETS: ${{ inputs.targets }}
+          SIGN: ${{ inputs.sign }}
+          WINDOWS_CERTIFICATE_BASE64: ${{ secrets.WINDOWS_CERTIFICATE_BASE64 }}
+          WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
+          APPLE_CERTIFICATE_BASE64: ${{ secrets.APPLE_CERTIFICATE_BASE64 }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_NOTARY_PROFILE: ${{ secrets.APPLE_NOTARY_PROFILE }}
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          case "$API_ORIGIN" in
+            https://*) ;;
+            *)
+              echo "::error::api_origin='$API_ORIGIN' is not https. A packaged client presents a bearer token on every request."
+              exit 2
+              ;;
+          esac
+
+          missing=""
+          missing_var() {
+            eval "value=\${$1:-}"
+            [ -n "$value" ] || missing="$missing $1"
+          }
+          case ",$TARGETS," in *,windows,*)
+            missing_var WINDOWS_CERTIFICATE_BASE64
+            missing_var WINDOWS_CERTIFICATE_PASSWORD
+            ;; esac
+          case ",$TARGETS," in *,macos,*)
+            # APPLE_KEYCHAIN_PASSWORD is what unlocks the temporary keychain the
+            # certificate is imported into. Without it `codesign` cannot read the
+            # key even though the certificate is present, and the failure is a
+            # code-signing error naming no credential at all.
+            for v in APPLE_CERTIFICATE_BASE64 APPLE_CERTIFICATE_PASSWORD APPLE_SIGNING_IDENTITY APPLE_KEYCHAIN_PASSWORD; do
+              missing_var "$v"
+            done
+            # Notarization is a separate credential from signing. A release that
+            # signed but did not notarize launches behind a Gatekeeper warning on
+            # every other Mac, which is worse than one that never claimed to be
+            # notarized.
+            missing_var APPLE_NOTARY_PROFILE
+            ;; esac
+          case ",$TARGETS," in *,android,*)
+            for v in ANDROID_KEYSTORE_BASE64 ANDROID_KEYSTORE_PASSWORD ANDROID_KEY_ALIAS ANDROID_KEY_PASSWORD; do
+              missing_var "$v"
+            done
+            ;; esac
+          case ",$TARGETS," in *,ios,*)
+            # The provisioning profile is what turns a signed binary into an
+            # installable one; `xcodebuild` reports its absence as a code-sign
+            # error naming the profile, not the secret that carried it.
+            for v in APPLE_CERTIFICATE_BASE64 APPLE_CERTIFICATE_PASSWORD APPLE_SIGNING_IDENTITY APPLE_KEYCHAIN_PASSWORD APPLE_TEAM_ID APPLE_PROVISIONING_PROFILE_BASE64 APPLE_PROVISIONING_PROFILE_NAME; do
+              missing_var "$v"
+            done
+            ;; esac
+
+          {
+            echo "origin=$API_ORIGIN"
+            echo "sign=$SIGN"
+          } >> "$GITHUB_OUTPUT"
+
+          {
+            echo "### Native release preflight"
+            echo "- api origin: \`$API_ORIGIN\`"
+            echo "- targets: \`$TARGETS\`"
+            echo "- signing requested: \`$SIGN\`"
+            if [ "$SIGN" = "true" ] && [ -n "$missing" ]; then
+              echo "- **missing repository secrets:**$missing"
+              echo "- each is a repository Actions secret; see docs/native.md for what to put in it."
+            else
+              echo "- signing inputs: present, or signing was not requested."
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          if [ "$SIGN" = "true" ] && [ -n "$missing" ]; then
+            echo "::error::signing was requested but these repository secrets are unset:$missing"
+            exit 1
+          fi
+          echo "preflight ok"
+
+  # ── Desktop, one job per operating system ──────────────────────────────────
+  #
+  # Not a matrix with conditionals: what "signed" means, and what the command
+  # even is, is different on each. Windows has `signtool`, macOS has
+  # `codesign` plus `xcrun notarytool`, and Linux has neither — a Debian package
+  # is signed by `gpg` with the *maintainer's* key, which belongs to whoever
+  # ships it and not to this repository.
+
+  windows:
+    name: Windows release binary
+    needs: preflight
+    if: contains(inputs.targets, 'windows')
+    runs-on: windows-2022
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+
+      - name: Install
+        run: bun install --frozen-lockfile
+
+      - name: Report what this host can build
+        run: bun run native:doctor
+
+      - name: Build the binary and its installer
+        # No `--no-bundle` here, unlike the uncredentialed lane: an installer is
+        # what a Windows user installs, and the packager is part of the artifact.
+        #
+        # `VITE_NATIVE_API_ORIGIN` is the operator's origin from `preflight`. The
+        # launcher refuses to build a packaged client without one, so omitting it
+        # does not build the wrong thing — it builds nothing, several minutes in.
+        env:
+          VITE_NATIVE_API_ORIGIN: ${{ needs.preflight.outputs.origin }}
+        run: bun run native:build -- --platform windows
+
+      - name: Import the code-signing certificate
+        if: inputs.sign
+        shell: pwsh
+        env:
+          CERT_BASE64: ${{ secrets.WINDOWS_CERTIFICATE_BASE64 }}
+          CERT_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if (-not $env:CERT_BASE64) { throw 'WINDOWS_CERTIFICATE_BASE64 is unset; preflight should have failed.' }
+          $bytes = [Convert]::FromBase64String($env:CERT_BASE64)
+          $path = Join-Path $env:RUNNER_TEMP 'signing.pfx'
+          [IO.File]::WriteAllBytes($path, $bytes)
+          $password = ConvertTo-SecureString -String $env:CERT_PASSWORD -AsPlainText -Force
+          Import-PfxCertificate -FilePath $path -CertStoreLocation Cert:\CurrentUser\My -Password $password | Out-Null
+          Remove-Item -Force $path
+
+      - name: Sign the binary and the installer
+        if: inputs.sign
+        shell: pwsh
+        env:
+          TARGET_DIR: apps/frontend/native/src-tauri/target
+        run: |
+          $ErrorActionPreference = 'Stop'
+          # Cargo writes to `target/<triple>/release`, not `target/release`, when
+          # a `--target` is named. Searched rather than hardcoded so a layout
+          # change is a missing file here, not a wrong path that finds nothing.
+          $binary = Get-ChildItem -Recurse -Path $env:TARGET_DIR -Filter 'starter.exe' |
+            Where-Object { $_.FullName -match 'release' } | Select-Object -First 1
+          $installer = Get-ChildItem -Recurse -Path "$env:TARGET_DIR/*/bundle" -Filter '*.msi' -ErrorAction SilentlyContinue |
+            Select-Object -First 1
+          if (-not $installer) {
+            $installer = Get-ChildItem -Recurse -Path "$env:TARGET_DIR/bundle" -Filter '*.msi' -ErrorAction SilentlyContinue |
+              Select-Object -First 1
+          }
+          if (-not $binary -or -not $installer) { throw 'no starter.exe or no .msi was produced; nothing to sign' }
+
+          # The certificate is selected by **thumbprint**, not by passing a store
+          # path to `/f`. `/f` wants a PFX file; given `Cert:\CurrentUser\My` it
+          # fails with a file-not-found error that names neither the certificate
+          # nor the store.
+          $cert = Get-ChildItem Cert:\CurrentUser\My |
+            Where-Object { $_.HasPrivateKey -and $_.NotAfter -gt (Get-Date) } |
+            Select-Object -First 1
+          if (-not $cert) { throw 'no usable code-signing certificate in Cert:\CurrentUser\My' }
+
+          $signtool = Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\bin\x64\signtool.exe" |
+            Select-Object -First 1
+          foreach ($file in @($binary.FullName, $installer.FullName)) {
+            & $signtool sign /tr http://timestamp.digicert.com /td sha256 `
+              /sha1 $cert.Thumbprint $file
+            if ($LASTEXITCODE -ne 0) { throw "signtool exited $LASTEXITCODE for $file" }
+          }
+          # Both are signed: an installer that launches an unsigned binary is the
+          # case where a release *looks* signed and is not.
+          & $signtool verify /pa $binary.FullName
+          & $signtool verify /pa $installer.FullName
+          if ($LASTEXITCODE -ne 0) { throw 'signtool verify failed on a file this step signed' }
+
+      - name: Name the artifacts
+        shell: pwsh
+        env:
+          SIGN: ${{ inputs.sign }}
+          TARGET_DIR: apps/frontend/native/src-tauri/target
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $marker = if ($env:SIGN -eq 'true') { 'signed' } else { 'unsigned' }
+          New-Item -ItemType Directory -Force -Path out | Out-Null
+          foreach ($spec in @(
+            @{ Pattern = 'starter.exe'; Ext = 'exe' },
+            @{ Pattern = '*.msi';        Ext = 'msi' }
+          )) {
+            $found = Get-ChildItem -Recurse -Path $env:TARGET_DIR -Filter $spec.Pattern |
+              Where-Object { $_.FullName -match 'release|bundle' } | Select-Object -First 1
+            if (-not $found) { throw "no $($spec.Pattern) under $env:TARGET_DIR; the build produced nothing to upload" }
+            $name = "starter-windows-x86_64-$($env:GITHUB_SHA.Substring(0,12))-$marker.$($spec.Ext)"
+            Copy-Item $found.FullName "out/$name" -Force
+          }
+          "windows out" | Out-File -Append $env:GITHUB_OUTPUT
+          "- Windows artifacts: \`out/starter-windows-x86_64-$($env:GITHUB_SHA.Substring(0,12))-$marker.{exe,msi} ($marker)" |
+            Out-File -Append $env:GITHUB_STEP_SUMMARY
+
+      - name: Upload the Windows artifacts
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: starter-windows-x86_64-${{ github.sha }}
+          path: out
+          retention-days: 30
+          if-no-files-found: error
+
+  macos:
+    name: macOS release binary, signed and notarized
+    needs: preflight
+    if: contains(inputs.targets, 'macos')
+    runs-on: macos-14
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+
+      - name: Install
+        run: bun install --frozen-lockfile
+
+      - name: Report what this host can build
+        run: bun run native:doctor
+
+      - name: Build the app bundle and the DMG
+        env:
+          VITE_NATIVE_API_ORIGIN: ${{ needs.preflight.outputs.origin }}
+        run: bun run native:build -- --platform macos
+
+      - name: Import the Developer ID certificate
+        if: inputs.sign
+        env:
+          APPLE_CERTIFICATE_BASE64: ${{ secrets.APPLE_CERTIFICATE_BASE64 }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          KEYCHAIN_PASSWORD: ${{ secrets.APPLE_KEYCHAIN_PASSWORD }}
+        run: |
+          set -euo pipefail
+          test -n "${APPLE_CERTIFICATE_BASE64:-}" || { echo '::error::APPLE_CERTIFICATE_BASE64 is unset'; exit 1; }
+          CERT_PATH="$RUNNER_TEMP/developer-id.p12"
+          KEYCHAIN_PATH="$RUNNER_TEMP/signing.keychain-db"
+          echo "$APPLE_CERTIFICATE_BASE64" | base64 --decode > "$CERT_PATH"
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security import "$CERT_PATH" -k "$KEYCHAIN_PATH" -P "$APPLE_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          # `-s` *replaces* the search list; without the existing entries a
+          # runner where the login keychain is not the default cannot find its own
+          # certificates and `codesign` fails naming nothing.
+          security list-keychains -d user -s "$KEYCHAIN_PATH" $(security list-keychains -d user | tr -d '"')
+          rm -f "$CERT_PATH"
+
+      - name: Store the notarization credentials on this runner
+        if: inputs.sign
+        env:
+          APPLE_NOTARY_KEY_ID: ${{ secrets.APPLE_NOTARY_KEY_ID }}
+          APPLE_NOTARY_ISSUER_ID: ${{ secrets.APPLE_NOTARY_ISSUER_ID }}
+          APPLE_NOTARY_PRIVATE_KEY: ${{ secrets.APPLE_NOTARY_PRIVATE_KEY }}
+          APPLE_NOTARY_PROFILE: ${{ secrets.APPLE_NOTARY_PROFILE }}
+          APPLE_KEYCHAIN_PASSWORD: ${{ secrets.APPLE_KEYCHAIN_PASSWORD }}
+        run: |
+          set -euo pipefail
+          # `APPLE_NOTARY_PROFILE` names a keychain profile that does not exist on
+          # a fresh runner. `--keychain-profile "$P"` against a missing profile
+          # fails with "No keychain profile", which reads as a credential problem
+          # rather than as "nothing here was ever set up". So the profile is
+          # *created* from the notary inputs, and only when those inputs are
+          # present; otherwise the named profile is used as-is.
+          if [ -n "${APPLE_NOTARY_KEY_ID:-}" ] && [ -n "${APPLE_NOTARY_ISSUER_ID:-}" ] && [ -n "${APPLE_NOTARY_PRIVATE_KEY:-}" ]; then
+            security create-keychain -p "$APPLE_KEYCHAIN_PASSWORD" "$RUNNER_TEMP/notary.keychain-db"
+            security unlock-keychain -p "$APPLE_KEYCHAIN_PASSWORD" "$RUNNER_TEMP/notary.keychain-db"
+            echo "$APPLE_NOTARY_PRIVATE_KEY" > "$RUNNER_TEMP/AuthKey_${APPLE_NOTARY_KEY_ID}.p8"
+            chmod 600 "$RUNNER_TEMP/AuthKey_${APPLE_NOTARY_KEY_ID}.p8"
+            xcrun notarytool store-credentials "$APPLE_NOTARY_PROFILE" \
+              --key "$RUNNER_TEMP/AuthKey_${APPLE_NOTARY_KEY_ID}.p8" \
+              --key-id "$APPLE_NOTARY_KEY_ID" \
+              --issuer "$APPLE_NOTARY_ISSUER_ID" \
+              --keychain "$RUNNER_TEMP/notary.keychain-db"
+            security list-keychains -d user -s "$RUNNER_TEMP/notary.keychain-db" $(security list-keychains -d user | tr -d '"')
+            rm -f "$RUNNER_TEMP/AuthKey_${APPLE_NOTARY_KEY_ID}.p8"
+            echo "notary profile '$APPLE_NOTARY_PROFILE' created on this runner"
+          else
+            echo "::warning::APPLE_NOTARY_KEY_ID / ISSUER_ID / PRIVATE_KEY are unset, so the pre-existing profile '$APPLE_NOTARY_PROFILE' is used as-is"
+          fi
+
+      - name: Sign the app and rebuild the DMG around it
+        if: inputs.sign
+        env:
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_NOTARY_PROFILE: ${{ secrets.APPLE_NOTARY_PROFILE }}
+          TARGET_DIR: apps/frontend/native/src-tauri/target
+        run: |
+          set -euo pipefail
+          app="$(find "$TARGET_DIR" -maxdepth 5 -type d -name 'Starter.app' | head -n 1)"
+          test -n "$app" || { echo "::error::no Starter.app under $TARGET_DIR"; exit 1; }
+
+          # Sign the .app **before** it goes into a disk image. Tauri builds the
+          # DMG from whatever it just produced, so signing afterwards leaves a
+          # DMG containing an unsigned app: it installs, and Gatekeeper then
+          # refuses the executable inside it. The image is rebuilt from the signed
+          # bundle rather than the other way round, which is the only order that
+          # produces a DMG worth notarizing.
+          codesign --force --deep --options runtime --timestamp \
+            --sign "$APPLE_SIGNING_IDENTITY" "$app"
+          codesign --verify --strict --verbose=2 "$app"
+
+          dmg_dir="$RUNNER_TEMP/dmg"
+          mkdir -p "$dmg_dir"
+          cp -R "$app" "$dmg_dir/"
+          dmg="$dmg_dir/$(basename "${app%.app}").dmg"
+          hdiutil create -volname "$(basename "${app%.app}")" -srcfolder "$dmg_dir" \
+            -ov -format UDZO "$dmg"
+          # The DMG is signed too: Gatekeeper checks the image before the app
+          # inside it, and an unsigned image is refused on first open.
+          codesign --force --timestamp --sign "$APPLE_SIGNING_IDENTITY" "$dmg"
+
+          # Notarization is asynchronous: `notarytool submit` returns a status
+          # that is `Invalid` until Apple has processed the upload. Polling here
+          # is the whole point — an un-polled submit produces a DMG that is
+          # signed and un-notarized, which is what Gatekeeper complains about.
+          xcrun notarytool submit "$dmg" --keychain-profile "$APPLE_NOTARY_PROFILE" --wait
+          xcrun stapler staple "$dmg"
+          xcrun stapler validate "$dmg"
+          echo "$dmg" > "$RUNNER_TEMP/dmg-path"
+
+      - name: Name the artifact
+        env:
+          SIGN: ${{ inputs.sign }}
+          TARGET_DIR: apps/frontend/native/src-tauri/target
+        run: |
+          set -uo pipefail
+          marker=$([ "$SIGN" = "true" ] && echo signed || echo unsigned)
+          mkdir -p out
+          if [ "$SIGN" = "true" ] && [ -f "$RUNNER_TEMP/dmg-path" ]; then
+            dmg="$(cat "$RUNNER_TEMP/dmg-path")"
+          else
+            dmg="$(find "$TARGET_DIR" -name '*.dmg' | head -n 1)"
+          fi
+          if [ -z "$dmg" ]; then
+            echo "::error::no .dmg was produced under $TARGET_DIR"
+            exit 1
+          fi
+          name="starter-macos-aarch64-${GITHUB_SHA::12}-${marker}.dmg"
+          cp "$dmg" "out/$name"
+          echo "macos out" >> "$GITHUB_OUTPUT"
+          echo "- macOS artifact: \`$name\` ($marker)" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload the macOS artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: starter-macos-aarch64-${{ github.sha }}
+          path: out
+          retention-days: 30
+          if-no-files-found: error
+
+  linux:
+    name: Linux packages
+    needs: preflight
+    if: contains(inputs.targets, 'linux')
+    runs-on: ubuntu-22.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+
+      - uses: ./.github/actions/install-native-linux-deps
+
+      - name: Install
+        run: bun install --frozen-lockfile
+
+      - name: Report what this host can build
+        run: bun run native:doctor
+
+      - name: Build the binary, the AppImage and the .deb
+        env:
+          VITE_NATIVE_API_ORIGIN: ${{ needs.preflight.outputs.origin }}
+        run: bun run native:build -- --platform linux
+
+      - name: Name the artifacts
+        env:
+          TARGET_DIR: apps/frontend/native/src-tauri/target
+        run: |
+          set -euo pipefail
+          mkdir -p out
+          # No signing step, and the artifact says so. A Debian package signature
+          # is a maintainer key that belongs to whoever distributes it; this
+          # repository has none, and pretending otherwise would be a claim about
+          # a keypair that does not exist.
+          #
+          # Each pattern is **required**. `find … || continue` turns a packaging
+          # tool that silently produced nothing into a green release with an
+          # empty upload, which is the successful no-op this repository refuses.
+          for pattern in '*.AppImage' '*.deb'; do
+            found="$(find "$TARGET_DIR" -name "$pattern" | head -n 1)"
+            if [ -z "$found" ]; then
+              echo "::error::no $pattern under $TARGET_DIR; the release would ship nothing for it"
+              exit 1
+            fi
+            base="$(basename "$found")"
+            ext="${base##*.}"
+            name="starter-linux-x86_64-${GITHUB_SHA::12}-unsigned.${ext}"
+            cp "$found" "out/$name"
+            echo "- Linux artifact: \`$name\` (unsigned — no repository signing key)" >> "$GITHUB_STEP_SUMMARY"
+          done
+          echo "linux out" >> "$GITHUB_OUTPUT"
+
+      - name: Upload the Linux packages
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: starter-linux-x86_64-${{ github.sha }}
+          path: out
+          retention-days: 30
+          if-no-files-found: error
+
+  # ── Android ────────────────────────────────────────────────────────────────
+
+  android:
+    name: Android release bundle
+    needs: preflight
+    if: contains(inputs.targets, 'android')
+    runs-on: ubuntu-22.04
+    timeout-minutes: 75
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+
+      - name: Install a JDK
+        uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6.0.1
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Install the Android SDK and NDK
+        uses: android-actions/setup-android@be39fa834029ff78f1a44aa3bb0819b8fc2bd8fd # v4.0.4
+        with:
+          cmdline-tools-version: 13114758
+          # `platforms;android-37` does not exist — Android publishes minor-versioned
+          # platform packages and CI's sdkmanager answered "Failed to find package".
+          # `37.2` is the newest 37.x on the stable channel. `ndk;29.0.13846066` is
+          # the pinned CLI's own constant, without which `native:doctor` refuses and
+          # the build below is four minutes wasted.
+          packages: 'platform-tools platforms;android-37.2 ndk;29.0.13846066'
+          accept-android-sdk-licenses: true
+
+      - name: Install
+        run: bun install --frozen-lockfile
+
+      - name: Install the pinned toolchain and the mobile targets
+        run: |
+          set -euo pipefail
+          rustup show active-toolchain || rustup toolchain install
+          rustup target add aarch64-linux-android armv7-linux-androideabi i686-linux-android x86_64-linux-android
+
+      - name: Report what this host can build
+        run: bun run native:doctor -- --platform android
+
+      - name: Generate the Android project
+        run: bun run native:android -- init --ci
+
+      - name: Build the static frontend
+        run: bun run --cwd apps/frontend/native build
+
+      - name: Prove the frontend carries no server code
+        run: bun run --cwd apps/frontend/native check:bundle
+
+      - name: Materialize the upload keystore
+        if: inputs.sign
+        env:
+          KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          echo "$KEYSTORE_BASE64" | base64 --decode > "$RUNNER_TEMP/upload.keystore"
+          chmod 600 "$RUNNER_TEMP/upload.keystore"
+          # Gradle reads these from properties or the environment. Written to the
+          # generated project's gradle.properties, which is inside the gitignored
+          # `gen/` tree, so no credential is ever written to a tracked file.
+          cat >> apps/frontend/native/src-tauri/gen/android/gradle.properties <<EOF
+          STORE_FILE=$RUNNER_TEMP/upload.keystore
+          STORE_PASSWORD=$KEYSTORE_PASSWORD
+          KEY_ALIAS=$KEY_ALIAS
+          KEY_PASSWORD=$KEY_PASSWORD
+          EOF
+          # A properties file alone configures nothing. The signing config has to
+          # be *declared* in build.gradle.kts and *attached* to the release build
+          # type, or `bundleRelease` silently produces an unsigned .aab and the
+          # step below would be marking it `signed` because a keystore was
+          # downloaded.
+          cat > apps/frontend/native/src-tauri/gen/android/app/signing.gradle.kts <<'EOF'
+          import java.util.Properties
+
+          val keystoreProperties = Properties().apply {
+            val file = rootProject.file("gradle.properties")
+            if (file.exists()) file.inputStream().use { load(it) }
+          }
+
+          // `null` when the properties are absent, which is the honest answer for
+          // an unsigned lane: Gradle then produces an unsigned .aab rather than
+          // failing with a message about a key alias nobody configured.
+          android.signingConfigs.create("release") {
+            if (keystoreProperties.containsKey("STORE_FILE")) {
+              storeFile = file(keystoreProperties.getProperty("STORE_FILE"))
+              storePassword = keystoreProperties.getProperty("STORE_PASSWORD")
+              keyAlias = keystoreProperties.getProperty("KEY_ALIAS")
+              keyPassword = keystoreProperties.getProperty("KEY_PASSWORD")
+            }
+          }
+          EOF
+          cat >> apps/frontend/native/src-tauri/gen/android/app/build.gradle.kts <<'EOF'
+
+          // Attached by the release lane. Guarded so the uncredentialed lane,
+          // which never writes these properties, still builds.
+          if (project.hasProperty("STORE_FILE") || rootProject.file("gradle.properties").exists()) {
+            apply(from = rootProject.file("signing.gradle.kts"))
+            android {
+              buildTypes {
+                getByName("release") {
+                  signingConfig = signingConfigs.getByName("release")
+                }
+              }
+            }
+          }
+          EOF
+
+      - name: Build the release bundle
+        env:
+          VITE_NATIVE_API_ORIGIN: ${{ needs.preflight.outputs.origin }}
+        run: bun run native:android -- build --aab --ci
+
+      - name: Verify the bundle is signed before calling it signed
+        if: inputs.sign
+        env:
+          KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+        run: |
+          set -euo pipefail
+          # Searched, not hardcoded: with every ABI built (as a release .aab must
+          # be) Gradle writes to `bundle/universalRelease/`, not `bundle/release/`.
+          aab="$(find apps/frontend/native/src-tauri/gen/android/app/build/outputs -name '*.aab' -type f | head -n 1)"
+          test -n "$aab" || { echo '::error::no .aab was produced'; exit 1; }
+          # `jarsigner -verify` reads the signature *inside* the bundle. An .aab
+          # built without the signing config is a perfectly valid zip that carries
+          # no signature at all, so naming it `signed` would be a claim nothing
+          # checked. This is that check.
+          if ! jarsigner -verify -strict -keystore "$RUNNER_TEMP/upload.keystore" \
+               -storepass "$KEYSTORE_PASSWORD" "$aab"; then
+            echo "::error::the .aab carries no valid signature; signing was requested but did not happen"
+            exit 1
+          fi
+
+      - name: Verify and name the artifact
+        env:
+          SIGN: ${{ inputs.sign }}
+          VITE_NATIVE_API_ORIGIN: ${{ needs.preflight.outputs.origin }}
+        run: |
+          set -euo pipefail
+          dir="$(dirname "$(find apps/frontend/native/src-tauri/gen/android/app/build/outputs -name '*.aab' -type f | head -n 1)")"
+          if [ -z "$dir" ] || [ "$dir" = "." ]; then
+            echo "::error::no .aab was produced under gen/android/app/build/outputs"
+            exit 1
+          fi
+          bun run --cwd apps/frontend/native check:artifacts -- \
+            -- "$dir" --origin "$VITE_NATIVE_API_ORIGIN" --revision "$GITHUB_SHA" --platform android
+          marker=$([ "$SIGN" = "true" ] && echo signed || echo unsigned)
+          # `universal` because this AAB carries every ABI; a single-ABI name would
+          # be a lie the checker could not detect.
+          name="$(bun run --cwd apps/frontend/native check:artifacts -- --name android universal aab "$marker" | tail -n 1)"
+          mkdir -p out
+          # The Gradle output name is its own; `name` is what the artifact is
+          # *called* from here on. Renaming is the point: the built file says
+          # nothing about the revision it came from.
+          cp "$dir"/*.aab "out/$name"
+          echo "android out" >> "$GITHUB_OUTPUT"
+          {
+            echo "- Android artifact: \`$name\` ($marker)"
+            echo "- Google Play upload: **NOT RUN** — this workflow produces artifacts only. A store upload is a separate authority with its own credential and rollback story."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload the Android bundle
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: starter-android-universal-${{ github.sha }}
+          path: out
+          retention-days: 30
+          if-no-files-found: error
+
+  # ── iOS ────────────────────────────────────────────────────────────────────
+  #
+  # macOS only, and not as a policy: the pinned CLI compiles `tauri ios` only into
+  # its macOS build, so `bun run native:ios` on any other host exits 3 naming the
+  # macOS runner. A Linux job with a full set of Apple credentials still cannot
+  # produce an iOS build.
+
+  ios:
+    name: iOS signed archive for App Store Connect
+    needs: preflight
+    if: contains(inputs.targets, 'ios')
+    # macos-15 for the same reason as the uncredentialed lane: Xcode 16+ is needed
+    # to open the project format `tauri ios init` writes.
+    runs-on: macos-15
+    timeout-minutes: 75
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+
+      - name: Select the newest installed Xcode
+        # `/Applications/Xcode.app` is a symlink that pointed at 15.4 on the image
+        # this first used, while 16.2 sat beside it; `tauri ios init` writes project
+        # format 77, which Xcode 15 refuses. Pick the newest, then assert the major.
+        run: |
+          set -euo pipefail
+          newest="$(ls -d /Applications/Xcode_*.app | sort -V | tail -n 1)"
+          echo "newest installed Xcode: $newest"
+          sudo xcode-select -s "$newest"
+          version="$(xcodebuild -version | head -n 1)"
+          echo "$version"
+          major="${version##* }"; major="${major%%.*}"
+          case "$major" in
+            ''|*[!0-9]*) echo "::error::cannot read an Xcode major version from '$version'"; exit 1 ;;
+          esac
+          if [ "$major" -lt 16 ]; then
+            echo "::error::Xcode $version cannot open project format 77; Xcode 16 or newer is required."
+            exit 1
+          fi
+
+      - name: Install
+        run: bun install --frozen-lockfile
+
+      - name: Install the pinned toolchain and the iOS targets
+        run: |
+          set -euo pipefail
+          rustup show active-toolchain || rustup toolchain install
+          rustup target add aarch64-apple-ios
+
+      - name: Report what this host can build
+        run: bun run native:doctor -- --platform ios
+
+      - name: Import the distribution certificate and the provisioning profile
+        if: inputs.sign
+        env:
+          APPLE_CERTIFICATE_BASE64: ${{ secrets.APPLE_CERTIFICATE_BASE64 }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_PROVISIONING_PROFILE_BASE64: ${{ secrets.APPLE_PROVISIONING_PROFILE_BASE64 }}
+          APPLE_PROVISIONING_PROFILE_NAME: ${{ secrets.APPLE_PROVISIONING_PROFILE_NAME }}
+          KEYCHAIN_PASSWORD: ${{ secrets.APPLE_KEYCHAIN_PASSWORD }}
+        run: |
+          set -euo pipefail
+          for name in APPLE_CERTIFICATE_BASE64 APPLE_CERTIFICATE_PASSWORD APPLE_SIGNING_IDENTITY APPLE_TEAM_ID APPLE_PROVISIONING_PROFILE_BASE64 APPLE_PROVISIONING_PROFILE_NAME; do
+            eval "value=\${$name:-}"
+            test -n "$value" || { echo "::error::$name is unset"; exit 1; }
+          done
+          CERT_PATH="$RUNNER_TEMP/distribution.p12"
+          PROFILE_PATH="$HOME/Library/MobileDevice/Provisioning Profiles/$APPLE_PROVISIONING_PROFILE_NAME.mobileprovision"
+          mkdir -p "$(dirname "$PROFILE_PATH")"
+          echo "$APPLE_CERTIFICATE_BASE64" | base64 --decode > "$CERT_PATH"
+          echo "$APPLE_PROVISIONING_PROFILE_BASE64" | base64 --decode > "$PROFILE_PATH"
+          IOS_KEYCHAIN="$RUNNER_TEMP/ios.keychain-db"
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$IOS_KEYCHAIN"
+          # Auto-lock off for the length of the build. A keychain created with
+          # `create-keychain` locks after five minutes of inactivity by default, and
+          # an `xcodebuild` archive takes longer than that — at which point
+          # codesign fails with "The specified item already exists in the keychain"
+          # or an errSecInternalComponent, naming no timeout and no credential.
+          security set-keychain-settings -lut 21600 "$IOS_KEYCHAIN"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$IOS_KEYCHAIN"
+          security import "$CERT_PATH" -k "$IOS_KEYCHAIN" \
+            -P "$APPLE_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple:,codesign: \
+            -s -k "$KEYCHAIN_PASSWORD" "$IOS_KEYCHAIN"
+          # `-s` replaces the search list, so the existing entries are appended
+          # rather than dropped: on a runner whose login keychain is not already
+          # in it, replacing the list removes the runner's own certificates.
+          security list-keychains -d user -s "$IOS_KEYCHAIN" $(security list-keychains -d user | tr -d '"')
+          rm -f "$CERT_PATH"
+
+      - name: Generate the Xcode project
+        run: bun run native:ios -- init --ci
+
+      - name: Build the static frontend
+        run: bun run --cwd apps/frontend/native build
+
+      - name: Prove the frontend carries no server code
+        run: bun run --cwd apps/frontend/native check:bundle
+
+      - name: Produce the archive
+        env:
+          # `sign` is read from the environment, never interpolated into the script
+          # body: a `${{ }}` expression is substituted into the shell text before
+          # bash ever sees it, so any value the operator can influence becomes
+          # shell source.
+          SIGN: ${{ inputs.sign }}
+          VITE_NATIVE_API_ORIGIN: ${{ needs.preflight.outputs.origin }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+        run: |
+          set -euo pipefail
+          # `--export-method app-store-connect` is what makes the archive one
+          # App Store Connect accepts; `--archive-only` stops after the
+          # `.xcarchive` instead of also producing an IPA that is then uploaded
+          # by hand. Both are iOS flags and neither exists on `android build`.
+          #
+          # `--no-sign` when signing was not requested, which is an *unsigned*
+          # archive that cannot be submitted — named and reported as such below
+          # rather than as a TestFlight build.
+          if [ "$SIGN" = "true" ]; then
+            bun run native:ios -- build --target aarch64 --export-method app-store-connect \
+              --archive-only --build-number "${GITHUB_RUN_NUMBER}" --ci
+          else
+            bun run native:ios -- build --target aarch64 --archive-only --no-sign --ci
+          fi
+
+      - name: Verify and name the archive
+        env:
+          SIGN: ${{ inputs.sign }}
+          VITE_NATIVE_API_ORIGIN: ${{ needs.preflight.outputs.origin }}
+        run: |
+          set -euo pipefail
+          archive="$(find apps/frontend/native/src-tauri/gen/apple -maxdepth 4 -name '*.xcarchive' -type d | head -n 1)"
+          test -n "$archive" || { echo '::error::no .xcarchive was produced'; exit 1; }
+          marker=$([ "$SIGN" = "true" ] && echo signed || echo unsigned)
+          name="starter-ios-aarch64-${GITHUB_SHA::12}-${marker}.xcarchive"
+          mkdir -p out
+          # A directory, so `ditto` rather than `cp -R`: `cp` does not preserve the
+          # symlinks inside a built bundle's Frameworks, and the archive that
+          # results installs and then crashes on launch.
+          ditto "$archive" "out/$name"
+          echo "ios out" >> "$GITHUB_OUTPUT"
+          {
+            echo "- iOS artifact: \`$name\` ($marker)"
+            if [ "$SIGN" = "true" ]; then
+              echo "- ready for App Store Connect / TestFlight upload: the archive is signed and exported with \`app-store-connect\`. **The upload itself is NOT RUN** — this workflow stops at the artifact."
+            else
+              echo "- TestFlight submission: **NOT RUN** — signing was not requested, so this archive carries no provisioning profile and cannot be submitted. That is the state, stated rather than implied."
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload the iOS archive
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: starter-ios-aarch64-${{ github.sha }}
+          path: out
+          retention-days: 30
+          if-no-files-found: error
+
+  # ── Upload, once every job that ran has said what it produced ─────────────
+
+  upload:
+    name: Collect the release artifacts
+    needs: [preflight, windows, macos, linux, android, ios]
+    # `always()` so a lane that failed does not silently produce an empty
+    # "success" — the summary below reports every lane, including the skipped and
+    # failed ones, and names what is missing from this release.
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          path: out
+          merge-multiple: true
+
+      - name: Report what this release contains and what it does not
+        env:
+          WINDOWS_RESULT: ${{ needs.windows.result }}
+          MACOS_RESULT: ${{ needs.macos.result }}
+          LINUX_RESULT: ${{ needs.linux.result }}
+          ANDROID_RESULT: ${{ needs.android.result }}
+          IOS_RESULT: ${{ needs.ios.result }}
+        run: |
+          set -uo pipefail
+          {
+            echo ""
+            echo "### What this release contains"
+            for lane in WINDOWS MACOS LINUX ANDROID IOS; do
+              result="$(eval echo \$${lane}_RESULT)"
+              echo "- \`$lane\`: $result"
+            done
+            echo ""
+            echo "Each lane uploaded its own artifact under its own SHA-pinned name; this job collects them into one:"
+            ls -1 out 2>/dev/null | sed 's/^/- /' || echo "- (none)"
+            echo ""
+            echo "Never performed by this workflow: Google Play upload, App Store Connect upload, TestFlight submission, physical-device testing. A lane that reported \`skipped\` was not in the requested \`targets\`; a lane that reported \`failure\` produced no release artifact."
+          } >> "$GITHUB_STEP_SUMMARY"
+          ls -la out || true
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: starter-native-release-${{ github.sha }}
+          path: out
+          retention-days: 30
+          if-no-files-found: error

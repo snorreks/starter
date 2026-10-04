@@ -24,3 +24,46 @@ body {
      desktop OS this builds for. */
   font-family: system-ui, sans-serif;
 }
+
+/*
+  Phone insets, and only where there is something to inset.
+
+  `app.html` asks for `viewport-fit=cover`, which is what makes a notched phone
+  paint edge to edge instead of letterboxing the page. The consequence is that
+  the app owns the area behind the status bar and the home indicator, so it has to
+  inset them itself — `--safe-top` and friends are the four values the layout
+  reads.
+
+  `env(…, 0px)` rather than `env(…)`: the fallback is what a desktop webview and
+  every browser resolves to, and a declaration with no fallback is invalid where
+  the variable is unknown, which is every non-mobile engine.
+
+  `100dvh` with a `100vh` line in front of it lives in the root layout, where
+  `.shell` is defined; see the comment there.
+*/
+:root {
+  --safe-top: env(safe-area-inset-top, 0px);
+  --safe-right: env(safe-area-inset-right, 0px);
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+  --safe-left: env(safe-area-inset-left, 0px);
+}
+
+/*
+  Two things a desktop stylesheet gets for free and a phone does not.
+
+  `overflow-wrap` — a long API error, an email address or a job id is one
+  unbreakable token, and a single one is enough to produce a page that scrolls
+  sideways on a 360dp screen. Breaking it is the fix; hiding the overflow would
+  hide the value.
+
+  `touch-action` — a double-tap delay is a 300ms penalty on every list row in an
+  app whose whole surface is taps. `manipulation` removes it without disabling
+  pinch-zoom, which `none` would.
+*/
+body {
+  overflow-wrap: break-word;
+  touch-action: manipulation;
+  /* No horizontal scrolling, ever. An overflowing phone view is a layout bug, and
+     letting the user pan to it hides the bug from them and from every test. */
+  overflow-x: hidden;
+}

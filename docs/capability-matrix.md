@@ -335,8 +335,87 @@ Nothing above this line changed.
 | A real desktop binary on Linux, macOS, Windows | Needs the toolchain above. The CI lane that does it is added by this change. | `.github/workflows/native.yml`, `desktop` job |
 | Launching the packaged app | No display, no signed app, no deployment to point it at | `./apps/frontend/native/src-tauri/target/release/starter` |
 | An authenticated workflow inside the shell | Both sides are proved separately (see the device rows); the last mile needs a signed-in window | A deployment, then `bun run native:dev` |
-| Android / iOS builds | Out of scope for this change. | Not implemented |
-| Notarization, signing, app stores | Need credentials this repository does not have, and this change adds no remote secret. | Not implemented |
+| Notarization, signing, app stores | Need credentials this repository does not have, and this change writes no remote secret. | `.github/workflows/native-release.yml`, `workflow_dispatch` |
+
+## The native mobile lane (PR E)
+
+A fourth dated section. This round extended the shell to Android and iOS and did
+**not** re-run the web lanes, so the rows above keep their own revision.
+
+**Proved here, on this host, without an SDK or a phone:**
+
+| Capability | How it was verified | Command | Result |
+|---|---|---|---|
+| Exact mobile argv | Read out of the pinned CLI: `tauri android {init,dev,build,run} --help` on this host, and `crates/tauri-cli/src/mobile/ios/*.rs` at `tauri-cli-v2.12.1` for the macOS-only half | `bun test ./tests/native_mobile.test.ts` (cwd `scripts`) | 29 pass, 0 fail |
+| `tauri ios` really is absent on Linux | The CLI answered `error: unrecognized subcommand 'ios'` | `apps/frontend/native/node_modules/.bin/tauri ios build --help` | exit 2 |
+| Wrong flags refused, per platform **and** subcommand | `android build --no-sign`, `ios build --apk`, `--target <triple>`, `--host` on a build, `--debug` with `--release` | same | same |
+| iOS refused as unavailable (exit 3), not as usage (exit 2) | `bun run native:ios -- build --target aarch64-sim --ci` | same | exit 3 |
+| Committed config carries no dev reachability | Marker scan of `tauri.conf.json` for `usesCleartextTraffic`, `networkSecurityConfig`, `NSAppTransportSecurity`, `NSAllowsArbitraryLoads`, `NSAllowsLocalNetworking`, `NSExceptionDomains`; plus no `bundle.iOS.infoPlist` | `bun test ./tests/mobile_platform_config.test.ts` (cwd `scripts`) | 9 pass, 0 fail |
+| No desktop window minimum reaches a phone | `app.windows[]` has no `minWidth`/`minHeight` | same | same |
+| Android pins are the CLI's constants | `SDK_VERSION = 37`, `NDK_VERSION = 29.0.13846066` read from the pinned CLI source | `bun test ./tests/native_mobile.test.ts` | same |
+| The compileSdk API level is not the installable package | `repository2-3.xml` and `sys-img/google_apis/sys-img2-3.xml`: `platforms;android-37` does not exist; `37.2` does and unpacks into `platforms/android-37.2/` | `bun test ./tests/mobile_prerequisites.test.ts` | 18 pass, 0 fail |
+| A device host cannot survive into a packaged build | `resolveApiOrigin({ dev: false, devHost })` throws; `dev` comes from the subcommand | `bun run --cwd apps/frontend/native test` | 112 pass, 0 fail |
+| Lifecycle: suspend, resume, offline, disposal | A real `EventTarget`, no phone | same | same |
+| The lifecycle decision | The ViewModel's rule, not the layout's: refresh only on the transition *into* `active` | same | same |
+| A flag with no value, or another flag in its place | `--target`, `--target --aab`, `--host` with nothing after each | `bun test ./tests/native_mobile.test.ts` (cwd `scripts`) | 29 pass, 0 fail |
+| Android prerequisites, driven with a fake environment | Empty `NDK_HOME` falling through to `ANDROID_NDK_HOME`; an SDK carrying r22 not satisfying NDK 29 | `bun test ./tests/mobile_prerequisites.test.ts` (cwd `scripts`) | 12 pass, 0 fail |
+| Artifact naming and origin verification | Real ZIP containers written by the test and read by the shipped reader, with a CRC check and a deliberately corrupted fixture | `bun run --cwd apps/frontend/native test` | same |
+| The marker is mandatory, every directory is checked, and an identifier is not a deployment | `--name`, `parseArgs`, `isForeignOrigin` — including `schema.tauri.app` and the config's `devUrl`, both found by shipping real APKs, and `schema.tauri.app.evil.invalid`, which must still be reported | same | same |
+| Rust formatting | `cargo fmt --check` | `cargo fmt --check` in `apps/frontend/native/src-tauri` | clean |
+
+**Proved on CI, on the real runtimes** — these are no longer `NOT RUN`:
+
+| Capability | How it was verified | Command | Result |
+|---|---|---|---|
+| Android debug APK and release AAB, unsigned | `android` job, API 34 platform, NDK 29.0.13846066, JDK 17 | `bun run native:android -- build --debug --apk --target aarch64 --ci` and `… -- build --aab --ci` | **both built** |
+| The Android packages name themselves and carry the expected origin | Every step green: name, revision, signing marker, and the API origin present with no other deployment | `bun run --cwd apps/frontend/native check:artifacts` | **pass** |
+| Installed and launched on an Android emulator | Real `adb install -r` (reported `Success`), `am start -W` on the package and activity **resolved from the device**, then `dumpsys activity activities` matching the resolved activity | the `android` job's install step | **running** |
+| The Android back key | `KEYCODE_BACK` twice, then the package asserted still registered | the `android` job's back-key step | **pass** |
+| iOS installed and launched on a simulator | `xcrun simctl install` + `launch`, then `get_app_container` | the `ios` job | **pass** |
+| A build failure propagates out of the launcher | Fresh `CARGO_TARGET_DIR` plus a nonexistent linker, asserted to appear in the log | both mobile jobs' induced-failure step | **pass** |
+
+Recorded honestly, because they are the failures CI found and this round fixed:
+`platforms;android-37` does not exist (minor-versioned packages now);
+`macos-14`'s `/Applications/Xcode.app` symlink pointed at 15.4 while the project
+format is 77; `libc 0.2.190` gated `mach_task_self` away from iOS;
+`avdmanager create` exited 0 having created nothing; the runner was not in `kvm`;
+and the debug APK installs as `com.example.starter.debug`, not the identifier.
+
+One infrastructure flake, not a defect: `Desktop build (windows-2022)` failed once
+in `libsodium-sys-stable`'s build script with `Os { code: 11002 }` — "temporary
+error during hostname resolution", from a download the crate performs at build
+time. It passed on the immediately preceding run and on the re-run. No workaround
+was added, because a retry here would hide a network fault rather than name it.
+| An iOS simulator app is actually produced | CI, `ios` job, `macos-15` with Xcode 26.3, `aarch64-sim` — `tauri ios build` reported `Finished 1 iOS Bundle at: …/gen/apple/build/arm64-sim/Starter.app` | `bun run native:ios -- build --target aarch64-sim --ci` | **built** |
+| The launcher propagates an iOS build failure | `CARGO_TARGET_DIR` fresh + `CARGO_TARGET_AARCH64_APPLE_IOS_SIM_LINKER` pointing at nothing, and the step asserts the log names the linker | the `ios` job's induced-failure step | **passes** — and it caught its own first premise being untrue (`CC=/nonexistent/cc` changed nothing once every C build script was cached) |
+| The iOS dependency graph type-checks | `cargo check --locked --target aarch64-apple-ios-sim`, reproduced **and fixed** on this host after CI reported `E0425: cannot find function mach_task_self` from `num_threads` | `cargo check --locked --target aarch64-apple-ios-sim -p num_threads` | **compiles** after `cargo update -p libc --precise 0.2.189` |
+| The `libc` pin cannot drift silently | `scripts/tests/cargo_ios_pins.test.ts`: a lockfile carrying `num_threads` on `libc 0.2.190` is refused with the reason and the remedy; the media crate is shown unaffected | `bun test ./tests/cargo_ios_pins.test.ts` (cwd `scripts`) | 6 pass, 0 fail |
+
+**NOT RUN here, with the reason.** This host is Linux with no Android SDK, no JDK,
+no `pkg-config` and no Xcode, so *every* row that needs a vendor toolchain or a
+device is a row that CI owns:
+
+| Capability | Why it was not run | Exact command that runs it |
+|---|---|---|
+| `cargo check` / `cargo test` / `cargo clippy` on `src-tauri` | No WebKitGTK 4.1 and no `pkg-config`; the dependency chain cannot link. `cargo` 1.98.1 was installed for this round, and `cargo fmt --check` does pass. | `cargo test --locked` in `apps/frontend/native/src-tauri` |
+| A whole-crate `cargo check --target aarch64-apple-ios-sim` | Gets past `num_threads` and stops at `objc2-exception-helper`, whose build script needs a real `SDKROOT`. That is the missing-Xcode prerequisite, not a defect — this host has no Xcode. | the `ios` job in `.github/workflows/native.yml`, on `macos-15` |
+| Android APK/AAB build and emulator launch | The platform package that CI was asking for did not exist; it now installs `platforms;android-37.2`. Whether AGP accepts the template's `compileSdk = 37` against that installed minor version is **not** something this host can answer — there is no Android SDK here. | the `android` job in `.github/workflows/native.yml` |
+| Android debug APK | No `ANDROID_HOME`, no JDK. | `bun run native:android -- build --debug --apk --target aarch64 --ci` |
+| Android release AAB | Same. | `bun run native:android -- build --aab --ci` |
+| Android install + launch on an emulator | **Run on CI — see above.** Closed. | the `android` job: `adb install -r`, then the package and launcher resolved with `pm list packages` and `cmd package resolve-activity` |
+| Android back key | **Run on CI — see above.** Closed. | the `android` job's `KEYCODE_BACK` step |
+| iOS simulator build | **Run on CI — see above.** Closed. | `bun run native:ios -- build --target aarch64-sim --ci` on `macos-15` |
+| iOS install + launch on a simulator | **Run on CI — see above.** Closed. | the `ios` job: `xcrun simctl install` / `launch` |
+| CLI failure propagation through the launcher | Needs a real Android/iOS build to fail. | the induced-failure step in each of those two jobs |
+| Stronghold lock/unlock **on a phone** | The store's rules are platform-independent and unit-tested; the OS keychain interaction and process freezing are device observations. | manual, on a device: see `docs/native.md` |
+| A signed AAB or iOS archive | Needs `ANDROID_KEYSTORE_*` / Apple secrets that this repository does not have, and PRs write no remote secrets. | `.github/workflows/native-release.yml`, `workflow_dispatch` with `sign: true` |
+| Physical device run | A human, a provisioned device, an Apple Developer account. | Not implemented |
+| Google Play / App Store Connect upload | Deliberately not implemented: a store credential in CI is a second authority with its own rollback story. | Not implemented |
+| Authenticated sign-in and the notes path **on a device** | Needs a deployed API. The template ships none, and the CI lanes say so in their job summary rather than implying it. | `bun run native:android -- run --release` against a deployment |
+
+Every row above that names a CI job is a *lane that exists*, not a lane that has
+run. A lane that has not run has not proved anything, and this table keeps the two
+apart for the same reason the desktop rows above do.
 
 ## Host prerequisites the lanes need
 

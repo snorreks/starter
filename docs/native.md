@@ -1,8 +1,14 @@
-# Native: desktop client, device sign-in and the vault
+# Native: desktop and mobile clients, device sign-in and the vault
 
 The canonical guide for `apps/frontend/native`. The package
 [README](../apps/frontend/native/README.md) says what the project is and how to run
 it; this says why each decision is the way it is, and what is **not** claimed.
+
+Desktop (Linux, macOS, Windows), Android and iOS are built from the same static
+bundle by the same pinned Tauri CLI. They are not the same *capability*: an
+emulator launch, a signed archive and a physical device run are three separate
+things with three separate proofs, and this document keeps them in three separate
+rows rather than under one "mobile works" heading.
 
 ## Why a second frontend at all
 
@@ -167,10 +173,9 @@ binary** on Ubuntu, macOS and Windows.
 |---|---|
 | Compiles on Linux, macOS, Windows | Proven by CI; artifacts are named with target, revision and the word `unsigned`. |
 | Formatted, clippy-clean, unit-tested | Proven by CI (`rust` job), with the passing count asserted. |
-| Signed installer, notarized `.dmg`, app-store upload | **Not implemented.** They need credentials this repository does not have, and a workflow that referenced them would fail for every contributor. |
-| The packaged app **launching** | **Not proved.** CI builds; it does not run. |
-| An authenticated workflow inside the shell | **Not proved end to end.** The flow is proven from both sides — device approval, bearer access, revocation — against the built Worker; the last mile needs a signed-in shell. |
-| Android, iOS | **Not implemented.** Out of scope for this change; `docs/rename-checklist.md` and the round-2 review record what it needs. |
+| Signed installer, notarized `.dmg`, app-store upload | **Not implemented here.** `.github/workflows/native-release.yml` implements the signing lanes; they need credentials this repository does not have, and a workflow that referenced them on `pull_request` would fail for every contributor. |
+| The packaged app **launching** | **Not proved on desktop.** CI builds; it does not run. The mobile lanes below *do* launch, on an emulator and a simulator. |
+| An authenticated workflow inside the shell | **Not proved end to end.** The flow is proven from both sides — device approval, bearer access, revocation — against the built Worker; the last mile needs a signed-in shell and a deployed API. |
 
 To check a launch yourself:
 
@@ -181,19 +186,310 @@ bun run native:build -- --linux --no-bundle
 
 with `VITE_NATIVE_API_ORIGIN` pointing at a deployment you control.
 
-## Mobile, and who owns it
+## Mobile: the CLI vocabulary, and where it came from
 
-The shell is written so a mobile build is a configuration change rather than a
-rewrite: `src/lib.rs` has a `#[cfg_attr(mobile, tauri::mobile_entry_point)]` entry
-point, the window has no desktop minimum width, and the app HTML asks for
-`viewport-fit=cover`. The plugins chosen here (opener, stronghold) support both
-mobile platforms.
+`bun run native:android` and `bun run native:ios` run the pinned Tauri CLI's own
+mobile subcommands. Every flag they accept was read out of that CLI, not recalled:
 
-What is **not** here: `tauri android init`, `tauri ios init`, the generated Gradle
-and Xcode projects, the signing identities, and the device-reachable dev URL — a
-phone's `localhost` is not a development machine's `localhost`. Those belong to the
-change that adds mobile, and that change owns this workflow's mobile lanes rather
-than creating a second one.
+| | Android | iOS |
+|---|---|---|
+| Subcommands | `init`, `dev`, `build`, `run` | `init`, `dev`, `build`, `run` |
+| `--target` values | `aarch64`, `armv7`, `i686`, `x86_64` (ABIs) | `aarch64`, `aarch64-sim`, `x86_64` (architectures) |
+| Default target | all | `aarch64` — the **device**, not the simulator |
+| Rust triples | `aarch64-linux-android`, `armv7-linux-androideabi`, `i686-linux-android`, `x86_64-linux-android` | `aarch64-apple-ios`, `aarch64-apple-ios-sim`, `x86_64-apple-ios` |
+| Platform flags | `--apk`, `--aab`, `--split-per-abi` | `--export-method`, `--no-sign`, `--archive-only`, `--build-number` |
+
+Two facts about the CLI shape the rest of this section follows from:
+
+- **`--target` is never a Rust triple.** `tauri android build --target
+  x86_64-linux-android` is a usage error, and so is `tauri ios build --target
+  aarch64-apple-ios`. The triples live in `scripts/src/native/mobile.ts` because
+  the doctor asks `rustup target add` for them, and because the mapping should be
+  one table rather than a paragraph of prose.
+- **`tauri ios` is compiled only into the CLI's macOS build.** On Linux it is
+  `error: unrecognized subcommand 'ios'` with exit 2, which a caller reading exit
+  codes alone would record as a usage mistake. `bun run native ios …` therefore
+  refuses on a non-macOS host with **exit 3**, naming the macOS runner — and a
+  Linux build is never credited with an iOS build.
+
+Wrong flags are refused rather than forwarded, per platform *and* per subcommand:
+`tauri android dev --apk` is a usage error from clap, and `tauri android build
+--no-sign` is an iOS flag. `scripts/tests/native_mobile.test.ts` asserts the exact
+argv and the refusals on a machine with neither SDK installed.
+
+## Android prerequisites, and where the numbers come from
+
+```bash
+bun run native:doctor -- --platform android
+```
+
+asks, by running each tool: `ANDROID_HOME` (or `ANDROID_SDK_ROOT`) and whether it
+exists, the installed platform, the NDK, a **JDK** (not a JRE — Gradle compiles the
+Android module), `adb`, and the rustup targets the requested ABIs need.
+
+| Pin | Value | Where it comes from |
+|---|---|---|
+| `compileSdk` / `targetSdk` **API level** | 37 | `SDK_VERSION` in `crates/tauri-cli/src/mobile/android/mod.rs` |
+| Installable platform package | `platforms;android-37.2` | `repository2-3.xml`: the newest 37.x on the stable channel |
+| NDK | `ndk;29.0.13846066` | `NDK_VERSION` in the same file |
+| `minSdkVersion` | 24 | `bundle.android.minSdkVersion` in `tauri.conf.json` |
+
+The API level is **not** a package name, and conflating the two is a failure CI
+already made: Android publishes platform packages under minor-versioned names
+(`android-36.1`, `android-37.0`, `android-37.1`, `android-37.2`,
+`android-37.2-beta1`…), there is no bare `platforms;android-37`, and
+`sdkmanager` answers `Warning: Failed to find package 'platforms;android-37'`.
+Each of those archives unpacks into `platforms/android-<major>.<minor>/`, so a
+correctly provisioned SDK contains `android-37.2` and **no** `android-37`
+directory at all — which is why `bun run native:doctor -- --platform android`
+compares the API **major** level instead of matching a directory name. Both
+constants live side by side in `scripts/src/native/mobile.ts` with the evidence
+attached.
+
+So, to provision a host by hand:
+
+```bash
+sdkmanager "platform-tools" "platforms;android-37.2" "ndk;29.0.13846066" \
+          "emulator" "system-images;android-34;google_apis;x86_64"
+```
+
+The generated Gradle project is **not committed**. `tauri android init` writes
+`src-tauri/gen/android/`, which is gitignored, excluded from project discovery by
+`GENERATED_TREES` in `scripts/src/guards/policy.ts`, and regenerated by
+`bun run native:android -- init --ci`. Regenerate rather than merge it: it is a
+build product of `tauri.conf.json` and `Cargo.toml`, and a hand-edited copy of one
+is a file that disagrees with its own source the next time either changes.
+
+## One transitive pin, and why it cannot be upgraded
+
+`libc` is held at **0.2.189** in `apps/frontend/native/src-tauri/Cargo.lock`, and
+that is the only pin in this repository that is not an `=` in a `Cargo.toml`.
+
+`libc 0.2.190` gated `mach_task_self()` behind `#[cfg(target_os = "macos")]` — the
+source says "Prohibited on iOS/tvOS/watchOS/visionOS". The unmaintained
+`num_threads 0.1.7` routes `target_os = "ios"` to `apple.rs`, which calls exactly
+that function, so the shell does not compile for `aarch64-apple-ios`:
+
+```
+error[E0425]: cannot find function `mach_task_self` in crate `libc`
+   --> num_threads-0.1.7/src/apple.rs:34
+error: could not compile `num_threads` (lib) due to 1 previous error
+```
+
+There is no upgrade path, which is why this is a pin rather than a wait:
+
+- `num_threads` has had **no release since 0.1.7** (checked against the registry).
+- `time` depends on it unconditionally, and `time` is reached by `cookie`,
+  `plist`, `tauri-codegen` and `tauri-plugin-log`.
+- `0.2.189` is the last release before the regression, and it satisfies
+  `rustix`'s `^0.2.182`, so the whole tree resolves there.
+
+```bash
+cargo update -p libc --precise 0.2.189   # the only command that restores this
+```
+
+`scripts/tests/cargo_ios_pins.test.ts` is what keeps it pinned. A lockfile pin is
+durable only until somebody runs `cargo update`; without the test, the next
+routine update restores a broken iOS build and the symptom is a CI error naming a
+crate this repository does not depend on.
+
+The rule is conditional on `num_threads` being in the tree, not on a path list.
+`apps/backend/media` carries `libc 0.2.190` today and is **fine** — nothing in its
+tree reaches `num_threads` — and a rule that pinned every Rust crate would push an
+unnecessary downgrade onto the one that has no problem.
+
+## iOS prerequisites
+
+```bash
+bun run native:doctor -- --platform ios
+```
+
+requires macOS, `xcodebuild` (the full Xcode — the command line tools cannot build
+an app) and a `xcode-select` path that is not `/Library/Developer/CommandLineTools`.
+On any other host the first line is `MISS xcode` with that as the remedy, and the
+command exits 3.
+
+`tauri ios init` writes `src-tauri/gen/apple/`, gitignored and regenerated the same
+way. `bundle.iOS.developmentTeam` is deliberately unset: it is a credential of
+whoever ships the app, and the CLI reads `APPLE_DEVELOPMENT_TEAM` from the
+environment instead. The archived Xcode project may be overridden per project
+through `bundle.iOS.template` (an XcodeGen `project.yml`).
+
+## A phone, and what `localhost` means there
+
+A physical phone's `127.0.0.1` is the phone. That single fact decides three
+separate things, and conflating them is how a phone build "works" on the
+developer's desk and nowhere else.
+
+1. **The dev server.** `NATIVE_DEV_HOST` is `127.0.0.1` by default. Passing
+   `--host <address>` makes the launcher set it to `0.0.0.0` for the Vite server
+   *and* export `VITE_NATIVE_DEV_API_HOST=<address>`, which moves the client's API
+   origin to the same machine. Both happen in one place — `launchMobile` in
+   `scripts/src/commands/native.ts` — and `--host` on anything but `dev` is refused.
+2. **The API origin.** `resolveApiOrigin` allows plain HTTP in a development build
+   to loopback, or to a host you named with `--host`, and refuses it everywhere
+   else. The `dev` flag comes from the **subcommand**, not from an environment
+   variable, so `bun run native:android -- build` cannot be talked into a LAN
+   address: `nativeConfiguration` passes `dev: false` and `resolveApiOrigin`
+   refuses the pair. A `build --debug` APK is `dev: false` too, which is why it
+   still needs an `https` API.
+3. **Cleartext.** The pinned CLI's own Gradle template sets
+   `manifestPlaceholders["usesCleartextTraffic"] = "true"` **only in the `debug`
+   build type**, and `"false"` for release. That is the whole mechanism, and it
+   lives in the generated project, not in this repository.
+   `scripts/tests/mobile_platform_config.test.ts` asserts that the committed
+   configuration names none of `usesCleartextTraffic`, `networkSecurityConfig`,
+   `NSAppTransportSecurity`, `NSAllowsArbitraryLoads`, `NSAllowsLocalNetworking`
+   or `NSExceptionDomains`, and that `bundle.iOS.infoPlist` is unset so no ATS
+   exception can be merged in. An ATS exception committed here is an ATS exception
+   in the App Store binary.
+
+**An iPhone against a plain-http development server** is the one case the above
+does not cover: iOS enforces App Transport Security for a device build, where the
+Android debug build type does not. Either serve the development API over https
+(a tunnel is enough), or supply an ATS exception through
+`bundle.iOS.infoPlist` pointing at a plist you keep out of the repository and
+merge with `--config`. This template does not ship one.
+
+## What a phone does while you are not looking
+
+`src/lib/platform/app_lifecycle.ts` turns the platform's own events into three
+states, `src/lib/viewmodels/app_lifecycle_view_model.ts` decides what each state
+*means* — including the only moment a refresh is automatic — and `+layout.svelte`
+owns the listeners and the markup. The split is the View -> ViewModel -> Services
+rule applied to a platform concern: the View never asks *whether* it may refresh,
+so a second screen cannot get that answer wrong a different way.
+
+Three states, and nothing else:
+
+| Phase | Cause | What the app does |
+|---|---|---|
+| `active` | visible, network believed up | — |
+| `suspended` | `visibilitychange`, `pagehide`/`pageshow` | cancels outstanding work on the way out; refreshes on the way in |
+| `offline` | `offline` (only `false` is acted on) | says so, once, and waits for a tap |
+
+`navigator.onLine` is read only as a hint that something changed, never as an
+answer: it reports `true` on a phone attached to a network with no route. Nothing
+retries automatically, because a retry of a request that may already have been
+received duplicates it.
+
+The layout side is CSS, in `src/routes/+layout.svelte` and `src/app.css`:
+`viewport-fit=cover` in `app.html`, `env(safe-area-inset-*, 0px)` applied to the
+header and the main column, `100vh` followed by `100dvh` so the keyboard shrinks
+the layout viewport, `flex-wrap` on the header nav, `overflow-wrap` on the user
+email, and `overflow-x: hidden` on the body so an overflowing view fails a test
+rather than scrolling. `tauri.conf.json` declares **no** `minWidth`/`minHeight`:
+Tauri applies window configuration to a phone, and a desktop minimum is a desktop
+assumption.
+
+**Android back.** The generated `MainActivity` is `launchMode="singleTask"` and the
+webview owns history, so back walks the app's own route stack and leaves the app at
+the root. The emulator lane delivers `KEYCODE_BACK` twice and asserts the shell does
+not hang.
+
+**Stronghold on a phone** is a separate capability from Stronghold on a desktop and
+is recorded as one in `docs/capability-matrix.md`. The rules — locked store reads
+nothing, wrong passphrase unlocks nothing, scope per environment and per account,
+sign-out removes and logout-revocation clears — are all in
+`apps/frontend/native/src/lib/platform/vault_session_store.ts` and are
+platform-independent. What a phone adds is the OS keychain interaction and the
+process being frozen between uses, and that is a device observation.
+
+## Artifacts
+
+Every mobile artifact is named by one function, `artifactName` in
+`apps/frontend/native/scripts/check_artifacts.ts`:
+
+```
+starter-<platform>-<target>-<first 12 of the source revision>-<signed|unsigned>.<apk|aab|ipa>
+```
+
+and then **verified**, not just renamed:
+
+```bash
+bun run --cwd apps/frontend/native check:artifacts -- \
+  -- apps/frontend/native/src-tauri/gen/android/app/build/outputs/apk/debug \
+     --origin "$VITE_NATIVE_API_ORIGIN" --revision "$GITHUB_SHA" --platform android
+```
+
+It refuses an artifact whose name does not carry its target, revision **and
+signing marker**, one from a different revision or a different platform, a
+directory with no package in it, a package with no frontend in it, a package that
+does not contain the expected origin, and — the one that catches a real mistake —
+a package containing a **second** deployment.
+
+The exclusions are named, because CI found all three of them by shipping real
+artifacts:
+
+| Excluded | Why it is in a correct bundle |
+|---|---|
+| `http://www.w3.org/…` | An SVG namespace or a `viewBox`. |
+| `https://schema.tauri.app` | The `$schema` of the **embedded `tauri.conf.json`** — the Tauri CLI copies the config into the app's assets. |
+| `http://127.0.0.1:1420` | That same config's `build.devUrl`. A packaged app cannot reach the developer's machine. |
+| `*.example.com` | RFC 2606 documentation hosts. |
+
+A check that fires on any of those fails on every correct build, and the fix
+everybody reaches for is deleting it. Each exclusion is named rather than
+pattern-matched and tested from both sides — `schema.tauri.app.evil.invalid` and
+`127.0.0.1.evil.invalid` are still reported — so it cannot become a hole somebody
+walks a real deployment through.
+
+**What this does not prove.** A grep cannot tell *which* URL in a bundle is the one
+the client calls. The strong version reads the packaged CSP's `connect-src` and
+asserts it names exactly one remote origin; that is not implemented, and it is the
+obvious next control.
+
+Every directory on the command line is checked, and the results are combined —
+`--apk` and `--aab` produce two, and checking only the first would certify a
+release bundle nobody read. And the check runs **after** the rename, on the names
+this repository ships: Gradle's own output is `app-universal-release.aab`, which
+says nothing about a target or a revision. The reader is a small ZIP implementation with a CRC check, not a
+shelled-out `unzip`: `unzip` is absent from a Nix dev shell half the time, and a
+verification step that skips when its tool is missing is worse than no
+verification.
+
+`--name` prints the same spelling, so a workflow renames an artifact with the
+function that later checks it. Two implementations of a naming scheme is how a lane
+starts uploading files nothing can attribute.
+
+## Mobile capabilities, stated separately
+
+A lane that exists is not a lane that has run. These are the rows as CI actually
+left them, with the evidence that closed each one and nothing claimed beyond it.
+
+| Capability | State | Evidence |
+|---|---|---|
+| Android debug APK + release AAB, unsigned | **Proved.** | `android` job, API 34 / NDK 29 / JDK 17. Both packages built; `check:artifacts` passed. |
+| Android installed and launched on an emulator | **Proved.** | `adb install -r` reported `Success`; `am start -W` on the package and activity *resolved from the device*; `dumpsys activity activities` matched. |
+| Android back key | **Proved.** | `KEYCODE_BACK` twice, then the package asserted still registered. |
+| iOS simulator bundle, unsigned | **Proved.** | `ios` job on `macos-15` / Xcode 26.3: `Finished 1 iOS Bundle at: …/gen/apple/build/arm64-sim/Starter.app`. |
+| iOS installed and launched on a simulator | **Proved.** | `xcrun simctl install` + `launch`, then `get_app_container`. |
+| A build failure propagates out of the launcher | **Proved.** | Both lanes: a fresh `CARGO_TARGET_DIR` and a nonexistent linker, with the log asserted to name it. |
+| The iOS dependency graph compiles | **Proved.** | `cargo check --locked --target aarch64-apple-ios-sim -p num_threads` after the `libc` pin. |
+| Signed AAB / archive, notarization | **Not proved.** | `native-release.yml` exists; it needs keystore and Apple secrets this repository does not have. |
+| Physical device | **Not proved.** | Needs a human, a provisioned device, an Apple Developer account. |
+| Google Play / App Store Connect upload | **Not implemented, deliberately.** | A store credential in CI is a second authority with its own rollback story. |
+| Authenticated sign-in and the notes path on a device | **Not proved.** | Needs a deployed API; the template ships none, and the lanes say so in their own job summaries. |
+| Stronghold on a phone | **Not proved.** | The store's rules are platform-independent and unit-tested; the OS keychain and process freezing are device observations. |
+
+## Running it yourself
+
+```bash
+# Android, on a machine with the SDK, a JDK and the NDK
+bun run native:doctor -- --platform android
+bun run native:android -- init --ci
+bun run native:android -- build --debug --apk --target aarch64 --ci
+bun run native:android -- run --release        # install and launch on a device
+
+# Android on a phone on the same network
+bun run native:android -- dev --host "$(ip -4 addr show scope global | awk '/inet /{print $2}' | cut -d/ -f1 | head -1)" "Pixel 8"
+
+# iOS, on macOS with full Xcode
+bun run native:doctor -- --platform ios
+bun run native:ios -- init --ci
+bun run native:ios -- build --target aarch64-sim --ci
+xcrun simctl install booted <the .app> && xcrun simctl launch booted com.example.starter
+```
 
 ## Also read
 
