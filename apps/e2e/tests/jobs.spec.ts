@@ -81,27 +81,38 @@ test.describe('the jobs screen with the profile switched off', () => {
 
   test('a signed-in user is told jobs are switched off, from the server-rendered HTML', async ({
     page,
+    browser,
   }) => {
     await signUp(page);
 
-    await page.goto('/jobs');
+    const context = await browser.newContext({
+      storageState: await page.context().storageState(),
+      javaScriptEnabled: false,
+    });
+    try {
+      const serverPage = await context.newPage();
+      await serverPage.goto(new URL('/jobs', page.url()).href);
 
-    await expect(page.getByRole('heading', { name: 'Sample encode' })).toBeVisible();
-    const unavailable = page.getByTestId('jobs-unavailable');
-    await expect(unavailable).toBeVisible();
-    await expect(unavailable).toContainText(/profile disabled/i);
+      await expect(serverPage.getByRole('heading', { name: 'Sample encode' })).toBeVisible();
+      const unavailable = serverPage.getByTestId('jobs-unavailable');
+      await expect(unavailable).toBeVisible();
+      await expect(unavailable).toContainText(/profile disabled/i);
 
-    // No retry control: retrying a capability that is off cannot succeed.
-    await expect(page.getByTestId('jobs-unavailable-retry')).toHaveCount(0);
-    // And no fabricated state — this deployment has never run a job, and the
-    // screen must not imply that one exists.
-    await expect(page.getByTestId('jobs-list')).toHaveCount(0);
-    await expect(page.getByTestId('jobs-empty')).toHaveCount(0);
+      // No retry control: retrying a capability that is off cannot succeed.
+      await expect(serverPage.getByTestId('jobs-unavailable-retry')).toHaveCount(0);
+      // And no fabricated state — this deployment has never run a job, and the
+      // screen must not imply that one exists.
+      await expect(serverPage.getByTestId('jobs-list')).toHaveCount(0);
+      await expect(serverPage.getByTestId('jobs-empty')).toHaveCount(0);
+    } finally {
+      await context.close();
+    }
   });
 
   test('the page makes no jobs request at all when the server already knows', async ({ page }) => {
     await signUp(page);
 
+    await page.clock.install();
     const requested: string[] = [];
     page.on('request', (request) => {
       const path = new URL(request.url()).pathname;
@@ -112,8 +123,8 @@ test.describe('the jobs screen with the profile switched off', () => {
 
     await page.goto('/jobs');
     await expect(page.getByTestId('jobs-unavailable')).toBeVisible();
-    // Give a stray client fetch time to appear before declaring there was none.
-    await page.waitForTimeout(1_000);
+    // Let a stray poll fire beyond the documented 1.5-second base interval.
+    await page.clock.runFor(2_000);
 
     // The capability arrived with the HTML. A client that fetched anyway would
     // be told 503 and reach the same state one round trip later.

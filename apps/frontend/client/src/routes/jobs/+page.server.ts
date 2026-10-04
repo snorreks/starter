@@ -22,7 +22,7 @@
 //      broken, which is the regression this branch exists to prevent.
 
 import type { JobDto, LatestMaintenance } from '@starter/schemas/jobs';
-import { redirect } from '@sveltejs/kit';
+import { error, redirect } from '@sveltejs/kit';
 import { JOBS_PROFILE_ENCODE } from '#lib/server/jobs_service.ts';
 import type { PageServerLoad } from './$types';
 
@@ -37,7 +37,10 @@ const readJobs = async (
   locals: App.Locals,
 ): Promise<{ jobs: JobDto[]; maintenance: LatestMaintenance | null }> => {
   const listed = await locals.container.jobs.list(locals.user?.id ?? '');
-  const jobs: JobDto[] = listed.ok ? listed.page.jobs : [];
+  if (!listed.ok) {
+    error(400, listed.detail);
+  }
+  const jobs = listed.page.jobs;
 
   const evidence = await locals.container.jobs.latestMaintenance();
   return { jobs, maintenance: evidence.ok ? evidence.latest : null };

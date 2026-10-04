@@ -50,7 +50,8 @@ $effect(() => {
   if (data.profile === 'disabled') {
     return;
   }
-  viewModel.seed(data.jobs, data.maintenance);
+  const { jobs, maintenance } = data;
+  untrack(() => viewModel.seed(jobs, maintenance));
 });
 
 // Visibility, through the window's own document. `document` is browser-only, and

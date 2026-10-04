@@ -250,6 +250,9 @@ export class JobsViewModel implements ScreenOwner, ScreenGuards {
     this.maintenance = maintenance;
     this.status = { kind: 'ready' };
     this.#seeded = true;
+    if (this.mounted) {
+      this.#schedule();
+    }
   }
 
   async initialize(): Promise<void> {
@@ -328,6 +331,10 @@ export class JobsViewModel implements ScreenOwner, ScreenGuards {
                 appError.errorType !== 'forbidden' && appError.errorType !== 'unauthorized',
             };
       reportError(appError);
+      if (background) {
+        this.#delay = nextDelay(this.#delay);
+        this.#schedule();
+      }
     } finally {
       if (this.requests.isCurrent(token)) {
         this.refreshing = false;
@@ -433,7 +440,9 @@ export class JobsViewModel implements ScreenOwner, ScreenGuards {
     }
 
     this.#delay = JOB_POLL_BASE_MS;
-    void this.load({ background: true });
+    if (this.status.kind !== 'unavailable') {
+      void this.load({ background: true });
+    }
   }
 
   /**
@@ -443,7 +452,9 @@ export class JobsViewModel implements ScreenOwner, ScreenGuards {
   resume(): void {
     this.active = true;
     this.#delay = JOB_POLL_BASE_MS;
-    void this.load({ background: true });
+    if (this.status.kind !== 'unavailable') {
+      void this.load({ background: true });
+    }
   }
 
   // ── Starting a job ─────────────────────────────────────────────────────────
@@ -457,6 +468,9 @@ export class JobsViewModel implements ScreenOwner, ScreenGuards {
    * it enforces atomically rather than one this screen has to be careful about.
    */
   async startEncode(idempotencyKey: string): Promise<boolean> {
+    if (this.mutations.disposed) {
+      return false;
+    }
     this.refusal = null;
 
     try {
@@ -464,6 +478,9 @@ export class JobsViewModel implements ScreenOwner, ScreenGuards {
         this.starting = true;
         try {
           const job = await this.#jobs.createEncode(idempotencyKey, handle.signal);
+          if (this.mutations.disposed) {
+            return false;
+          }
           // The admitted job is the server's answer, so the list shows it without
           // waiting for the first poll. It arrives as `pending` — which is what
           // the server committed — and the poll replaces it with what the
@@ -472,18 +489,22 @@ export class JobsViewModel implements ScreenOwner, ScreenGuards {
           this.status = { kind: 'ready' };
           return true;
         } finally {
-          this.starting = false;
+          if (!this.mutations.disposed) {
+            this.starting = false;
+          }
         }
       });
 
-      if (started) {
+      if (started && !this.mutations.disposed) {
         this.#delay = JOB_POLL_BASE_MS;
         this.#schedule();
         return true;
       }
       return false;
     } catch (error) {
-      this.refuse(error);
+      if (!this.mutations.disposed) {
+        this.refuse(error);
+      }
       return false;
     }
   }

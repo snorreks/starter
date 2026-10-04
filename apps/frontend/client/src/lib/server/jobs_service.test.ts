@@ -26,6 +26,7 @@ import {
   createJobsService,
   JOBS_PROFILE_DISABLED,
   JOBS_PROFILE_ENCODE,
+  MAINTENANCE_EVIDENCE_ROWS,
   MAX_OUTPUT_RANGE_BYTES,
   parseByteRange,
   toJobDto,
@@ -636,6 +637,24 @@ describe('the latest maintenance run, through the service', () => {
     expect(outcome.latest.latestScheduled?.trigger).toBe('scheduled');
     expect(outcome.latest.latestScheduled?.scheduledTime).toBe(scheduled.scheduledTime);
     expect(outcome.latest.latestScheduled?.slot).toBe(scheduled.slot);
+  });
+
+  test('manual runs beyond the list limit cannot hide the newest scheduled evidence', async () => {
+    await sweep({ trigger: 'scheduled', scheduledTimeMs: T0 - 2 * HOUR });
+    const scheduled = await sweep({ trigger: 'scheduled', scheduledTimeMs: T0 - HOUR });
+    // Tied start times use the descending run key to select the newer slot.
+    for (let index = 0; index < MAINTENANCE_EVIDENCE_ROWS + 1; index += 1) {
+      now += 1_000;
+      await sweep({ trigger: 'manual', requestId: `manual-${index}` });
+    }
+
+    const outcome = await serviceWith().latestMaintenance();
+    expect(outcome.ok).toBe(true);
+    if (!outcome.ok) {
+      return;
+    }
+    expect(outcome.latest.latest?.trigger).toBe('manual');
+    expect(outcome.latest.latestScheduled?.scheduledTime).toBe(scheduled.scheduledTime);
   });
 
   test('the DTO carries no run key, so a manual request id cannot reach a client', async () => {

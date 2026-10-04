@@ -166,15 +166,7 @@ export type LatestMaintenanceOutcome =
   | { ok: true; latest: LatestMaintenance }
   | { ok: false; code: 'jobs_profile_disabled'; detail: string };
 
-/**
- * How many runs this endpoint reads.
- *
- * A bound rather than a page size: the answer needs the newest run *of any
- * trigger* and the newest run that a **schedule** produced, and twenty rows is
- * more than enough to contain a scheduled run that has not fired for a week
- * while an operator was pressing the button. Nothing here needs a cursor, because
- * "the last scheduled run" has no older sibling a client would ask for.
- */
+/** The bound for the general latest-runs query. Scheduled evidence is read separately. */
 export const MAINTENANCE_EVIDENCE_ROWS = 20;
 
 /**
@@ -291,7 +283,7 @@ export const createJobsService = (options: {
       }
 
       const newestFirst = await runs.list(MAINTENANCE_EVIDENCE_ROWS);
-      const newestScheduled = newestFirst.find((run) => run.trigger === 'scheduled');
+      const newestScheduled = await runs.latestByTrigger('scheduled');
 
       return {
         ok: true,
@@ -302,8 +294,7 @@ export const createJobsService = (options: {
           // one cannot inspect at request time.
           schedule: MAINTENANCE_CRON,
           latest: newestFirst[0] === undefined ? null : toMaintenanceEvidence(newestFirst[0]),
-          latestScheduled:
-            newestScheduled === undefined ? null : toMaintenanceEvidence(newestScheduled),
+          latestScheduled: newestScheduled === null ? null : toMaintenanceEvidence(newestScheduled),
           serverTime: clock.now(),
         },
       };

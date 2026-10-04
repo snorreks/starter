@@ -21,19 +21,8 @@ import { watchAppActivity } from '#lib/platform/app_activity.ts';
 const viewModel = getJobsViewModel();
 
 $effect(() => {
-  // `initialize` and not `load`: it reads once and never again on its own, so a
-  // re-run of this effect cannot double-fetch.
-  void viewModel.initialize();
-
   const stopWatching = watchAppActivity((active) => viewModel.setActive(active));
-
-  return () => {
-    stopWatching();
-    // Cancellation on unmount: the poll timer is dropped and the in-flight read
-    // aborted rather than resolving into a window that is gone. `dispose` is
-    // async and an effect cleanup cannot await it.
-    void viewModel.dispose();
-  };
+  return stopWatching;
 });
 </script>
 

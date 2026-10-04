@@ -21,7 +21,7 @@
 
 import { describe, expect, test } from 'bun:test';
 import type { JobDto, LatestMaintenance } from '@starter/schemas/jobs';
-import { AppError } from '@starter/utils';
+import { AppError, createDeferred } from '@starter/utils';
 import type { ObjectUrlFactory } from './jobs_output.ts';
 import type { JobsService } from './jobs_service.svelte.ts';
 import {
@@ -203,6 +203,21 @@ describe('a deployment with the profile switched off', () => {
     expect(scheduler.pending).toBe(0);
   });
 
+  test('returning to an unavailable screen does not fetch or poll', async () => {
+    const { viewModel, calls, scheduler } = harness(undefined, { unavailableMessage: 'off' });
+    await viewModel.initialize();
+
+    viewModel.setActive(false);
+    viewModel.setActive(true);
+    viewModel.resume();
+    await scheduler.advance(JOB_POLL_MAX_MS);
+
+    expect(viewModel.active).toBe(true);
+    expect(viewModel.status.kind).toBe('unavailable');
+    expect(calls.list).toBe(0);
+    expect(scheduler.pending).toBe(0);
+  });
+
   test('an unavailable screen is still disposed like any other', async () => {
     // One teardown path, so a screen that was never usable cannot leak either.
     const { viewModel } = harness(undefined, { unavailableMessage: 'off' });
@@ -226,6 +241,20 @@ describe('seeding from a server load', () => {
     expect(calls.list).toBe(0);
     expect(viewModel.jobs).toHaveLength(1);
     expect(statusKind(viewModel.status)).toBe('ready');
+  });
+
+  test('navigation to a running job restarts polling on a mounted screen', async () => {
+    const { viewModel, scheduler, calls } = harness({ jobs: [], maintenance: maintenance() });
+    viewModel.mounted = true;
+    await viewModel.initialize();
+    expect(scheduler.pending).toBe(0);
+
+    viewModel.seed([job({ status: 'running' })], maintenance());
+
+    expect(calls.list).toBe(0);
+    expect(scheduler.pending).toBe(1);
+    await scheduler.advance(JOB_POLL_BASE_MS);
+    expect(calls.list).toBe(1);
   });
 
   test('an unseeded screen fetches once', async () => {
@@ -428,6 +457,29 @@ describe('stale answers', () => {
     expect(viewModel.jobs[0]?.status).toBe('succeeded');
   });
 
+  test('an encode pending during disposal cannot write or report success', async () => {
+    const pending = createDeferred<JobDto>();
+    const scheduler = new FakeScheduler();
+    const viewModel = new JobsViewModel({
+      jobs: { createEncode: () => pending.promise } as unknown as JobsService,
+      scheduler,
+      initialJobs: [],
+    });
+    const beforeStatus = viewModel.status;
+    const beforeJobs = viewModel.jobs;
+    const started = viewModel.startEncode('pending-key');
+    expect(viewModel.starting).toBe(true);
+
+    await viewModel.dispose();
+    pending.resolve(job());
+
+    expect(await started).toBe(false);
+    expect(viewModel.jobs).toBe(beforeJobs);
+    expect(viewModel.status).toBe(beforeStatus);
+    expect(viewModel.starting).toBe(true);
+    expect(scheduler.pending).toBe(0);
+  });
+
   test('a disposed screen is not written to', async () => {
     const { viewModel, controls } = harness();
     await viewModel.initialize();
@@ -484,6 +536,15 @@ describe('refusals the screen has to name', () => {
 
     expect(harnessWithList.viewModel.status.kind).toBe('ready');
     expect(harnessWithList.viewModel.jobs).toHaveLength(1);
+    expect(harnessWithList.scheduler.pending).toBe(1);
+    const retryDelay = harnessWithList.scheduler.delays.at(-1) ?? 0;
+    expect(retryDelay).toBeGreaterThan(JOB_POLL_BASE_MS);
+    expect(harnessWithList.calls.list).toBe(1);
+
+    harnessWithList.controls.listError = null;
+    await harnessWithList.scheduler.advance(retryDelay);
+    expect(harnessWithList.calls.list).toBe(2);
+    expect(harnessWithList.scheduler.pending).toBe(1);
   });
 
   test('a failed first read with nothing on screen is an error state', async () => {

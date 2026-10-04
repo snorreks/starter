@@ -223,6 +223,9 @@ export interface MaintenanceRunRepository {
 
   /** The most recent runs, newest first. Bounded. */
   list(limit: number): Promise<MaintenanceRun[]>;
+
+  /** The newest run for one trigger, independent of the general list limit. */
+  latestByTrigger(trigger: MaintenanceTrigger): Promise<MaintenanceRun | null>;
 }
 
 interface RunRow {
@@ -393,6 +396,17 @@ export const createMaintenanceRunRepository = (
       const row = await db
         .prepare(`SELECT ${RUN_COLUMNS} FROM maintenance_runs WHERE run_key = ?`)
         .bind(runKey)
+        .first<RunRow>();
+      return row === null ? null : toRun(row);
+    },
+
+    async latestByTrigger(trigger) {
+      const row = await db
+        .prepare(
+          `SELECT ${RUN_COLUMNS} FROM maintenance_runs
+           WHERE trigger = ? ORDER BY started_at DESC, run_key DESC LIMIT 1`,
+        )
+        .bind(trigger)
         .first<RunRow>();
       return row === null ? null : toRun(row);
     },
