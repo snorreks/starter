@@ -184,6 +184,53 @@ whether ciphertext belongs in the repository is your call — SOPS ciphertext is
 designed to be committed — but note that a committed encrypted file still discloses
 its recipient set and filename, which is often enough to identify who holds what.
 
+### What *this* project configured, and the constraint nobody documented
+
+This repository has been initialised as a real project, so it now carries a
+`.sops.yaml` with two recipients and a roster at `.age/recipients.txt`. The contract
+for the two ciphertext files is [secrets/README.md](../secrets/README.md); the short
+version is that each environment's two runtime secrets live in their own committed
+file, and `CLOUDFLARE_API_TOKEN` lives in neither.
+
+The constraint worth knowing before you arrange your own files: **`secrets:encrypt`
+refuses a path git is not ignoring**, so it cannot produce a *committed* ciphertext
+file — it protects you from encrypting something named like a plain env file. A file
+meant to be committed is encrypted with `sops --encrypt --in-place`, which is the same
+binary `secrets:edit` points you at when it refuses to exist. The two are not
+competing implementations: one is the wrapper for local files, the other is sops for
+files whose whole purpose is to be committed.
+
+Encrypt **before** removing the ignore rule. The order is the reverse of the one that
+feels natural, and getting it wrong produces an exit 4 that reads like a broken tool
+rather than a deliberate refusal.
+
+### In CI
+
+The `Provision` step in `deploy.yml` takes the runtime secrets from one of two
+sources, chosen per run:
+
+- `github` (the default) — the `BETTER_AUTH_SECRET` and `RESEND_API_KEY` environment
+  secrets, which is what the workflow did before SOPS existed here;
+- `sops` — `secrets/<env>.enc.env` from the repository, decrypted with the
+  `SOPS_AGE_KEY` environment secret into the step's child process.
+
+`SOPS_AGE_KEY` is read **only** in the `sops` branch, so with the default selected the
+job never receives a decryption key at all. A missing key, a missing ciphertext file
+or a runner without `sops` exits `3` and names itself rather than reaching
+`deploy:provision` with half its environment missing.
+
+```bash
+# what the workflow runs, and what you can run locally
+export SOPS_AGE_KEY_FILE="$HOME/.config/sops/age/keys.txt"
+sops exec-env secrets/staging.enc.env \
+  'bun run deploy:secrets --env staging --yes --install'
+```
+
+`sops exec-env`, **not** `exec-file`. This store is dotenv, and `exec-file` runs the
+command with the values absent — verified on this repository's own ciphertext: the
+child printed `AUTH_SET=[]` and exited `0`, which reads as "the secret is empty"
+rather than "wrong subcommand". Use `exec-file` only for a JSON or YAML store.
+
 ### What is verified, and what is not
 
 **Verified** by the 16 tests in `scripts/tests/secrets.test.ts`, including 11
