@@ -1,0 +1,6 @@
+# Only recipients.txt (public keys) and this file are committed.
+# Every private identity dropped in this directory is ignored, so an
+# `age-keygen` run here cannot be committed by accident.
+*
+!.gitignore
+!recipients.txt

@@ -80,12 +80,26 @@ secrets/*.enc.yml
 secrets/*.enc.json
 !.secrets/README.md
 .secrets/
+#
+# The negations come AFTER the rules they undo, because git takes the last matching
+# pattern: a `!` above `secrets/*.enc.env` is ignored, which is the one way to write
+# this that looks right and does nothing. These two files are this project's SOPS
+# ciphertext, one per environment, so a staging run can never read production
+# values. Encrypt BEFORE committing them: `bun run secrets:encrypt` refuses a path
+# git is ignoring, and the file has to be ignored while it is still plaintext.
+!secrets/staging.enc.env
+!secrets/production.enc.env
 # Real key material is never in the repository.
 *.pem
 *.key
 *.crt
 .age/*.txt
 !.age/recipients.txt.example
+# The recipient roster is public keys and is meant to be reviewed in a diff; the
+# private halves are `.age/*.txt` above, and `.age/.gitignore` ignores this whole
+# directory except these two files.
+!.age/recipients.txt
+!.age/.gitignore
 # Never commit a private age identity.
 *.agekey
 id_ed25519

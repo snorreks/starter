@@ -88,6 +88,14 @@ on:
         required: false
         default: false
         type: boolean
+      secrets_source:
+        description: 'Where the runtime secrets come from: the GitHub environment, or the committed SOPS ciphertext.'
+        required: false
+        default: github
+        type: choice
+        options:
+          - github
+          - sops
 
 # The floor. The token arrives as an environment secret rather than from this
 # block, and nothing here needs to write to the repository.
@@ -291,17 +299,66 @@ jobs:
       # create a database and a bucket gives every child of that process a credential
       # it has no reason to hold. The Cloudflare token is always needed; the other two
       # are not.
+      #
+      # Two sources, one of them opted into per run. `github` is the default and reads
+      # the environment secrets above. `sops` reads `secrets/<env>.enc.env` from this
+      # repository instead, which is where rotation becomes visible in a diff — and
+      # which is why SOPS_AGE_KEY is read only in that branch: with `github` selected
+      # the job never receives a decryption key at all.
+      #
+      # `exec-env`, not `exec-file`: the store is dotenv, and `exec-file` runs the
+      # command with the values absent, which fails as a missing secret rather than as
+      # the wrong command.
       - name: Provision
         if: ${{ inputs.first_deploy || inputs.install_secrets }}
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           DEPLOY_ENVIRONMENT: ${{ inputs.environment }}
           INSTALL_SECRETS: ${{ inputs.install_secrets }}
-          BETTER_AUTH_SECRET: ${{ inputs.install_secrets && secrets.BETTER_AUTH_SECRET || '' }}
-          RESEND_API_KEY: ${{ inputs.install_secrets && secrets.RESEND_API_KEY || '' }}
+          # The runtime secrets are supplied **only** when the operator asked to install
+          # them AND asked for the GitHub source. With `secrets_source: sops` the
+          # values come from the ciphertext, so reading them here as well would put
+          # both copies in the job's environment for no reason — and a rotation that
+          # changes one of them but not the other would be invisible until someone
+          # noticed which source won.
+          BETTER_AUTH_SECRET: ${{ inputs.install_secrets && inputs.secrets_source == 'github' && secrets.BETTER_AUTH_SECRET || '' }}
+          RESEND_API_KEY: ${{ inputs.install_secrets && inputs.secrets_source == 'github' && secrets.RESEND_API_KEY || '' }}
+          SECRETS_SOURCE: ${{ inputs.secrets_source }}
+          # Read only for the sops source, and only when secrets are actually being
+          # installed: a first deploy with `install_secrets` false has nothing to
+          # decrypt, and demanding the key for it turns "not asked for" into a red run.
+          SOPS_AGE_KEY: ${{ inputs.install_secrets && inputs.secrets_source == 'sops' && secrets.SOPS_AGE_KEY || '' }}
         run: |
-          bun run deploy:provision --env "$DEPLOY_ENVIRONMENT" --yes \
-            $([ "$INSTALL_SECRETS" = "true" ] && echo --install)
+          extra=""
+          [ "$INSTALL_SECRETS" = "true" ] && extra="--install"
+          if [ "$INSTALL_SECRETS" = "true" ] && [ "$SECRETS_SOURCE" = "sops" ]; then
+            # Only reached when secrets are genuinely being installed. A plain first
+            # deploy (`install_secrets` false) has nothing to decrypt and must not be
+            # turned red by a missing key or a missing ciphertext.
+            command -v sops >/dev/null 2>&1 || {
+              echo "::error::secrets_source=sops was chosen and this runner has no sops binary."
+              echo "::error::sops is not distributed through npm — the 'sops' package there is"
+              echo "::error::an unrelated 0.0.3 wrapper, not Mozilla's binary — so it cannot be"
+              echo "::error::pinned by this repository's lockfile. Install the real one on the"
+              echo "::error::runner image, or run the deploy locally with secrets_source=github."
+              exit 3
+            }
+            file="secrets/$DEPLOY_ENVIRONMENT.enc.env"
+            [ -f "$file" ] || {
+              echo "::error::$file is not in this revision. See secrets/README.md."
+              exit 3
+            }
+            [ -n "$SOPS_AGE_KEY" ] || {
+              echo "::error::SOPS_AGE_KEY is not set on the $DEPLOY_ENVIRONMENT environment."
+              exit 3
+            }
+            # Only flag NAMES are interpolated. The values arrive in the child's
+            # environment from the ciphertext and are never in this command line.
+            sops exec-env "$file" \
+              "bun run deploy:provision --env $DEPLOY_ENVIRONMENT --yes $extra"
+          else
+            bun run deploy:provision --env "$DEPLOY_ENVIRONMENT" --yes $extra
+          fi
 
       # One command for build, schema, storage, image, jobs, web, verify and record,
       # in that order, with `--yes` supplied here and nowhere else. The same pipeline

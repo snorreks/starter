@@ -86,7 +86,11 @@ export const preflightCommands = (target: ResolvedTarget): { check: string; args
     // Names only, never values: `wrangler secret list` reports what is installed
     // and nothing else. That is the property that makes this check safe to run
     // before every apply and safe to paste into a ticket.
-    { check: 'secrets', args: ['secret', 'list', '--name', target.workerName, '--json'] },
+    //
+    // The same call the check makes, not a second hand-written copy of it: this list
+    // is what a report shows an operator as "the commands that were run", and a copy
+    // that drifted is a report that describes something else.
+    { check: 'secrets', args: secretListArgv(target.workerName, target.environment) },
   ];
 
   if (target.compute.enabled && target.compute.mediaBucketName !== null) {
@@ -129,6 +133,30 @@ const arrayFromWrangler = (parsed: unknown): unknown[] => {
   }
   return [];
 };
+
+/**
+ * The argv that reads installed secret NAMES for a Worker.
+ *
+ * Exported so a test can hold every flag against the pinned CLI's own help output.
+ * That test is the only thing that catches a flag this repository made up: the
+ * behavioural tests inject a fake `run`, so they pass against an argv that no
+ * version of wrangler would accept.
+ */
+export const secretListArgv = (workerName: string, environment: string): string[] => [
+  'secret',
+  'list',
+  '--name',
+  workerName,
+  // The scope is the whole point. Without `--env`, wrangler asks the account about
+  // the *top-level* Worker, and this repository's config puts the Worker under
+  // `env.staging`. The answer was `Worker "…" not found` while both secrets sat
+  // there under the staging environment — the same env-scoping mistake
+  // `deploy:configure` was fixed for, appearing this time in the reader.
+  '--env',
+  environment,
+  '--format',
+  'json',
+];
 
 export const installedSecretNames = (stdout: string): string[] => {
   try {
@@ -331,7 +359,20 @@ export const preflight = (
   // nobody can confirm an account because the runtime secret was never installed.
   // The Cloudflare API token is *not* a substitute — it authorises this tooling and
   // is never readable by the Worker.
-  const secrets = run(['secret', 'list', '--name', target.workerName, '--json']);
+  // The presence check, never the value. This is the check that catches the most
+  // common real state of a first deployment: the Worker deploys, `/health` answers
+  // 200, and nobody can confirm an account because the runtime secret was never
+  // installed. The Cloudflare API token is *not* a substitute — it authorises this
+  // tooling and is never readable by the Worker.
+  //
+  // `--format json`, not `--json`. wrangler 4.142.0 has no `--json` flag on
+  // `secret list`; it has `--format [choices: "json", "pretty"]`. Passing the
+  // invented flag made Clap print usage and exit non-zero, so this check reported
+  // "this token cannot list them" on every run, including the ones where the
+  // secrets were installed and `wrangler secret list` answered them. The argv is a
+  // named export so a test can hold it against the pinned CLI's own help, which is
+  // the only thing that catches a flag this repository invented.
+  const secrets = run(secretListArgv(target.workerName, target.environment));
   if (!secrets.ok) {
     findings.push({
       check: 'secrets',

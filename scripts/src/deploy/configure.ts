@@ -45,65 +45,208 @@ import {
 const WRANGLER_CONFIG = `${CLIENT_DIR_RELATIVE}/wrangler.jsonc`;
 
 /**
- * The text of `"env": { "<environment>": { … } }`, or `null` when the config has no
- * such block.
+ * The text of `"env": { "<environment>": { … } }` **with its span in the file**, or
+ * `null` when the config has no such block.
  *
- * Brace-matched by hand rather than by parsing, because `wrangler.jsonc` is JSONC:
- * stripping the comments to parse it and writing the parsed form back would delete
- * every comment in the file — and those comments are where this repository records
- * *why* the file is shaped as it is. Only the `database_id` inside the matched
- * span is ever rewritten, so the rest is preserved byte for byte.
+ * The span is the point. Brace-matched by hand rather than by parsing, because
+ * `wrangler.jsonc` is JSONC: stripping the comments to parse it and writing the
+ * parsed form back would delete every comment in the file — and those comments are
+ * where this repository records *why* the file is shaped as it is.
+ *
+ * It used to return the matched text alone, and the writer then handed that text
+ * to `writeFileSync` as if it were the whole file. Provisioning any environment
+ * with an `env.<name>` block therefore replaced an 8 KB config with the 1 KB
+ * fragment that happened to start at `"staging": {` — 146 lines deleted, including
+ * every comment, and it printed `D1 database id written to wrangler.jsonc`. The
+ * claim that "the rest is preserved byte for byte" was only true of the function,
+ * not of the caller.
  */
-const extractEnvBlock = (text: string, environment: DeploymentEnvironment): string | null => {
-  const marker = new RegExp(`"${environment}"\\s*:\\s*\\{`);
-  const match = marker.exec(text);
-  if (match === null) {
+/** Index just past the string literal that starts at `open`, or `text.length`. */
+const skipString = (text: string, open: number): number => {
+  let index = open + 1;
+  while (index < text.length) {
+    if (text[index] === '\\') {
+      index += 2;
+      continue;
+    }
+    if (text[index] === '"') {
+      return index + 1;
+    }
+    index += 1;
+  }
+  return text.length;
+};
+
+/** Index just past a line or block comment beginning at `open`, or the newline. */
+const skipComment = (text: string, open: number): number => {
+  if (text[open + 1] === '/') {
+    const newline = text.indexOf('\n', open);
+    return newline === -1 ? text.length : newline;
+  }
+  const end = text.indexOf('*/', open);
+  return end === -1 ? text.length : end + 2;
+};
+
+interface JsoncMember {
+  readonly name: string;
+  /** Span of the member's VALUE — the braces for an object, the token otherwise. */
+  readonly start: number;
+  readonly end: number;
+}
+
+/**
+ * The members of the JSON object whose opening brace is at `open`, up to `close`.
+ *
+ * JSONC-aware, which is the whole point: braces inside a comment or a string are not
+ * structure, and counting them anyway is how a scanner selects the wrong span. This
+ * skips line and block comments and steps over string literals whole.
+ */
+const membersOf = (text: string, open: number, close: number): JsoncMember[] => {
+  const members: JsoncMember[] = [];
+  let index = open + 1;
+
+  while (index < close) {
+    const char = text[index];
+    if (char === undefined) {
+      break;
+    }
+    if (char === '"') {
+      index = skipString(text, index);
+      continue;
+    }
+    if (char === '/') {
+      index = skipComment(text, index);
+      continue;
+    }
+    if (char !== ',') {
+      index += 1;
+      continue;
+    }
+
+    // A comma: a member name, if one follows, starts here.
+    let cursor = index + 1;
+    while (cursor < close && /[\s/]/.test(text[cursor] ?? '')) {
+      cursor = text[cursor] === '/' ? skipComment(text, cursor) : cursor + 1;
+    }
+    if (text[cursor] !== '"') {
+      index += 1;
+      continue;
+    }
+
+    const nameEnd = skipString(text, cursor);
+    let name = '';
+    try {
+      name = JSON.parse(text.slice(cursor, nameEnd)) as string;
+    } catch {
+      index = nameEnd;
+      continue;
+    }
+
+    let value = nameEnd;
+    while (value < close && /[\s/]/.test(text[value] ?? '')) {
+      value = text[value] === '/' ? skipComment(text, value) : value + 1;
+    }
+    if (text[value] === ':') {
+      value += 1;
+    }
+    while (value < close && /[\s/]/.test(text[value] ?? '')) {
+      value = text[value] === '/' ? skipComment(text, value) : value + 1;
+    }
+
+    if (text[value] === '{') {
+      let depth = 0;
+      let end = value;
+      while (end < close) {
+        const inner = text[end];
+        if (inner === '"') {
+          end = skipString(text, end);
+          continue;
+        }
+        if (inner === '/') {
+          end = skipComment(text, end);
+          continue;
+        }
+        if (inner === '{') {
+          depth += 1;
+        } else if (inner === '}') {
+          depth -= 1;
+          if (depth === 0) {
+            end += 1;
+            break;
+          }
+        }
+        end += 1;
+      }
+      members.push({ name, start: value, end });
+      index = end;
+      continue;
+    }
+
+    let end = value;
+    while (end < close && text[end] !== ',') {
+      end = text[end] === '"' ? skipString(text, end) : end + 1;
+    }
+    members.push({ name, start: value, end });
+    index = end;
+  }
+
+  return members;
+};
+
+/**
+ * The span of `env.<environment>`'s VALUE object in `wrangler.jsonc`, or `null`.
+ *
+ * It used to regex the whole file for `"<environment>": {` and count braces from
+ * there. That found the environment key inside comments and strings when one
+ * mentioned it, and counted braces in comments and strings as structure — so the
+ * span could start or end in the wrong place, and the caller's prefix/suffix checks
+ * could not catch it because they were computed from the same wrong span.
+ *
+ * Now the key is looked up structurally: the root object's `env` member first, then
+ * the environment inside that. A config with no `env` object answers `null`, which
+ * is the top-level path and is handled by the caller.
+ */
+const extractEnvBlock = (
+  text: string,
+  environment: DeploymentEnvironment,
+): { start: number; end: number; source: string } | null => {
+  const open = text.indexOf('{');
+  if (open === -1) {
     return null;
   }
 
-  let depth = 0;
-  for (let index = match.index + match[0].length - 1; index < text.length; index += 1) {
-    if (text[index] === '{') {
-      depth += 1;
-    }
-    if (text[index] === '}') {
-      depth -= 1;
-    }
-    if (depth === 0) {
-      return text.slice(match.index, index + 1);
-    }
+  const env = membersOf(text, open, text.length).find((member) => member.name === 'env');
+  if (env === undefined || text[env.start] !== '{') {
+    return null;
   }
 
-  return null;
+  const scoped = membersOf(text, env.start, env.end).find((member) => member.name === environment);
+  if (scoped === undefined || text[scoped.start] !== '{') {
+    return null;
+  }
+
+  return {
+    start: scoped.start,
+    end: scoped.end,
+    source: text.slice(scoped.start, scoped.end),
+  };
 };
 
 /** The same file, resolved against a caller-supplied root. */
 const wranglerConfigAt = (root: string): string => join(root, WRANGLER_CONFIG);
 
 /**
- * The gitignored overlay, read for one environment.
+ * The `DB` binding's `database_id` for `environment`, read from config TEXT.
  *
- * `null` when the config carries no `env.<environment>` block *and* no top-level
- * `d1_databases`, and the resolved string when it does. A `wrangler.jsonc` with a
- * single top-level entry answers for every `--env`, which is exactly the shape
- * this repository warns about: two environments, one database, and no error.
- *
- * Exported so `migrationStep` can compare what the tooling resolved against what
- * Wrangler would reach. Both commands name the binding `DB`, so the argv alone
- * cannot tell the two databases apart.
+ * Split out of {@link wranglerDatabaseId} so the write path can ask the same question
+ * about a candidate file it has not written yet. Two definitions of "what Wrangler
+ * would resolve here" would be one more place for the writer and the reader to
+ * disagree, which is the failure this module exists to prevent.
  */
-export const wranglerDatabaseId = (
-  environment: DeploymentEnvironment,
-  root: string = REPO_ROOT,
-): string | null => {
-  const path = wranglerConfigAt(root);
-  if (!existsSync(path)) {
-    return null;
-  }
-
+const databaseIdIn = (environment: DeploymentEnvironment, text: string): string | null => {
   let doc: Record<string, unknown>;
   try {
-    doc = JSON.parse(stripJsonComments(readFileSync(path, 'utf8'))) as Record<string, unknown>;
+    doc = JSON.parse(stripJsonComments(text)) as Record<string, unknown>;
   } catch {
     // A config that does not parse is refused elsewhere, by `inspectConfig`. Here
     // it reads as "not configured", which is the safe direction: the caller
@@ -132,14 +275,38 @@ export const wranglerDatabaseId = (
       if ((binding as Record<string, unknown>).binding !== 'DB') {
         continue;
       }
-      const id = (binding as Record<string, unknown>).database_id;
-      if (typeof id === 'string' && id.trim() !== '') {
-        return id.trim();
+      const found = (binding as Record<string, unknown>).database_id;
+      if (typeof found === 'string' && found.trim() !== '') {
+        return found.trim();
       }
     }
   }
 
   return null;
+};
+
+/**
+ * The gitignored overlay, read for one environment.
+ *
+ * `null` when the config carries no `env.<environment>` block *and* no top-level
+ * `d1_databases`, and the resolved string when it does. A `wrangler.jsonc` with a
+ * single top-level entry answers for every `--env`, which is exactly the shape
+ * this repository warns about: two environments, one database, and no error.
+ *
+ * Exported so `migrationStep` can compare what the tooling resolved against what
+ * Wrangler would reach. Both commands name the binding `DB`, so the argv alone
+ * cannot tell the two databases apart.
+ */
+export const wranglerDatabaseId = (
+  environment: DeploymentEnvironment,
+  root: string = REPO_ROOT,
+): string | null => {
+  const path = wranglerConfigAt(root);
+  if (!existsSync(path)) {
+    return null;
+  }
+
+  return databaseIdIn(environment, readFileSync(path, 'utf8'));
 };
 
 export interface ConfigCheck {
@@ -346,11 +513,49 @@ export const provisionDatabase = (
     const withId = (source: string): string =>
       source.includes('"database_id"')
         ? source.replace(/("database_id"\s*:\s*)"[^"]*"/, `$1"${id}"`)
-        : source.replace(/("database_name"\s*:\s*"[^"]*",)/, `$1\n      "database_id": "${id}",`);
+        : // The indentation of the entry that already exists, rather than a hardcoded
+          // column that is wrong the moment anyone reformats the file.
+          source.replace(
+            /^([ \t]*)"database_name"(\s*:\s*)"([^"]*)",/m,
+            (_match, indent: string, colon: string, name: string) =>
+              `${indent}"database_name"${colon}"${name}",\n${indent}"database_id": "${id}",`,
+          );
 
-    const updated = scoped === null ? withId(text) : withId(scoped);
+    // Splice, never replace. Everything outside the matched span is copied through
+    // untouched, which is the property the previous version of this function only
+    // claimed to have.
+    const updated =
+      scoped === null
+        ? withId(text)
+        : text.slice(0, scoped.start) + withId(scoped.source) + text.slice(scoped.end);
 
-    if (updated !== text) {
+    // Semantic, not structural. The question is not "did the splice keep the bytes
+    // around it" — that is a property of the splice, and a wrongly *located* block
+    // satisfies it perfectly — but "does the file this edit produces resolve this
+    // environment's database to the id we just created". So the candidate is parsed
+    // and asked, and only a matching answer is written.
+    //
+    // On the `scoped === null` path too: that path edits the top-level block, and a
+    // top-level edit that resolves to a different environment's database is exactly
+    // the mistake `resolveTarget` refuses downstream.
+    //
+    // Skipping this write does NOT skip the overlay below. The database exists either
+    // way, and the overlay is the record of that; losing it because a *different*
+    // file could not be updated would trade a visible refusal for an invisible lie.
+    const resolved = databaseIdIn(environment, updated);
+    const writable = updated !== text && resolved === id;
+
+    if (updated !== text && !writable) {
+      process.stderr.write(
+        `Refusing to write ${WRANGLER_CONFIG}: the edited config resolves ` +
+          `${environment}'s database to ${resolved ?? 'nothing'}, not to the id just created.\n` +
+          `  ${WRANGLER_CONFIG} is unchanged, so a later \`deploy apply\` will refuse until it\n` +
+          '  carries this id. The id is recorded in ' +
+          `${LOCAL_DEPLOYMENT_FILE} and is not lost.\n`,
+      );
+    }
+
+    if (writable) {
       writeFileSync(wranglerPath, updated);
       process.stdout.write(`D1 database id written to wrangler.jsonc: ${id}\n`);
     }
