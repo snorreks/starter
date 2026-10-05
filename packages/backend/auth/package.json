@@ -18,6 +18,6 @@
   "dependencies": {
     "@starter/database": "workspace:*",
     "@starter/schemas": "workspace:*",
-    "better-auth": "1.7.6"
+    "better-auth": "1.7.7"
   }
 }

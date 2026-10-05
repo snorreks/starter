@@ -23,7 +23,7 @@
     "test:integration": "bun run build && bun test tests/worker_integration.test.ts"
   },
   "dependencies": {
-    "@opentelemetry/api": "1.9.0",
+    "@opentelemetry/api": "1.9.1",
     "@sinclair/typebox": "0.34.52",
     "@starter/auth": "workspace:*",
     "@starter/database": "workspace:*",
@@ -34,24 +34,24 @@
     "@starter/schemas": "workspace:*",
     "@starter/ui": "workspace:*",
     "@starter/utils": "workspace:*",
-    "better-auth": "1.7.6",
+    "better-auth": "1.7.7",
     "drizzle-orm": "0.45.3"
   },
   "devDependencies": {
-    "@cloudflare/workers-types": "5.20260929.1",
+    "@cloudflare/workers-types": "5.20261005.1",
     "@sveltejs/adapter-cloudflare": "8.0.0",
     "@sveltejs/kit": "3.0.0",
     "@sveltejs/vite-plugin-svelte": "7.3.1",
     "@tailwindcss/vite": "4.3.3",
-    "@vitest/browser": "5.0.2",
-    "@vitest/browser-playwright": "5.0.2",
+    "@vitest/browser": "5.0.3",
+    "@vitest/browser-playwright": "5.0.3",
     "playwright": "1.63.0",
     "svelte": "5.57.1",
     "svelte-check": "4.7.6",
     "tailwindcss": "4.3.3",
     "typescript": "6.0.3",
-    "vite": "8.3.1",
-    "vitest": "5.0.2",
-    "wrangler": "4.142.0"
+    "vite": "8.3.2",
+    "vitest": "5.0.3",
+    "wrangler": "4.147.0"
   }
 }

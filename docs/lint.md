@@ -216,7 +216,7 @@ Measured on the development machine over this repository, three consecutive runs
 That is the whole cost of the guard lane, in a static job that also runs a full
 typecheck and lint. It is deliberately uncached: a cached result is only as fresh as a
 key that would have to include every tsconfig `paths` entry, every `exports` map and
-every alias, and Moon 2.5.5 already demonstrated in this repository what a key built
+every alias, and Moon 2.6.0 already demonstrated in this repository what a key built
 from the files a task can see is worth. `--affected` is not used either, for the same
 reason: a wrong skip is invisible, because the lane goes green without having looked.
 

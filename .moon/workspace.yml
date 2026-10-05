@@ -110,19 +110,27 @@ vcs:
 # ── What Moon's cache can and cannot see here ──────────────────────────────────
 #
 # Every project sets `options.cache: false`. That is not caution, and it is not
-# that the tasks are impure; it is that Moon 2.5.5 cannot build a key equal to
+# that the tasks are impure; it is that Moon 2.6.0 cannot build a key equal to
 # the set of files these commands read. Both halves were measured on this
 # workspace, not inferred from documentation.
+#
+# Re-measured against 2.6.0 on 2026-10-05, from 2.5.5. All four conclusions held.
+# One enumerated list did not: `hasher` gained `warnOnMissingInputs`, which
+# warns rather than adding a file to any key, so the conclusion below is
+# unchanged while the list is no longer exhaustive. A list that reads as
+# current and is not is how the next reader trusts a claim that stopped being
+# true.
 #
 # 1. A task cannot name a file outside its project. `'../../biome.json'` is
 #    rejected at parse time:
 #
-#      tasks.probe.inputs[1]: parent directory traversal (..) is not supported
+#      tasks.probe.inputs[0]: parent directory traversal (..) is not supported
 #
-#    and `fileGroups` are accepted only at project scope in 2.5.5 — the
+#    and `fileGroups` are accepted only at project scope in 2.6.0 — the
 #    workspace schema has no `fileGroups` key, and its `hasher` block offers
-#    only `ignorePatterns`, `ignoreMissingPatterns`, `optimization` and
-#    `walkStrategy`. So `bun.lock`, root `package.json`, `bunfig.toml`,
+#    only `ignorePatterns`, `ignoreMissingPatterns`, `optimization`,
+#    `walkStrategy` and `warnOnMissingInputs`, none of which adds a file to a
+#    key. So `bun.lock`, root `package.json`, `bunfig.toml`,
 #    `biome.json`, `config/toolchain.json` and every `config/tsconfig/*.json` is
 #    unreachable from any task. Those files decide the result of every task in
 #    this workspace: the lockfile fixes the compiler, the linter and the test
@@ -133,6 +141,14 @@ vcs:
 #    `packages/shared/logger/src/index.ts` re-ran `logger:test` under a new hash
 #    while `utils:test` reported `cached, 2b8e371c` — the same hash as before.
 #    `dependsOn` orders the graph; it does not propagate content.
+#
+#    Re-measured on 2.6.0 the same way, in a two-project scratch workspace,
+#    because the original measurement named a hash from a graph that no longer
+#    exists in this form. `libb:test` declared `deps: ['liba:test']`; with the
+#    cache warm, editing `liba/src/index.ts` re-ran `liba:test` under a new hash
+#    (`00b5db61`) while `libb:test` reported `cached, cd620ceb` — byte-identical
+#    to the two runs before it. Editing `libb`'s own source then moved it
+#    (`f79a698f`). It moves when its own content moves, and not before.
 #
 # A cached hit therefore asserts something about files Moon never looked at. The
 # cache is not disabled globally, because that would be a habit rather than a

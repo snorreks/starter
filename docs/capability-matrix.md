@@ -512,7 +512,7 @@ failing silently.
 | Node | 22.23.3 (`nodejs_22`) — required by `wrangler dev` and Vite |
 | Chromium | 154.0.8037.57, `pkgs.chromium` from the Nix store |
 | Playwright | 1.63.0, `@playwright/test` 1.63.0 |
-| Moon | 2.5.5 |
+| Moon | 2.6.0 |
 | Biome | 2.5.13 |
 | TypeScript | 6.0.3 |
 | `@cloudflare/vitest-pool-workers` | **not adopted** — latest 0.22.0 peers `vitest ^4.1.0`, this workspace runs 5.0.2 |

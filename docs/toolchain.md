@@ -106,15 +106,17 @@ A Moon upgrade therefore cannot silently drop an architectural rule.
 
 ## What Moon's cache can and cannot see here
 
-Moon 2.5.5 cannot build a cache key equal to the set of files these commands
-read. Both halves were measured on this workspace:
+Moon 2.6.0 cannot build a cache key equal to the set of files these commands
+read. Both halves were measured on this workspace, and **re-measured on 2026-10-05**
+when Moon went 2.5.5 → 2.6.0:
 
 1. **A task cannot name a file outside its project.** `'../../biome.json'` fails
    to parse with `parent directory traversal (..) is not supported`.
-   `fileGroups` are project-scope only in 2.5.5, and the workspace `hasher` block
-   offers only `ignorePatterns`, `ignoreMissingPatterns`, `optimization` and
-   `walkStrategy` — nothing additive. So `bun.lock`, root `package.json`,
-   `bunfig.toml`, `biome.json`, `config/toolchain.json` and every
+   `fileGroups` are project-scope only in 2.6.0, and the workspace `hasher` block
+   offers only `ignorePatterns`, `ignoreMissingPatterns`, `optimization`,
+   `walkStrategy` and `warnOnMissingInputs` — none of which adds a file to a
+   key. So `bun.lock`, root `package.json`, `bunfig.toml`,
+   `biome.json`, `config/toolchain.json` and every
    `config/tsconfig/*.json` is unreachable from any task, and they decide the
    result of every task here.
 2. **A task's key does not include its dependencies' keys.** With `utils:test`
@@ -122,6 +124,16 @@ read. Both halves were measured on this workspace:
    `packages/shared/logger/src/index.ts` re-ran `logger:test` under a new hash
    while `utils:test` reported `cached, 2b8e371c` — byte-identical to the run
    before. `dependsOn` orders the graph; it does not propagate content.
+
+The 2026-10-05 re-measurement reproduced both in a two-project scratch workspace,
+because the original `utils:test` → `logger:test` example no longer has that shape
+in this workspace. `libb:test` declared `deps: ['liba:test']`; with the cache warm,
+editing `liba/src/index.ts` re-ran `liba:test` under a new hash while `libb:test`
+reported `cached` on a hash byte-identical to the two runs before it, and `libb:test`
+moved only once its own source changed. One difference worth recording: 2.6.0 added
+`hasher.warnOnMissingInputs`, so the enumerated key list above is no longer
+exhaustive — it warns instead of widening a key, which is why the conclusion is
+unchanged while the list is not.
 
 So the cache is not disabled globally, because that would be a habit rather than
 a decision. Every root script that fans out to Moon goes through:

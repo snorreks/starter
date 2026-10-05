@@ -21,11 +21,11 @@
     "@starter/logger": "workspace:*",
     "@starter/schemas": "workspace:*",
     "@starter/utils": "workspace:*",
-    "yaml": "2.9.0"
+    "yaml": "2.9.1"
   },
   "devDependencies": {
     "svelte": "5.57.1",
     "typescript": "6.0.3",
-    "wrangler": "4.142.0"
+    "wrangler": "4.147.0"
   }
 }

@@ -2,22 +2,25 @@
 //
 // Whether Moon's cache may be trusted for this run.
 //
-// Moon 2.5.5 builds a task's cache key from that task's declared `inputs` plus
+// Moon 2.6.0 builds a task's cache key from that task's declared `inputs` plus
 // its command and its `env`. Two classes of file that decide the result of every
 // task in this workspace are outside that set, and both were measured rather
-// than assumed:
+// than assumed — and re-measured on 2026-10-05 when Moon went 2.5.5 → 2.6.0:
 //
 //   1. Files at the workspace root. A task input may not contain `..`
 //      (`parent directory traversal (..) is not supported`), `fileGroups` are
-//      project-scope only in 2.5.5, and the workspace `hasher` block offers no
-//      additive input. So `bun.lock`, root `package.json`, `bunfig.toml`,
+//      project-scope only in 2.6.0, and the workspace `hasher` block offers no
+//      additive input (`warnOnMissingInputs` was added in 2.6.0; it warns, it
+//      does not widen a key). So `bun.lock`, root `package.json`, `bunfig.toml`,
 //      `biome.json`, `config/toolchain.json` and `config/tsconfig/**` cannot
 //      appear in any key.
 //
 //   2. A dependency project's sources. `dependsOn` orders the graph; it does not
 //      propagate content into a dependent task's key. Measured: a source edit in
 //      `packages/shared/logger` re-ran `logger:test` under a new hash while
-//      `utils:test` reported the same cached hash as before.
+//      `utils:test` reported the same cached hash as before. Reproduced on
+//      2.6.0 on 2026-10-05 with a dependent task that reported a byte-identical
+//      `cached` hash while its dependency re-ran under a new one.
 //
 // This module fingerprints exactly those files. `resolveCacheMode` then picks
 // Moon's own `--cache` mode for the run:
