@@ -10,6 +10,26 @@ export interface BoundedResult {
   stderr: string;
 }
 
+/**
+ * Decode a whole stream at once.
+ *
+ * Two defects come from decoding each chunk as it arrives. A pipe boundary lands
+ * wherever the kernel's buffer fills, which is routinely in the middle of a
+ * multibyte character: `toString('utf8')` on a fragment decodes it to U+FFFD, so
+ * one `é` written by a child became two replacement characters. And the byte
+ * budget can cut the last character in half, which decodes to a replacement
+ * character for bytes that were never a character at all.
+ *
+ * So the bytes are kept and decoded once. The trailing replacement characters are
+ * dropped, and only the trailing ones: `Buffer.byteLength` of the decoded text is
+ * shorter than the buffer exactly when the decoder gave up, and a genuinely
+ * encoded U+FFFD re-encodes to the three bytes it came from.
+ */
+const decode = (chunks: readonly Buffer[], byteLength: number): string => {
+  const text = Buffer.concat(chunks, byteLength).toString('utf8');
+  return Buffer.byteLength(text, 'utf8') === byteLength ? text : text.replace(/\uFFFD+$/u, '');
+};
+
 /** Run argv without a shell, bounding time, output, cancellation and descendants. */
 export const runBounded = (options: {
   command: string;
@@ -20,20 +40,30 @@ export const runBounded = (options: {
   signal?: AbortSignal;
   input?: string;
   env?: NodeJS.ProcessEnv;
+  /**
+   * `capture` (the default) bounds and returns the output. `inherit` hands the
+   * child this process's terminal — live streams, and a stdin that can still
+   * answer a prompt — and the returned strings are then empty because nothing is
+   * buffered. The time bound applies either way.
+   */
+  stdio?: 'capture' | 'inherit';
 }): Promise<BoundedResult> =>
   new Promise((resolve) => {
     // A group outlives its launcher. A reparented child retaining the pipes must
     // still be stoppable after the launcher's exit, not just while its PID exists.
+    const inherit = options.stdio === 'inherit';
     const child = spawn(options.command, [...options.args], {
       cwd: options.cwd,
       detached: process.platform !== 'win32',
       env: options.env,
-      stdio: ['pipe', 'pipe', 'pipe'],
+      stdio: inherit ? 'inherit' : ['pipe', 'pipe', 'pipe'],
     });
     const maxBytes = options.maxBytes ?? 4 * 1024 * 1024;
     let bytes = 0;
-    let stdout = '';
-    let stderr = '';
+    const stdoutChunks: Buffer[] = [];
+    const stderrChunks: Buffer[] = [];
+    let stdoutBytes = 0;
+    let stderrBytes = 0;
     let problem: string | undefined;
     let settled = false;
     let settlementTimer: ReturnType<typeof setTimeout> | undefined;
@@ -49,8 +79,10 @@ export const runBounded = (options: {
       options.signal?.removeEventListener('abort', interrupted);
       resolve({
         code: problem === undefined ? (code ?? 1) : 1,
-        stdout,
-        stderr: `${stderr}${problem === undefined ? '' : `\n${problem}`}`,
+        stdout: decode(stdoutChunks, stdoutBytes),
+        stderr: `${decode(stderrChunks, stderrBytes)}${
+          problem === undefined ? '' : `\n${problem}`
+        }`,
       });
     };
     const stop = (reason: string): void => {
@@ -70,19 +102,26 @@ export const runBounded = (options: {
         }
       }
       settlementTimer = setTimeout(() => {
-        child.stdout.destroy();
-        child.stderr.destroy();
+        // Null when the streams were inherited rather than piped; there is nothing
+        // to tear down in that case, and the guard is what keeps that from being a
+        // TypeError on the timeout path.
+        child.stdout?.destroy();
+        child.stderr?.destroy();
         child.unref();
         finish(null);
       }, 250);
     };
     const append = (options: { chunk: Buffer; error: boolean }): void => {
-      const text = options.chunk.subarray(0, Math.max(0, maxBytes - bytes)).toString('utf8');
+      const kept = options.chunk.subarray(0, Math.max(0, maxBytes - bytes));
       bytes += options.chunk.length;
-      if (options.error) {
-        stderr += text;
-      } else {
-        stdout += text;
+      if (kept.length > 0) {
+        if (options.error) {
+          stderrChunks.push(kept);
+          stderrBytes += kept.length;
+        } else {
+          stdoutChunks.push(kept);
+          stdoutBytes += kept.length;
+        }
       }
       if (bytes > maxBytes) {
         stop('Process exceeded its output budget.');
@@ -96,14 +135,17 @@ export const runBounded = (options: {
     process.once('SIGINT', interrupted);
     process.once('SIGTERM', interrupted);
     options.signal?.addEventListener('abort', interrupted, { once: true });
-    child.stdout.on('data', (chunk: Buffer) => append({ chunk, error: false }));
-    child.stderr.on('data', (chunk: Buffer) => append({ chunk, error: true }));
+    child.stdout?.on('data', (chunk: Buffer) => append({ chunk, error: false }));
+    child.stderr?.on('data', (chunk: Buffer) => append({ chunk, error: true }));
     child.on('error', (error) => {
       problem = error.message;
     });
     child.on('close', finish);
-    child.stdin.on('error', () => stop('Child stdin closed before input was accepted.'));
-    child.stdin.end(options.input);
+    const stdin = child.stdin;
+    if (!inherit && stdin !== null) {
+      stdin.on('error', () => stop('Child stdin closed before input was accepted.'));
+      stdin.end(options.input);
+    }
     if (options.signal?.aborted) {
       interrupted();
     }
@@ -118,30 +160,43 @@ export const runBoundedSync = (options: {
   maxBytes?: number;
   input?: string;
   env?: NodeJS.ProcessEnv;
+  /**
+   * `capture` (the default) bounds and returns the output. `inherit` hands the
+   * child this process's terminal, so its streams stay live and it can be
+   * prompted; the returned strings are then empty because nothing is buffered.
+   */
+  stdio?: 'capture' | 'inherit';
 }): BoundedResult => {
   const timeoutMs = options.timeoutMs ?? 15 * 60_000;
   const maxBytes = options.maxBytes ?? 4 * 1024 * 1024;
+  const inherit = options.stdio === 'inherit';
   const result = spawnSync(
     process.execPath,
     [fileURLToPath(import.meta.url), options.command, ...options.args],
     {
       cwd: options.cwd,
-      input: options.input ?? '',
+      input: inherit ? undefined : (options.input ?? ''),
       env: {
         ...(options.env ?? process.env),
         STARTER_PROCESS_TIMEOUT_MS: String(timeoutMs),
         STARTER_PROCESS_MAX_BYTES: String(maxBytes),
+        ...(inherit ? { STARTER_PROCESS_STDIO: 'inherit' } : {}),
       },
+      stdio: inherit ? 'inherit' : undefined,
       encoding: 'utf8',
       timeout: timeoutMs + 5_000,
       killSignal: 'SIGKILL',
-      maxBuffer: maxBytes + 4096,
+      // A limit that is not applied is not a limit: Node's own default is 1 MiB,
+      // and an inherited stream exceeds it without anyone noticing.
+      maxBuffer: inherit ? undefined : maxBytes + 4096,
     },
   );
   return {
     code: result.status ?? 1,
-    stdout: result.stdout ?? '',
-    stderr: `${result.stderr ?? ''}${result.error === undefined ? '' : `\nSupervisor failed: ${result.error.message}`}`,
+    stdout: inherit ? '' : (result.stdout ?? ''),
+    stderr: inherit
+      ? ''
+      : `${result.stderr ?? ''}${result.error === undefined ? '' : `\nSupervisor failed: ${result.error.message}`}`,
   };
 };
 
@@ -150,6 +205,18 @@ if (import.meta.main) {
   if (command === undefined) {
     process.stderr.write('Missing supervised command.\n');
     process.exitCode = 2;
+  } else if (process.env.STARTER_PROCESS_STDIO === 'inherit') {
+    // The supervisor's own terminal is the child's: stdin is readable, output is
+    // live, and the time bound is the only thing left to enforce.
+    process.exitCode = (
+      await runBounded({
+        command,
+        args,
+        cwd: process.cwd(),
+        stdio: 'inherit',
+        timeoutMs: Number(process.env.STARTER_PROCESS_TIMEOUT_MS),
+      })
+    ).code;
   } else {
     const result = await runBounded({
       command,

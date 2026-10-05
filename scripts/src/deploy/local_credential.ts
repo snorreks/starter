@@ -24,7 +24,10 @@ export const needsDeploymentCredential = (options: {
     return args.includes('--provision');
   }
   if (command === 'db') {
-    return args.includes('--remote');
+    // `--dry-run` prints the command it would run and stops, the same as
+    // `deploy plan`. Asking it for the deploy credential would refuse a run that
+    // reaches no remote and would name a `.env.deploy` it never needs.
+    return args.includes('--remote') && !args.includes('--dry-run');
   }
   return (
     command === 'logs' &&

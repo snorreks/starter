@@ -272,6 +272,7 @@ export type SecretSource = 'env' | 'sops' | 'skip';
 export const secretPlan = (
   target: ResolvedTarget,
   source: SecretSource,
+  root?: string,
 ): { name: string; workerName: string; envVar: string; source: SecretSource; argv: string[] }[] =>
   RUNTIME_SECRET_NAMES.map((name) => ({
     name,
@@ -284,8 +285,12 @@ export const secretPlan = (
       name,
       '--name',
       target.workerName,
+      // The config this plan points at has to be the one the rest of the
+      // provisioner will have written. Left at the repository default, a run
+      // resolved against another root would install secrets against a config that
+      // does not exist — and would do so after every other step succeeded.
       '--config',
-      remoteConfigPath({ target }),
+      remoteConfigPath({ target, root }),
     ],
   }));
 
@@ -512,7 +517,7 @@ export const provision = (
     return stop('secrets');
   }
 
-  for (const plan of secretPlan(target, options.secretSource ?? 'env')) {
+  for (const plan of secretPlan(target, options.secretSource ?? 'env', options.root)) {
     if (options.installSecrets !== true) {
       steps.push({
         name: `secret:${plan.name}`,

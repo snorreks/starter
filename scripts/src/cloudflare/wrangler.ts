@@ -144,10 +144,19 @@ export interface ProcessRunner {
 
 const defaultRunner: ProcessRunner = {
   run: (command, args, options) => {
-    const result = runBoundedSync({ command, args, cwd: options.cwd });
-    process.stdout.write(result.stdout);
-    process.stderr.write(result.stderr);
-    return result.code;
+    // The terminal is inherited rather than piped. Wrangler is an interactive CLI:
+    // it asks before it does something irreversible, and a piped stdin is already
+    // at EOF, so a prompt either cannot be answered or answers itself. Capturing
+    // also defers every line until the process exits, which turns a deploy's
+    // progress into a single dump at the end — and it hands the child a byte
+    // budget it never agreed to. The time bound stays; the output bound does not
+    // apply to output nobody buffers.
+    return runBoundedSync({
+      command,
+      args,
+      cwd: options.cwd,
+      stdio: 'inherit',
+    }).code;
   },
 };
 

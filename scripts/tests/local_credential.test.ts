@@ -125,4 +125,20 @@ test('offline plans, dev, builds, help, and local logs never load the token', ()
   );
   expect(needsDeploymentCredential({ command: 'configure', args: ['--provision'] })).toBe(true);
   expect(needsDeploymentCredential({ command: 'db', args: ['migrate', '--remote'] })).toBe(true);
+  // `db migrate --remote staging --dry-run` prints the command it would run and
+  // stops: it reaches no remote, so loading the deploy credential for it would
+  // refuse a plan with a missing `.env.deploy` and read a secret it never uses.
+  expect(
+    needsDeploymentCredential({
+      command: 'db',
+      args: ['migrate', '--remote', 'staging', '--dry-run'],
+    }),
+  ).toBe(false);
+  // The flag order is the operator's, not the parser's.
+  expect(
+    needsDeploymentCredential({
+      command: 'db',
+      args: ['migrate', '--dry-run', '--remote'],
+    }),
+  ).toBe(false);
 });

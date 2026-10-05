@@ -82,6 +82,28 @@ const EXCLUDED = new Set([
   'target',
 ]);
 
+/**
+ * Does git track anything inside this directory?
+ *
+ * The answer decides whether a name in `EXCLUDED` means "generated output" or
+ * only "a word this repository happens to use". `scripts/src/artifacts` holds a
+ * committed source file — the Worker bundler `client:build` runs — and excluding
+ * it by name deleted it from every rehearsal, where `bun run build` then failed
+ * with `Module not found "../../../scripts/src/artifacts/bundle_worker.ts"`.
+ *
+ * A repository without git has nothing tracked here, which leaves the name-based
+ * exclusion in charge: the same posture `isGitIgnored` takes for a fixture.
+ */
+const hasTrackedFiles = (root: string, directory: string): boolean => {
+  const result = spawnSync('git', ['ls-files', '--', directory], {
+    cwd: root,
+    encoding: 'utf8',
+    timeout: 30_000,
+  });
+
+  return result.status === 0 && result.stdout.trim() !== '';
+};
+
 /** The one identity string a template consumer replaces. */
 export const PROJECT_NAME = '@starter/monorepo';
 
@@ -225,7 +247,11 @@ export const copyTemplateTree = (from: string, to: string): string[] => {
       // failed on the copy with "couldn't find an ignore file", and the documented-
       // paths guard reported `.github/workflows/deploy.yml` as missing. The rehearsal
       // is a faithful clone, not a tidy one.
-      if (EXCLUDED.has(entry) || entry === '.git') {
+      //
+      // A name in `EXCLUDED` is not applied here: at this point a file and a
+      // directory are indistinguishable, and `scripts/src/artifacts` is a committed
+      // source directory. The name is checked in the branch that knows which it is.
+      if (entry === '.git') {
         continue;
       }
       const sourcePath = join(source, entry);
@@ -247,11 +273,17 @@ export const copyTemplateTree = (from: string, to: string): string[] => {
         // repository-relative — a relative path from anywhere else names a file that
         // does not exist.
         const relativePath = relative(from, sourcePath);
-        if (!isGitIgnored(from, relativePath)) {
+        if (!EXCLUDED.has(entry) && !isGitIgnored(from, relativePath)) {
           cpSync(sourcePath, targetPath);
           copied.push(relativePath);
         }
       } else if (stats.isDirectory()) {
+        // The name is only a reason to skip when git tracks nothing inside it, so
+        // the check happens here rather than in the loop's first condition: at that
+        // point a file and a directory are still indistinguishable.
+        if (EXCLUDED.has(entry) && !hasTrackedFiles(from, relative(from, sourcePath))) {
+          continue;
+        }
         walk(sourcePath, targetPath);
       }
     }

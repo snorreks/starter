@@ -180,6 +180,22 @@ describe('a fingerprint that reads nothing must not be treated as a fingerprint'
 
     expect(resolveCacheMode({ root, previous: first.fingerprint }).mode).toBe('off');
   });
+
+  test('a change to the Worker bundler switches the cache off', () => {
+    writeFixture(root);
+    const first = resolveCacheMode({ root, previous: null });
+
+    // `client:build` is `vite build && bundle_worker.ts`. The bundler decides
+    // whether the artifact is a closed standalone Worker or the adapter's own
+    // unbundled entry, and Moon cannot see it from the client's task — so a
+    // change to it would have restored a Worker built by the previous bundler.
+    writeFileSync(
+      join(root, 'scripts/src/artifacts/bundle_worker.ts'),
+      'export const bundled = false;\n',
+    );
+
+    expect(resolveCacheMode({ root, previous: first.fingerprint }).mode).toBe('off');
+  });
 });
 
 describe('a changed fingerprint must leave no cache entry eligible to be restored', () => {

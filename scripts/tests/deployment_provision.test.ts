@@ -25,8 +25,10 @@ import {
   secretInArgvProblem,
   secretPlan,
 } from '../src/deploy/provision.ts';
+import { remoteConfigPath } from '../src/deploy/remote_config.ts';
 import type { ResolvedTarget } from '../src/deploy/target.ts';
 import { REQUIRED_TOKEN_SCOPES } from '../src/registry/app_registry.ts';
+import { REPO_ROOT } from '../src/shared/paths.ts';
 
 const created: string[] = [];
 const cleanup = (): void => {
@@ -119,6 +121,26 @@ describe('a secret never reaches argv', () => {
       expect(Object.keys(entry).sort()).toEqual(['argv', 'envVar', 'name', 'source', 'workerName']);
       expect(JSON.stringify(entry)).not.toContain('hunter2');
     }
+  });
+
+  test('the secret plan targets the config of the root it was resolved against', () => {
+    // The rest of the provisioner resolves every path against `root`. A secret
+    // plan that quietly used the repository default would install against a config
+    // file that does not exist — after the database, the bucket and the fixture had
+    // already been created.
+    const root = tree(true);
+    const [first] = secretPlan(encodeTarget, 'env', root);
+
+    const config = first?.argv[first.argv.indexOf('--config') + 1];
+    expect(config).toBe(join(root, '.starter/deploy/staging-web.json'));
+    expect(config).not.toContain(REPO_ROOT);
+  });
+
+  test('the secret plan still defaults to the repository root when given none', () => {
+    const [first] = secretPlan(encodeTarget, 'env');
+    const config = first?.argv[first.argv.indexOf('--config') + 1];
+
+    expect(config).toBe(remoteConfigPath({ target: encodeTarget }));
   });
 
   test('installation passes the value on stdin and the name in argv', () => {

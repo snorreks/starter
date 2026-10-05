@@ -8,7 +8,7 @@ import { renderRemoteConfig, writeRemoteConfig } from '../src/deploy/remote_conf
 import type { ResolvedTarget } from '../src/deploy/target.ts';
 
 const roots: string[] = [];
-const target = (enabled = false): ResolvedTarget => ({
+const target = (enabled = false, containerImage = '../media/Dockerfile'): ResolvedTarget => ({
   environment: 'staging',
   project: 'starter',
   accountId: 'a'.repeat(32),
@@ -28,7 +28,7 @@ const target = (enabled = false): ResolvedTarget => ({
     mediaBucketName: enabled ? 'exact-bucket-staging' : null,
     encodeWorkflowName: enabled ? 'exact-encode-staging' : null,
     maintenanceWorkflowName: enabled ? 'exact-maintenance-staging' : null,
-    containerImage: enabled ? '../media/Dockerfile' : null,
+    containerImage: enabled ? containerImage : null,
     imageProtocol: enabled ? 'sample-v1' : null,
     containerProfile: enabled ? 'basic' : null,
   },
@@ -74,6 +74,11 @@ const fixture = (): string => {
       ],
     }),
   );
+  // A local build input exists; a registry reference does not. The rendered
+  // config decides between them by that, so the fixture has to have one.
+  mkdirSync(join(root, 'apps/backend/media'), { recursive: true });
+  writeFileSync(join(root, 'apps/backend/media/Dockerfile'), 'FROM scratch\n');
+  writeFileSync(join(root, 'apps/backend/media/processor.build'), 'FROM scratch\n');
   return root;
 };
 afterEach(() => {
@@ -145,6 +150,30 @@ test('compute bindings, image, and private jobs identity come from the resolved 
   expect(JSON.stringify(jobs.containers)).toContain(join(root, 'apps/backend/media/Dockerfile'));
   expect(JSON.stringify(jobs.workflows)).toContain('exact-maintenance-staging');
   expect(JSON.stringify(jobs.workflows)).toContain('"steps":32');
+});
+
+test('a relative local image is resolved whatever it is named, and a reference is left alone', () => {
+  // `Dockerfile` in the name was the whole test for "this is a local path". A
+  // build input called `processor.build` was therefore emitted unresolved, and
+  // wrangler read it relative to its own working directory.
+  const root = fixture();
+  const named = renderRemoteConfig({
+    target: target(true, '../media/processor.build'),
+    root,
+    kind: 'jobs',
+  });
+
+  expect(JSON.stringify(named.containers)).toContain(
+    join(root, 'apps/backend/media/processor.build'),
+  );
+
+  // A registry reference is not a path, and `existsSync` is what tells them apart:
+  // `ghcr.io/starter/processor:sample-v1` cannot exist beside the source config.
+  const reference = 'ghcr.io/starter/processor:sample-v1';
+  const published = renderRemoteConfig({ target: target(true, reference), root, kind: 'jobs' });
+  const containers = published.containers as { image: string }[];
+
+  expect(containers[0]?.image).toBe(reference);
 });
 
 test('broken artifact policy fails before a derived config can be written', () => {

@@ -56,7 +56,7 @@ const assertClosedOutputs = (options: {
 
 /** Close the adapter's transitive SSR graph before it is cached, hashed or deployed. */
 export const bundleWorker = async (
-  options: { root?: string; run?: typeof runBounded } = {},
+  options: { root?: string; run?: typeof runBounded; env?: NodeJS.ProcessEnv } = {},
 ): Promise<number> => {
   const client = join(options.root ?? REPO_ROOT, CLIENT_DIR_RELATIVE);
   const artifact = join(client, '.svelte-kit/cloudflare');
@@ -84,7 +84,9 @@ export const bundleWorker = async (
       ],
       cwd: client,
       timeoutMs: 180_000,
-      env: buildEnvironment(),
+      // Injected so a test can observe the environment the bundler actually hands
+      // Wrangler, rather than the shape of the filter that produces it.
+      env: buildEnvironment(options.env),
     });
     process.stdout.write(result.stdout);
     process.stderr.write(result.stderr);
