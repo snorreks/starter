@@ -190,12 +190,19 @@ describe('the apply pipeline spawns exactly the commands it prints', () => {
       inspect: () => artifact(),
       run: spawns.run,
       fetch: http.fetch,
-      capture: () => ({ ok: true, stdout: '{"id":"dep-1","version_id":"v1"}', stderr: '' }),
+      capture: () => ({
+        ok: true,
+        stdout:
+          '[{"id":"older","created_on":"2025-12-31T00:00:00Z","versions":[{"version_id":"old-version","percentage":100}]},{"id":"dep-1","created_on":"2026-01-01T00:00:00Z","versions":[{"version_id":"v1","percentage":100}]}]',
+        stderr: '',
+      }),
       now: () => '2026-01-01T00:00:00.000Z',
       root: fixtureRoot('db-staging'),
     });
 
     expect(result.ok).toBe(true);
+    expect(result.record?.deploymentId).toBe('dep-1');
+    expect(result.record?.versionId).toBe('v1');
     expect(spawns.calls).toHaveLength(2);
 
     // The migration names the environment and the binding, before anything deploys.
@@ -448,7 +455,12 @@ describe('apply refuses and stops at the first failing step', () => {
       inspect: () => artifact(),
       run: spawns.run,
       fetch: http.fetch,
-      capture: () => ({ ok: true, stdout: '{"id":"dep-9","version_id":"v9"}', stderr: '' }),
+      capture: () => ({
+        ok: true,
+        stdout:
+          '[{"id":"dep-9","created_on":"2026-01-01T00:00:00Z","versions":[{"version_id":"v9","percentage":100}]}]',
+        stderr: '',
+      }),
       root: fixtureRoot('db-staging'),
     });
 
@@ -915,7 +927,12 @@ describe('verification asks whether the release can serve, not only whether it i
       inspect: () => artifact(),
       run: spawns.run,
       fetch: http.fetch,
-      capture: () => ({ ok: true, stdout: '{"id":"dep-3","version_id":"v3"}', stderr: '' }),
+      capture: () => ({
+        ok: true,
+        stdout:
+          '[{"id":"dep-3","created_on":"2026-01-01T00:00:00Z","versions":[{"version_id":"v3","percentage":100}]}]',
+        stderr: '',
+      }),
       now: () => '2026-01-01T00:00:00.000Z',
       root: fixtureRoot('db-staging'),
     });

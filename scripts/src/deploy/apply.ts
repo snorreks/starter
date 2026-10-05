@@ -35,6 +35,7 @@ import { IDEMPOTENCY_KEY_HEADER } from '@starter/schemas/jobs';
 import { captureWrangler, runWrangler } from '../cloudflare/wrangler.ts';
 import { CLIENT_DIR, REPO_ROOT } from '../shared/paths.ts';
 import { imageProtocolProblem } from './compatibility.ts';
+import { parseDeploymentIdentity } from './deployment_identity.ts';
 import { bucketExists } from './provision.ts';
 import {
   type ArtifactCheck,
@@ -537,11 +538,10 @@ export const VERIFY_TIMEOUT_MS = 10_000;
 /**
  * The provider's identity for the release that is now active, or `null`s.
  *
- * Exported rather than inlined because it is useful *after* a pipeline that
- * already recorded: `verify` needs the same answer without re-running a deploy.
- * `wrangler deployments list` is read-only. A provider that reports no id yields
- * `null`, which the record renders as "not reported" — different from claiming an
- * id nobody can check.
+ * Wrangler history is not ordered newest-first. Select by its precise timestamp,
+ * and report a version only when it owns all traffic. Unparseable history stays
+ * unreported rather than borrowing identifiers from an older release.
+ * `wrangler deployments list` is read-only.
  */
 export const deploymentIdentity = (
   target: ResolvedTarget,
@@ -552,12 +552,7 @@ export const deploymentIdentity = (
     return { deploymentId: null, versionId: null };
   }
 
-  const pick = (key: string): string | null => {
-    const match = new RegExp(`"${key}"\\s*:\\s*"([^"]+)"`).exec(result.stdout);
-    return match?.[1] ?? null;
-  };
-
-  return { deploymentId: pick('id'), versionId: pick('version_id') ?? pick('deployment_id') };
+  return parseDeploymentIdentity(result.stdout);
 };
 
 /**
