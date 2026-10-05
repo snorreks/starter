@@ -32,6 +32,7 @@ Run from the repository root unless noted.
 bun install
 bun run setup
 bun run setup:doctor
+bun run setup:doctor -- --profile native    # what a lane needs, and what to do without it
 
 # Develop — one application, two ways to run it
 bun run dev                 # vite dev, Node, emulated bindings. Fast.
@@ -61,6 +62,8 @@ bun run guard -- --profile  # the same, plus per-guard elapsed time
 bun run guard:whole-repo
 bun run workflows           # CI workflow policy: pins, permissions, bounds, secrets
 bun run smoke               # fresh checkout of this template, no credentials
+bun run smoke -- --without-heavy   # the same, after deleting the native and compute examples
+bun run evidence            # the capability matrix agrees with the evidence manifest
 
 # Database
 bun run db:generate         # drizzle-kit generate
@@ -73,7 +76,9 @@ bun run db:seed
 bun run deploy:status                       # configured + last release. Read-only.
 bun run deploy:check --env staging          # the offline plan. No credential, no network.
 bun run deploy:preflight --env staging      # authenticated, read-only
-bun run deploy:apply --env staging --yes    # build, migrate, deploy, verify, record
+bun run deploy:provision --env staging --yes   # idempotent: db, bucket, fixture, secrets
+bun run deploy:apply --env staging --yes    # schema, storage, image, jobs, web, verify, record
+bun run deploy:apply --env staging --yes --only jobs   # a subset, in dependency order
 bun run deploy verify --env staging
 
 # Native — a separate lane: it needs a Rust toolchain and a webview library
@@ -169,11 +174,31 @@ Three directory rules that are *not* stylistic:
   `@starter/auth`, `drizzle-orm`, `better-auth` or a Cloudflare binding. Two
   `check:bundle` commands assert the same property on the emitted artifacts, in
   opposite directions.
+- **A count in a document is derived, never typed.** `docs/evidence/current.json`
+  carries every row with its revision, platform, command, count, timestamp and
+  artifact; `docs/capability-matrix.md`'s current table is generated from it and
+  `bun run evidence` fails when the two disagree. Historical rows are kept, dated,
+  so a regression stays answerable. This is the fix for a matrix that advertised
+  883 unit / 19 Worker / 20 E2E tests from a round two revisions old.
+- **An unsuffixed CI variable describes one environment, and says which.**
+  `DEPLOY_ENVIRONMENT` is what scopes `CLOUDFLARE_WORKER_NAME` and its siblings;
+  applying one value to both environments made the isolation check prove that staging
+  and production shared a Worker, and `deploy plan` refused on every run. The
+  nonsecret target map is a **repository** variable, because the credential-free
+  `plan` job cannot read environment-scoped configuration at all.
+- **A secret value never reaches argv, a log line or an artifact.** `wrangler secret
+  put` takes the *name* in argv and the value on stdin; `secretInArgvProblem` refuses
+  a value-shaped argument, and the Cloudflare API token is never a substitute for
+  `BETTER_AUTH_SECRET` or `RESEND_API_KEY`.
 - **One authority decides what a command would change.** `scripts/src/deploy/target.ts`
-  exports `resolveTarget(environment)`. Every command that can reach a remote
-  resource resolves its destination through it and nothing else resolves one
-  independently. Two lookups that are each correct about different things is how a
-  deploy ended up migrating staging while publishing production.
+  exports `resolveTarget(environment)`, and it covers the *whole* environment: web
+  Worker, jobs Worker, both Workflow identities, D1, the private R2 bucket, the image
+  and its protocol, the public origin, the mail sender and the native API origin. A
+  plan that printed one Worker while `apply` went on to build an image and deploy a
+  second Worker was not the thing an approval was given against. Every command that
+  can reach a remote resource resolves its destination through it and nothing else
+  resolves one independently. Two lookups that are each correct about different
+  things is how a deploy ended up migrating staging while publishing production.
 
 ## Tool resolution
 
@@ -249,7 +274,9 @@ bun run --cwd packages/backend/database db:generate
 | [docs/architecture.md](docs/architecture.md) | boundaries and why |
 | [docs/auth.md](docs/auth.md) | the account lifecycle, the D1 rate limiter, and mail |
 | [docs/cloudflare.md](docs/cloudflare.md) | Workers, D1, credentials, the deployment-mode binding |
-| [docs/deployment.md](docs/deployment.md) | the one deployment path: authority, pipeline, migrations, concurrency, health, rollback recovery |
+| [docs/deployment.md](docs/deployment.md) | the one deployment path: the resolved target, the CI variable model, provisioning, secret installation, the ordered pipeline, migrations, concurrency, health, rollback and image retention |
+| [docs/compute.md](docs/compute.md) | what the compute example does and does not do, the Cloud Run Jobs escape route, and when Stream replaces the container |
+| [docs/evidence/current.json](docs/evidence/current.json) | the machine-readable record `docs/capability-matrix.md` is generated from |
 | [docs/logs.md](docs/logs.md) | the log CLI and its refusals |
 | [docs/secrets.md](docs/secrets.md) | SOPS: the operations, and what each one refuses |
 | [docs/agent.md](docs/agent.md) | Pi extensions and trust |

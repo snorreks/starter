@@ -10,6 +10,11 @@ and the **account** you provision into — not through a bundle id, because this
 a web starter and there is no installed application to identify. Set those in
 step 1.
 
+If you also ship the native client, your identity additionally reaches users through
+the **API origin a packaged build targets** (`nativeApiOrigin`), which is compiled
+into a signed binary and cannot be corrected afterwards. Set it per environment
+alongside the Worker name.
+
 ## 1. Provision your resources
 
 ```bash
@@ -20,14 +25,35 @@ This creates the D1 database and records its id in
 `.starter/deployment.local.json`, plus the database entry in `wrangler.jsonc`.
 It creates no Worker and deploys nothing.
 
-Then set the account and Worker names in the gitignored local configuration:
+Then set the account, the Worker names and the public origins in the gitignored local
+configuration. Every one of these requires `--env`: staging and production are
+different Workers, different databases and different buckets, and a value written
+without one is the shared fallback both of them used to read.
 
 ```bash
-bun run deploy:configure -- --account <account-id> --worker your-app-web
+bun run deploy:configure -- --account <account-id>
+bun run deploy:configure -- --env staging    --worker your-app-web-staging
+bun run deploy:configure -- --env production --worker your-app-web
+bun run deploy:configure -- --env staging    --origin https://staging.your-domain
+bun run deploy:configure -- --env production --origin https://your-domain
+bun run deploy:configure -- --env staging    --mail-from no-reply@your-verified-domain
+bun run deploy:configure -- --env production --mail-from no-reply@your-verified-domain
+bun run deploy:configure -- --env staging    --native-api-origin https://staging.your-domain
+
+# only if this deployment runs compute
+bun run deploy:configure -- --env staging --jobs-worker your-app-jobs-staging \
+  --media-bucket your-app-media-staging --image-protocol sample-v1 \
+  --container-profile basic --jobs-profile encode
 ```
 
 Keep unprovisioned values in `scripts/src/registry/app_registry.ts` as `null`.
 Guard 5 rejects literal resource IDs in that committed template configuration.
+
+**For CI**, put the same nonsecret values in a **repository** variable called
+`STARTER_DEPLOYMENT_TARGETS` (a JSON object keyed by environment), and keep every
+credential on the protected environment. The credential-free plan job cannot read
+environment-scoped configuration at all, which is why the map is repository-scoped.
+See [deployment.md](deployment.md).
 
 ## 2. Replace the demo entity
 

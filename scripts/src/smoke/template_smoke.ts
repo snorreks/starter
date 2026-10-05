@@ -33,15 +33,17 @@
 import { spawnSync } from 'node:child_process';
 import {
   cpSync,
+  existsSync,
   lstatSync,
   mkdirSync,
   mkdtempSync,
   readdirSync,
   readFileSync,
   rmSync,
+  writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join, relative, sep } from 'node:path';
+import { dirname, join, relative, resolve, sep } from 'node:path';
 import { REPO_ROOT } from '../shared/paths.ts';
 
 /** Seconds each step may take. A step that needs more is a step that has hung. */
@@ -99,6 +101,15 @@ export interface SmokeReport {
   ok: boolean;
   /** Committed references to the old identity, as `path:line`. */
   identityReferences: string[];
+  /**
+   * What the removal rehearsal actually deleted, as repository-relative paths.
+   *
+   * Reported rather than narrated. The command printed a fixed sentence naming four
+   * directories and two workflows whether or not they existed, so a rehearsal that
+   * removed nothing still claimed it had — and a reader checking the claim had no way
+   * to tell. Empty means nothing was removed.
+   */
+  removed: string[];
   /**
    * The `HOME` a step's child process actually saw, or null when no step ran.
    *
@@ -205,9 +216,16 @@ export const copyTemplateTree = (from: string, to: string): string[] => {
     for (const entry of readdirSync(source)) {
       // `cache` by name covers `.moon/cache`, `.pi/artifacts` and any other
       // generated directory whose *contents* are gitignored while its parent is
-      // not. `.git` is matched by prefix because `.gitignore`, `.gitattributes`
-      // and `.github` all start with it.
-      if (EXCLUDED.has(entry) || entry.startsWith('.git')) {
+      // not.
+      //
+      // `.git` is excluded by exact name, and nothing else starts with a prefix
+      // match on it. The previous `startsWith('.git')` rule also dropped
+      // `.gitignore`, `.gitattributes` and the whole `.github` directory — all of
+      // which are committed files every clone has. Biome's `vcs.useIgnoreFile` then
+      // failed on the copy with "couldn't find an ignore file", and the documented-
+      // paths guard reported `.github/workflows/deploy.yml` as missing. The rehearsal
+      // is a faithful clone, not a tidy one.
+      if (EXCLUDED.has(entry) || entry === '.git') {
         continue;
       }
       const sourcePath = join(source, entry);
@@ -303,9 +321,20 @@ const runStep = (step: string, cwd: string, args: string[]): StepResult => {
  * One function, so the probe below and the real steps cannot disagree about what
  * was passed — which is the failure the probe exists to rule out.
  */
-const stepEnv = (cwd: string): NodeJS.ProcessEnv => ({
+/**
+ * The HOME every step's child is given.
+ *
+ * A *sibling* of the checkout, not a directory inside it. Inside it, Bun fills it
+ * with a package cache on the first `install`, and then the whole-repository guard —
+ * which walks everything it is handed — reports several thousand unclassified files
+ * under a directory that no ownership rule could ever cover. The directory is inside
+ * the same temporary root either way, so it is removed with the run.
+ */
+const smokeHome = (checkout: string): string => join(dirname(checkout), 'smoke-home');
+
+const stepEnv = (checkout: string): NodeJS.ProcessEnv => ({
   PATH: process.env.PATH ?? '',
-  HOME: join(cwd, '.smoke-home'),
+  HOME: smokeHome(checkout),
   STARTER_SKIP_SETUP: '1',
   CI: '1',
 });
@@ -328,6 +357,22 @@ export interface SmokeOptions {
   root?: string;
   /** Keep the temporary checkout after the run. */
   keep?: boolean;
+  /**
+   * Remove the native and compute examples from the copy before rehearsing.
+   *
+   * The rehearsal then asks the question a downstream project actually asks: does
+   * the *web* half still install, build and pass its own guards once the native app
+   * and the Rust processor are gone? The starter keeps both; the copy answers for
+   * the version that keeps neither.
+   *
+   * What this deliberately does NOT remove: `apps/backend/jobs` and
+   * `packages/backend/jobs`. The web Worker imports the jobs *package* for its
+   * `/api/jobs` routes, so deleting it is a guarded feature removal across the web
+   * app rather than a rehearsal. That work is specified in docs/compute.md and is
+   * NOT RUN here; the compute lane's independence from Docker and credentials is
+   * proven by `bun run setup:doctor --profile web` returning 0 with no engine.
+   */
+  withoutHeavyExamples?: boolean;
   /**
    * Stop after this many steps. Used by the tests to keep them quick.
    *
@@ -353,16 +398,295 @@ export class InvalidStepLimit extends Error {
   }
 }
 
+/**
+ * The heavy examples, and everything that names them.
+ *
+ * Rehearsed in a *disposable copy*, never in the template: this repository ships
+ * both the native client and the compute example, and the question a downstream
+ * project actually asks is "what happens if I delete them?". Answering it by
+ * editing the template would trade a working example for a broken one.
+ *
+ * Deleting the directories is only half the rehearsal. The web workspace declares
+ * `apps/frontend/*`, the Biome overrides name the native app, the guard policy
+ * classifies it, and `package.json` has five `native:*` scripts — so a copy with
+ * only the directories removed fails with an error about a missing project rather
+ * than with anything about the web app. Each entry below is one such reference.
+ */
+export const HEAVY_EXAMPLES = {
+  /** Directories removed wholesale. */
+  directories: [
+    'apps/frontend/native',
+    // The Rust/FFmpeg processor. Nothing in the web app imports it: the web Worker
+    // reaches it only over HTTP through the jobs Worker, so deleting the crate
+    // removes a container image and a Cargo workspace member without removing a
+    // module the web half has to compile against.
+    'apps/backend/media',
+  ],
+  /** Workflow files that only make sense with the native app present. */
+  workflows: ['.github/workflows/native.yml', '.github/workflows/native-release.yml'],
+  /**
+   * Moon project ids pointing at a removed directory.
+   *
+   * Removed because Moon treats a `projects:` entry naming a missing path as a hard
+   * error — `No project exists at source path apps/backend/media` — before it runs
+   * a single task. Every lane that goes through `moon run` therefore fails on a
+   * copy that has an example deleted but the workspace map left intact, which reads
+   * as "the template is broken" rather than as "the workspace map still names it".
+   */
+  moonProjects: ['media', 'native'],
+  /** Root scripts that only make sense with the native app present. */
+  packageScripts: ['native:doctor', 'native:dev', 'native:build', 'native:android', 'native:ios'],
+  /**
+   * Biome override keys naming the removed trees.
+   *
+   * Edited by key rather than by rewriting the config file, because `biome.json`
+   * is JSON and a regenerated file would lose the comments a reviewer reads.
+   */
+  biomeOverrideKeys: ['apps/frontend/native', 'apps/backend/media'],
+} as const;
+
+/**
+ * Remove the heavy examples from a copied tree, and report what it touched.
+ *
+ * `root` is the disposable copy, never the repository: `copyTemplateTree` has
+ * already made this checkout's contents disposable by the time this runs, and
+ * every path here is resolved against `root`.
+ */
+/**
+ * The guard's own exemption, reimplemented here on purpose.
+ *
+ * `scripts/src/guards/boundary.ts` refuses a document that names a path which does
+ * not exist, and its remedy is: *say in the same sentence that it was removed*. So
+ * the rehearsal does exactly that rather than deleting the prose — which would throw
+ * away the parts of a README that still describe the web half.
+ *
+ * Duplicated because a rehearsal that imported the guard's private helper would be
+ * testing the guard's regex against itself.
+ */
+const NARRATED =
+  /\b(once had|once was|used to be|previously|former(ly)?|no longer|removed|renamed|moved|pointed at|does not exist|doesn'?t exist|is gone)\b/i;
+
+/**
+ * Rewrite the prose in a copy that names a removed example, so the whole-repository
+ * guard passes for the right reason rather than being skipped.
+ *
+ * The note is inserted **immediately after the path**, not at the end of the line.
+ * The guard checks the line and the paragraph separately, so a note parked at the end
+ * of a multi-line block leaves the offending line unchanged and the guard still
+ * refuses — which is what the first version of this function did.
+ *
+ * Two places are skipped:
+ *   * fenced code blocks, byte for byte — a command sample naming the removed path is
+ *     a historical sample, and a sentence inside a fence breaks the copy-paste;
+ *   * lines that already read as narrated, so this is idempotent.
+ */
+/**
+ * A literal, quoted for use inside a regular expression alternation.
+ *
+ * Not `escapeRegExp` from somewhere: one call, and a path segment can contain a dot
+ * (`apps/backend/media/README.md`), which would otherwise match more than it names.
+ */
+const escapeForRegExp = (value: string): string => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+/**
+ * The relative link targets on one line that no longer resolve.
+ *
+ * The guard checks *links*, not just bare paths: a README whose link target was
+ * deleted renders as a broken link, which is the same reader-facing failure as a
+ * sentence pointing at nothing. Narrating only the literal directory name would leave
+ * `../media/README.md` untouched.
+ */
+const brokenLinkTargets = (root: string, file: string, line: string): string[] => {
+  const base = dirname(join(root, file));
+  const broken: string[] = [];
+
+  for (const match of line.matchAll(/\]\(([^)\s]+)\)/g)) {
+    const target = match[1] as string;
+    if (/^[a-z]+:/i.test(target) || target.startsWith('#') || target.startsWith('/')) {
+      continue;
+    }
+    const [path] = target.split('#');
+    if (path === undefined || path === '') {
+      continue;
+    }
+    if (!existsSync(resolve(base, path))) {
+      broken.push(target);
+    }
+  }
+
+  return broken;
+};
+
+export const narrateRemovedReferences = (root: string, removed: readonly string[]): string[] => {
+  const touched: string[] = [];
+  const needle = removed.filter((path) => path !== '' && !path.includes('*'));
+
+  for (const file of committedFiles(root)) {
+    if (!file.endsWith('.md')) {
+      continue;
+    }
+    const path = join(root, file);
+    let text: string;
+    try {
+      text = readFileSync(path, 'utf8');
+    } catch {
+      continue;
+    }
+
+    let inFence = false;
+    let changed = false;
+
+    const lines = text.split('\n').map((line) => {
+      if (line.trimStart().startsWith('```')) {
+        inFence = !inFence;
+        return line;
+      }
+      if (inFence || NARRATED.test(line)) {
+        return line;
+      }
+
+      const candidates = [
+        ...new Set([
+          ...needle.filter((candidate) => line.includes(candidate)),
+          ...brokenLinkTargets(root, file, line),
+        ]),
+      ].sort((left, right) => right.length - left.length);
+
+      const hits = candidates.filter((candidate) => line.includes(candidate));
+      if (hits.length === 0) {
+        return line;
+      }
+      changed = true;
+
+      // One pass, longest candidate first, over a single alternation.
+      //
+      // Reducing with `String.replace` per candidate corrupted overlapping
+      // candidates: `apps/frontend/native` is a prefix of
+      // `apps/frontend/native/src-tauri`, so annotating the short one first inserted
+      // text *inside* the long one and the long one's own annotation then failed to
+      // match — leaving `apps/frontend/native (removed in this copy)/src-tauri`,
+      // which is neither path and matches neither exemption.
+      const pattern = new RegExp(
+        `(${hits.map((candidate) => escapeForRegExp(candidate)).join('|')})`,
+        'g',
+      );
+      // Inserted after the path rather than appended, so the note stays in the same
+      // cell/sentence and markdown tables and lists keep their shape.
+      return line.replace(pattern, '$1 (removed in this copy)');
+    });
+
+    if (changed) {
+      writeFileSync(path, lines.join('\n'), 'utf8');
+      touched.push(file);
+    }
+  }
+
+  return touched;
+};
+
+export const removeHeavyExamples = (root: string): string[] => {
+  const touched: string[] = [];
+
+  for (const relative of HEAVY_EXAMPLES.directories) {
+    const path = join(root, relative);
+    if (existsSync(path)) {
+      rmSync(path, { recursive: true, force: true });
+      touched.push(relative);
+    }
+  }
+
+  for (const relative of HEAVY_EXAMPLES.workflows) {
+    const path = join(root, relative);
+    if (existsSync(path)) {
+      rmSync(path, { force: true });
+      touched.push(relative);
+    }
+  }
+
+  const workspacePath = join(root, '.moon/workspace.yml');
+  if (existsSync(workspacePath)) {
+    // Line-filtered rather than parsed: the file is hand-maintained and heavily
+    // commented, and this runs against a disposable copy where rewriting it wholesale
+    // would cost more than it proves. Only the mapping lines are dropped; the
+    // surrounding prose is left where it is, which is why the rehearsal's own output
+    // names what it removed.
+    const kept = readFileSync(workspacePath, 'utf8')
+      .split('\n')
+      .filter(
+        (line) =>
+          !HEAVY_EXAMPLES.moonProjects.some((id) => new RegExp(`^\\s*${id}:\\s*'`).test(line)),
+      );
+    writeFileSync(workspacePath, kept.join('\n'), 'utf8');
+    touched.push('.moon/workspace.yml');
+  }
+
+  const manifestPath = join(root, 'package.json');
+  if (existsSync(manifestPath)) {
+    const manifest = JSON.parse(readFileSync(manifestPath, 'utf8')) as {
+      scripts?: Record<string, string>;
+    };
+    for (const name of HEAVY_EXAMPLES.packageScripts) {
+      if (manifest.scripts !== undefined && name in manifest.scripts) {
+        delete manifest.scripts[name];
+        touched.push(`package.json#scripts.${name}`);
+      }
+    }
+    writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`, 'utf8');
+  }
+
+  const biomePath = join(root, 'biome.json');
+  if (existsSync(biomePath)) {
+    const biome = JSON.parse(readFileSync(biomePath, 'utf8')) as {
+      files?: { includes?: string[] };
+      overrides?: Array<{ includes?: string[] }>;
+    };
+    const prune = (value: string[]): string[] =>
+      value.filter(
+        (entry) => !HEAVY_EXAMPLES.biomeOverrideKeys.some((key) => entry.startsWith(key)),
+      );
+
+    if (Array.isArray(biome.files?.includes)) {
+      biome.files.includes = prune(biome.files.includes);
+    }
+    if (Array.isArray(biome.overrides)) {
+      biome.overrides = biome.overrides
+        .map((entry) =>
+          entry.includes === undefined ? entry : { ...entry, includes: prune(entry.includes) },
+        )
+        // An override whose every pattern names a removed tree is dropped rather
+        // than left with an empty `includes`. Biome rejects an empty pattern list as
+        // a configuration error, and the symptom — "Biome exited because the
+        // configuration resulted in errors", printed against an unrelated project —
+        // points at the wrong file entirely.
+        .filter((entry) => entry.includes === undefined || entry.includes.length > 0);
+    }
+    writeFileSync(biomePath, `${JSON.stringify(biome, null, 2)}\n`, 'utf8');
+    touched.push('biome.json');
+  }
+
+  const narrated = narrateRemovedReferences(root, [
+    ...HEAVY_EXAMPLES.directories,
+    ...HEAVY_EXAMPLES.workflows,
+  ]);
+
+  return [...touched, ...narrated];
+};
+
 export const runTemplateSmoke = (options: SmokeOptions = {}): SmokeReport => {
   const root = options.root ?? REPO_ROOT;
   const dir = mkdtempSync(join(tmpdir(), 'starter-smoke-'));
   const checkout = join(dir, 'starter');
   const steps: StepResult[] = [];
 
+  const removed: string[] = [];
+
   try {
     copyTemplateTree(root, checkout);
+    if (options.withoutHeavyExamples === true) {
+      removed.push(...removeHeavyExamples(checkout));
+    }
     // `setup` writes into `$HOME`; give it one that exists and is disposable.
-    mkdirSync(join(checkout, '.smoke-home'), { recursive: true });
+    mkdirSync(smokeHome(checkout), { recursive: true });
 
     // Ask a child what `HOME` it sees, rather than trusting that the directory was
     // created and the env block was correct. Both halves of that are checked by the
@@ -372,13 +696,32 @@ export const runTemplateSmoke = (options: SmokeOptions = {}): SmokeReport => {
     // The documented order. `install` before everything because nothing resolves
     // without it; `build` before the entrypoints because the Worker lane serves
     // the built artifact.
+    // Removing a workspace makes `bun.lock` stale, and `--frozen-lockfile`
+    // correctly refuses a stale lockfile rather than silently rewriting it. So the
+    // removal rehearsal installs once *without* the flag to regenerate, and then
+    // immediately re-runs `--frozen-lockfile` to prove the regenerated lockfile is
+    // clean. A downstream project that deletes an example has to do this too, which
+    // is exactly the thing worth discovering in a rehearsal rather than in
+    // production.
+    const installSteps: string[][] =
+      options.withoutHeavyExamples === true
+        ? [['install'], ['install', '--frozen-lockfile']]
+        : [['install', '--frozen-lockfile']];
+
+    // `typecheck`, `lint` and `guard` are in the plan because the rehearsal that
+    // only proves `build` succeeds is the one that misses a reference the web app
+    // still has to the deleted example. `guard` in particular is what catches a
+    // boundary that still imports from `apps/frontend/native`.
     const plan: string[][] = [
-      ['install', '--frozen-lockfile'],
+      ...installSteps,
       ['run', 'setup'],
       ['run', 'db:migrate'],
       ['run', 'db:seed'],
       ['run', 'build'],
       ['run', 'check:bundle'],
+      ['run', 'typecheck'],
+      ['run', 'lint'],
+      ['run', 'guard'],
       ['run', 'setup:doctor'],
     ];
 
@@ -402,6 +745,7 @@ export const runTemplateSmoke = (options: SmokeOptions = {}): SmokeReport => {
       steps,
       ok: steps.length === Math.min(limit, plan.length) && steps.every((step) => step.ok),
       identityReferences: findIdentityReferences(root),
+      removed,
       reportedHome,
     };
   } finally {

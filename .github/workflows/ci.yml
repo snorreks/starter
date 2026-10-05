@@ -198,6 +198,15 @@ jobs:
         # credential referenced by a workflow that also runs pull-request code.
         run: bun run workflows
 
+      - name: Evidence manifest
+        # The capability matrix's current table is generated from
+        # `docs/evidence/current.json`. This fails the moment the two disagree, so a
+        # count cannot drift away from the run that produced it without CI noticing —
+        # which is the failure this file previously had and nobody caught.
+        #
+        # Read-only, no credential, no network, and uncached.
+        run: bun run evidence
+
       - name: Pi extension loader smoke
         # Drives the real pinned Pi resource loader against this repository's `.pi/`
         # layout. A test file or helper left inside `.pi/extensions` is loaded as an

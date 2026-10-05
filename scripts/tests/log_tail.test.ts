@@ -30,6 +30,7 @@ import {
   tailCloudflare,
 } from '../src/logs/cloudflare_adapter.ts';
 import type { LogQuery } from '../src/logs/types.ts';
+import { targets } from '../src/registry/app_registry.ts';
 import { setDeploymentValues } from '../src/registry/deployment_values.ts';
 
 const NOW = 1_760_000_000_000;
@@ -129,6 +130,7 @@ describe('tailCloudflare', () => {
       d1DatabaseId: 'db-1',
       r2BucketNames: { uploads: null },
       customDomain: null,
+      jobsProfile: 'disabled',
       accountId: 'a'.repeat(32),
     });
   };
@@ -260,6 +262,7 @@ describe('tailCloudflare', () => {
       d1DatabaseId: 'db-1',
       r2BucketNames: { uploads: null },
       customDomain: null,
+      jobsProfile: 'disabled',
       accountId: 'a'.repeat(32),
     });
     const h = harness(() => {});
@@ -294,12 +297,13 @@ describe('environment-specific log targets', () => {
         d1DatabaseId: 'single-db',
         r2BucketNames: { uploads: null },
         customDomain: null,
+        jobsProfile: 'disabled',
         environments: {
-          staging: {
+          staging: targets({
             workerName: 'staging-web',
             d1DatabaseId: 'staging-db',
             origin: 'https://staging.example',
-          },
+          }),
         },
       });
       const requests: unknown[] = [];

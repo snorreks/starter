@@ -23,8 +23,10 @@ import {
   setConfig,
   writeLocalValues,
 } from '../src/deploy/configure.ts';
-import { DEPLOYMENT_CONFIG } from '../src/registry/app_registry.ts';
+import { resolveTarget } from '../src/deploy/target.ts';
+import { DEPLOYMENT_CONFIG, targets } from '../src/registry/app_registry.ts';
 import {
+  type DeploymentValues,
   describeResolution,
   effectiveDeploymentValues,
   LOCAL_DEPLOYMENT_FILE,
@@ -120,7 +122,14 @@ describe('resolveDeploymentValues', () => {
       [LOCAL_DEPLOYMENT_FILE]: local({ d1DatabaseId: 'local-db' }),
     });
 
-    const values = resolveDeploymentValues({ CLOUDFLARE_D1_DATABASE_ID: 'ci-db' }, root);
+    // `DEPLOY_ENVIRONMENT` is what says *which* environment the run is deploying.
+    // Without it the unsuffixed overrides are deliberately ignored — they describe
+    // one environment and applying them to both is how a plan comes to believe
+    // staging and production share a Worker.
+    const values = resolveDeploymentValues(
+      { DEPLOY_ENVIRONMENT: 'staging', CLOUDFLARE_D1_DATABASE_ID: 'ci-db' },
+      root,
+    );
     expect(values.d1DatabaseId).toBe('ci-db');
   });
 
@@ -183,7 +192,12 @@ describe('resolveDeploymentValues', () => {
         },
       }),
     });
-    setDeploymentValues(resolveDeploymentValues({ CLOUDFLARE_D1_DATABASE_ID: 'ci-db' }, root));
+    setDeploymentValues(
+      resolveDeploymentValues(
+        { DEPLOY_ENVIRONMENT: 'staging', CLOUDFLARE_D1_DATABASE_ID: 'ci-db' },
+        root,
+      ),
+    );
     expect(targetsFor('staging')?.d1DatabaseId).toBe('ci-db');
     expect(targetsFor('staging')?.workerName).toBe('staging-api');
     expect(targetsFor('production')).toBeNull();
@@ -435,11 +449,12 @@ describe('targetsFor', () => {
   // With one set, `--env staging` and `--env production` produced identical plans —
   // the flag changed a notice and nothing else.
 
-  const base = {
+  const base: DeploymentValues = {
     workerName: 'single-web',
     d1DatabaseId: 'single-db',
     r2BucketNames: { uploads: null },
     customDomain: null,
+    jobsProfile: 'disabled',
     accountId: 'a'.repeat(32),
   };
 
@@ -458,16 +473,16 @@ describe('targetsFor', () => {
     setDeploymentValues({
       ...base,
       environments: {
-        staging: {
+        staging: targets({
           workerName: 'web-staging',
           d1DatabaseId: 'db-staging',
           origin: 'https://web-staging.example',
-        },
-        production: {
+        }),
+        production: targets({
           workerName: 'web-prod',
           d1DatabaseId: 'db-prod',
           origin: 'https://web-prod.example',
-        },
+        }),
       },
     });
 
@@ -486,11 +501,11 @@ describe('targetsFor', () => {
     setDeploymentValues({
       ...base,
       environments: {
-        staging: {
+        staging: targets({
           workerName: 'web-staging',
           d1DatabaseId: 'db-staging',
           origin: 'https://web-staging.example',
-        },
+        }),
       },
     });
 
@@ -505,16 +520,16 @@ describe('targetsFor', () => {
     setDeploymentValues({
       ...base,
       environments: {
-        staging: {
+        staging: targets({
           workerName: 'web-staging',
           d1DatabaseId: null,
           origin: null,
-        },
-        production: {
+        }),
+        production: targets({
           workerName: 'web-prod',
           d1DatabaseId: 'db-prod',
           origin: 'https://web-prod.example',
-        },
+        }),
       },
     });
 
@@ -582,6 +597,87 @@ describe('targetsFor', () => {
     const values = resolveDeploymentValues({}, root);
     expect(values.environments?.staging?.workerName).toBe('ok-api');
     expect(values.environments?.production).toBeUndefined();
+  });
+});
+
+describe('the compute half is configurable end to end', () => {
+  // The gap this closes: `--jobs-profile encode` was accepted, and the three
+  // identities it also needs had no flag at all, so a compute environment could be
+  // requested and never configured.
+  const computeArgs = [
+    '--env',
+    'staging',
+    // The web half the compute half sits on. Both are required by `resolveTarget`,
+    // which is the point: an environment with compute and no origin does not resolve.
+    '--worker',
+    'starter-staging',
+    '--origin',
+    'https://staging.example',
+    '--mail-from',
+    'noreply@staging.example',
+    '--jobs-worker',
+    'starter-jobs-staging',
+    '--media-bucket',
+    'starter-media-staging',
+    '--encode-workflow',
+    'starter-encode-staging',
+    '--maintenance-workflow',
+    'starter-maintenance-staging',
+    '--image',
+    '../media/Dockerfile',
+    '--image-protocol',
+    'sample-v1',
+    '--container-profile',
+    'basic',
+    '--jobs-profile',
+    'encode',
+  ];
+
+  test('every compute identity is writable, and the target then resolves', () => {
+    const root = makeTree({});
+    // The account id and the database id are *provisioned*, not typed: no flag sets
+    // them, and inventing one would let an operator record an id that does not exist.
+    writeLocalValues(
+      () => ({
+        accountId: 'a'.repeat(32),
+        environments: { staging: { d1DatabaseId: '00000000-0000-4000-8000-000000000001' } },
+      }),
+      root,
+    );
+    expect(setConfig(computeArgs, root)).toBe(0);
+
+    const values = resolveDeploymentValues({}, root);
+    const resolved = resolveTarget('staging', { values });
+
+    expect(resolved.ok).toBe(true);
+    if (!resolved.ok) {
+      throw new Error(resolved.reason);
+    }
+    expect(resolved.target.compute.enabled).toBe(true);
+    expect(resolved.target.compute.jobsWorkerName).toBe('starter-jobs-staging');
+    expect(resolved.target.compute.encodeWorkflowName).toBe('starter-encode-staging');
+    expect(resolved.target.compute.maintenanceWorkflowName).toBe('starter-maintenance-staging');
+    expect(resolved.target.compute.containerImage).toBe('../media/Dockerfile');
+  });
+
+  test('an unknown flag is refused rather than silently changing nothing', () => {
+    // `--jobs-workr` used to be ignored: the command exited 0, wrote nothing, and the
+    // operator concluded the compute half was configured.
+    const root = makeTree({});
+    const before = existsSync(join(root, LOCAL_DEPLOYMENT_FILE));
+    expect(setConfig(['--env', 'staging', '--jobs-workr', 'typo'], root)).toBe(2);
+    expect(existsSync(join(root, LOCAL_DEPLOYMENT_FILE))).toBe(before);
+  });
+
+  test('a Workflow name Cloudflare would reject is refused here, not at deploy time', () => {
+    const root = makeTree({});
+    expect(setConfig(['--env', 'staging', '--encode-workflow', 'Not Valid'], root)).toBe(2);
+  });
+
+  test('compute flags still require --env', () => {
+    const root = makeTree({});
+    expect(setConfig(['--image', '../media/Dockerfile'], root)).toBe(2);
+    expect(setConfig(['--encode-workflow', 'starter-encode'], root)).toBe(2);
   });
 });
 
@@ -766,11 +862,15 @@ describe('environment configuration consumers', () => {
               workerName: 'staging-web',
               d1DatabaseId: 'staging-db',
               origin: 'https://staging.example',
+              mailFrom: 'noreply@staging.example',
+              jobsProfile: 'disabled',
             },
             production: {
               workerName: 'production-web',
               d1DatabaseId: 'production-db',
               origin: 'https://app.example',
+              mailFrom: 'noreply@app.example',
+              jobsProfile: 'disabled',
             },
           },
         }),

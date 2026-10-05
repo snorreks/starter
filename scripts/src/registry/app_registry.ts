@@ -217,8 +217,26 @@ export const DEPLOYMENT_CONFIG: DeploymentConfig = {
  * `MAIL_FROM` and `DEPLOYMENT_ENV` are *vars*, not secrets: they are nonsecret
  * configuration and are supplied through `wrangler.jsonc`'s environment vars, so
  * they never pass through the secret channel or a process's argv.
+ *
+ * None of these is the Cloudflare API token. That token authorises *this tooling*
+ * to change the account; these two are read by the *running application*. Keeping
+ * them separate is not tidiness — one is a CI secret that must never reach the
+ * Worker, and the other two must reach it and must never appear in a log, an argv
+ * or a release record.
  */
 export const REQUIRED_REMOTE_SECRET_NAMES = ['BETTER_AUTH_SECRET', 'RESEND_API_KEY'] as const;
+
+/**
+ * Secrets that belong to a Worker rather than to the deployment credential.
+ *
+ * Named separately because the remediation is different: a missing
+ * `CLOUDFLARE_API_TOKEN` means the run is unauthenticated and stops, while a
+ * missing runtime secret means the release is live and unable to sign anyone in.
+ */
+export const RUNTIME_SECRET_NAMES = REQUIRED_REMOTE_SECRET_NAMES;
+
+/** The name of the CI/deployment credential. Never a runtime secret. */
+export const DEPLOY_CREDENTIAL_NAME = 'CLOUDFLARE_API_TOKEN';
 
 /** Nonsecret vars every remote environment needs. Names only, never values. */
 export const REQUIRED_REMOTE_VAR_NAMES = [
@@ -226,6 +244,33 @@ export const REQUIRED_REMOTE_VAR_NAMES = [
   'BETTER_AUTH_URL',
   'MAIL_FROM',
   'RELEASE',
+] as const;
+
+/**
+ * Cloudflare API token permissions the deployment actually needs.
+ *
+ * Derived from the operations the pipeline performs, not from a documentation page
+ * copied by hand — a scope list that grants more than the code uses is a standing
+ * invitation, and one that grants less fails on the first real run. Each entry
+ * names the call that needs it, so a new step without a scope is a visible
+ * omission rather than a runtime 403 nobody can explain.
+ *
+ * `Workers Scripts: Edit` covers Worker deploys and D1 migrations through
+ * Wrangler; `D1: Edit` and `R2: Edit` are separate resources in Cloudflare's model;
+ * containers and Workflows ride on the Workers Script permission for the bound
+ * Worker. `Account Settings: Read` is what `whoami` and account-scoped queries
+ * need.
+ */
+export interface TokenScope {
+  permission: string;
+  neededBy: string;
+}
+
+export const REQUIRED_TOKEN_SCOPES: readonly TokenScope[] = [
+  { permission: 'Account Settings: Read', neededBy: '`wrangler whoami` — the account check' },
+  { permission: 'Workers Scripts: Edit', neededBy: 'the web and jobs Worker deploys' },
+  { permission: 'D1: Edit', neededBy: '`wrangler d1 migrations apply` and `d1 execute`' },
+  { permission: 'R2: Edit', neededBy: '`wrangler r2 bucket create` and the fixture upload' },
 ] as const;
 
 /**
@@ -325,10 +370,66 @@ export const APP_LOG_CONFIG: Record<AppId, AppLogConfig> = {
  * optional key: an environment with no entry must not silently fall back to
  * another environment's Worker. A missing key is a refusal, and `deploy --env`
  * refuses.
+ *
+ * The set covers the *whole* environment rather than the web Worker alone,
+ * because "what would this command change" has to name everything a deployment
+ * touches. Before this was extended, a plan printed one Worker and one database
+ * while `apply` would go on to build an image, deploy a second Worker and create a
+ * bucket — three mutations the reviewed plan did not mention, which makes the plan
+ * worthless as the thing an approval is given against.
+ *
+ * Every field is `null` in the committed template. A template cannot know a
+ * bucket name, a workflow identity or a sender address, and a committed one
+ * points a fresh clone at somebody else's account.
  */
 export interface EnvironmentTargets {
   workerName: string | null;
+  /**
+   * The jobs Worker for this environment.
+   *
+   * Separate from `workerName` because it is a separate resource with a separate
+   * name, not a second name for the web Worker. It has no public route: the web
+   * Worker reaches its Workflows through a binding, so nothing about it is
+   * addressable from the internet and nothing about it belongs in `origin`.
+   */
+  jobsWorkerName: string | null;
   d1DatabaseId: string | null;
+  /**
+   * The private R2 bucket holding the fixture and job output, or `null`.
+   *
+   * "private" is a property of how it is bound, not of its name: nothing here
+   * configures public access, and the container never receives a bucket key. The
+   * field is in the target because a bucket name is a real, billable, per-
+   * environment resource that `provision` creates and `apply` writes into.
+   */
+  mediaBucketName: string | null;
+  /** Stable identity of the encode Workflow, used for instance and storage namespacing. */
+  encodeWorkflowName: string | null;
+  /** Stable identity of the maintenance Workflow. */
+  maintenanceWorkflowName: string | null;
+  /**
+   * The container image this environment runs.
+   *
+   * A reference, not a digest: the committed value is the Dockerfile the jobs
+   * Worker builds (`../media/Dockerfile`), and the digest that actually ran is
+   * recorded per release. Retention and rollback are about digests, and that
+   * record lives in the release, not in configuration.
+   */
+  containerImage: string | null;
+  /**
+   * The wire protocol the deployed image speaks, e.g. `sample-v1`.
+   *
+   * In the target rather than derived from the repository because the whole point
+   * is to compare what is *deployed* against what this source expects. A container
+   * can be one release behind and still serve traffic, which is exactly when an
+   * active Workflow must refuse to start rather than send an encode the image will
+   * reject. See `compatibility.ts`.
+   */
+  imageProtocol: string | null;
+  /** The measured container profile, e.g. `basic`. Refused if not one the platform offers. */
+  containerProfile: string | null;
+  /** `disabled` or `encode`. `disabled` is a real refusal, not a placeholder. */
+  jobsProfile: string | null;
   /**
    * Public origin for this environment, or `null`.
    *
@@ -337,7 +438,134 @@ export interface EnvironmentTargets {
    * verified, and "the deploy command exited 0" is not a release record.
    */
   origin: string | null;
+  /**
+   * The verified sender address mail is sent from, or `null`.
+   *
+   * Configuration, not a secret — but it is also not *ours*: an unverified domain
+   * makes real mail fail in a way that looks like a deployment problem. It is in
+   * the target so `preflight` can refuse before a deploy rather than after someone
+   * tries to sign in.
+   */
+  mailFrom: string | null;
+  /**
+   * The HTTPS API origin a packaged native build is compiled against, or `null`.
+   *
+   * Nonsecret and per environment, because a packaged app cannot be re-pointed at
+   * runtime. A native bundle built for staging and shipped as "the app" is a
+   * client of the wrong deployment with a valid credential channel, which is why
+   * this is resolved here and injected at build time rather than left to each
+   * workflow.
+   */
+  nativeApiOrigin: string | null;
 }
+
+/**
+ * Every `null`-able field of {@link EnvironmentTargets}, so a reader cannot add one
+ * to the interface and forget the schema (and therefore the offline validation of
+ * the CI environment map, and therefore `deploy plan` on a fork).
+ */
+export const ENVIRONMENT_TARGET_FIELDS = [
+  'workerName',
+  'jobsWorkerName',
+  'd1DatabaseId',
+  'mediaBucketName',
+  'encodeWorkflowName',
+  'maintenanceWorkflowName',
+  'containerImage',
+  'imageProtocol',
+  'containerProfile',
+  'jobsProfile',
+  'origin',
+  'mailFrom',
+  'nativeApiOrigin',
+] as const satisfies readonly (keyof EnvironmentTargets)[];
+
+export type EnvironmentTargetField = (typeof ENVIRONMENT_TARGET_FIELDS)[number];
+
+/**
+ * Every target field, as a record of `null`.
+ *
+ * One constructor rather than thirteen literals, because a field added to
+ * {@link ENVIRONMENT_TARGET_FIELDS} and forgotten here would be `undefined` in a
+ * partial entry — indistinguishable from "not set" everywhere except in the one
+ * place it matters: a value that silently falls back to another environment's.
+ */
+export const nullTargets = (): EnvironmentTargets =>
+  Object.fromEntries(
+    ENVIRONMENT_TARGET_FIELDS.map((field) => [field, null]),
+  ) as unknown as EnvironmentTargets;
+
+/**
+ * Build a complete entry from a partial one.
+ *
+ * For fixtures and for the overlay writer. Without it, every reader of this shape
+ * in a test has to spell out thirteen nulls, and the natural thing to do next is
+ * to cast — which is how a fixture ends up describing a target that `resolveTarget`
+ * could never produce.
+ */
+export const targets = (partial: Partial<EnvironmentTargets> = {}): EnvironmentTargets => {
+  const out = nullTargets();
+  for (const field of ENVIRONMENT_TARGET_FIELDS) {
+    const value = partial[field];
+    out[field] = value === undefined ? null : value;
+  }
+  return out;
+};
+
+/** The values `jobsProfile` may take. `disabled` is a refusal, not an absence. */
+export const JOBS_PROFILES = ['disabled', 'encode'] as const;
+export type JobsProfile = (typeof JOBS_PROFILES)[number];
+
+/**
+ * A shape that is not validated is a comment, so this schema exists to be run.
+ *
+ * `scripts/src/deploy/variables.ts` parses the CI environment map with it before
+ * any value reaches `resolveTarget`, which is what lets a mistyped key fail in the
+ * offline `plan` job rather than after a migration.
+ *
+ * `additionalProperties: false` on purpose: an unknown key in the map is either a
+ * typo of one that matters — silently ignored, and then the real value comes from
+ * somewhere else — or a value this source does not know how to deploy. Both should
+ * stop the run.
+ */
+/**
+ * Every field is `Type.Optional`, and `null` is accepted.
+ *
+ * Both for the same reason: a CI map is *partial by nature*. An operator writes
+ * the fields they have and leaves the rest out, and requiring thirteen keys to
+ * describe three real resources is how a configuration stops being editable.
+ * Omission and an explicit `null` both mean "not provisioned" here, and
+ * `nullTargets()` re-adds every field before anything reads it, so a partial map
+ * can never reach `resolveTarget` as an `undefined`.
+ */
+export const EnvironmentTargetsSchema = Type.Object(
+  Object.fromEntries(
+    ENVIRONMENT_TARGET_FIELDS.map((field) => [
+      field,
+      Type.Optional(Type.Union([Type.String({ minLength: 1 }), Type.Null()])),
+    ]),
+  ) as unknown as Record<EnvironmentTargetField, ReturnType<typeof Type.Optional>>,
+  { additionalProperties: false },
+);
+
+export type EnvironmentTargetsInput = Static<typeof EnvironmentTargetsSchema>;
+
+/**
+ * A CI environment map: every environment this project deploys, by name.
+ *
+ * `{ [environment]: EnvironmentTargets }` rather than a `Record` with an optional
+ * key, for the same reason `EnvironmentTargets` is per-environment: a missing
+ * entry is a refusal, never a fallback to another environment.
+ */
+export const DeploymentEnvironmentMapSchema = Type.Object(
+  {
+    staging: Type.Optional(EnvironmentTargetsSchema),
+    production: Type.Optional(EnvironmentTargetsSchema),
+  },
+  { additionalProperties: false },
+);
+
+export type DeploymentEnvironmentMap = Static<typeof DeploymentEnvironmentMapSchema>;
 
 // `Partial`: presence is the signal. A project with only staging must be able to say so
 // without a placeholder for production, and a placeholder is indistinguishable from a

@@ -92,12 +92,17 @@ names what is missing rather than failing obscurely:
 | `bun install` | Install from the committed lockfile. |
 | `bun run setup` | Check the toolchain and write `.env` from the example. |
 | `bun run setup:doctor` | Prove the browser prerequisites actually launch. |
+| `bun run setup:doctor -- --profile compute` | What *one lane* needs here, and the exact remedy when it is missing. |
 | `bun run dev` | The app in Node with emulated bindings. `apps/frontend/client` has its own ports. |
 | `bun run dev:worker` | The **built** Worker in real workerd. Requires `bun run build` first. |
 | `bun run test:all` | The four test lanes, no duplicates. |
 | `bun run guard` | Eight whole-repository invariants. |
 | `bun run native:doctor` | What this host can build for the desktop client. |
 | `bun run deploy:check --env staging` | The offline deployment plan. No credential, no network. |
+| `bun run deploy:provision --env staging --yes` | Idempotent: creates the database, the private bucket, uploads the fixture, installs secrets by value. |
+| `bun run deploy:apply --env staging --yes` | schema → storage → image → jobs → web → verify → record. |
+| `bun run smoke -- --without-heavy` | Rehearse a downstream copy with the native app and the Rust processor deleted. |
+| `bun run evidence` | Check the capability matrix against the evidence manifest. |
 
 ## Tests
 
@@ -136,7 +141,24 @@ Some lanes need a system prerequisite: `node` on PATH for anything starting
 `wrangler dev`, and Chromium's shared libraries for the browser lanes. Each command
 names what is missing rather than failing obscurely. See
 [docs/capability-matrix.md](docs/capability-matrix.md) for what is verified, what is
-fixture-verified, and what has not been run at all.
+fixture-verified, and what has not been run at all. Its current table is **generated**
+from [docs/evidence/current.json](docs/evidence/current.json): every row carries the
+revision, platform, command, count, timestamp and artifact it was observed on, and
+`bun run evidence` fails when the two files disagree. Hand-editing a count is not a
+documentation nit; it is a failing check.
+
+Two further lanes are separate because their prerequisites are separate, and each
+refuses with the exact remedy rather than failing obscurely:
+
+```bash
+bun run test:compute      # real Workflows + emulated D1/R2 + a real FFmpeg container. Needs Docker.
+bun run setup:doctor -- --profile native     # web + the Rust toolchain + WebKitGTK on Linux
+bun run setup:doctor -- --profile android    # + Android SDK, JDK, NDK
+bun run setup:doctor -- --profile ios        # macOS with the full Xcode; cannot pass elsewhere
+```
+
+Exit **3** from a profile means *this host cannot run that lane*. It is a different
+answer from a broken repository, and it is reported as one.
 
 ## Architecture
 
@@ -204,7 +226,8 @@ Start at [AGENTS.md](AGENTS.md) for commands and navigation.
 | [docs/lint.md](docs/lint.md) | Biome, and the rules that are off and why |
 | [docs/toolchain.md](docs/toolchain.md) | Version pinning, and what Moon is for |
 | [docs/cloudflare.md](docs/cloudflare.md) | Workers, D1, credentials, the deployment-mode binding |
-| [docs/deployment.md](docs/deployment.md) | The one deployment path: configuration authority, the pipeline, migrations, concurrency, health, and how to recover from a bad release |
+| [docs/deployment.md](docs/deployment.md) | The one deployment path: the resolved target, the CI variable model, provisioning, secret installation, the ordered pipeline, migrations, concurrency, health, rollback and image retention |
+| [docs/compute.md](docs/compute.md) | What the compute example does and does not, when Cloud Run Jobs is the right answer instead, and when managed Stream replaces the container |
 | [docs/secrets.md](docs/secrets.md) | SOPS, what is not implemented, and what never goes in the repository |
 | [docs/agent.md](docs/agent.md) | The Pi setup, skills, and the log tool |
 | [docs/rename-checklist.md](docs/rename-checklist.md) | Everything to change to make this yours |
@@ -217,10 +240,19 @@ Run through [docs/rename-checklist.md](docs/rename-checklist.md). The short vers
 bun run deploy:configure -- --account <32-hex>
 bun run deploy:configure -- --env staging --worker <name>
 bun run deploy:configure -- --env staging --origin https://<host>
+bun run deploy:configure -- --env staging --mail-from no-reply@your-verified-domain
 bun run deploy:configure -- --env staging --provision
 
-bun run deploy:check --env staging   # the plan, offline. Reads nothing secret.
+bun run deploy:check --env staging     # the plan, offline. Reads nothing secret.
+bun run deploy preflight --env staging # the account, read-only. Needs a token.
+bun run deploy provision --env staging --yes
+bun run deploy apply --env staging --yes
 ```
+
+For CI, put the **nonsecret** target map in a **repository** variable
+(`STARTER_DEPLOYMENT_TARGETS`) and keep every credential on the protected
+environment. The plan job deliberately has no environment, and therefore no secrets —
+and GitHub only exposes environment-scoped variables to a job that declares one.
 
 The template provisions nothing on purpose. A fresh clone reaches a working local
 state and refuses, clearly, to deploy anywhere. Deployment is manual and

@@ -51,6 +51,23 @@ prerequisites and name them: run `bun run native:doctor`.
 | `NATIVE_DEV_HOST` | run time | Address the dev server binds. `127.0.0.1` by default; a phone needs `0.0.0.0`, which is set for you by `--host`. |
 | `VITE_NATIVE_DEV_API_HOST` | build time | The development machine's address, for a phone whose `localhost` is the phone. Set by `native … dev --host <address>`, read by `resolveApiOrigin`, and **refused** in a packaged build — see `docs/native.md`. |
 
+### Which environment a packaged build targets
+
+`VITE_NATIVE_API_ORIGIN` is **not** a workflow detail. A signed binary cannot be
+re-pointed afterwards, so the origin a release is built against is part of the
+resolved deployment target: `nativeApiOrigin` in
+`resolveTarget(environment)`, configured with
+
+```bash
+bun run deploy:configure -- --env staging --native-api-origin https://staging.example
+```
+
+and refused, before any mutation, when it is not an absolute `https` URL with no path.
+The release workflow builds against the selected environment's value, so "the app"
+can never be one environment's client wearing another environment's name. A missing
+value is **not** defaulted to the web app's origin: a client pointed at the wrong
+environment is a valid credential channel pointed at someone else's data.
+
 Validation of the origin is a unit-tested function, not a convention:
 `src/lib/runtime/config.test.ts` refuses a path, a query, a non-http scheme, a
 missing production value and a development build pointed at a non-loopback host.

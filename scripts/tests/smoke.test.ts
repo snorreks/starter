@@ -18,16 +18,18 @@
 
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { REPO_ROOT } from '../src/shared/paths.ts';
 import {
   committedFiles,
   copyTemplateTree,
   findIdentityReferences,
   InvalidStepLimit,
+  narrateRemovedReferences,
   PROJECT_NAME,
+  removeHeavyExamples,
   runTemplateSmoke,
 } from '../src/smoke/template_smoke.ts';
 
@@ -112,16 +114,87 @@ describe('the rehearsal cannot inherit this machine', () => {
     const report = runTemplateSmoke({ root, keep: true });
     try {
       // The *reported* HOME, not the existence of the directory. `runTemplateSmoke`
-      // creates `.smoke-home` itself before running any step, so the directory being
+      // creates the HOME itself before running any step, so the directory being
       // there proves only that the rehearsal made a directory — not that the child
       // process was pointed at it. A run whose env block lost `HOME` would still
       // pass the old assertion while inheriting the maintainer's home directory,
       // which is the entire risk.
-      expect(report.reportedHome).toBe(join(report.dir, '.smoke-home'));
+      //
+      // A *sibling* of the checkout, not a directory inside it: inside it, `install`
+      // fills it with a Bun package cache and the whole-repository guard then reports
+      // thousands of unclassified files under a directory no ownership rule covers.
+      expect(report.reportedHome).toBe(join(dirname(report.dir), 'smoke-home'));
+      expect(report.reportedHome).not.toBe(join(report.dir, '.smoke-home'));
       expect(report.reportedHome?.startsWith('/')).toBe(true);
     } finally {
-      rmSync(report.dir, { recursive: true, force: true });
+      // The temporary *root*: the checkout and the disposable HOME beside it. Removing
+      // only `report.dir` left the sibling behind, so every run of this test leaked a
+      // directory into /tmp.
+      rmSync(dirname(report.dir), { recursive: true, force: true });
     }
+  });
+
+  test('removal reports what it actually deleted, and an empty tree reports nothing', () => {
+    // It used to print a fixed sentence naming four directories and two workflows
+    // regardless, so a rehearsal that deleted nothing still claimed it had.
+    const root = join(dir, 'empty');
+    mkdirSync(root, { recursive: true });
+    expect(removeHeavyExamples(root)).toEqual([]);
+
+    const populated = join(dir, 'populated');
+    for (const relative of ['apps/frontend/native', 'apps/backend/media']) {
+      mkdirSync(join(populated, relative), { recursive: true });
+    }
+    const removed = removeHeavyExamples(populated);
+    expect(removed).toContain('apps/frontend/native');
+    expect(removed).toContain('apps/backend/media');
+    expect(existsSync(join(populated, 'apps/frontend/native'))).toBe(false);
+  });
+
+  test('a rehearsal that removed nothing reports an empty list, not a claim', () => {
+    const root = join(dir, 'bare');
+    mkdirSync(root, { recursive: true });
+    writeFileSync(join(root, 'README.md'), '# nothing to remove\n', 'utf8');
+    // `removed` is populated from `removeHeavyExamples`, so a tree with no heavy
+    // examples yields an empty list — and the command's notice keys off exactly that.
+    expect(removeHeavyExamples(root)).toEqual([]);
+  });
+
+  test('overlapping removed paths are each annotated once', () => {
+    // `apps/frontend/native` is a prefix of `apps/frontend/native/src-tauri`.
+    // Annotating the short one first inserted text inside the long one, producing
+    // `apps/frontend/native (removed in this copy)/src-tauri` — which is neither
+    // path and matches neither exemption.
+    const root = join(dir, 'overlap');
+    mkdirSync(root, { recursive: true });
+    writeFileSync(
+      join(root, 'README.md'),
+      'See apps/frontend/native and apps/frontend/native/src-tauri for details.\n',
+      'utf8',
+    );
+
+    const touched = narrateRemovedReferences(root, [
+      'apps/frontend/native',
+      'apps/frontend/native/src-tauri',
+    ]);
+
+    expect(touched).toContain('README.md');
+    const text = readFileSync(join(root, 'README.md'), 'utf8');
+    expect(text).toContain('apps/frontend/native (removed in this copy)');
+    expect(text).toContain('apps/frontend/native/src-tauri (removed in this copy)');
+    expect(text).not.toContain('native (removed in this copy)/src-tauri');
+    // Twice: one per distinct path. Not three, and not one.
+    expect(text.match(/removed in this copy/g) ?? []).toHaveLength(2);
+  });
+
+  test('a path segment with a dot is matched literally', () => {
+    const root = join(dir, 'dotted');
+    mkdirSync(root, { recursive: true });
+    writeFileSync(join(root, 'README.md'), 'See apps/backend/media/README.md here.\n', 'utf8');
+
+    narrateRemovedReferences(root, ['apps/backend/media/README.md']);
+    const text = readFileSync(join(root, 'README.md'), 'utf8');
+    expect(text).toContain('apps/backend/media/README.md (removed in this copy)');
   });
 
   test('a failing step stops the run instead of cascading', () => {

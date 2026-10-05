@@ -74,6 +74,21 @@ bun run typecheck           # svelte-check --threshold error
 bun run lint                # biome lint src
 ```
 
+## What a deploy of this app touches
+
+One Worker, one database, one origin — plus, when the compute profile is on, a second
+Worker and a private bucket. `resolveTarget(environment)` in
+`scripts/src/deploy/target.ts` resolves all of them together, and the offline plan
+prints every one of them before anything is mutated, because a plan that named only
+the web Worker would be approving something the pipeline then does not do.
+
+`wrangler.jsonc` is the canonical binding source for both the build and the dev
+runtime, so local and deployed cannot disagree; and `migrationStep` compares the
+database id Wrangler would actually reach against the resolved one, because both
+commands name the binding `DB` and the argv alone cannot tell two databases apart.
+
+See [docs/deployment.md](../../../docs/deployment.md).
+
 ## Lanes and what they need
 
 | Lane | Needs | Symptom when absent |

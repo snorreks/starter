@@ -29,10 +29,61 @@ production. See [architecture.md](architecture.md).
 bun run deploy:configure -- --account <32-hex>
 bun run deploy:configure -- --env staging --worker starter-web-staging
 bun run deploy:configure -- --env staging --origin https://<host>
+bun run deploy:configure -- --env staging --mail-from no-reply@your-verified-domain
 bun run deploy:configure -- --env staging --provision   # create the D1 database
 bun run deploy:configure -- --check                     # report; never provisions
 bun run deploy:check --env staging                      # the offline plan
 ```
+
+### Everything a deployment touches, not just the web Worker
+
+`resolveTarget(environment)` resolves the whole environment, so `deploy:check`
+prints all of it before anything is mutated:
+
+| Flag | Names |
+|---|---|
+| `--worker <name>` | the web Worker |
+| `--jobs-worker <name>` | the compute Worker. No public route |
+| `--media-bucket <name>` | the private R2 bucket |
+| `--image-protocol <id>` | the wire protocol the deployed image must speak |
+| `--container-profile <name>` | the measured profile (`basic`, …) |
+| `--jobs-profile disabled\|encode` | whether the environment admits compute jobs |
+| `--native-api-origin https://<host>` | the origin a packaged native build targets |
+
+Every one of them requires `--env`. A jobs Worker, a bucket or a profile written
+without one is the shared value both environments used to read, and
+`environmentIsolationProblem` refuses that configuration before any mutation.
+
+`--image-protocol` accepts only the id this source implements. Changing the processor
+protocol is a source change with a golden fixture, not a configuration value, and
+accepting an arbitrary one here would mean an image rejecting every encode at the
+container boundary.
+
+### Provisioning is separate from configuring, and from installing secrets
+
+Two different commands with two different kinds of write:
+
+| Command | Writes | Idempotent |
+|---|---|---|
+| `bun run deploy:configure …` | *names*, into the gitignored overlay | yes, read-modify-write |
+| `bun run deploy:provision --env <env> --yes` | the D1 database, the private R2 bucket, the sample fixture | yes |
+| `bun run deploy:provision --env <env> --yes --install` | the above **and** the runtime secrets | yes |
+| `bun run deploy:secrets --env <env> --yes --install` | **the runtime secrets only** | yes |
+
+`deploy secrets` installs nothing else. It used to run the whole provisioner, so
+refreshing one runtime secret also created a database, created a bucket and uploaded
+the fixture — separate authority, separate reversibility, separate bill, and none of
+it named in the command the operator typed.
+
+`deploy provision` without `--install` reports the secrets as **skipped** rather than
+passing them off as done, because "this release can sign someone in" is a different
+claim from "this release's resources exist".
+
+Existence is read from a **list**, not from an exit code: `d1 info <id>` reports a
+missing database by exiting nonzero, which is the same signal it gives for a revoked
+token or the wrong account. A read that cannot tell whether a resource exists stops
+the run rather than creating a duplicate. Secret values reach wrangler on **stdin**;
+argv carries names only. The full table is in [deployment.md](deployment.md).
 
 `--provision` creates the database **for one environment** and records its id in the
 gitignored `.starter/deployment.local.json` under `environments.<env>`, which is
@@ -422,6 +473,10 @@ shipped failing its own schema until this was fixed, and nothing noticed. `null`
 fails the type, so the compiler catches it.
 
 ## Compute: Workflows, Containers and one schedule
+
+What this example demonstrates, what it does not, and when Cloud Run Jobs or managed
+Stream is the right answer instead, is **[compute.md](compute.md)**. The provider
+facts below are the ones that document is written against.
 
 This repository ships **two** Workers.
 

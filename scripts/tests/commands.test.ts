@@ -12,7 +12,7 @@
 // assertion without testing more.
 
 import { afterEach, describe, expect, test } from 'bun:test';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { ciCommand } from '../src/commands/ci.ts';
@@ -23,6 +23,7 @@ import { secretsCommand } from '../src/commands/secrets.ts';
 import { setupCommand } from '../src/commands/setup.ts';
 import { probeTools } from '../src/secrets/sops.ts';
 import { EXIT } from '../src/shared/command.ts';
+import { REPO_ROOT } from '../src/shared/paths.ts';
 
 const quiet = async (body: () => number | Promise<number>): Promise<number> => {
   const original = { out: process.stdout.write, err: process.stderr.write };
@@ -293,4 +294,35 @@ describe('setup command', () => {
     expect(printed).toContain('--force');
     expect(printed).toContain('--quiet');
   });
+
+  test('rejects an unknown profile rather than falling back to web', async () => {
+    // Falling back would make `--profile nativ` report a healthy core lane, which is
+    // the reading an operator would take from a green line.
+    const code = await quiet(() => setupCommand.run(['--profile', 'nativ']));
+    expect(code).toBe(EXIT.usage);
+  });
+
+  test('rejects --profile with no value', async () => {
+    expect(await quiet(() => setupCommand.run(['--profile']))).toBe(EXIT.usage);
+  });
+
+  test('a profile whose prerequisites are missing refuses before anything is written', async () => {
+    // The ordering. It used to call `runSetup` first and evaluate the profile after,
+    // so a refusal followed: dependencies installed, `.env` written, a browser
+    // possibly downloaded — and then "Nothing was written".
+    //
+    // `ios` is the profile guaranteed to be absent on any non-macOS host, so this is
+    // the same assertion on every machine that is not a Mac.
+    const before = existsSync(join(REPO_ROOT, '.env'));
+    const printed = await captureStdout(() => setupCommand.run(['--profile', 'ios', '--quiet']));
+
+    if (process.platform === 'darwin') {
+      // A Mac with Xcode would legitimately proceed; nothing to assert about the
+      // refusal here, and asserting one would fail on the platform that can pass.
+      return;
+    }
+
+    expect(printed).toContain('Profile: ios');
+    expect(existsSync(join(REPO_ROOT, '.env'))).toBe(before);
+  }, 60_000);
 });
