@@ -85,8 +85,8 @@ const CONFORMANT: Tree = {
   'packages/shared/thing/README.md': CONFORMANT_README,
   '.moon/workspace.yml': "projects:\n  tool: 'tools/thing'\n",
   'tools/thing/README.md': CONFORMANT_README,
-  'crates/processor/Cargo.toml': '[package]\nname = "processor"\nversion = "0.1.0"\n',
-  'crates/processor/README.md': CONFORMANT_README,
+  'apps/backend/processor/Cargo.toml': '[package]\nname = "processor"\nversion = "0.1.0"\n',
+  'apps/backend/processor/README.md': CONFORMANT_README,
 };
 
 const run = (files: Tree): readonly Violation[] => guardProjectReadmes(makeTree(files)).violations;
@@ -110,6 +110,23 @@ describe('readmes: which directories owe a README', () => {
     expect(run(CONFORMANT)).toEqual([]);
   });
 
+  test('scratch Cargo manifests do not become first-party projects', () => {
+    expect(
+      run({
+        ...CONFORMANT,
+        'tmp/experiment/Cargo.toml': '[package]\nname = "scratch"\nversion = "0.1.0"\n',
+      }),
+    ).toEqual([]);
+    const found = discoverProjects(
+      makeTree({
+        ...CONFORMANT,
+        'tmp/experiment/Cargo.toml': '[package]\nname = "scratch"\nversion = "0.1.0"\n',
+      }),
+    );
+    expect(found.some((project) => project.dir.startsWith('tmp/'))).toBe(false);
+    expect(found.some((project) => project.dir === 'apps/backend/processor')).toBe(true);
+  });
+
   test('finds projects through each of the three declarations', () => {
     // The property that replaces the list. Each source is exercised on its own, and
     // the answer names the declaration that found the project — which is what makes
@@ -117,7 +134,7 @@ describe('readmes: which directories owe a README', () => {
     const found = discoverProjects(makeTree(CONFORMANT));
     expect(found.map((project) => [project.dir, project.name])).toEqual([
       ['.', 'fixture'],
-      ['crates/processor', 'processor'],
+      ['apps/backend/processor', 'processor'],
       ['packages/shared/thing', '@starter/thing'],
       ['tools/thing', 'tool'],
     ]);
@@ -127,7 +144,7 @@ describe('readmes: which directories owe a README', () => {
     expect(found.find((project) => project.dir === 'tools/thing')?.sources).toEqual([
       'moon-project',
     ]);
-    expect(found.find((project) => project.dir === 'crates/processor')?.sources).toEqual([
+    expect(found.find((project) => project.dir === 'apps/backend/processor')?.sources).toEqual([
       'cargo-crate',
     ]);
   });

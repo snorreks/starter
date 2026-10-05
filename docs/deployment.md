@@ -57,6 +57,21 @@ Provisioning records the D1 ID **only in the gitignored overlay**. It never rewr
 the committed dev config. Existing resources can be configured through the overlay
 or repository map rather than re-created.
 
+### One closed, cached Worker artifact
+
+Build runs Vite and then pinned Wrangler's credential-free `deploy --dry-run` to
+close the adapter's transitive SSR graph. The bundle metadata must leave only
+platform imports; the build fails before deployment if it still needs a file or
+package outside the artifact. Build subprocesses do not receive deploy/runtime
+credentials. The OpenTelemetry API is included to resolve Better Auth's optional
+import, with no exporter or external telemetry destination.
+
+The generated web config uses `no_bundle: true`: upload the hashed Worker unchanged,
+not an entrypoint that borrows intermediate SSR files from another build. Source
+maps remain excluded from public assets. The real Worker lane deletes both
+intermediate server trees before startup, then proves behavior in workerd and that
+private Worker bytes/maps are not publicly served.
+
 ### Derived Wrangler configs, not a second source of truth
 
 Authenticated mutations generate `.starter/deploy/<environment>-web.json` (and

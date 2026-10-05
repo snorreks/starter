@@ -29,7 +29,7 @@ import type { Violation } from '../src/guards/boundary.ts';
 import { guardArchitecture } from '../src/guards/guard_architecture.ts';
 import {
   buildModuleGraph,
-  listSourceFiles,
+  listRepositorySourceFiles,
   ProjectRegistry,
   runtimeTargets,
 } from '../src/guards/module_graph.ts';
@@ -128,7 +128,7 @@ describe('architecture: a conformant project', () => {
     // clean project in every other case in this file.
     const root = makeProject(BASE);
     const graph = buildModuleGraph(root);
-    const discovered = listSourceFiles(root).length;
+    const discovered = listRepositorySourceFiles(root).length;
 
     expect(discovered).toBeGreaterThan(0);
     expect(graph.modules.size + graph.unclassified.length).toBe(discovered);
@@ -512,13 +512,14 @@ describe('architecture: failure is reported, never swallowed', () => {
     const root = makeProject({
       members: BASE.members,
       rootFiles: {
-        'unowned/tool.ts': "import { notes } from '@starter/database';\nexport const n = notes;\n",
+        'apps/unowned/tool.ts':
+          "import { notes } from '@starter/database';\nexport const n = notes;\n",
       },
     });
 
     const violation = firstOf(run(root), 'unclassified-source');
     expect(violation, 'expected unclassified-source').toBeDefined();
-    expect(violation?.file).toBe('unowned/tool.ts');
+    expect(violation?.file).toBe('apps/unowned/tool.ts');
   });
 
   test('reports a project whose tsconfig cannot be read', () => {

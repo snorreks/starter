@@ -75,6 +75,8 @@ export const renderRemoteConfig = (options: {
     },
   ];
   if (kind === 'web') {
+    // Build closes the adapter's SSR graph. Upload those hashed bytes unchanged.
+    config.no_bundle = true;
     const assets = object(config.assets);
     config.assets = { ...assets, directory: pathFrom({ directory, value: assets.directory }) };
     const origin = new URL(target.origin);

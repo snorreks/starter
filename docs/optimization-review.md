@@ -49,6 +49,17 @@ setup or additional servers would add authorities this starter does not need.
   time/output/cancellation bounds and owned process groups. A launcher exiting while
   its child retains the pipes cannot outlive the deadline. Existing synchronous
   CLIs use a supervised adapter, including stdin-only secret installation.
+- **Closed deployment artifact.** The adapter's entry still imports intermediate
+  SSR trees. Bundle it once with pinned Wrangler during build, verify metadata
+  imports are platform-only, then cache/hash/deploy those closed bytes. The real
+  Worker lane deletes intermediate SSR trees before startup. Worker code/maps are
+  excluded from public assets, including nested client source maps. Better Auth's
+  optional OpenTelemetry API is included without any exporter. Builds cannot inherit
+  the deployment token or runtime secret values from authenticated apply.
+- **Governed discovery.** Source checks and Cargo discovery scan maintained roots
+  (`apps/`, `packages/`, `scripts/`, `.pi/`), not repository-level scratch. Explicit
+  root configuration/docs/workflow checks remain. Fixtures prove that scratch is
+  ignored while new applications and hidden Pi helpers are still rejected.
 - **Operator-independent tests.** Remote migration/log tests use explicit fixture
   destinations rather than this checkout's local overlay. Generated web/jobs configs
   are tested for agreement; the neutral committed template is tested as neutral.

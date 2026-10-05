@@ -19,7 +19,7 @@ passes on files Pi cannot load.
 | | |
 |---|---|
 | `settings.json` | Tool and resource defaults |
-| `extensions/` | Entrypoints: one file per tool |
+| `extensions/` | Entrypoints: one file per tool, plus `edit-policy.ts`, which registers none |
 | `lib/` | Helpers. No Pi imports, testable without a runtime |
 | `tests/` | Tests, including the loader smoke test |
 | `skills/` | The conventions, as skills |

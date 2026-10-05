@@ -47,6 +47,7 @@ import {
   effectiveDeploymentValues,
   LOCAL_DEPLOYMENT_FILE,
 } from '../registry/deployment_values.ts';
+import { buildEnvironment } from '../shared/build_environment.ts';
 import { EXIT, fail, wantsHelp } from '../shared/command.ts';
 import { CLIENT_DIR, REPO_ROOT } from '../shared/paths.ts';
 import { runBoundedSync } from '../shared/run_bounded.ts';
@@ -574,7 +575,7 @@ const readValues = (): DeploymentValues => effectiveDeploymentValues();
  * repository treats as the worst outcome.
  */
 const runBun = (args: readonly string[], cwd: string): number => {
-  const result = runBoundedSync({ command: process.execPath, args, cwd });
+  const result = runBoundedSync({ command: process.execPath, args, cwd, env: buildEnvironment() });
   process.stdout.write(result.stdout);
   process.stderr.write(result.stderr);
   return result.code;

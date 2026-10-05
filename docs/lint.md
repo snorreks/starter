@@ -8,6 +8,19 @@ bun run format   # biome format
 bun run fix      # biome check --write, plus formatting
 ```
 
+## What repository-wide source checks discover
+
+`scripts/src/guards/policy.ts` owns the maintained source roots: `apps/`,
+`packages/`, `scripts/`, and `.pi/`. Architecture, debug-leftover and hidden-source
+checks scan these roots, not arbitrary repository scratch files. Cargo discovery
+uses the same roots. A new application is still reported as unclassified until its
+runtime is deliberately assigned; ignored first-party source still fails.
+
+Root configuration, declared workspace projects, documentation and workflows are
+checked through their explicit inputs. They are not discovered by scanning a
+scratch directory. A directory named `tmp` **inside an application's source tree**
+is still source; only repository-level scratch is outside the governed roots.
+
 ## Two rules are off, and why
 
 Both are off because they cannot be satisfied honestly here. Neither was turned

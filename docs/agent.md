@@ -29,6 +29,7 @@ habit. `defaultProjectTrust` is `ask`, not `always`, for that reason.
 | `.pi/extensions/dev_process.ts` | Start, watch and stop owned long-running processes |
 | `.pi/extensions/handoff.ts` | Write and resume durable handoff notes |
 | `.pi/extensions/herdr.ts` | Isolated worktrees — **optional**, absent by default |
+| `.pi/extensions/edit-policy.ts` | Refuses exact-string `edit`; enforces anchored `edit_lines` |
 | `.pi/lib/logs_args.ts` | argv construction, no Pi imports, testable without a runtime |
 | `.pi/lib/tasks.ts` | Moon task graph discovery and argv |
 | `.pi/lib/jobs.ts` | Job handles, bounded logs, owned-child cleanup |
@@ -225,6 +226,32 @@ Pass the directory that contains `.git`. A path without one is refused too:
 presence is not validity, and Herdr resolves the target from whatever it is given.
 
 See [Optional capabilities](#optional-capabilities) below.
+
+## The editing policy
+
+Exact-string `edit` is **disabled in this repository**: removed from the tool surface at `session_start` and refused at call time, with no retry allowance. The only way to change an existing file is `edit_lines`, anchored to the line numbers and 3-character hashes that `read` printed.
+
+**Why an enforcement rather than a rule in `AGENTS.md`.** `edit` requires every `oldText` to match a unique region of the file byte-for-byte, which makes its correctness depend on the caller reproducing file text exactly. That is the one thing a model does badly, and context compaction, offloading and summarisation all degrade it further. The result was the most common error in this repository:
+
+```
+Could not find the exact text in scripts/src/deploy/remote_config.ts.
+```
+
+**What it is not.** The formatter hypothesis was tested and eliminated, not assumed: no extension in `~/.pi/agent` rewrites files, an 80-second idle watch over 714 files in two repositories found zero content changes, and Zed's `format_on_save` only runs when Zed saves a buffer, which an external write never causes. The two files named in those errors were already Biome-clean, so a format pass had nothing to change in them.
+
+**Two halves, because one is not enough.** Hiding a tool is a convenience: `tool_search`, a command, or another extension can activate it again mid-session. Only the `tool_call` refusal is the guarantee, and the test drives that half separately so neither can regress unnoticed.
+
+**It fails open, deliberately.** `edit_lines` is not a Pi built-in — it arrives with a package. Refusing `edit` while no anchored editor is registered would leave no way to modify an existing file at all, which is worse than the error being prevented. So the refusal is conditional on the anchored editor being present, and both branches are tested.
+
+**It is not a sandbox.** `bash` can still rewrite files. This governs tool selection, not the filesystem, and the one-writer-per-checkout rule still applies.
+
+```bash
+bun run --cwd .pi test        # tests/edit_policy.test.ts
+```
+
+That suite loads the real pinned loader, supplies the anchored editor as a throwaway stub so the result does not depend on the developer's `~/.pi`, and refuses an `edit` whose payload would otherwise have matched — so it cannot pass on a guard that blocked everything, nor on a payload that was merely invalid.
+
+**Changing it means changing two files.** The policy exists as a project extension here and as a byte-identical global twin in `~/.pi/agent/extensions/edit-policy.ts`, which covers every other repository. Edit one, edit both; `tests/edit_policy.test.ts` fails when the two have diverged.
 
 ## The tool surface budget
 

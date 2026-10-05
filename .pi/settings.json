@@ -10,8 +10,6 @@
     "trusting one on sight is how a template checkout becomes arbitrary code",
     "execution. See the security note in docs/agent.md."
   ],
-  "defaultThinkingLevel": "medium",
-  "defaultTools": ["read", "bash", "edit", "write", "grep", "find", "ls"],
   "enableSkillCommands": true,
   "extensions": ["./extensions"],
   "skills": ["./skills"],
