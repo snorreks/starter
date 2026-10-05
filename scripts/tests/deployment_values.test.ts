@@ -50,6 +50,9 @@ const makeTree = (files: Record<string, string>): string => {
   return root;
 };
 
+/** Enough JSONC to prove the file is still parseable, and not a stripped copy. */
+const stripComments = (jsonc: string): string => jsonc.replace(/^\s*\/\/.*$/gm, '');
+
 afterEach(() => {
   setDeploymentValues(null);
   for (const root of created.splice(0)) {
@@ -301,6 +304,96 @@ describe('provisionDatabase', () => {
       // And the file the tooling reads is on disk, not merely in memory.
       expect(localConfigProblem(root)).toBeNull();
       expect(readFileSync(join(root, LOCAL_DEPLOYMENT_FILE), 'utf8')).toContain(UUID);
+    } finally {
+      restore();
+    }
+  });
+
+  // A config with an `env.staging` block and comments, which is the shape this
+  // repository actually ships. Provisioning it used to leave a 1 KB fragment
+  // starting at `"staging": {` in an 8 KB file: 146 lines gone, and the command
+  // still printed "D1 database id written to wrangler.jsonc".
+  const envShaped = (): string =>
+    makeTree({
+      'apps/frontend/client/wrangler.jsonc': [
+        '{',
+        '  // The deployment and the local development contract, in one file.',
+        '  // Every comment here is load-bearing documentation.',
+        '  "main": "./_worker.js",',
+        '  "d1_databases": [',
+        '    {',
+        '      "binding": "DB",',
+        '      "database_name": "starter-web"',
+        '    }',
+        '  ],',
+        '  "env": {',
+        '    "staging": {',
+        '      // Per environment, so staging and production cannot share a database.',
+        '      "d1_databases": [',
+        '        {',
+        '          "binding": "DB",',
+        '          "database_name": "starter-web",',
+        '          "migrations_dir": "../../../packages/backend/database/drizzle-d1"',
+        '        }',
+        '      ]',
+        '    },',
+        '    "production": {',
+        '      "d1_databases": [',
+        '        {',
+        '          "binding": "DB",',
+        '          "database_name": "starter-web"',
+        '        }',
+        '      ]',
+        '    }',
+        '  }',
+        '}',
+        '',
+      ].join('\n'),
+    });
+
+  test('provisioning an env-scoped database id leaves the rest of the file intact', () => {
+    const root = envShaped();
+    const restore = quiet();
+    const path = join(root, 'apps/frontend/client/wrangler.jsonc');
+    const before = readFileSync(path, 'utf8');
+
+    try {
+      expect(
+        provisionDatabase({
+          root,
+          hasCredential: () => true,
+          create: () => ({ ok: true, stdout: `${ACCOUNT}\n${UUID}\n`, stderr: '' }),
+        }),
+      ).toBe(0);
+
+      const after = readFileSync(path, 'utf8');
+
+      // The bug in one assertion: the file did not shrink to a fragment.
+      expect(after.length).toBeGreaterThan(before.length);
+      expect(after.startsWith('{')).toBe(true);
+      expect(after.trimEnd().endsWith('}')).toBe(true);
+
+      // The bytes before the env block are byte-for-byte what they were.
+      const stagingAt = before.indexOf('"staging"');
+      expect(after.slice(0, stagingAt)).toBe(before.slice(0, stagingAt));
+
+      // The comments are the documentation. Losing them is the actual harm.
+      expect(after).toContain('// The deployment and the local development contract');
+      expect(after).toContain('// Per environment, so staging and production cannot share');
+
+      // And the top-level binding and the sibling environment are still there.
+      expect(after).toContain('"main": "./_worker.js"');
+      expect(after).toContain('"production"');
+      expect(after).toContain('"migrations_dir"');
+
+      // The id landed inside env.staging, not at the top level and not in production.
+      const stagingBlock = after.slice(after.indexOf('"staging"'), after.indexOf('"production"'));
+      expect(stagingBlock).toContain(`"database_id": "${UUID}"`);
+      expect(after.slice(0, after.indexOf('"staging"'))).not.toContain(UUID);
+      expect(after.slice(after.indexOf('"production"'))).not.toContain(UUID);
+
+      // It is still the JSONC it was, not a stripped or re-serialised copy.
+      expect(JSON.parse(stripComments(after)).env.staging.d1_databases[0].database_id).toBe(UUID);
     } finally {
       restore();
     }
