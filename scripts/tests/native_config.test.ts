@@ -1,6 +1,39 @@
 import { describe, expect, test } from 'bun:test';
 import { assertNativeCsp, DEFAULT_DEV_API_ORIGIN } from '@starter/schemas/native';
-import { nativeConfiguration } from '../src/native/config.ts';
+import { nativeConfiguration, normalizeCi } from '../src/native/config.ts';
+
+describe('the CI value the pinned Tauri CLI receives', () => {
+  // tauri-cli 2.12.1 feeds the environment's CI straight to its boolean `--ci`
+  // flag, so `CI=1` fails with "invalid value '1' for '--ci'" before compiling.
+  test('a spelling the CLI cannot parse becomes a boolean it can', () => {
+    for (const value of ['1', 'yes', 'on', 'TRUE', 'anything-else']) {
+      expect(normalizeCi({ CI: value }).CI).toBe('true');
+    }
+    for (const value of ['', '0', 'false', 'FALSE', 'no', 'off']) {
+      expect(normalizeCi({ CI: value }).CI).toBe('false');
+    }
+  });
+
+  test('an absent CI stays absent, and nothing else in the environment is touched', () => {
+    const env = { PATH: '/usr/bin', VITE_NATIVE_API_ORIGIN: 'https://api.example.test' };
+
+    expect(normalizeCi(env)).toBe(env);
+    expect(normalizeCi({ CI: '1', PATH: '/usr/bin' })).toEqual({
+      PATH: '/usr/bin',
+      CI: 'true',
+    });
+  });
+
+  test('a build passes the normalized value, not the shell spelling', () => {
+    const configured = nativeConfiguration('build', {
+      CI: '1',
+      VITE_NATIVE_API_ORIGIN: 'https://api.example.test',
+    });
+
+    expect(configured.env.CI).toBe('true');
+    expect(configured.env.VITE_NATIVE_API_ORIGIN).toBe('https://api.example.test');
+  });
+});
 
 describe('the origin shared by the shell and frontend', () => {
   for (const mode of ['dev', 'build'] as const) {
