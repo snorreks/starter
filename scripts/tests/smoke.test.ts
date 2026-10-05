@@ -107,6 +107,38 @@ describe('the rehearsal cannot inherit this machine', () => {
     expect(withMoon.some((file) => file.includes('warm.bin'))).toBe(false);
   });
 
+  test('a committed source file under a generated-output name is copied anyway', () => {
+    // `artifacts` is in `EXCLUDED` because `.pi/artifacts` and friends are
+    // generated. `scripts/src/artifacts` holds the Worker bundler that
+    // `client:build` runs, and excluding the directory by name deleted it from
+    // every rehearsal — `bun run smoke` failed at `bun run build` with
+    // `Module not found "../../../scripts/src/artifacts/bundle_worker.ts"`, in a
+    // checkout whose repository has the file.
+    const root = join(dir, 'mini');
+    writeMiniRepo(root);
+    mkdirSync(join(root, 'scripts/src/artifacts'), { recursive: true });
+    writeFileSync(join(root, 'scripts/src/artifacts/bundler.ts'), 'export const bundled = 1;\n');
+    mkdirSync(join(root, '.pi/artifacts'), { recursive: true });
+    writeFileSync(
+      join(root, '.pi/artifacts', 'warm.bin'),
+      'a warm cache that must not be copied\n',
+    );
+    // Generated output is gitignored rather than committed — which is what the
+    // exclusion exists for, and what makes `.pi/artifacts` a different case from
+    // `scripts/src/artifacts`.
+    writeFileSync(join(root, '.gitignore'), '.pi/artifacts/\n');
+    spawnSync('git', ['init', '--quiet'], { cwd: root });
+    spawnSync('git', ['add', '-A'], { cwd: root });
+    const target = join(dir, 'copy');
+
+    const copied = copyTemplateTree(root, target);
+
+    expect(copied).toContain(join('scripts', 'src', 'artifacts', 'bundler.ts'));
+    expect(existsSync(join(target, 'scripts/src/artifacts/bundler.ts'))).toBe(true);
+    // The reason the name is in the list at all still holds.
+    expect(copied.some((file) => file.includes('.pi/artifacts'))).toBe(false);
+  });
+
   test('the rehearsal gives the checkout its own HOME', () => {
     const root = join(dir, 'mini');
     writeMiniRepo(root);

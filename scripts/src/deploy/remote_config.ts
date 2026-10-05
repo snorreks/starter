@@ -1,4 +1,4 @@
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { parseConfigFileTextToJson } from 'typescript';
 import { REPO_ROOT } from '../shared/paths.ts';
@@ -123,11 +123,17 @@ export const renderRemoteConfig = (options: {
     if (image === null) {
       throw new Error('No processor image was resolved.');
     }
+    // A local build input is a path; a registry reference is not. Deciding by
+    // spelling — "absolute, or a filename that happens to contain `Dockerfile`" —
+    // left every other relative build input unresolved, so the generated config
+    // named a path relative to whatever directory wrangler happened to run in.
+    // Existence is the discriminator, and a reference like `ghcr.io/org/img:tag`
+    // cannot exist as a relative file next to the source config.
+    const local = resolve(directory, image);
     config.containers = [
       {
         ...container,
-        image:
-          image.includes('Dockerfile') || isAbsolute(image) ? resolve(directory, image) : image,
+        image: isAbsolute(image) || existsSync(local) ? local : image,
         image_build_context: pathFrom({ directory, value: container.image_build_context }),
         instance_type: target.compute.containerProfile,
       },

@@ -23,14 +23,22 @@ const loadPolicy = async (options: { duplicate?: boolean } = {}) => {
   const projectDirectory = join(directory, 'project');
   mkdirSync(join(projectDirectory, '.pi'), { recursive: true });
   mkdirSync(agentDirectory);
+  // The two copies come from independently resolved resources — the global agent
+  // settings and the project's `.pi/settings.json` — because that is the only
+  // arrangement in which the question is real. Listing both paths in one array
+  // tests a list, not a policy: it never reaches the merge, and it would keep
+  // passing if Pi resolved the project array as a *replacement* for the global one.
   const duplicatePath = join(directory, 'second-policy.ts');
   if (options.duplicate) {
     copyFileSync(POLICY, duplicatePath);
   }
-  writeFileSync(
-    join(projectDirectory, '.pi/settings.json'),
-    JSON.stringify({ extensions: options.duplicate ? [POLICY, duplicatePath] : [POLICY] }),
-  );
+  writeFileSync(join(agentDirectory, 'settings.json'), JSON.stringify({ extensions: [POLICY] }));
+  if (options.duplicate) {
+    writeFileSync(
+      join(projectDirectory, '.pi/settings.json'),
+      JSON.stringify({ extensions: [duplicatePath] }),
+    );
+  }
   const cleanup = (): void => rmSync(directory, { recursive: true, force: true });
   try {
     const settingsManager = SettingsManager.create(projectDirectory, agentDirectory);
@@ -106,6 +114,10 @@ describe('normal editing with explicit final formatting', () => {
     const fixture = await loadPolicy({ duplicate: true });
     try {
       expect(fixture.loaded.errors).toEqual([]);
+      // Both resources are loaded: Pi unions the global and project extension sets
+      // rather than letting the project's replace the agent's. Asserted here
+      // because the whole point is that two copies reach `before_agent_start` — if
+      // one were dropped, the deduplication below would pass for the wrong reason.
       expect(fixture.loaded.extensions).toHaveLength(2);
       const result = await fixture.runner.emitBeforeAgentStart('continue', undefined, {
         cwd: fixture.projectDirectory,

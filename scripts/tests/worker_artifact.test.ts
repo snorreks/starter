@@ -1,5 +1,5 @@
 import { afterEach, expect, test } from 'bun:test';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { bundleWorker } from '../src/artifacts/bundle_worker.ts';
@@ -21,6 +21,22 @@ const tree = (): string => {
     'unbundled-input',
   );
   return root;
+};
+const workerOf = (root: string): string =>
+  join(root, 'apps/frontend/client/.svelte-kit/cloudflare/_worker.js');
+const ignoreOf = (root: string): string =>
+  join(root, 'apps/frontend/client/.svelte-kit/cloudflare/.assetsignore');
+
+/**
+ * Read a published artifact, asserting it is there first.
+ *
+ * Without the assertion a moved output is an `ENOENT` from `readFileSync` rather
+ * than a failure that names the path invariant it broke — which is the whole
+ * question these reads are asked.
+ */
+const readArtifact = (path: string): string => {
+  expect(existsSync(path)).toBe(true);
+  return readFileSync(path, 'utf8');
 };
 const runFixture = (
   options: { imports?: unknown[]; code?: number; empty?: boolean } = {},
@@ -64,41 +80,46 @@ test('build environment excludes credentials even when called from authenticated
   ).toEqual({ PATH: '/bin', PUBLIC_LABEL: 'starter' });
 });
 
+test('the bundler hands Wrangler no credential, not merely a filter that would remove one', async () => {
+  const options = runFixture();
+  const seen: NodeJS.ProcessEnv[] = [];
+  await bundleWorker({
+    ...options,
+    env: {
+      PATH: '/bin',
+      PUBLIC_LABEL: 'starter',
+      CLOUDFLARE_API_TOKEN: 'fixture-token',
+      BETTER_AUTH_SECRET: 'fixture-auth',
+      RESEND_API_KEY: 'fixture-mail',
+    },
+    run: async (command) => {
+      seen.push(command.env ?? {});
+      return options.run(command);
+    },
+  });
+
+  // The unit test above proves the filter's output shape; this proves the
+  // bundler *calls* it. A build environment that stopped being applied would
+  // leave that test green while every credential reached `wrangler deploy`.
+  expect(seen).toHaveLength(1);
+  expect(seen[0]).toEqual({ PATH: '/bin', PUBLIC_LABEL: 'starter' });
+});
+
 test('build publishes the closed Worker instead of the adapter entry', async () => {
   const options = runFixture();
   expect(await bundleWorker(options)).toBe(0);
-  expect(
-    readFileSync(
-      join(options.root, 'apps/frontend/client/.svelte-kit/cloudflare/_worker.js'),
-      'utf8',
-    ),
-  ).toBe('closed-worker');
-  expect(
-    readFileSync(
-      join(options.root, 'apps/frontend/client/.svelte-kit/cloudflare/.assetsignore'),
-      'utf8',
-    ),
-  ).toContain('**/*.map');
+  expect(readArtifact(workerOf(options.root))).toBe('closed-worker');
+  expect(readArtifact(ignoreOf(options.root))).toContain('**/*.map');
 });
 test('a leftover SSR import refuses the build and never overwrites its entry', async () => {
   const options = runFixture({ imports: [{ path: '../output/server/index.js', external: true }] });
   expect(await bundleWorker(options)).toBe(1);
-  expect(
-    readFileSync(
-      join(options.root, 'apps/frontend/client/.svelte-kit/cloudflare/_worker.js'),
-      'utf8',
-    ),
-  ).toBe('unbundled-input');
+  expect(readArtifact(workerOf(options.root))).toBe('unbundled-input');
 });
 test('a failed bundler stops before publishing its partial output', async () => {
   const options = runFixture({ code: 7 });
   expect(await bundleWorker(options)).toBe(7);
-  expect(
-    readFileSync(
-      join(options.root, 'apps/frontend/client/.svelte-kit/cloudflare/_worker.js'),
-      'utf8',
-    ),
-  ).toBe('unbundled-input');
+  expect(readArtifact(workerOf(options.root))).toBe('unbundled-input');
 });
 test('zero Worker bytes cannot be published as a successful build', async () => {
   expect(await bundleWorker(runFixture({ empty: true }))).toBe(1);
