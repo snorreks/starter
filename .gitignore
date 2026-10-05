@@ -133,8 +133,20 @@ id_rsa
 #
 #    Evidence is a local artifact: it can contain screenshots of unreleased UI
 #    and raw model findings. It belongs in review, not in git history.
+#
+#    Coverage is anchored to the root and to package roots, for the same reason
+#    `logs/` is anchored above: an unanchored `coverage/` also matches
+#    `scripts/src/coverage/`, which is source. It did — the `source-is-tracked`
+#    guard refused two modules that were silently untracked, which is the only
+#    reason the collision is fixed here rather than discovered on a fresh clone.
+#    Coverage output is written to a package root or the repository root and
+#    nowhere else, so those are the only places an anchored rule has to cover.
 # =============================================================================
-coverage/
+/coverage/
+apps/*/*/coverage/
+packages/*/*/coverage/
+scripts/coverage/
+.pi/coverage/
 test-results/
 playwright-report/
 blob-report/

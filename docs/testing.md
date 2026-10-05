@@ -727,10 +727,31 @@ body where a plain `fetch` does not. Each is written down where it is fixed.
 
 ## Coverage
 
-There is no coverage number, deliberately. Coverage measures which lines ran, and
-the interesting failures here are about *what was asserted* — whether a schema
-refuses an unknown field, whether an aborted request reports as a failure. A
-coverage percentage would be a number to improve rather than a thing to read.
+`bun run coverage` runs the credential-free unit lane with Bun's lcov reporter,
+merges every report into `coverage/lcov.info`, and prints the totals. It reports
+and it does not gate: no threshold is checked, so an untested new file lowers the
+number without failing anything.
 
-What is measured instead: guards with no baselines, and assertions written so that
-each one names a specific failure someone could observe.
+The number is one figure over the projects that reported, and the output names
+every project that did not. Three things it deliberately does not do:
+
+- **It does not count the Rust crates.** `apps/backend/media` runs `cargo-*`
+  tasks precisely so that `moon run :test` does not require a Rust toolchain,
+  FFmpeg or Docker, so it is outside the lane this number comes from. It is also
+  invisible to the Node workspace — a crate has no `package.json` — which is why
+  the output lists it separately rather than leaving it silently absent.
+- **It does not report branches.** Bun writes no `BRDA` records, so there is no
+  branch data to aggregate. A branch figure would have to be invented.
+- **It does not serve a cached hit.** A cached Moon task does not run, so it
+  writes no report, and the merge would then describe whatever a previous run
+  left on disk. The lane runs with `--cache off` for that reason, which also
+  makes it slower and more contention-sensitive than `bun run test`.
+
+Paths are resolved to repository-relative before merging, because Bun writes
+`SF:` relative to the package that produced it: a file in `packages/shared/schemas`
+is `../schemas/src/x.ts` in `logger`'s report. Keyed on the raw string, one file
+reported by four packages would be counted four times, and the total would move
+when an unrelated package started importing a module.
+
+What is measured *instead of* a target: guards with no baselines, and assertions
+written so that each one names a specific failure someone could observe.

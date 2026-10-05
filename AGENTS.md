@@ -59,6 +59,12 @@ bun run test:compute        # the jobs Worker: real Workflows, real D1/R2, real 
                             # Needs a Docker engine, is never cached, and is NOT in
                             # test:all. Without Docker it fails with the missing
                             # prerequisite named — it never skips.
+bun run coverage            # merged lcov over the unit lane + one percentage.
+                            # Reports only, never gates. No branch figure: Bun
+                            # emits no BRDA. Names every project it did not
+                            # cover, including the Rust crate. Runs the lane
+                            # with --cache off, so a cached hit cannot serve it.
+bun run coverage -- --no-run   # re-render the number without the test run.
 
 # Checks
 bun run typecheck
