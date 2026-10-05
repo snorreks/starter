@@ -58,9 +58,23 @@ wrangler.generated.jsonc
 .starter/
 !.dev.vars.example
 
-# Native build output
-apps/frontend/native/src-tauri/target/
-apps/frontend/native/src-tauri/gen/
+# Native build output, matched by the shell's fixed layout rather than by the
+# path of whichever application currently owns it.
+#
+# A path-anchored entry here was the reason `apps/frontend/client/src-tauri/gen/`
+# went untracked: the rule named `apps/frontend/native/…`, the build had been run
+# under `apps/frontend/client/`, and a stale entry stops matching silently — the
+# failure mode section 9 already records for these paths. Tauri writes `gen/` and
+# `target/` wherever the crate is, and `scripts/src/guards/policy.ts` classifies
+# both by layout in `GENERATED_TREES`; these rules agree with it.
+#
+# The `**/` is load-bearing: an interior slash anchors a pattern to the directory
+# holding this file, so `src-tauri/gen/` matches only a `src-tauri` at the
+# repository root. `**/` is what lets the rule follow the crate wherever it is.
+**/src-tauri/target/
+**/src-tauri/gen/
+**/src-tauri/gen-schemas/
+**/src-tauri/vendor/
 
 # =============================================================================
 # 4. Environment and secrets
