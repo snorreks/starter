@@ -152,8 +152,9 @@ tasks:
       - '@group(tests)'
     # The one task in the workspace with a restorable output.
     #
-    # `.svelte-kit/cloudflare` is a complete artifact: a restored copy is the
-    # Worker plus its assets that this input set produced. `check:bundle` and the
+    # Build closes the adapter's SSR graph with pinned Wrangler before caching.
+    # `.svelte-kit/cloudflare` is then a complete artifact: a restored copy is the
+    # Worker plus its assets, not an entry importing uncached intermediate trees. `check:bundle` and the
     # Worker lane both consume it, so a hit saves a real build.
     #
     # It is not, on its own, sufficient: the build reads `bun.lock`, the

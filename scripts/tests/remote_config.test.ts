@@ -95,6 +95,7 @@ test('web-only plans cannot publish template compute bindings or stale database 
   });
   expect(config.r2_buckets).toBeUndefined();
   expect(config.workflows).toBeUndefined();
+  expect(config.no_bundle).toBe(true);
   expect(config.env).toBeUndefined();
   expect(JSON.stringify(config)).not.toContain('wrong-database');
   expect(JSON.stringify(config)).toContain('resolved-database');

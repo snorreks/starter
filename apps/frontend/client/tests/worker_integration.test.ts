@@ -44,6 +44,14 @@ const APP_CONFIG = join(APP_DIR, 'wrangler.jsonc');
 const WORKER_ENTRY = join(APP_DIR, '.svelte-kit/cloudflare/_worker.js');
 const LOCAL_STATE = join(APP_DIR, '.wrangler/state');
 
+for (const path of ['/_worker.js', '/_worker.js.map']) {
+  test(`private Worker artifact ${path} is not served as a public asset`, async () => {
+    expect(existsSync(join(APP_DIR, '.svelte-kit/cloudflare', path.slice(1)))).toBe(true);
+    const response = await fetch(`${base()}${path}`);
+    expect(response.status).toBe(404);
+  });
+}
+
 /**
  * The pinned workspace copy of wrangler.
  *
@@ -145,6 +153,11 @@ beforeAll(async () => {
         'only reproduces in workerd. Run `bun run build` first.',
     );
   }
+
+  // A cached/deployed artifact must not borrow intermediate files from another
+  // build. Exercise its real workerd behavior after both SSR trees are gone.
+  rmSync(join(APP_DIR, '.svelte-kit/cloudflare-tmp'), { recursive: true, force: true });
+  rmSync(join(APP_DIR, '.svelte-kit/output/server'), { recursive: true, force: true });
 
   port = await findFreePort();
 

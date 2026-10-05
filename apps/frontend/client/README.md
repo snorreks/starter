@@ -4,6 +4,15 @@ The one application: a SvelteKit app whose server half is a Cloudflare Worker an
 whose browser half is the same app's pages. One origin serves the HTML, the assets
 and the public authenticated API. There is no second API service and no proxy.
 
+## Build artifact
+
+`bun run build` runs Vite plus pinned Wrangler in credential-free dry-run mode.
+It closes the adapter's SSR imports into `.svelte-kit/cloudflare/_worker.js` before
+Moon caches or the release checker hashes that artifact. Only platform imports may
+remain; generated remote configs upload it without re-bundling. Intermediate SSR
+trees are not deployment dependencies. Worker code and source maps are excluded
+from public assets and covered by real workerd regression checks.
+
 ## Runtime and layout
 
 | Path | Plane | What lives there |
@@ -28,8 +37,7 @@ HTTP-fetches its own origin is a second, differently authenticated path to the s
 data.
 
 The load also asks about the deployment mode before it reads. `JOBS_PROFILE` is
-absent in this repository's default `wrangler.jsonc`, and its absence *means*
-`disabled`; in that case the load reports the capability and the page renders "jobs
+explicitly `disabled` in this repository's default `wrangler.jsonc`; in that case the load reports the capability and the page renders "jobs
 are switched off here" from the HTML, without making a request it already knows the
 answer to. `bun run e2e` asserts both halves: the state renders, and the page issues
 **no** `/api/jobs` request at all.
