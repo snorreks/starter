@@ -18,7 +18,7 @@
 // filters. Those tests passed, which is the part worth remembering — a test that
 // pins the wrong contract reads as evidence the code is correct.
 
-import { describe, expect, test } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { Value } from '@sinclair/typebox/value';
 import { LOG_SOURCES, type LogEvent, LogEventSchema } from '@starter/schemas';
 import { parseArgs, toQuery } from '../src/commands/logs.ts';
@@ -32,7 +32,35 @@ import { buildFilter } from '../src/logs/filter.ts';
 import { parseNdjson } from '../src/logs/local_file_adapter.ts';
 import { capabilitiesFor, resolveLogAdapter } from '../src/logs/registry.ts';
 import type { LogQuery } from '../src/logs/types.ts';
-import type { AppId } from '../src/registry/app_registry.ts';
+import { type AppId, DEPLOYMENT_CONFIG, targets } from '../src/registry/app_registry.ts';
+import { setDeploymentValues } from '../src/registry/deployment_values.ts';
+
+beforeEach(() =>
+  setDeploymentValues({
+    ...DEPLOYMENT_CONFIG,
+    accountId: 'a'.repeat(32),
+    jobsProfile: 'disabled',
+    environments: {
+      staging: {
+        ...targets(),
+        workerName: 'fixture-staging',
+        d1DatabaseId: 'db-staging',
+        origin: 'https://staging.example',
+        mailFrom: 'no-reply@staging.example',
+        jobsProfile: 'disabled',
+      },
+      production: {
+        ...targets(),
+        workerName: 'fixture-production',
+        d1DatabaseId: 'db-production',
+        origin: 'https://production.example',
+        mailFrom: 'no-reply@production.example',
+        jobsProfile: 'disabled',
+      },
+    },
+  }),
+);
+afterEach(() => setDeploymentValues(null));
 
 // ── Fixtures ─────────────────────────────────────────────────────────────────
 
@@ -283,7 +311,7 @@ describe('buildHistoricalRequest', () => {
     // — `buildFilter` against `capabilitiesFor('wrangler-tail')`, asserted above.
     // Here the point is the opposite: this path does narrow, so `--uid` is honoured
     // rather than silently dropped from the provider request.
-    const request = buildHistoricalRequest({ ...baseQuery, uid: 'user_verified' });
+    const request = buildHistoricalRequest({ ...baseQuery, mode: 'staging', uid: 'user_verified' });
     expect(request.ok).toBe(true);
     if (request.ok) {
       expect(request.request.parameters.filters).toContainEqual({

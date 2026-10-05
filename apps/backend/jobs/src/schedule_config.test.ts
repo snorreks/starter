@@ -149,23 +149,20 @@ describe('the committed maintenance schedule', () => {
 });
 
 describe('the configuration as a whole', () => {
-  test('web and jobs share a distinct MEDIA bucket for each deployed environment', () => {
+  test('the committed web template cannot enable compute without resolved remote bindings', () => {
     const web = JSON.parse(
       stripComments(readFileSync(join(APP_DIR, '../../frontend/client/wrangler.jsonc'), 'utf8')),
     ) as WranglerConfig;
-    const names: string[] = [];
+    expect(web.vars?.JOBS_PROFILE).toBe('disabled');
     for (const environment of ['staging', 'production']) {
-      const jobsBucket = config().env?.[environment]?.r2_buckets?.find(
-        (bucket) => bucket.binding === 'MEDIA',
-      )?.bucket_name;
-      const webBucket = web.env?.[environment]?.r2_buckets?.find(
-        (bucket) => bucket.binding === 'MEDIA',
-      )?.bucket_name;
-      expect(jobsBucket).toBe(`starter-media-${environment}`);
-      expect(webBucket).toBe(jobsBucket);
-      names.push(jobsBucket as string);
+      const section = web.env?.[environment];
+      expect(section).toBeDefined();
+      expect(section?.vars?.JOBS_PROFILE).toBe('disabled');
+      expect(section?.r2_buckets).toBeUndefined();
+      expect(section?.workflows).toBeUndefined();
     }
-    expect(new Set(names).size).toBe(2);
+    // Exact web/jobs binding agreement is exercised with generated targets in
+    // scripts/tests/remote_config.test.ts, where both destinations are resolved.
   });
 
   test('this Worker has no route and no public API', () => {

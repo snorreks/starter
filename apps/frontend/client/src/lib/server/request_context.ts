@@ -12,7 +12,6 @@
 // request ends. A route that needs a trace id reads `locals.context`, which the
 // hook already built — it does not resolve the session a second time.
 
-import { sessions } from '@starter/database';
 import {
   type ConsoleLogger,
   createLogger,
@@ -23,7 +22,6 @@ import {
 } from '@starter/logger';
 import { type DeploymentEnvironment, isDeploymentEnvironment } from '@starter/schemas/logging';
 import { createId } from '@starter/utils';
-import { lt } from 'drizzle-orm';
 import type { Container } from './container.ts';
 import { unauthorized } from './http.ts';
 
@@ -260,24 +258,3 @@ export const buildRequestContext = async (
 };
 
 export { unauthorized };
-
-/**
- * Delete expired sessions. Exposed as a maintenance operation, not on a timer.
- *
- * Counts first and returns the count: the `DELETE` result from the D1 driver
- * carries no row count, and reporting "0 rows removed" after a successful
- * delete would be a small lie in an operational log.
- */
-export const purgeExpiredSessions = async (container: Container): Promise<number> => {
-  const expired = await container.db
-    .select({ id: sessions.id })
-    .from(sessions)
-    .where(lt(sessions.expiresAt, new Date()));
-
-  if (expired.length === 0) {
-    return 0;
-  }
-
-  await container.db.delete(sessions).where(lt(sessions.expiresAt, new Date()));
-  return expired.length;
-};

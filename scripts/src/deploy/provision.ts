@@ -37,20 +37,22 @@
 // here because a project that has configured `.sops.yaml` should not need a second
 // mechanism.
 
-import { spawnSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
+import { mediaFixtureKey, PROCESSOR_FIXTURE_ID } from '@starter/schemas/jobs';
 import {
   DEPLOY_CREDENTIAL_NAME,
   REQUIRED_TOKEN_SCOPES,
   RUNTIME_SECRET_NAMES,
 } from '../registry/app_registry.ts';
 import { CLIENT_DIR, REPO_ROOT } from '../shared/paths.ts';
+import { runBoundedSync } from '../shared/run_bounded.ts';
 import { wranglerBin } from '../shared/tools.ts';
+import { remoteConfigPath } from './remote_config.ts';
 import type { ResolvedTarget } from './target.ts';
 
 /** The fixture the jobs Workflow fetches by key. Built by `bun run --cwd apps/backend/media`. */
-export const FIXTURE_KEY = 'jobs/fixtures/sample-v1.mp4';
+export const FIXTURE_KEY = mediaFixtureKey(PROCESSOR_FIXTURE_ID);
 
 export interface ProvisionStep {
   name: string;
@@ -109,7 +111,8 @@ export const secretInArgvProblem = (args: readonly string[]): string | null => {
 export interface ProvisionDefinition {
   name: string;
   description: string;
-  create: string[];
+  /** Null when creation assigns a new identity that must be configured/re-planned. */
+  create: string[] | null;
   /** A read-only listing. A nonzero exit here means *cannot tell*, never *absent*. */
   exists: string[];
   /** How to answer "is it there?" from a successful read's output. */
@@ -131,7 +134,7 @@ export const provisionSteps = (target: ResolvedTarget): ProvisionDefinition[] =>
       // the *data*, and a nonzero exit unambiguously means "could not tell".
       exists: ['d1', 'list', '--json'],
       present: (stdout) => databaseExists(stdout, target.d1DatabaseId),
-      create: ['d1', 'create', `${target.project}-${target.environment}-db`, '--type', 'primary'],
+      create: null,
       cwd: REPO_ROOT,
     },
   ];
@@ -242,7 +245,7 @@ export const fixtureUploadStep = (
     return null;
   }
 
-  const source = join('apps', 'backend', 'media', 'fixtures', 'sample-v1.mp4');
+  const source = join('apps', 'backend', 'media', 'fixtures', 'media', 'sample-v1.mp4');
   return {
     source,
     cwd: REPO_ROOT,
@@ -275,7 +278,15 @@ export const secretPlan = (
     workerName: target.workerName,
     envVar: name,
     source,
-    argv: ['secret', 'put', name, '--name', target.workerName, '--env', target.environment],
+    argv: [
+      'secret',
+      'put',
+      name,
+      '--name',
+      target.workerName,
+      '--config',
+      remoteConfigPath({ target }),
+    ],
   }));
 
 /** The runtime secrets present in the environment, by name. Values never read. */
@@ -402,6 +413,16 @@ export const provision = (
       continue;
     }
 
+    if (definition.create === null) {
+      steps.push({
+        name: definition.name,
+        description: definition.description,
+        outcome: 'failed',
+        detail: `The configured D1 ID is absent. Refusing to create a replacement with a different ID. Run deploy:configure -- --env ${target.environment} --provision, then review a new plan.`,
+        argv,
+      });
+      return stop(definition.name);
+    }
     const created = run(definition.create, { cwd: definition.cwd });
     steps.push({
       name: definition.name,
@@ -560,18 +581,22 @@ export const runWranglerMutating: MutatingCommand = (args, options) => {
     return { ok: false, detail: leak };
   }
 
-  const result = spawnSync(bin, [...args], {
+  const result = runBoundedSync({
+    command: bin,
+    args,
     cwd: options.cwd,
-    encoding: 'utf8',
     input: options.stdin ?? '',
-    timeout: 10 * 60_000,
+    timeoutMs: 10 * 60_000,
   });
 
-  if (result.status !== 0) {
-    const detail = (result.stderr ?? result.stdout ?? '').trim().split('\n').slice(0, 4).join('\n');
+  if (result.code !== 0) {
+    const raw = (result.stderr || result.stdout).trim();
+    const value = options.stdin?.trim();
+    const safe = value ? raw.replaceAll(value, '[REDACTED]') : raw;
+    const detail = safe.split('\n').slice(0, 4).join('\n');
     return {
       ok: false,
-      detail: detail === '' ? `wrangler exited ${String(result.status)}` : detail,
+      detail: detail === '' ? `wrangler exited ${String(result.code)}` : detail,
     };
   }
 

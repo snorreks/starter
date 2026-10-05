@@ -1,95 +1,22 @@
 {
-  // The one Cloudflare Worker.
-  //
-  // This file is the deployment *and* the local development contract:
-  // `@sveltejs/adapter-cloudflare` reads it to emit `.svelte-kit/cloudflare/`
-  // (client assets plus `_worker.js`), and in `vite dev` and `vite preview` it
-  // builds the emulated binding set from it through wrangler's
-  // `getPlatformProxy`. There is no second source, so local and deployed
-  // environments cannot disagree about what the D1 binding is called.
-  //
-  // The three keys below are required by the adapter and are not optional
-  // preferences: `main` and `assets.directory` say what to ship, and
-  // `assets.binding` is how the Worker reads the assets. Removing `assets.binding`
-  // while keeping `main` fails configuration validation with a message naming
-  // the key, which is why they are written out rather than inherited.
-  //
-  // `database_id` has no placeholder on purpose. An invented id fails at deploy
-  // time with an opaque Wrangler error; omitting it fails at configuration time
-  // with a clear one. `bun run deploy:configure` writes the real id, and
-  // `bun run deploy:check` reports which ids are still unset.
-  //
-  // The Worker name is likewise not asserted here: resource identity belongs in
-  // `.starter/deployment.local.json`, which is gitignored, and `wrangler deploy`
-  // reads `--name` from the plan that `deploy:check` prints. A name committed here
-  // would make a fresh clone target somebody else's Worker — which is exactly what
-  // the `registry-valid` guard fails the build for.
+  // Local dev/build contract. Remote operations derive a gitignored exact-target
+  // config under .starter/deploy; no live resource ID belongs in this template.
   "$schema": "../../../node_modules/wrangler/config-schema.json",
   "name": "starter-web",
   "compatibility_date": "2026-10-01",
-  // `nodejs_compat` is not cosmetic. The adapter's own `cloudflare:workers` stub
-  // in dev imports `node:async_hooks` for AsyncLocalStorage, and that import is
-  // replaced with the real module in the built output.
   "compatibility_flags": ["nodejs_compat"],
   "main": ".svelte-kit/cloudflare/_worker.js",
   "assets": {
     "binding": "ASSETS",
     "directory": ".svelte-kit/cloudflare",
-    // `none`, and stated explicitly because the default is not safe to leave
-    // implicit here.
-    //
-    // This is a **server-rendered** application: `/`, `/login` and `/notes` are
-    // not files, they are routes the Worker renders. The static-assets router
-    // runs *before* the Worker and answers a request it can match; anything it
-    // cannot match it either passes on or answers itself, and which of those it
-    // does is what `not_found_handling` decides.
-    //
-    // With `"404-page"` it answers a *navigation* request itself. That produced a
-    // 404 for `/login` in a browser while the same URL answered 200 from curl,
-    // because only a navigation carries `Sec-Fetch-Mode: navigate`. Ten E2E
-    // specs failed on it, and every API spec passed — a difference in one header,
-    // in the exact direction that makes a browser look broken while the tool
-    // that "works" is the one lying.
-    //
-    // `none` passes the miss to the Worker, which is the SSR handler: it renders
-    // the route, and it returns a real 404 for a route that does not exist.
+    // SSR owns unmatched navigations. A static 404 page would bypass the Worker
+    // for browser requests while the same URL still worked from an API client.
     "not_found_handling": "none"
   },
-  "observability": {
-    // Structured events, indexed by the provider's Logs product. The same
-    // request-scoped logger writes them whether it is running in workerd or in the
-    // Node dev server.
-    "enabled": true
-  },
-  // DEPLOYMENT_ENV is required and is the only thing that decides whether
-  // development defaults are permitted. It is set explicitly here rather than
-  // inferred from BETTER_AUTH_URL, because a deploy that forgets BETTER_AUTH_URL is
-  // exactly the deploy that must not be treated as local.
-  //
-  // `local` is the default *top-level* environment, which is what `vite dev` and
-  // `vite preview` read. Every `--env staging` / `--env production` deployment
-  // overrides it; the app refuses to start if the resolved value is absent or
-  // unrecognised.
-  //
-  // BETTER_AUTH_URL is deliberately absent. In a local environment the app derives
-  // it from the origin the request arrived on, which is correct for a single-origin
-  // app and removes a value that has to be edited every time the dev port changes.
-  // A deployed environment must set it, and must set it to https.
-  "vars": {
-    "DEPLOYMENT_ENV": "local"
-    // JOBS_PROFILE is deliberately absent here, and its absence means `disabled`.
-    //
-    // The jobs domain (job state, admission budgets, attempt fencing, the public
-    // /api/jobs routes) ships and works in every environment, so a checkout with no
-    // cloud resources serves notes, auth and an honest `503 jobs_profile_disabled`
-    // from `/api/jobs`. An enabled profile with no jobs Worker bound would instead
-    // answer `202` for a job nothing would ever run, which is why the value is
-    // absent rather than defaulted.
-    //
-    // The deployed environments below set it to `encode` in the same section that
-    // binds the jobs Worker's Workflow and the private bucket — one decision, one
-    // file. `resolveJobsProfile` refuses an unrecognised value rather than guessing.
-  },
+  "observability": { "enabled": true },
+  // Deployment mode is explicit; only local may derive auth origin/defaults.
+  // Compute stays disabled until a resolved target supplies all its bindings.
+  "vars": { "DEPLOYMENT_ENV": "local", "JOBS_PROFILE": "disabled" },
   "d1_databases": [
     {
       "binding": "DB",
@@ -97,80 +24,8 @@
       "migrations_dir": "../../../packages/backend/database/drizzle-d1"
     }
   ],
-
-  // R2 and the encode Workflow are **not** declared at the top level, and that is
-  // the shipped default rather than an omission.
-  //
-  // The top level is what `vite dev` and `vite preview` read, and a template
-  // checkout has neither a jobs Worker nor a bucket: naming them here would make the
-  // local runtime demand a binding that does not exist, and `getPlatformProxy` fails
-  // configuration loudly rather than substituting anything. With them absent, the
-  // default is `JOBS_PROFILE: disabled` and every `/api/jobs` request answers
-  // `503 jobs_profile_disabled` while notes and auth work exactly as before.
-  //
-  // The deployed environments below enable the compute half. `workflows` there is a
-  // **cross-Worker** binding: the Workflow class is exported by the jobs Worker, not
-  // by this one, and `script_name` is what makes the reference cross that boundary.
-  // `r2_buckets` is the same private bucket the jobs Worker writes to — one bucket,
-  // environment-isolated, with no key ever handed to the processor container.
-  //
-  // Enabling the profile is therefore a *deployment* decision made in one file, and
-  // it is the same file that decides the jobs Worker's own schedule — see
-  // apps/backend/jobs/wrangler.jsonc and docs/cloudflare.md.
   "env": {
-    "staging": {
-      "vars": {
-        "DEPLOYMENT_ENV": "staging",
-        "JOBS_PROFILE": "encode"
-      },
-      "d1_databases": [
-        {
-          "binding": "DB",
-          "database_name": "starter-web",
-          "migrations_dir": "../../../packages/backend/database/drizzle-d1"
-        }
-      ],
-      "r2_buckets": [
-        {
-          "binding": "MEDIA",
-          // The name, not an id: R2 addresses buckets by name within an account, so
-          // this is the same value the jobs Worker declares. It is committed for the
-          // same reason `database_name` is — a name a fresh clone will never own,
-          // because the account behind it does not exist until `deploy:configure`
-          // runs.
-          "bucket_name": "starter-media-staging"
-        }
-      ],
-      "workflows": [
-        {
-          "binding": "ENCODE_WORKFLOW",
-          "class_name": "EncodeWorkflow",
-          "name": "starter-encode",
-          "script_name": "starter-jobs"
-        }
-      ]
-    },
-    "production": {
-      "vars": {
-        "DEPLOYMENT_ENV": "production",
-        "JOBS_PROFILE": "encode"
-      },
-      "d1_databases": [
-        {
-          "binding": "DB",
-          "database_name": "starter-web",
-          "migrations_dir": "../../../packages/backend/database/drizzle-d1"
-        }
-      ],
-      "r2_buckets": [{ "binding": "MEDIA", "bucket_name": "starter-media-production" }],
-      "workflows": [
-        {
-          "binding": "ENCODE_WORKFLOW",
-          "class_name": "EncodeWorkflow",
-          "name": "starter-encode",
-          "script_name": "starter-jobs"
-        }
-      ]
-    }
+    "staging": { "vars": { "DEPLOYMENT_ENV": "staging", "JOBS_PROFILE": "disabled" } },
+    "production": { "vars": { "DEPLOYMENT_ENV": "production", "JOBS_PROFILE": "disabled" } }
   }
 }

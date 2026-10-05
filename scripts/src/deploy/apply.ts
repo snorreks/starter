@@ -29,12 +29,12 @@
 // Nothing here decides *whether* to deploy. That is `--yes`, and it is checked
 // before the first step, not between steps.
 
+import { randomUUID } from 'node:crypto';
 import { join } from 'node:path';
+import { IDEMPOTENCY_KEY_HEADER } from '@starter/schemas/jobs';
 import { captureWrangler, runWrangler } from '../cloudflare/wrangler.ts';
-import { planMigrate } from '../db/migrate.ts';
 import { CLIENT_DIR, REPO_ROOT } from '../shared/paths.ts';
 import { imageProtocolProblem } from './compatibility.ts';
-import { wranglerDatabaseId } from './configure.ts';
 import { bucketExists } from './provision.ts';
 import {
   type ArtifactCheck,
@@ -46,6 +46,7 @@ import {
   sourceRevision,
   writeReleaseRecord,
 } from './release.ts';
+import { remoteConfigPath, renderRemoteConfig, writeRemoteConfig } from './remote_config.ts';
 import type { ResolvedTarget } from './target.ts';
 
 /** Where the built Worker and its assets live. */
@@ -212,35 +213,30 @@ export const migrationStep = (
   target: ResolvedTarget,
   root: string = REPO_ROOT,
 ): { ok: true; args: string[]; description: string } | { ok: false; detail: string } => {
-  const plan = planMigrate(target.environment, { databaseId: target.d1DatabaseId });
-
-  if (!plan.ok) {
-    return {
-      ok: false,
-      detail: `Refusing to deploy without migrating: ${plan.reason} ${plan.remedy}`,
-    };
+  if (target.d1DatabaseId.trim() === '') {
+    return { ok: false, detail: 'No D1 database id in the resolved target; refusing to migrate.' };
   }
 
-  const configured = wranglerDatabaseId(target.environment, root);
-  if (configured !== target.d1DatabaseId) {
-    // Migrating one database and deploying code that reads another is invisible in
-    // the argv: both commands name the binding `DB`, so only the configured id
-    // reveals it. Refused before anything runs.
+  try {
+    renderRemoteConfig({ target, root });
+  } catch (error) {
     return {
       ok: false,
-      detail:
-        `The ${target.environment} D1 database in wrangler.jsonc is ` +
-        `${configured === null ? 'not configured' : `"${configured}"`}, but this project ` +
-        `is configured with ${target.d1DatabaseId}.\n` +
-        '  Wrangler resolves the database from its own config, so migrating now would move\n' +
-        '  a different database than the deployment expects. Nothing has been changed.\n' +
-        `  bun run deploy:configure -- --env ${target.environment} --provision`,
+      detail: `Cannot render the migration/deploy config: ${error instanceof Error ? error.message : 'invalid source config'}`,
     };
   }
 
   return {
     ok: true,
-    args: plan.args,
+    args: [
+      'd1',
+      'migrations',
+      'apply',
+      'DB',
+      '--remote',
+      '--config',
+      remoteConfigPath({ target, root }),
+    ],
     description: `Apply reviewed migrations to ${target.d1DatabaseId} (${target.environment})`,
   };
 };
@@ -270,12 +266,10 @@ export const jobsDeployStep = (
     description: `Deploy the jobs Worker ${compute.jobsWorkerName} and its Workflows`,
     args: [
       'deploy',
-      '--env',
-      target.environment,
       '--name',
       compute.jobsWorkerName,
       '--config',
-      join(root, 'apps/backend/jobs/wrangler.jsonc'),
+      remoteConfigPath({ target, root, kind: 'jobs' }),
       // The jobs Worker carries the *same* release identity as the web Worker. Two
       // SHAs for one deployment would make "which code is live" unanswerable.
       '--var',
@@ -289,18 +283,17 @@ export const deployStep = (
   target: ResolvedTarget,
   sourceSha: string,
   digest: string | null,
+  root: string = REPO_ROOT,
 ): { description: string; args: string[] } => ({
   description: `Deploy ${target.workerName} and its assets to ${target.origin}`,
   args: [
     'deploy',
-    '--env',
-    target.environment,
     // The Worker name is passed explicitly rather than read from the config, so
     // the name the plan printed is the name that gets deployed.
     '--name',
     target.workerName,
     '--config',
-    join(CLIENT_DIR, 'wrangler.jsonc'),
+    remoteConfigPath({ target, root }),
     // RELEASE is a git SHA: public information by construction, which is why it is
     // safe as a var and why /health can report it. It is what lets verification
     // prove *which* release is answering rather than merely that something is.
@@ -309,7 +302,7 @@ export const deployStep = (
     // The digest travels with the release as metadata. Wrangler records it, and it
     // is what makes the recorded artifact independently checkable against the
     // provider.
-    '--meta',
+    '--message',
     `source_sha=${sourceSha},artifact=${digest ?? 'unknown'}`,
   ],
 });
@@ -633,6 +626,16 @@ export const apply = async (options: ApplyOptions): Promise<ApplyResult> => {
   }
 
   const revision = sourceRevision(options.root);
+  try {
+    writeRemoteConfig({ target, root: options.root });
+    if (target.compute.enabled) {
+      writeRemoteConfig({ target, root: options.root, kind: 'jobs' });
+    }
+  } catch (error) {
+    const detail = `Cannot generate remote configuration: ${error instanceof Error ? error.message : 'invalid configuration'}`;
+    outcomes.push(bad('build', detail));
+    return stop('build', detail);
+  }
 
   // -- build ---------------------------------------------------------------
   // The artifact is produced here, from the source in this checkout, rather than
@@ -803,7 +806,7 @@ export const apply = async (options: ApplyOptions): Promise<ApplyResult> => {
     return { ok: true, outcomes, argv, record: null, components, stoppedAt: null };
   }
 
-  const deployArgs = deployStep(target, revision.sha, artifact.digest).args;
+  const deployArgs = deployStep(target, revision.sha, artifact.digest, options.root).args;
   argv.push(deployArgs);
 
   const deployCode = run('wrangler', deployArgs, { cwd: CLIENT_DIR });
@@ -910,7 +913,7 @@ const lastComputeProtocol = (
 export const verifyTinyJob = async (
   target: ResolvedTarget,
   doFetch: typeof globalThis.fetch = globalThis.fetch,
-  options: { token?: string | null; timeoutMs?: number } = {},
+  options: { token?: string | null; timeoutMs?: number; idempotencyKey?: string } = {},
 ): Promise<{ ok: boolean; detail: string | null }> => {
   if (!target.compute.enabled) {
     return {
@@ -938,7 +941,11 @@ export const verifyTinyJob = async (
     `${target.origin}/api/jobs`,
     {
       method: 'POST',
-      headers: { 'content-type': 'application/json', authorization: `Bearer ${options.token}` },
+      headers: {
+        'content-type': 'application/json',
+        authorization: `Bearer ${options.token}`,
+        [IDEMPOTENCY_KEY_HEADER]: options.idempotencyKey ?? randomUUID(),
+      },
       body: JSON.stringify({ fixture: 'sample-v1', preset: 'demo-180p-v1' }),
       signal: AbortSignal.timeout(timeoutMs),
     },

@@ -20,6 +20,7 @@
 import { spawn, spawnSync } from 'node:child_process';
 import { killTree } from '@starter/utils/process';
 import { CLIENT_DIR, REPO_ROOT } from '../shared/paths.ts';
+import { runBoundedSync } from '../shared/run_bounded.ts';
 import { missingToolMessage, wranglerBin } from '../shared/tools.ts';
 
 export { CLIENT_DIR, REPO_ROOT };
@@ -37,7 +38,13 @@ export const wranglerUnavailableReason = (): string | null => {
     return missingToolMessage('wrangler', 'apps/frontend/client');
   }
 
-  const probe = spawnSync(bin, ['--version'], { encoding: 'utf8', cwd: REPO_ROOT });
+  const probe = spawnSync(bin, ['--version'], {
+    encoding: 'utf8',
+    cwd: REPO_ROOT,
+    timeout: 5_000,
+    killSignal: 'SIGKILL',
+    maxBuffer: 16_384,
+  });
   if (probe.error !== undefined || probe.status !== 0) {
     const detail = probe.error?.message ?? probe.stderr?.trim() ?? 'unknown error';
     return `\`${bin} --version\` failed (${detail}). Run \`bun install\` and try again.`;
@@ -55,7 +62,13 @@ export const wranglerVersion = (): string | null => {
   if (bin === null) {
     return null;
   }
-  const probe = spawnSync(bin, ['--version'], { encoding: 'utf8', cwd: REPO_ROOT });
+  const probe = spawnSync(bin, ['--version'], {
+    encoding: 'utf8',
+    cwd: REPO_ROOT,
+    timeout: 5_000,
+    killSignal: 'SIGKILL',
+    maxBuffer: 16_384,
+  });
   return probe.status === 0 ? probe.stdout.trim() : null;
 };
 
@@ -130,8 +143,12 @@ export interface ProcessRunner {
 }
 
 const defaultRunner: ProcessRunner = {
-  run: (command, args, options) =>
-    spawnSync(command, [...args], { stdio: 'inherit', cwd: options.cwd }).status ?? 1,
+  run: (command, args, options) => {
+    const result = runBoundedSync({ command, args, cwd: options.cwd });
+    process.stdout.write(result.stdout);
+    process.stderr.write(result.stderr);
+    return result.code;
+  },
 };
 
 /** Injected by `main`/tests; defaults to the real process. */
@@ -345,14 +362,13 @@ export const captureWrangler = (
     };
   }
 
-  const result = spawnSync(bin, [...wranglerArgs], {
-    encoding: 'utf8',
+  const result = runBoundedSync({
+    command: bin,
+    args: wranglerArgs,
     cwd: REPO_ROOT,
+    timeoutMs: 60_000,
+    maxBytes: 1024 * 1024,
   });
 
-  return {
-    ok: result.status === 0,
-    stdout: result.stdout ?? '',
-    stderr: result.stderr ?? '',
-  };
+  return { ok: result.code === 0, stdout: result.stdout, stderr: result.stderr };
 };

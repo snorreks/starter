@@ -28,7 +28,7 @@
 // 10 MiB artifact twice in a Worker's memory, and is the "materialize the video in
 // a step result" failure this design forbids.
 
-import type { JobFixture } from '@starter/schemas/jobs';
+import { type JobFixture, MEDIA_KEY_PREFIX, mediaFixtureKey } from '@starter/schemas/jobs';
 import { Sha256 } from './sha256.ts';
 import { withKnownLength } from './stream.ts';
 
@@ -39,13 +39,13 @@ import { withKnownLength } from './stream.ts';
  * prefix rather than a silent reinterpretation of objects whose bytes were written
  * under different assumptions.
  */
-const PREFIX = 'media/v1';
+const PREFIX = MEDIA_KEY_PREFIX;
 
 /** Identifiers allowed in a key. Deliberately narrow. */
 const SAFE_ID = /^[A-Za-z0-9._-]{1,64}$/;
 
 /** The private key of a named fixture. */
-export const fixtureKey = (fixture: JobFixture): string => `${PREFIX}/fixtures/${fixture}.mp4`;
+export const fixtureKey = mediaFixtureKey;
 
 /**
  * The private key one attempt writes its output to.

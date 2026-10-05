@@ -201,10 +201,10 @@ describe('the apply pipeline spawns exactly the commands it prints', () => {
     // The migration names the environment and the binding, before anything deploys.
     const [migration, deploy] = spawns.calls;
     expect(migration?.args.slice(0, 4)).toEqual(['d1', 'migrations', 'apply', 'DB']);
-    expect(migration?.args).toContain('--env');
-    expect(migration?.args).toContain('staging');
+    expect(migration?.args).not.toContain('--env');
+    expect(migration?.args.at(-1)).toContain('staging-web.json');
 
-    expect(deploy?.args.slice(0, 2)).toEqual(['deploy', '--env']);
+    expect(deploy?.args.slice(0, 2)).toEqual(['deploy', '--name']);
     expect(deploy?.args).toContain('starter-staging');
 
     // The rendered argv is the spawned argv. Asserting only on return values would
@@ -229,7 +229,7 @@ describe('the apply pipeline spawns exactly the commands it prints', () => {
     });
 
     const deploy = spawns.calls[1];
-    const meta = deploy?.args[deploy.args.indexOf('--meta') + 1] ?? '';
+    const meta = deploy?.args[deploy.args.indexOf('--message') + 1] ?? '';
     expect(meta).toContain('artifact=sha256:deadbeef');
     expect(meta).toContain('source_sha=');
   });
@@ -616,16 +616,7 @@ describe('preflight is read-only and refuses a mismatched destination', () => {
     // `--json` is not a flag wrangler 4.142.0 has on `secret list`, and asserting the
     // invented spelling here is what let it reach a real account.
     expect(seen[3]).toEqual(secretListArgv('starter-staging', 'staging'));
-    expect(seen[3]).toEqual([
-      'secret',
-      'list',
-      '--name',
-      'starter-staging',
-      '--env',
-      'staging',
-      '--format',
-      'json',
-    ]);
+    expect(seen[3]).toEqual(['secret', 'list', '--name', 'starter-staging', '--format', 'json']);
   });
 
   test('a matching account and resources pass', () => {
@@ -794,7 +785,7 @@ const fixtureRoot = (databaseId: string): string => {
   mkdirSync(dirname(path), { recursive: true });
   writeFileSync(
     path,
-    `{\n  "name": "starter",\n  "d1_databases": [\n    {\n      "binding": "DB",\n      "database_name": "starter",\n      "database_id": "${databaseId}"\n    }\n  ]\n}\n`,
+    `{\n  "name": "starter",\n  "main": ".svelte-kit/cloudflare/_worker.js",\n  "assets": { "directory": ".svelte-kit/cloudflare", "binding": "ASSETS" },\n  "d1_databases": [\n    {\n      "binding": "DB",\n      "database_name": "starter",\n      "database_id": "${databaseId}"\n    }\n  ]\n}\n`,
     'utf8',
   );
   return root;

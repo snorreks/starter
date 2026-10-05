@@ -84,12 +84,16 @@ describe('the flags this repository passes to the pinned wrangler', () => {
     }
   });
 
-  test('the read is scoped to the environment, not the top-level Worker', () => {
+  test('secret reads name the exact Worker without legacy environment suffixing', () => {
     const argv = secretListArgv('starter-demo-web-staging', 'staging');
-    const envAt = argv.indexOf('--env');
+    expect(argv).not.toContain('--env');
+    expect(argv[argv.indexOf('--name') + 1]).toBe('starter-demo-web-staging');
+  });
 
-    expect(envAt).toBeGreaterThan(-1);
-    expect(argv[envAt + 1]).toBe('staging');
+  test('deployment provenance uses an offered flag, not the invented --meta', () => {
+    const offered = offeredFlags(helpFor(['deploy']));
+    expect(offered.has('--message')).toBe(true);
+    expect(offered.has('--meta')).toBe(false);
   });
 
   test('a flag the CLI does not offer would be visible here and nowhere else', () => {

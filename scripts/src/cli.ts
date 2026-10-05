@@ -34,6 +34,7 @@ const COMMANDS: Record<string, CommandLoader> = {
   setup: async () => (await import('./commands/setup.ts')).setupCommand,
   smoke: async () => (await import('./commands/smoke.ts')).smokeCommand,
   workflows: async () => (await import('./commands/workflows.ts')).workflowsCommand,
+  update: async () => (await import('./commands/update.ts')).updateCommand,
   evidence: async () => (await import('./commands/evidence.ts')).evidenceCommand,
 };
 
@@ -83,7 +84,36 @@ export const main = async (argv: readonly string[]): Promise<number> => {
   }
 
   try {
-    return await (await loader()).run(rest);
+    const command = await loader();
+    const { needsDeploymentCredential, withDeploymentCredential } = await import(
+      './deploy/local_credential.ts'
+    );
+    if (needsDeploymentCredential({ command: name, args: rest })) {
+      return await withDeploymentCredential({
+        run: async () => {
+          const { effectiveDeploymentValues } = await import('./registry/deployment_values.ts');
+          const accountId = effectiveDeploymentValues().accountId;
+          if (accountId === null || !/^[0-9a-f]{32}$/i.test(accountId)) {
+            return fail(
+              "No valid Cloudflare account ID configured. Refusing to use Wrangler's cached account. Run deploy:configure -- --account <32-hex>.",
+              EXIT.unavailable,
+            );
+          }
+          const previous = process.env.CLOUDFLARE_ACCOUNT_ID;
+          process.env.CLOUDFLARE_ACCOUNT_ID = accountId;
+          try {
+            return await command.run(rest);
+          } finally {
+            if (previous === undefined) {
+              delete process.env.CLOUDFLARE_ACCOUNT_ID;
+            } else {
+              process.env.CLOUDFLARE_ACCOUNT_ID = previous;
+            }
+          }
+        },
+      });
+    }
+    return await command.run(rest);
   } catch (error) {
     // An unexpected throw is a defect, not a usage error. Name the command and
     // exit nonzero rather than letting a stack trace be the whole interface.

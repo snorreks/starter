@@ -262,8 +262,10 @@ describe('the apply pipeline checks the protocol the last release recorded', () 
     status: number;
     bytes: number;
   }): typeof globalThis.fetch =>
-    (async (url: string) => {
+    (async (url: string, init?: RequestInit) => {
       if (url.endsWith('/api/jobs')) {
+        const key = new Headers(init?.headers).get('idempotency-key');
+        expect(key).toMatch(/^[\x21-\x7e]{1,100}$/);
         return { ok: true, status: 202, json: async () => ({ id: 'job-1', status: 'pending' }) };
       }
       if (url.endsWith('/output')) {

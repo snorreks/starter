@@ -14,7 +14,7 @@
 // engines ever disagreed about the upsert, one of those two suites goes red.
 
 import { Database } from 'bun:sqlite';
-import { describe, expect, test } from 'bun:test';
+import { describe, expect, mock, test } from 'bun:test';
 import { createD1RateLimitStorage, type RateLimitDatabase } from './d1_rate_limit.ts';
 
 /** The migration's table, verbatim, so a schema drift breaks these tests. */
@@ -80,6 +80,38 @@ const harness = (startMs = 1_700_000_000_000): Harness => {
     },
   };
 };
+
+test('failed housekeeping reports a fixed event and never weakens the auth verdict', async () => {
+  const sql = new Database(':memory:');
+  sql.run(CREATE_TABLE);
+  const database = sqliteAdapter(sql);
+  let clock = 1_700_000_000_000;
+  const report = mock(() => {});
+  const storage = createD1RateLimitStorage(
+    {
+      prepare: (query) =>
+        query.startsWith('DELETE')
+          ? {
+              bind: () => ({
+                all: async () => {
+                  throw new Error('sensitive-db-detail');
+                },
+              }),
+            }
+          : database.prepare(query),
+    },
+    { now: () => clock, onPruneFailure: report },
+  );
+  try {
+    expect((await storage.consume('fixture', { max: 1, window: 3600 })).allowed).toBe(true);
+    clock += 60_000;
+    expect((await storage.consume('fixture', { max: 1, window: 3600 })).allowed).toBe(false);
+    expect(report).toHaveBeenCalledTimes(2);
+    expect(report).toHaveBeenCalledWith();
+  } finally {
+    sql.close();
+  }
+});
 
 const KEY = '203.0.113.7|/sign-in/email';
 

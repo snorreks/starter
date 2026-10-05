@@ -142,18 +142,13 @@ const arrayFromWrangler = (parsed: unknown): unknown[] => {
  * behavioural tests inject a fake `run`, so they pass against an argv that no
  * version of wrangler would accept.
  */
-export const secretListArgv = (workerName: string, environment: string): string[] => [
+export const secretListArgv = (workerName: string, _environment: string): string[] => [
   'secret',
   'list',
   '--name',
   workerName,
-  // The scope is the whole point. Without `--env`, wrangler asks the account about
-  // the *top-level* Worker, and this repository's config puts the Worker under
-  // `env.staging`. The answer was `Worker "…" not found` while both secrets sat
-  // there under the staging environment — the same env-scoping mistake
-  // `deploy:configure` was fixed for, appearing this time in the reader.
-  '--env',
-  environment,
+  // Legacy secret commands append --env to --name. The validated target already
+  // includes its environment identity; suffixing again queries a different Worker.
   '--format',
   'json',
 ];

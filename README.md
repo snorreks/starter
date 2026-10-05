@@ -45,13 +45,12 @@ still downloadable, and what the maintenance schedule last did — with the run'
 trigger, because a hand-triggered sweep is not the schedule firing. Both hosts
 render it from `@starter/features`; the native one fetches the result through its
 bearer transport and plays it from a Blob, so no credential ever reaches a URL.
-The compute profile is **off** by default (`JOBS_PROFILE` is absent, which means
-`disabled`), so a fresh checkout renders the "switched off here" state and notes
+The compute profile is **off** by default (`JOBS_PROFILE: disabled`), so a fresh checkout renders the "switched off here" state and notes
 and auth keep working. `bun run test:compute` is the lane that proves a real
 encode, and it needs Docker.
 
-Nothing is provisioned. There are no Cloudflare resource ids, no signing keys, no
-domains, and no tokens anywhere in the repository — see
+A fresh template copy carries no live Cloudflare resource ids, signing keys,
+domains or plaintext tokens in tracked source — see
 [docs/starter-extraction.md](docs/starter-extraction.md).
 
 ## Getting started
@@ -92,6 +91,8 @@ names what is missing rather than failing obscurely:
 | `bun install` | Install from the committed lockfile. |
 | `bun run setup` | Check the toolchain and write `.env` from the example. |
 | `bun run setup:doctor` | Prove the browser prerequisites actually launch. |
+| `bun run update` | Offline preview of Nix + Bun + all workspace package updates. |
+| `bun run update --yes --verify` | Apply latest releases, reconcile pins, and run guards/lint/typecheck/unit tests. |
 | `bun run setup:doctor -- --profile compute` | What *one lane* needs here, and the exact remedy when it is missing. |
 | `bun run dev` | The app in Node with emulated bindings. `apps/frontend/client` has its own ports. |
 | `bun run dev:worker` | The **built** Worker in real workerd. Requires `bun run build` first. |
@@ -99,10 +100,38 @@ names what is missing rather than failing obscurely:
 | `bun run guard` | Eight whole-repository invariants. |
 | `bun run native:doctor` | What this host can build for the desktop client. |
 | `bun run deploy:check --env staging` | The offline deployment plan. No credential, no network. |
-| `bun run deploy:provision --env staging --yes` | Idempotent: creates the database, the private bucket, uploads the fixture, installs secrets by value. |
+| `bun run deploy:provision --env staging --yes` | Check the configured D1; provision optional private storage/fixture. Add `--install-secrets` explicitly. |
 | `bun run deploy:apply --env staging --yes` | schema → storage → image → jobs → web → verify → record. |
 | `bun run smoke -- --without-heavy` | Rehearse a downstream copy with the native app and the Rust processor deleted. |
 | `bun run evidence` | Check the capability matrix against the evidence manifest. |
+
+## One selective updater
+
+Borrowed from Aikami's DX, but integrated into this repository's existing dispatcher:
+
+```bash
+bun run update                              # preview; no writes or network
+bun run update --yes --verify                # Nix → Bun → all workspace packages
+bun run update --packages --yes              # packages only, including .pi
+bun run update --nix --yes                   # flake inputs only
+bun run update --bun --yes                   # Bun pin + verified runtime + lockfile
+bun run update --no-nix --yes                # Bun and packages
+bun run update --bun-version 1.4.2 --yes     # select a reviewed exact Bun release
+```
+
+Selection is additive; without selectors all lanes run. Apply requires `--yes`.
+Package updates include majors and preserve exact pins. Bun is built with Nix from
+hash-verified release archives; config, CI mirrors and `.bun-version` move together.
+No global `bun upgrade` or unpinned `bunx` is used. Re-enter `nix develop`/reload
+direnv afterwards: a running shell cannot replace itself. Non-Nix hosts can use the
+package lane; the Nix/Bun lanes name their Nix prerequisite rather than pretending
+to upgrade a runtime. Agent extension dependencies in the `.pi` workspace are
+included; global Pi packages and externally installed skills are deliberately not.
+Review the diff and run browser/Worker/E2E lanes before committing an update.
+
+For deployment, keep the local token in gitignored root `.env.deploy` (mode 600),
+not a global config directory or runtime secrets file. Follow
+[deployment.md](docs/deployment.md).
 
 ## Tests
 
