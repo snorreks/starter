@@ -72,7 +72,7 @@ describe('the flags this repository passes to the pinned wrangler', () => {
   });
 
   test('every flag `secret list` is given exists in that subcommand', () => {
-    const argv = secretListArgv('starter-demo-web-staging');
+    const argv = secretListArgv('starter-demo-web-staging', 'staging');
     const help = helpFor(['secret', 'list']);
     const offered = offeredFlags(help);
 
@@ -82,6 +82,14 @@ describe('the flags this repository passes to the pinned wrangler', () => {
     for (const flag of flagsOf(argv)) {
       expect(offered.has(flag)).toBe(true);
     }
+  });
+
+  test('the read is scoped to the environment, not the top-level Worker', () => {
+    const argv = secretListArgv('starter-demo-web-staging', 'staging');
+    const envAt = argv.indexOf('--env');
+
+    expect(envAt).toBeGreaterThan(-1);
+    expect(argv[envAt + 1]).toBe('staging');
   });
 
   test('a flag the CLI does not offer would be visible here and nowhere else', () => {

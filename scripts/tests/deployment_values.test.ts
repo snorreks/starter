@@ -377,6 +377,14 @@ describe('provisionDatabase', () => {
       const stagingAt = before.indexOf('"staging"');
       expect(after.slice(0, stagingAt)).toBe(before.slice(0, stagingAt));
 
+      // And so are the bytes from the sibling environment onward. The prefix check
+      // alone would pass on a write that dropped everything after the block — which
+      // is the shape the original bug took, since it replaced the file with the
+      // fragment and the fragment ended at the block's own closing brace.
+      const productionAt = before.indexOf('"production"');
+      expect(after.slice(after.indexOf('"production"'))).toBe(before.slice(productionAt));
+      expect(after.endsWith(before.slice(productionAt))).toBe(true);
+
       // The comments are the documentation. Losing them is the actual harm.
       expect(after).toContain('// The deployment and the local development contract');
       expect(after).toContain('// Per environment, so staging and production cannot share');
@@ -394,6 +402,108 @@ describe('provisionDatabase', () => {
 
       // It is still the JSONC it was, not a stripped or re-serialised copy.
       expect(JSON.parse(stripComments(after)).env.staging.d1_databases[0].database_id).toBe(UUID);
+    } finally {
+      restore();
+    }
+  });
+
+  test('a key that only appears in a comment does not select the block', () => {
+    // The scanner this replaces regexed the whole file and counted braces, so a
+    // comment naming the environment could select a span that was not the block —
+    // and the prefix/suffix guard was computed from that same wrong span, so it
+    // agreed with itself and passed.
+    const root = envShaped();
+    const restore = quiet();
+    const path = join(root, 'apps/frontend/client/wrangler.jsonc');
+
+    try {
+      const original = readFileSync(path, 'utf8');
+      // A decoy, before the real one: a comment mentioning "staging", and a string
+      // value containing braces, both inside the top level.
+      const decoyed = original.replace(
+        '{\n  // The deployment',
+        '{\n  // "staging": { "d1_databases": [] }  <- a comment, not a block\n' +
+          '  "note": "a } brace inside a string }",\n  // The deployment',
+      );
+      writeFileSync(path, decoyed, 'utf8');
+
+      expect(
+        provisionDatabase({
+          root,
+          hasCredential: () => true,
+          create: () => ({ ok: true, stdout: `${ACCOUNT}\n${UUID}\n`, stderr: '' }),
+        }),
+      ).toBe(0);
+
+      const after = readFileSync(path, 'utf8');
+
+      // The decoy survived untouched…
+      expect(after).toContain('// "staging": { "d1_databases": [] }  <- a comment, not a block');
+      expect(after).toContain('"note": "a } brace inside a string }"');
+      // …and the id went into the real env.staging, which the guard verifies by
+      // resolving the file rather than by trusting the span it picked.
+      expect(JSON.parse(stripComments(after)).env.staging.d1_databases[0].database_id).toBe(UUID);
+    } finally {
+      restore();
+    }
+  });
+
+  test('an edit that would not resolve to the created id is not written', () => {
+    // The guard is semantic: the candidate file is parsed and asked. A config with no
+    // DB binding anywhere cannot be made to answer with this id, so the write is
+    // skipped and the refusal is reported.
+    //
+    // The database still exists, so the overlay — the record of that — is still
+    // written. Returning nonzero there would lose the only durable note about a
+    // resource that was created, and a later `deploy apply` refuses on the missing id
+    // anyway, which is the visible failure this wants.
+    const root = makeTree({
+      'apps/frontend/client/wrangler.jsonc': [
+        '{',
+        '  // Two bindings, and neither is DB. The writer edits the FIRST',
+        '  // `database_name` it finds; this file is the case where that is the wrong one.',
+        '  "env": {',
+        '    "staging": {',
+        '      "d1_databases": [',
+        '        {',
+        '          "binding": "ARCHIVE",',
+        '          "database_name": "archive-store",',
+        '          "migrations_dir": "elsewhere"',
+        '        }',
+        '      ]',
+        '    }',
+        '  }',
+        '}',
+        '',
+      ].join('\n'),
+    });
+    const restore = quiet();
+    const path = join(root, 'apps/frontend/client/wrangler.jsonc');
+    const before = readFileSync(path, 'utf8');
+    const errors: string[] = [];
+    process.stderr.write = ((text: string) => {
+      errors.push(String(text));
+      return true;
+    }) as typeof process.stderr.write;
+
+    try {
+      expect(
+        provisionDatabase({
+          root,
+          hasCredential: () => true,
+          create: () => ({ ok: true, stdout: `${ACCOUNT}\n${UUID}\n`, stderr: '' }),
+        }),
+      ).toBe(0);
+
+      // wrangler.jsonc is exactly as it was — not truncated, not edited.
+      expect(readFileSync(path, 'utf8')).toBe(before);
+
+      // The refusal names the file and what it resolved to instead of the new id.
+      expect(errors.join('')).toContain('Refusing to write apps/frontend/client/wrangler.jsonc');
+      expect(errors.join('')).toContain('nothing');
+
+      // And the overlay records what was actually created.
+      expect(resolveDeploymentValues({}, root).environments?.staging?.d1DatabaseId).toBe(UUID);
     } finally {
       restore();
     }

@@ -196,7 +196,7 @@
       "revision": "d7e57cb6a6b6e9c80c51084d4518e46c65fb970f",
       "command": "VITE_NATIVE_API_ORIGIN=https://starter-demo.invalid bun run native:build -- --no-bundle",
       "platform": "linux-x64, Rust 1.98.1, WebKitGTK 4.1 from a Nix shell",
-      "result": "Compiled and linked a real release binary: 5.6 MB stripped ELF, sha256 2b03bd54c98f155ceb6388c1f1f821cb. The placeholder .invalid origin appears exactly once in the binary, so the build-time origin really is compiled in. No credential-shaped material found. NOTE: this proves compilation on linux-x64 only. The origin is RFC 2606 non-resolvable on purpose, because no deployed API exists to point at; every network behaviour of the packaged client is therefore NOT VERIFIED.",
+      "result": "Compiled and linked a real release binary: 5,861,608-byte stripped ELF, sha256 2b03bd54c98f155ceb6388c1f1f821cbc246a3412fa23955196c2d6ddcc1aa10 (the full 64-character digest; a prefix is not a digest). The placeholder .invalid origin appears exactly once in the binary, so the build-time origin really is compiled in. No credential-shaped material found. NOTE: this proves compilation on linux-x64 only. The origin is RFC 2606 non-resolvable on purpose, because no deployed API exists to point at; every network behaviour of the packaged client is therefore NOT VERIFIED.",
       "count": null,
       "recordedAt": "2026-10-05T00:25:54.000Z",
       "artifact": null

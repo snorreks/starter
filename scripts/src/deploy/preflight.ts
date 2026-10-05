@@ -86,7 +86,11 @@ export const preflightCommands = (target: ResolvedTarget): { check: string; args
     // Names only, never values: `wrangler secret list` reports what is installed
     // and nothing else. That is the property that makes this check safe to run
     // before every apply and safe to paste into a ticket.
-    { check: 'secrets', args: ['secret', 'list', '--name', target.workerName, '--json'] },
+    //
+    // The same call the check makes, not a second hand-written copy of it: this list
+    // is what a report shows an operator as "the commands that were run", and a copy
+    // that drifted is a report that describes something else.
+    { check: 'secrets', args: secretListArgv(target.workerName, target.environment) },
   ];
 
   if (target.compute.enabled && target.compute.mediaBucketName !== null) {
@@ -138,11 +142,18 @@ const arrayFromWrangler = (parsed: unknown): unknown[] => {
  * behavioural tests inject a fake `run`, so they pass against an argv that no
  * version of wrangler would accept.
  */
-export const secretListArgv = (workerName: string): string[] => [
+export const secretListArgv = (workerName: string, environment: string): string[] => [
   'secret',
   'list',
   '--name',
   workerName,
+  // The scope is the whole point. Without `--env`, wrangler asks the account about
+  // the *top-level* Worker, and this repository's config puts the Worker under
+  // `env.staging`. The answer was `Worker "…" not found` while both secrets sat
+  // there under the staging environment — the same env-scoping mistake
+  // `deploy:configure` was fixed for, appearing this time in the reader.
+  '--env',
+  environment,
   '--format',
   'json',
 ];
@@ -361,7 +372,7 @@ export const preflight = (
   // secrets were installed and `wrangler secret list` answered them. The argv is a
   // named export so a test can hold it against the pinned CLI's own help, which is
   // the only thing that catches a flag this repository invented.
-  const secrets = run(secretListArgv(target.workerName));
+  const secrets = run(secretListArgv(target.workerName, target.environment));
   if (!secrets.ok) {
     findings.push({
       check: 'secrets',

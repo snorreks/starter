@@ -612,11 +612,20 @@ describe('preflight is read-only and refuses a mismatched destination', () => {
     expect(seen.map((args) => args[0])).toEqual(['whoami', 'd1', 'deployments', 'secret']);
     expect(seen[2]).toContain('deployments');
     expect(seen[2]).toContain('list');
-    // The pinned CLI spells this `--format json`. `--json` is not a flag wrangler
-    // 4.142.0 has on `secret list`, and asserting the invented spelling here is
-    // what let it reach a real account.
-    expect(seen[3]).toEqual(secretListArgv('starter-staging'));
-    expect(seen[3]).toEqual(['secret', 'list', '--name', 'starter-staging', '--format', 'json']);
+    // The pinned CLI spells this `--format json`, and the scope is `--env`.
+    // `--json` is not a flag wrangler 4.142.0 has on `secret list`, and asserting the
+    // invented spelling here is what let it reach a real account.
+    expect(seen[3]).toEqual(secretListArgv('starter-staging', 'staging'));
+    expect(seen[3]).toEqual([
+      'secret',
+      'list',
+      '--name',
+      'starter-staging',
+      '--env',
+      'staging',
+      '--format',
+      'json',
+    ]);
   });
 
   test('a matching account and resources pass', () => {

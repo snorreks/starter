@@ -315,16 +315,32 @@ jobs:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           DEPLOY_ENVIRONMENT: ${{ inputs.environment }}
           INSTALL_SECRETS: ${{ inputs.install_secrets }}
-          BETTER_AUTH_SECRET: ${{ inputs.install_secrets && secrets.BETTER_AUTH_SECRET || '' }}
-          RESEND_API_KEY: ${{ inputs.install_secrets && secrets.RESEND_API_KEY || '' }}
+          # The runtime secrets are supplied **only** when the operator asked to install
+          # them AND asked for the GitHub source. With `secrets_source: sops` the
+          # values come from the ciphertext, so reading them here as well would put
+          # both copies in the job's environment for no reason — and a rotation that
+          # changes one of them but not the other would be invisible until someone
+          # noticed which source won.
+          BETTER_AUTH_SECRET: ${{ inputs.install_secrets && inputs.secrets_source == 'github' && secrets.BETTER_AUTH_SECRET || '' }}
+          RESEND_API_KEY: ${{ inputs.install_secrets && inputs.secrets_source == 'github' && secrets.RESEND_API_KEY || '' }}
           SECRETS_SOURCE: ${{ inputs.secrets_source }}
-          SOPS_AGE_KEY: ${{ inputs.secrets_source == 'sops' && secrets.SOPS_AGE_KEY || '' }}
+          # Read only for the sops source, and only when secrets are actually being
+          # installed: a first deploy with `install_secrets` false has nothing to
+          # decrypt, and demanding the key for it turns "not asked for" into a red run.
+          SOPS_AGE_KEY: ${{ inputs.install_secrets && inputs.secrets_source == 'sops' && secrets.SOPS_AGE_KEY || '' }}
         run: |
           extra=""
           [ "$INSTALL_SECRETS" = "true" ] && extra="--install"
-          if [ "$SECRETS_SOURCE" = "sops" ]; then
+          if [ "$INSTALL_SECRETS" = "true" ] && [ "$SECRETS_SOURCE" = "sops" ]; then
+            # Only reached when secrets are genuinely being installed. A plain first
+            # deploy (`install_secrets` false) has nothing to decrypt and must not be
+            # turned red by a missing key or a missing ciphertext.
             command -v sops >/dev/null 2>&1 || {
               echo "::error::secrets_source=sops was chosen and this runner has no sops binary."
+              echo "::error::sops is not distributed through npm — the 'sops' package there is"
+              echo "::error::an unrelated 0.0.3 wrapper, not Mozilla's binary — so it cannot be"
+              echo "::error::pinned by this repository's lockfile. Install the real one on the"
+              echo "::error::runner image, or run the deploy locally with secrets_source=github."
               exit 3
             }
             file="secrets/$DEPLOY_ENVIRONMENT.enc.env"

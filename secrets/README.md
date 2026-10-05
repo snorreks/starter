@@ -1,15 +1,26 @@
 # SOPS ciphertext for this project
 
-Two files, one per environment, both committed as ciphertext:
+Two files, one per environment. Each holds that environment's two runtime secrets
+and nothing else:
 
-| File | Installs into | Never contains |
+| File | State | Installs into |
 |---|---|---|
-| `staging.enc.env` | the `staging` Worker | anything else |
-| `production.enc.env` | the `production` Worker | anything else |
+| `staging.enc.env` | **committed** | the `staging` Worker |
+| `production.enc.env` | **not yet created** | the `production` Worker |
 
 Two files rather than one because a deploy reads exactly one. A single file holding
 both environments means the staging job's process holds the production values, which
 is a credential handed to a job that has no reason to have it.
+
+`production.enc.env` has to be created before a SOPS-backed production run, the same
+way `staging.enc.env` was — and its absence is a refusal, not a fallback:
+
+```
+::error::secrets/production.enc.env is not in this revision. See secrets/README.md.
+```
+
+Nothing falls back to the GitHub environment secrets behind your back. If a
+production deploy needs its secrets today, run it with `secrets_source: github`.
 
 Each file holds exactly the two **runtime** secrets the Workers need, and nothing
 else:

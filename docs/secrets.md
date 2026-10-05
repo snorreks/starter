@@ -175,22 +175,31 @@ whether `.sops.yaml` exists, and how many recipients it names. It exits `3` when
 either tool is missing and `0` otherwise — an unconfigured recipient is the expected
 state of a fresh clone, not a failure.
 
-The template ships **no `.sops.yaml`, no `.age/recipients.txt` and no ciphertext**,
-because recipients identify the people who ran the extraction, not you. Create
-`.sops.yaml` with your own public age recipient before encrypting anything.
+**The tooling ships unconfigured.** Whoever generates the template gets no
+`.sops.yaml`, no `.age/recipients.txt` and no ciphertext, because recipients identify
+the people who ran the extraction, not you. Create `.sops.yaml` with your own public
+age recipient before encrypting anything, and `secrets/*.enc.*` is gitignored in the
+template for the same reason. For an initialised project, whether ciphertext belongs
+in the repository is your call — SOPS ciphertext is designed to be committed — but
+note that a committed encrypted file still discloses its recipient set and filename,
+which is often enough to identify who holds what.
 
-`secrets/*.enc.*` is gitignored in this template. For an initialised project,
-whether ciphertext belongs in the repository is your call — SOPS ciphertext is
-designed to be committed — but note that a committed encrypted file still discloses
-its recipient set and filename, which is often enough to identify who holds what.
+**This repository is not that fresh clone any more.** It has been initialised as a
+real project and carries a `.sops.yaml`, a roster and a committed
+`staging.enc.env`; the next section says what that changed and why. So if you are
+reading this in a checkout and the doctor reports `configured yes (2 recipients)`,
+that is this repository's state, not the template's.
 
 ### What *this* project configured, and the constraint nobody documented
 
 This repository has been initialised as a real project, so it now carries a
-`.sops.yaml` with two recipients and a roster at `.age/recipients.txt`. The contract
-for the two ciphertext files is [secrets/README.md](../secrets/README.md); the short
-version is that each environment's two runtime secrets live in their own committed
-file, and `CLOUDFLARE_API_TOKEN` lives in neither.
+`.sops.yaml` with two recipients, a roster at `.age/recipients.txt`, and
+`secrets/staging.enc.env` — the staging environment's two runtime secrets, encrypted
+to both. `secrets/production.enc.env` does not exist yet, and a SOPS-backed
+production run refuses rather than falling back to the GitHub environment secrets.
+`CLOUDFLARE_API_TOKEN` is in none of them: it is a deployment credential, it lives in
+the `staging` environment secret, and it is never readable by the Worker. The contract
+for both files is [secrets/README.md](../secrets/README.md).
 
 The constraint worth knowing before you arrange your own files: **`secrets:encrypt`
 refuses a path git is not ignoring**, so it cannot produce a *committed* ciphertext
