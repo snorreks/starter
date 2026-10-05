@@ -111,9 +111,32 @@ own:
 
 See [docs/capability-matrix.md](docs/capability-matrix.md).
 
-`nix develop` supplies all of them. On a non-Nix host, `bun run setup` installs the
-browser matching the locked Playwright version and `bun run setup:doctor` proves it
-launches.
+`nix develop` supplies the web half of that table: Bun, Node, Git, `gh`, SOPS,
+age, `jq`, `ripgrep`, `fd`, direnv and a Chromium linked against the same store. On
+a non-Nix host, `bun run setup` installs the browser matching the locked Playwright
+version and `bun run setup:doctor` proves it launches.
+
+**It does not supply the native half, and this is the one place that table has been
+wrong.** `flake.nix` carries no Rust toolchain and no WebKitGTK. That is a decision,
+not an oversight — [docs/toolchain.md](docs/toolchain.md) states it: the flake pins
+what a workspace lockfile does not, and Rust is pinned per crate in
+`apps/frontend/native/src-tauri/rust-toolchain.toml`. Inside `nix develop` on this
+host `cargo` is not on PATH and `pkg-config` does not exist, so `bun run native:build`
+exits 3 naming `webkit2gtk-4.1`: a real build refusing for a real missing
+prerequisite, after the reader was told the shell would have it. The native lane
+wants:
+
+```bash
+# Linux desktop: the webview development files, alongside the crate toolchain
+nix shell nixpkgs#webkitgtk_4_1 nixpkgs#gtk3 nixpkgs#libsoup_3 \
+             nixpkgs#libayatana-appindicator nixpkgs#librsvg \
+             nixpkgs#openssl nixpkgs#libGL nixpkgs#patchelf nixpkgs#pkg-config
+```
+
+`bun run native:doctor` is the authority on whether a host can build, and it exits 3
+with the missing package named rather than letting a linker report it twenty minutes
+later. The same is true of Android (SDK, JDK, NDK) and iOS (macOS with full Xcode):
+neither comes from this flake, and both are named by `setup:doctor --profile`.
 
 ## Layout, and the boundaries that matter
 
