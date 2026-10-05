@@ -44,6 +44,14 @@ const APP_CONFIG = join(APP_DIR, 'wrangler.jsonc');
 const WORKER_ENTRY = join(APP_DIR, '.svelte-kit/cloudflare/_worker.js');
 const LOCAL_STATE = join(APP_DIR, '.wrangler/state');
 
+for (const path of ['/_worker.js', '/_worker.js.map']) {
+  test(`private Worker artifact ${path} is not served as a public asset`, async () => {
+    expect(existsSync(join(APP_DIR, '.svelte-kit/cloudflare', path.slice(1)))).toBe(true);
+    const response = await fetch(`${base()}${path}`);
+    expect(response.status).toBe(404);
+  });
+}
+
 /**
  * The pinned workspace copy of wrangler.
  *
@@ -145,6 +153,11 @@ beforeAll(async () => {
         'only reproduces in workerd. Run `bun run build` first.',
     );
   }
+
+  // A cached/deployed artifact must not borrow intermediate files from another
+  // build. Exercise its real workerd behavior after both SSR trees are gone.
+  rmSync(join(APP_DIR, '.svelte-kit/cloudflare-tmp'), { recursive: true, force: true });
+  rmSync(join(APP_DIR, '.svelte-kit/output/server'), { recursive: true, force: true });
 
   port = await findFreePort();
 
@@ -1364,6 +1377,39 @@ describe('the database-backed rate limit', () => {
     expect((await attempt(1)).status).toBe(429);
   }, 90_000);
 
+  test('auth housekeeping prunes expired windows on real D1 without removing live windows', async () => {
+    sql(
+      "INSERT INTO rate_limits VALUES ('expired-fixture', 1, 0), ('live-fixture', 1, 9000000000000)",
+    );
+    const worker = workers.at(-1);
+    if (worker?.pid === undefined) {
+      throw new Error('Missing rate-limit Worker');
+    }
+    expect(killTree(worker.pid, { graceMs: 200, attempts: 20 })).toEqual([]);
+    await start(Number(new URL(origins[0] ?? '').port));
+    expect((await attempt()).status).toBe(401);
+    const result = spawnSync(
+      [
+        WRANGLER,
+        'd1',
+        'execute',
+        'DB',
+        '--local',
+        '--config',
+        APP_CONFIG,
+        '--persist-to',
+        state,
+        '--json',
+        '--command',
+        "SELECT key FROM rate_limits WHERE key IN ('expired-fixture', 'live-fixture') ORDER BY key",
+      ],
+      { cwd: APP_DIR, stdout: 'pipe', stderr: 'pipe' },
+    );
+    expect(result.exitCode).toBe(0);
+    const rows: unknown = JSON.parse(result.stdout.toString());
+    expect(rows).toEqual([expect.objectContaining({ results: [{ key: 'live-fixture' }] })]);
+  }, 90_000);
+
   test('rotating cf-connecting-ip cannot evade the local ingress budget', async () => {
     const responses: Response[] = [];
     for (let index = 0; index < budget + 3; index += 1) {
@@ -2106,10 +2152,26 @@ describe('the jobs API with the compute profile enabled', () => {
     const key = () => createId('key', 12);
 
     const cases: Array<[string, string]> = [
-      ['a client that names its own owner', JSON.stringify({ fixture: 'sample-v1', preset: 'demo-180p-v1', ownerId: 'user_somebody_else' })],
-      ['a URL for the input media', JSON.stringify({ fixture: 'https://example.invalid/v.mp4', preset: 'demo-180p-v1' })],
-      ['an ffmpeg argument vector', JSON.stringify({ fixture: 'sample-v1', preset: 'demo-180p-v1', args: ['-f', 'lavfi'] })],
-      ['a preset outside the frozen set', JSON.stringify({ fixture: 'sample-v1', preset: 'uhd-2160p-v1' })],
+      [
+        'a client that names its own owner',
+        JSON.stringify({
+          fixture: 'sample-v1',
+          preset: 'demo-180p-v1',
+          ownerId: 'user_somebody_else',
+        }),
+      ],
+      [
+        'a URL for the input media',
+        JSON.stringify({ fixture: 'https://example.invalid/v.mp4', preset: 'demo-180p-v1' }),
+      ],
+      [
+        'an ffmpeg argument vector',
+        JSON.stringify({ fixture: 'sample-v1', preset: 'demo-180p-v1', args: ['-f', 'lavfi'] }),
+      ],
+      [
+        'a preset outside the frozen set',
+        JSON.stringify({ fixture: 'sample-v1', preset: 'uhd-2160p-v1' }),
+      ],
     ];
 
     for (const [label, body] of cases) {
@@ -2161,7 +2223,7 @@ describe('the jobs API with the compute profile enabled', () => {
     expect(ids.size).toBe(1);
   }, 90_000);
 
-  test('one user cannot read another user\'s job, list it, or ask for its output', async () => {
+  test("one user cannot read another user's job, list it, or ask for its output", async () => {
     const [alice, bob] = await Promise.all([
       jobsSignUp('integration-jobs-alice'),
       jobsSignUp('integration-jobs-bob'),

@@ -41,9 +41,11 @@ import { guardProjectReadmes } from './guard_readmes.ts';
 import {
   IGNORED_DIRS,
   isGeneratedOutputDirectory,
+  listRepositorySourceFiles,
   listSourceFiles,
   SOURCE_EXTENSIONS,
 } from './module_graph.ts';
+import { SOURCE_ROOTS } from './policy.ts';
 // The document list and the README-coverage guard have to agree about which
 // directories are projects, so the discovery is imported rather than re-walked.
 import { discoverProjects } from './project_discovery.ts';
@@ -139,7 +141,7 @@ export const guardNoLeftovers = (root = REPO_ROOT): GuardResult => {
     },
   ];
 
-  for (const file of listSourceFiles(root)) {
+  for (const file of listRepositorySourceFiles(root)) {
     const relativePath = relative(root, file);
     // Tests may print, and the guards' own source necessarily contains the
     // patterns being searched for.
@@ -237,9 +239,9 @@ export const guardSourceIsTracked = (root = REPO_ROOT): GuardResult => {
     }
   };
 
-  for (const extra of ['scripts/src', 'apps', 'packages']) {
+  for (const extra of SOURCE_ROOTS) {
     const directory = join(root, extra);
-    // Not every tree has all three, and a missing one is not a violation.
+    // Fixture trees need not have every governed root.
     if (existsSync(directory)) {
       walk(directory);
     }

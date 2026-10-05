@@ -11,14 +11,17 @@
 // Nothing here executes anything. `planMigrate` is separated from `main` for
 // exactly this reason.
 
-import { afterEach, describe, expect, test } from 'bun:test';
+import { afterAll, afterEach, beforeEach, describe, expect, test } from 'bun:test';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { type MigrateTarget, parseTarget, planMigrate } from '../src/db/migrate.ts';
-import {
-  effectiveDeploymentValues,
-  setDeploymentValues,
-} from '../src/registry/deployment_values.ts';
+import { targets } from '../src/registry/app_registry.ts';
+import { resolveDeploymentValues, setDeploymentValues } from '../src/registry/deployment_values.ts';
 
-const savedDatabaseId = effectiveDeploymentValues().d1DatabaseId;
+const root = mkdtempSync(join(tmpdir(), 'starter-migrate-'));
+const baseline = resolveDeploymentValues({}, root);
+afterAll(() => rmSync(root, { recursive: true, force: true }));
 
 /**
  * Install a database id for the duration of a test.
@@ -29,15 +32,32 @@ const savedDatabaseId = effectiveDeploymentValues().d1DatabaseId;
  * command refuses.
  */
 const setDatabaseId = (value: string | null): void => {
-  setDeploymentValues({ ...effectiveDeploymentValues(), d1DatabaseId: value });
+  setDeploymentValues({
+    ...baseline,
+    accountId: 'a'.repeat(32),
+    environments: {
+      staging: {
+        ...targets(),
+        workerName: 'migration-staging',
+        origin: 'https://staging.example',
+        mailFrom: 'no-reply@staging.example',
+        jobsProfile: 'disabled',
+        d1DatabaseId: value,
+      },
+      production: {
+        ...targets(),
+        workerName: 'migration-production',
+        origin: 'https://production.example',
+        mailFrom: 'no-reply@production.example',
+        jobsProfile: 'disabled',
+        d1DatabaseId: value === null ? null : `${value}-production`,
+      },
+    },
+  });
 };
 
-afterEach(() => {
-  // Clear rather than restore: leaving values installed leaks them into every
-  // later test file in this process.
-  setDeploymentValues(null);
-  setDatabaseId(savedDatabaseId);
-});
+beforeEach(() => setDatabaseId(null));
+afterEach(() => setDeploymentValues(null));
 
 /**
  * The argv as it will be handed to the wrangler wrapper.
@@ -161,8 +181,10 @@ describe('planMigrate', () => {
   test('a remote plan names its environment', () => {
     setDatabaseId('test-database-id');
 
-    expect(commandFor('staging')).toContain('--env staging');
-    expect(commandFor('production')).toContain('--env production');
+    expect(commandFor('staging')).toContain('.starter/deploy/staging-web.json');
+    expect(commandFor('production')).toContain('.starter/deploy/production-web.json');
+    expect(commandFor('staging')).not.toContain('--env');
+    expect(commandFor('production')).not.toContain('--env');
   });
 
   test('every plan names the wrangler config of the one application', () => {
@@ -170,7 +192,9 @@ describe('planMigrate', () => {
     // the migrations would apply to whichever database that config names.
     for (const target of ['local', 'staging', 'production'] as const) {
       setDatabaseId('test-database-id');
-      expect(commandFor(target)).toContain('wrangler.jsonc');
+      expect(commandFor(target)).toContain(
+        target === 'local' ? 'wrangler.jsonc' : `.starter/deploy/${target}-web.json`,
+      );
     }
   });
 

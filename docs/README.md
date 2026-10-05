@@ -11,6 +11,7 @@ Start here. Nothing below is required reading before running a command — the
 | know what is actually verified | [capability-matrix.md](capability-matrix.md) |
 | write or run tests | [testing.md](testing.md) |
 | understand a past decision | [first-round-review.md](first-round-review.md) |
+| review the current DX/security repairs and remaining limits | [optimization-review.md](optimization-review.md) |
 | change the architecture | [architecture.md](architecture.md) |
 | deploy it | [deployment.md](deployment.md) |
 | run a real encode, or decide whether to leave Cloudflare | [compute.md](compute.md) |

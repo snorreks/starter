@@ -47,6 +47,7 @@ import {
   planeOf,
   type Role,
   roleOf,
+  SOURCE_ROOTS,
 } from './policy.ts';
 
 /**
@@ -143,6 +144,13 @@ export const listSourceFiles = (root: string): string[] => {
   walk(root, '');
   return found;
 };
+
+/** Repository source comes only from governed roots, never arbitrary scratch files. */
+export const listRepositorySourceFiles = (root: string): string[] =>
+  SOURCE_ROOTS.flatMap((directory) => listSourceFiles(join(root, directory))).filter((file) => {
+    const path = toRelative(root, file);
+    return !GRAPH_EXCLUDED_DIRS.some((directory) => path.startsWith(`${directory}/`));
+  });
 
 /** Repo-relative POSIX path. The canonical identity of a first-party module. */
 export const toRelative = (root: string, file: string): string =>
@@ -1339,7 +1347,7 @@ export const buildModuleGraph = (root: string): ModuleGraph => {
   const frameworkModules = readFrameworkModules(root);
   const context: ResolverContext = { root, packages, frameworkModules, registry };
 
-  const files = listSourceFiles(root);
+  const files = listRepositorySourceFiles(root);
   const modules = new Map<string, ModuleNode>();
   const projectErrors = new Map<string, string[]>();
 

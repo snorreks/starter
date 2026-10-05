@@ -34,6 +34,13 @@ bun run setup
 bun run setup:doctor
 bun run setup:doctor -- --profile native    # what a lane needs, and what to do without it
 
+# Update — one uncached command, independent lanes, explicit apply
+bun run update                         # offline preview
+bun run update --yes --verify           # Nix → Bun → packages, then checks
+bun run update --packages --yes         # package dependencies only
+bun run update --nix --yes               # flake inputs only
+bun run update --bun --yes               # Bun pin, verified runtime, mirrors + lock
+
 # Develop — one application, two ways to run it
 bun run dev                 # vite dev, Node, emulated bindings. Fast.
 bun run dev:worker          # the BUILT Worker in real workerd. Requires a build.
@@ -72,7 +79,9 @@ bun run db:migrate:remote staging --yes    # requires an explicit environment
 bun run db:status
 bun run db:seed
 
-# Deploy — four phases, because they have different authority
+# Deploy — local token in root .env.deploy (gitignored, chmod 600), never a Worker var
+# Remote Wrangler configs are derived under .starter/deploy; local config stays neutral.
+# Four phases, because they have different authority
 bun run deploy:status                       # configured + last release. Read-only.
 bun run deploy:check --env staging          # the offline plan. No credential, no network.
 bun run deploy:preflight --env staging      # authenticated, read-only

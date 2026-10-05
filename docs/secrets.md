@@ -5,7 +5,7 @@ Two rules, and everything else follows from them.
 1. **Examples are committed. Real values never are.**
 2. **Prefer a value the server derives over a value you store.**
 
-## What never goes in the repository
+## What never goes in tracked source
 
 - `.env`, `.dev.vars` — real values
 - `secrets/*.enc.*` — SOPS ciphertext is encrypted to *specific* recipients, so
@@ -40,7 +40,7 @@ Nothing above needs a secret. The local Worker runs on local D1, and
 | Value | Where | Used for |
 |---|---|---|
 | `BETTER_AUTH_SECRET` | Worker binding | Signing session cookies |
-| `CLOUDFLARE_API_TOKEN` | your shell | `deploy:check`, `deploy` |
+| `CLOUDFLARE_API_TOKEN` | root gitignored `.env.deploy`, or injected shell/CI environment | authenticated deploy, remote DB/log commands (never offline plan) |
 | `TRUSTED_ORIGINS` | Worker binding | Which origins may send credentials |
 | Age identity | your machine | Decrypting SOPS files |
 
@@ -56,8 +56,12 @@ from the session, not the body. A secret you do not store cannot leak.
 **2. A Cloudflare Worker binding.** Set with `wrangler secret put NAME`. It never
 appears in a file, in a build, or in a deploy payload.
 
-**3. Your shell, not the repository.** Export it in your profile, or use
-`direnv` (below).
+**3. Repo-local, untracked tooling credentials.** Keep the Cloudflare deploy token
+in root `.env.deploy` (mode 600), following `.env.deploy.example`. The CLI loads it
+only around authenticated remote commands; injected shell/CI credentials win.
+Do not add it to `.env`, `.envrc`, a `PUBLIC_*`/`VITE_*` variable or a runtime SOPS
+file. No global `~/.config/starter` credential is read. See
+[deployment.md](deployment.md).
 
 **4. SOPS, for what must be shared.** Encrypted per-recipient, decrypted locally,
 never committed in plaintext.

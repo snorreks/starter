@@ -14,6 +14,8 @@ import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { isDeploymentEnvironment } from '@starter/schemas';
 import { runWrangler, wranglerAvailable } from '../cloudflare/wrangler.ts';
+import { writeRemoteConfig } from '../deploy/remote_config.ts';
+import { resolveTarget } from '../deploy/target.ts';
 import { targetsFor } from '../registry/deployment_values.ts';
 import { CLIENT_DIR, REPO_ROOT } from '../shared/paths.ts';
 
@@ -123,10 +125,8 @@ export const planMigrate = (target: MigrateTarget, options: { databaseId?: strin
       'apply',
       'DB',
       '--remote',
-      '--env',
-      target,
       '--config',
-      join(CLIENT_DIR, 'wrangler.jsonc'),
+      join(REPO_ROOT, '.starter/deploy', `${target}-web.json`),
     ],
   };
 };
@@ -140,7 +140,15 @@ export const main = (args: readonly string[]): number => {
     return 2;
   }
 
-  const plan = planMigrate(target);
+  const resolved = target === 'local' ? undefined : resolveTarget(target);
+  if (resolved !== undefined && !resolved.ok) {
+    process.stderr.write(`${resolved.reason}\n${resolved.remedy}\n`);
+    return 1;
+  }
+  const plan = planMigrate(
+    target,
+    resolved?.ok ? { databaseId: resolved.target.d1DatabaseId } : {},
+  );
   if (!plan.ok) {
     process.stderr.write(`${plan.reason}\n  ${plan.remedy}\n`);
     return 1;
@@ -164,5 +172,8 @@ export const main = (args: readonly string[]): number => {
     return 2;
   }
 
+  if (resolved?.ok) {
+    writeRemoteConfig({ target: resolved.target });
+  }
   return runWrangler(plan.args, { cwd: REPO_ROOT });
 };

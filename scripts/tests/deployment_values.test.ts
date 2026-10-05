@@ -50,9 +50,6 @@ const makeTree = (files: Record<string, string>): string => {
   return root;
 };
 
-/** Enough JSONC to prove the file is still parseable, and not a stripped copy. */
-const stripComments = (jsonc: string): string => jsonc.replace(/^\s*\/\/.*$/gm, '');
-
 afterEach(() => {
   setDeploymentValues(null);
   for (const root of created.splice(0)) {
@@ -254,6 +251,7 @@ describe('setDeploymentValues', () => {
     // This is the whole reason the deploy tests use the seam rather than mutating
     // `DEPLOYMENT_CONFIG`: if injecting had no effect on the value callers see,
     // every deploy test would be exercising a path that does not exist.
+    const before = effectiveDeploymentValues();
     const empty = resolveDeploymentValues({}, makeTree({}));
     expect(empty.accountId).toBeNull();
 
@@ -261,7 +259,7 @@ describe('setDeploymentValues', () => {
     expect(effectiveDeploymentValues().accountId).toBe('c'.repeat(32));
 
     setDeploymentValues(null);
-    expect(effectiveDeploymentValues().accountId).toBeNull();
+    expect(effectiveDeploymentValues()).toEqual(before);
   });
 });
 describe('provisionDatabase', () => {
@@ -369,7 +367,7 @@ describe('provisionDatabase', () => {
       const after = readFileSync(path, 'utf8');
 
       // The bug in one assertion: the file did not shrink to a fragment.
-      expect(after.length).toBeGreaterThan(before.length);
+      expect(after).toBe(before);
       expect(after.startsWith('{')).toBe(true);
       expect(after.trimEnd().endsWith('}')).toBe(true);
 
@@ -394,14 +392,9 @@ describe('provisionDatabase', () => {
       expect(after).toContain('"production"');
       expect(after).toContain('"migrations_dir"');
 
-      // The id landed inside env.staging, not at the top level and not in production.
-      const stagingBlock = after.slice(after.indexOf('"staging"'), after.indexOf('"production"'));
-      expect(stagingBlock).toContain(`"database_id": "${UUID}"`);
-      expect(after.slice(0, after.indexOf('"staging"'))).not.toContain(UUID);
-      expect(after.slice(after.indexOf('"production"'))).not.toContain(UUID);
-
-      // It is still the JSONC it was, not a stripped or re-serialised copy.
-      expect(JSON.parse(stripComments(after)).env.staging.d1_databases[0].database_id).toBe(UUID);
+      // Live IDs only belong in the overlay; the whole template stays unchanged.
+      expect(after).not.toContain(UUID);
+      expect(resolveDeploymentValues({}, root).environments?.staging?.d1DatabaseId).toBe(UUID);
     } finally {
       restore();
     }
@@ -440,9 +433,9 @@ describe('provisionDatabase', () => {
       // The decoy survived untouched…
       expect(after).toContain('// "staging": { "d1_databases": [] }  <- a comment, not a block');
       expect(after).toContain('"note": "a } brace inside a string }"');
-      // …and the id went into the real env.staging, which the guard verifies by
-      // resolving the file rather than by trusting the span it picked.
-      expect(JSON.parse(stripComments(after)).env.staging.d1_databases[0].database_id).toBe(UUID);
+      // The template is never rewritten, even when comments contain decoy blocks.
+      expect(after).toBe(decoyed);
+      expect(resolveDeploymentValues({}, root).environments?.staging?.d1DatabaseId).toBe(UUID);
     } finally {
       restore();
     }
@@ -498,9 +491,8 @@ describe('provisionDatabase', () => {
       // wrangler.jsonc is exactly as it was — not truncated, not edited.
       expect(readFileSync(path, 'utf8')).toBe(before);
 
-      // The refusal names the file and what it resolved to instead of the new id.
-      expect(errors.join('')).toContain('Refusing to write apps/frontend/client/wrangler.jsonc');
-      expect(errors.join('')).toContain('nothing');
+      // No rewrite is attempted, so no false claim about updating the template.
+      expect(errors).toEqual([]);
 
       // And the overlay records what was actually created.
       expect(resolveDeploymentValues({}, root).environments?.staging?.d1DatabaseId).toBe(UUID);
@@ -509,7 +501,7 @@ describe('provisionDatabase', () => {
     }
   });
 
-  test('still writes wrangler.jsonc, because wrangler itself reads that one', () => {
+  test('never inserts a live resource id into the committed template', () => {
     const root = tree();
     const restore = quiet();
 
@@ -525,7 +517,10 @@ describe('provisionDatabase', () => {
       // at deploy time, and the registry is what `deploy:check` and `db:migrate`
       // read. A value in one and not the other is a deploy that succeeds and a
       // `deploy:check` that reports the project unprovisioned.
-      expect(wrangler).toContain(`"database_id": "${UUID}"`);
+      expect(wrangler).not.toContain(UUID);
+      expect(wrangler).toBe(
+        readFileSync(join(tree(), 'apps/frontend/client/wrangler.jsonc'), 'utf8'),
+      );
       expect(resolveDeploymentValues({}, root).environments?.staging?.d1DatabaseId).toBe(UUID);
     } finally {
       restore();

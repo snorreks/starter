@@ -35,7 +35,6 @@
 //   * An unknown flag is an error, and a boolean flag written as `--flag=value`
 //     is an error naming the mistake.
 
-import { spawnSync } from 'node:child_process';
 import { isDeploymentEnvironment } from '@starter/schemas';
 import {
   captureWrangler,
@@ -48,8 +47,10 @@ import {
   effectiveDeploymentValues,
   LOCAL_DEPLOYMENT_FILE,
 } from '../registry/deployment_values.ts';
+import { buildEnvironment } from '../shared/build_environment.ts';
 import { EXIT, fail, wantsHelp } from '../shared/command.ts';
 import { CLIENT_DIR, REPO_ROOT } from '../shared/paths.ts';
+import { runBoundedSync } from '../shared/run_bounded.ts';
 import {
   type ApplyResult,
   apply,
@@ -71,6 +72,7 @@ import {
   renderReleaseRecord,
   sourceRevision,
 } from './release.ts';
+import { writeRemoteConfig } from './remote_config.ts';
 import {
   DEPLOYABLE_ENVIRONMENTS,
   environmentIsolationProblem,
@@ -442,9 +444,9 @@ export const planDeploy = (
 
   steps.push(
     {
-      description: deployStep(target, revision.sha, null).description,
+      description: deployStep(target, revision.sha, null, options.root).description,
       command: 'wrangler',
-      args: deployStep(target, revision.sha, null).args,
+      args: deployStep(target, revision.sha, null, options.root).args,
       cwd: CLIENT_DIR,
       remote: true,
     },
@@ -572,10 +574,12 @@ const readValues = (): DeploymentValues => effectiveDeploymentValues();
  * to check, which is the "command that succeeds while doing nothing" this
  * repository treats as the worst outcome.
  */
-const runBun = (args: readonly string[], cwd: string): number =>
-  // `bun` by name: it is the interpreter already running this process, so it is
-  // on PATH by definition and there is nothing to resolve.
-  spawnSync('bun', [...args], { stdio: 'inherit', cwd }).status ?? 1;
+const runBun = (args: readonly string[], cwd: string): number => {
+  const result = runBoundedSync({ command: process.execPath, args, cwd, env: buildEnvironment() });
+  process.stdout.write(result.stdout);
+  process.stderr.write(result.stderr);
+  return result.code;
+};
 
 /**
  * `status`: what is configured, and what was last released.
@@ -784,6 +788,7 @@ export const main = async (argv: readonly string[]): Promise<number> => {
       provisionMode = parsed.install ? 'both' : 'resources';
     }
 
+    writeRemoteConfig({ target: resolved.target });
     const result = provision(resolved.target, {
       capture: captureWrangler,
       env: process.env,

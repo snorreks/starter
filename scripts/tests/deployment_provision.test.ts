@@ -13,6 +13,7 @@ import { afterEach, describe, expect, test } from 'bun:test';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { mediaFixtureKey, PROCESSOR_FIXTURE_ID } from '@starter/schemas/jobs';
 import {
   bucketExists,
   describeTokenScopes,
@@ -24,8 +25,10 @@ import {
   secretInArgvProblem,
   secretPlan,
 } from '../src/deploy/provision.ts';
+import { remoteConfigPath } from '../src/deploy/remote_config.ts';
 import type { ResolvedTarget } from '../src/deploy/target.ts';
 import { REQUIRED_TOKEN_SCOPES } from '../src/registry/app_registry.ts';
+import { REPO_ROOT } from '../src/shared/paths.ts';
 
 const created: string[] = [];
 const cleanup = (): void => {
@@ -83,12 +86,19 @@ const tree = (withFixture: boolean): string => {
   const root = mkdtempSync(join(tmpdir(), 'starter-provision-'));
   created.push(root);
   if (withFixture) {
-    const dir = join(root, 'apps/backend/media/fixtures');
+    const dir = join(root, 'apps/backend/media/fixtures/media');
     mkdirSync(dir, { recursive: true });
     writeFileSync(join(dir, 'sample-v1.mp4'), 'not really an mp4');
   }
   return root;
 };
+
+test('provisioning uploads the fixture where the runtime reads it', () => {
+  const step = fixtureUploadStep(encodeTarget);
+  expect(step?.source).toBe('apps/backend/media/fixtures/media/sample-v1.mp4');
+  expect(FIXTURE_KEY).toBe(mediaFixtureKey(PROCESSOR_FIXTURE_ID));
+  expect(step?.argv).toContain(`starter-media-staging/${mediaFixtureKey(PROCESSOR_FIXTURE_ID)}`);
+});
 
 describe('a secret never reaches argv', () => {
   test('a value-shaped argument is refused by name', () => {
@@ -113,11 +123,31 @@ describe('a secret never reaches argv', () => {
     }
   });
 
+  test('the secret plan targets the config of the root it was resolved against', () => {
+    // The rest of the provisioner resolves every path against `root`. A secret
+    // plan that quietly used the repository default would install against a config
+    // file that does not exist — after the database, the bucket and the fixture had
+    // already been created.
+    const root = tree(true);
+    const [first] = secretPlan(encodeTarget, 'env', root);
+
+    const config = first?.argv[first.argv.indexOf('--config') + 1];
+    expect(config).toBe(join(root, '.starter/deploy/staging-web.json'));
+    expect(config).not.toContain(REPO_ROOT);
+  });
+
+  test('the secret plan still defaults to the repository root when given none', () => {
+    const [first] = secretPlan(encodeTarget, 'env');
+    const config = first?.argv[first.argv.indexOf('--config') + 1];
+
+    expect(config).toBe(remoteConfigPath({ target: encodeTarget }));
+  });
+
   test('installation passes the value on stdin and the name in argv', () => {
     const seen: { args: readonly string[]; stdin?: string }[] = [];
     provision(encodeTarget, {
       root: tree(true),
-      capture: () => ({ ok: true, stdout: '[]', stderr: '' }),
+      mode: 'secrets',
       env: { BETTER_AUTH_SECRET: 'super-secret-value', RESEND_API_KEY: 're_realvalue' },
       installSecrets: true,
       run: (args, options) => {
@@ -148,7 +178,7 @@ describe('a secret never reaches argv', () => {
     const seen: string[] = [];
     provision(encodeTarget, {
       root: tree(true),
-      capture: () => ({ ok: true, stdout: '[]', stderr: '' }),
+      mode: 'secrets',
       env: { BETTER_AUTH_SECRET: 'first-value', RESEND_API_KEY: 'second-value' },
       installSecrets: true,
       run: (args, options) => {
@@ -167,7 +197,7 @@ describe('a secret never reaches argv', () => {
   test('a rendered report cannot contain a value, because no step holds one', () => {
     const result = provision(encodeTarget, {
       root: tree(true),
-      capture: () => ({ ok: true, stdout: '[]', stderr: '' }),
+      mode: 'secrets',
       env: { BETTER_AUTH_SECRET: 'super-secret-value', RESEND_API_KEY: 're_realvalue' },
       installSecrets: true,
       run: () => ({ ok: true, detail: 'ok' }),
@@ -185,7 +215,7 @@ describe('the Cloudflare token is not a runtime secret', () => {
     const runs: string[][] = [];
     const result = provision(encodeTarget, {
       root: tree(true),
-      capture: () => ({ ok: true, stdout: '[]', stderr: '' }),
+      mode: 'secrets',
       // The credential a CI run actually has.
       env: { CLOUDFLARE_API_TOKEN: 'cf-token-value' },
       installSecrets: true,
@@ -275,7 +305,7 @@ describe('provisioning is idempotent', () => {
     expect(attempted).toEqual([]);
   });
 
-  test('a resource the read positively does not find is created', () => {
+  test('a bucket the successful read does not find is created', () => {
     // The distinction the two tests above make: an empty *successful* list means
     // absent, and absent is the only thing that may create.
     const attempted: string[][] = [];
@@ -284,7 +314,7 @@ describe('provisioning is idempotent', () => {
       capture: (args) =>
         args[0] === 'r2'
           ? { ok: true, stdout: '[]', stderr: '' }
-          : { ok: true, stdout: '[]', stderr: '' },
+          : { ok: true, stdout: '[{"uuid":"db-staging"}]', stderr: '' },
       env: {},
       run: (args) => {
         attempted.push([...args]);
@@ -294,12 +324,12 @@ describe('provisioning is idempotent', () => {
 
     expect(result.ok).toBe(true);
     expect(result.stoppedAt).toBeNull();
-    // Both creates ran, because both reads succeeded and found nothing.
-    expect(attempted.some((args) => args[0] === 'd1' && args[1] === 'create')).toBe(true);
+    // The exact D1 ID exists; only the missing named bucket is created.
+    expect(attempted.some((args) => args[0] === 'd1' && args[1] === 'create')).toBe(false);
     expect(attempted.some((args) => args[0] === 'r2' && args[1] === 'bucket')).toBe(true);
   });
 
-  test('a missing resource is created, and the failure of one stops the next', () => {
+  test('an absent configured D1 ID never creates an unbound replacement database', () => {
     const created_: string[] = [];
     const result = provision(encodeTarget, {
       root: tree(true),
@@ -319,7 +349,8 @@ describe('provisioning is idempotent', () => {
     expect(result.ok).toBe(false);
     expect(result.stoppedAt).toBe('database');
     // Everything before the failure ran; nothing after it did.
-    expect(created_).toEqual(['d1 create starter-staging-db --type primary']);
+    expect(created_).toEqual([]);
+    expect(result.steps[0]?.detail).toContain('different ID');
     expect(result.steps.map((step) => step.name)).toEqual(['database']);
   });
 
@@ -359,7 +390,7 @@ describe('the fixture upload is refused when the fixture was never built', () =>
       capture: (args) =>
         args[0] === 'r2'
           ? { ok: true, stdout: JSON.stringify([{ name: 'starter-media-staging' }]), stderr: '' }
-          : { ok: true, stdout: '{}', stderr: '' },
+          : { ok: true, stdout: '[{"uuid":"db-staging"}]', stderr: '' },
       env: {},
       run: () => ({ ok: true, detail: 'ok' }),
     });
@@ -465,6 +496,7 @@ describe('SOPS is refused here, with the composition that works', () => {
         stderr: '',
       }),
       env: {},
+      mode: 'secrets',
       secretSource: 'sops',
       run: () => ({ ok: true, detail: 'ok' }),
     });

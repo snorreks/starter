@@ -145,7 +145,10 @@ RETURNING count, last_request
 const PRUNE_AFTER_MS = 60_000;
 const PRUNE_MAX_AGE_MS = 24 * 60 * 60 * 1000;
 const PRUNE_BATCH = 200;
-const PRUNE_SQL = 'DELETE FROM rate_limits WHERE last_request < ? LIMIT ?';
+// D1 does not enable SQLite's optional DELETE ... LIMIT extension.
+const PRUNE_SQL = `DELETE FROM rate_limits WHERE key IN (
+  SELECT key FROM rate_limits WHERE last_request < ? ORDER BY last_request, key LIMIT ?
+)`;
 
 export interface D1RateLimitStorageOptions {
   /**
@@ -157,6 +160,8 @@ export interface D1RateLimitStorageOptions {
   now?: () => number;
   /** Bound on one prune statement's row count. */
   pruneBatch?: number;
+  /** Report a fixed housekeeping event without database errors or caller keys. */
+  onPruneFailure?: () => void;
 }
 
 export const createD1RateLimitStorage = (
@@ -207,8 +212,12 @@ export const createD1RateLimitStorage = (
           .bind(at - PRUNE_MAX_AGE_MS, pruneBatch)
           .all<unknown>()
           .catch(() => {
-            // Housekeeping failing must not turn a refused request into a 500.
-            // The row still exists; the next prune will catch it.
+            // The host supplies its structured destination; never hand it a
+            // database error or caller key. Without a reporter, fail visibly.
+            if (options.onPruneFailure === undefined) {
+              throw new Error('Rate limit housekeeping failed; configure onPruneFailure.');
+            }
+            options.onPruneFailure();
           });
       }
 

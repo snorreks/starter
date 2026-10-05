@@ -98,6 +98,8 @@ describe('the repository environment map', () => {
       join(configDir, 'wrangler.jsonc'),
       JSON.stringify({
         name: 'starter',
+        main: '.svelte-kit/cloudflare/_worker.js',
+        assets: { directory: '.svelte-kit/cloudflare', binding: 'ASSETS' },
         d1_databases: [{ binding: 'DB', database_name: 'starter' }],
         env: {
           staging: { d1_databases: [{ binding: 'DB', database_id: 'db-staging' }] },
@@ -574,6 +576,8 @@ describe('the plan names everything the pipeline will change', () => {
       join(client, 'wrangler.jsonc'),
       JSON.stringify({
         name: 'starter',
+        main: '.svelte-kit/cloudflare/_worker.js',
+        assets: { directory: '.svelte-kit/cloudflare', binding: 'ASSETS' },
         d1_databases: [{ binding: 'DB', database_name: 'starter' }],
         env: { staging: { d1_databases: [{ binding: 'DB', database_id: 'db-staging' }] } },
       }),
@@ -644,12 +648,10 @@ describe('the plan names everything the pipeline will change', () => {
     const step = jobsDeployStep(target.target, 'abc123', root);
     expect(step?.args).toEqual([
       'deploy',
-      '--env',
-      'staging',
       '--name',
       'starter-jobs-staging',
       '--config',
-      join(root, 'apps/backend/jobs/wrangler.jsonc'),
+      join(root, '.starter/deploy/staging-jobs.json'),
       '--var',
       'RELEASE:abc123',
     ]);

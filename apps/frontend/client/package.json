@@ -7,7 +7,7 @@
   "scripts": {
     "dev": "bun run --cwd ../.. scripts/src/cli.ts dev app",
     "dev:worker": "bun run --cwd ../.. scripts/src/cli.ts dev built",
-    "build": "vite build",
+    "build": "vite build && bun ../../../scripts/src/artifacts/bundle_worker.ts",
     "preview": "vite preview",
     "check:bundle": "bun scripts/check_bundle.ts",
     "prepare": "svelte-kit sync",
@@ -23,6 +23,7 @@
     "test:integration": "bun run build && bun test tests/worker_integration.test.ts"
   },
   "dependencies": {
+    "@opentelemetry/api": "1.9.0",
     "@sinclair/typebox": "0.34.52",
     "@starter/auth": "workspace:*",
     "@starter/database": "workspace:*",

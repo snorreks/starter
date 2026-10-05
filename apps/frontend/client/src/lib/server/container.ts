@@ -58,6 +58,7 @@ import {
 } from './env.ts';
 import { createArtifactReader, createDispatchPort } from './jobs_bindings.ts';
 import { createJobsService, JOBS_PROFILE_ENCODE, type JobsService } from './jobs_service.ts';
+import { createServerRecordLogger } from './request_context.ts';
 
 /**
  * The tables this application exposes through Drizzle.
@@ -236,7 +237,17 @@ export const getContainer = (rawEnv: unknown, requestOrigin?: string): Container
       trustedOrigins: resolveTrustedOrigins(env, baseUrl, isLocal),
       // The atomic, database-backed counter. Built here rather than inside
       // `@starter/auth` so the D1 binding is reached in exactly one place.
-      rateLimitStorage: createD1RateLimitStorage(env.DB),
+      rateLimitStorage: createD1RateLimitStorage(env.DB, {
+        onPruneFailure: () => {
+          const { logger } = createServerRecordLogger({
+            app: 'web',
+            environment: environment === 'development' ? 'local' : environment,
+            source: 'worker',
+            release: env.RELEASE ?? 'dev',
+          });
+          logger.warn({ component: 'auth.rate_limit', message: 'auth.rate_limit.prune_failed' });
+        },
+      }),
       rateLimitMax: budget.max,
       rateLimitWindow: budget.window,
       ipAddressHeaders: ingress.headers,

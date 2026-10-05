@@ -62,6 +62,12 @@ export const SHARED_INPUTS = [
   // out. `scripts/moon.yml` also cannot reference it: that is the `..` restriction
   // documented in `.moon/workspace.yml`.
   'scripts/src/shared/browser_path.ts',
+  // The Worker bundler `client:build` runs after Vite. It decides what is cached
+  // as the closed Worker artifact and what `check:bundle` then inspects, and it
+  // lives in `scripts/`, so Moon cannot name it in the client's inputs — for the
+  // same `..` reason as the resolver above. Editing it changed what a build
+  // produced while the previous build's output stayed eligible to be restored.
+  'scripts/src/artifacts/bundle_worker.ts',
 ] as const;
 
 /** Directories whose sources feed the build of other projects. */

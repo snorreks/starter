@@ -307,6 +307,9 @@ export const capabilityRoles = (capability: Capability): readonly Role[] | undef
  * validated by `cargo check`/`cargo test` in its own lanes, and a guard that parsed it
  * would be a second, weaker answer to a question the compiler already answers.
  */
+/** Maintained source roots; scratch trees are never recursively inspected as code. */
+export const SOURCE_ROOTS: readonly string[] = ['apps', 'packages', 'scripts', '.pi'];
+
 export const GENERATED_TREES: readonly { readonly test: RegExp; readonly reason: string }[] = [
   {
     test: /(^|\/)node_modules(\/|$)/,

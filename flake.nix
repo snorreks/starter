@@ -56,6 +56,20 @@
         nixpkgs.lib.genAttrs systems (system:
           let
             pkgs = nixpkgs.legacyPackages.${system};
+            # Match CI's pin even when nixpkgs updates independently. Sources are
+            # verified and refreshed together by `bun run update --bun --yes`.
+            bunAssets = {
+              x86_64-linux = "bun-linux-x64-baseline.zip";
+              aarch64-linux = "bun-linux-aarch64.zip";
+              aarch64-darwin = "bun-darwin-aarch64.zip";
+            };
+            pinnedBun = pkgs.bun.overrideAttrs (_: {
+              version = pins.bun;
+              src = pkgs.fetchurl {
+                url = "https://github.com/oven-sh/bun/releases/download/bun-v${pins.bun}/${bunAssets.${system}}";
+                hash = pins.bunSources.${system};
+              };
+            });
 
             # ── what each profile adds ──────────────────────────────────────
             # The tools that install, develop, check, and reach a provider with.
@@ -63,7 +77,7 @@
             # to Node; workerd ships inside the workspace's wrangler package, so
             # this is not a second wrangler.
             corePackages = with pkgs; [
-              bun
+              pinnedBun
               nodejs_22
               git
               cacert
@@ -153,7 +167,7 @@
             });
           in
           f {
-            inherit pkgs corePackages browser pinsFile mkShellFor;
+            inherit pkgs pinnedBun corePackages browser pinsFile mkShellFor;
           });
     in
     {
@@ -166,8 +180,9 @@
 
       # Chromium, so a caller can reach it without the shell's env:
       # `nix run .#chromium -- --version`
-      packages = forEachSystem ({ pkgs, browser, ... }: {
-        inherit (pkgs) bun sops age gh;
+      packages = forEachSystem ({ pkgs, pinnedBun, browser, ... }: {
+        bun = pinnedBun;
+        inherit (pkgs) sops age gh;
         inherit browser;
       });
 

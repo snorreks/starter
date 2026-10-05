@@ -223,7 +223,7 @@ const fixtureRoot = (databaseId: string): string => {
   mkdirSync(dirname(path), { recursive: true });
   writeFileSync(
     path,
-    `{\n  "name": "starter",\n  "d1_databases": [\n    {\n      "binding": "DB",\n      "database_name": "starter",\n      "database_id": "${databaseId}"\n    }\n  ]\n}\n`,
+    `{\n  "name": "starter",\n  "main": ".svelte-kit/cloudflare/_worker.js",\n  "assets": { "directory": ".svelte-kit/cloudflare", "binding": "ASSETS" },\n  "d1_databases": [\n    {\n      "binding": "DB",\n      "database_name": "starter",\n      "database_id": "${databaseId}"\n    }\n  ]\n}\n`,
     'utf8',
   );
   return root;

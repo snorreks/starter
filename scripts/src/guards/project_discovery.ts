@@ -31,7 +31,7 @@ import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { parse } from 'yaml';
 import { IGNORED_DIRS, isGeneratedOutputDirectory, readWorkspacePackages } from './module_graph.ts';
-import { isGeneratedPath } from './policy.ts';
+import { isGeneratedPath, SOURCE_ROOTS } from './policy.ts';
 
 /**
  * Where a project was discovered from.
@@ -164,7 +164,7 @@ const readTextSafe = (file: string): string => {
 };
 
 /**
- * Every directory holding a `Cargo.toml`, skipping generated and vendored trees.
+ * Every governed directory holding a `Cargo.toml`, excluding scratch and build trees.
  *
  * The walk is the same one the module graph uses, minus the extension filter: a crate
  * has no `.ts` file to find, and the only question here is whether the manifest is
@@ -212,7 +212,9 @@ const cargoCrateDirs = (root: string): string[] => {
     }
   };
 
-  walk(root, '');
+  for (const directory of SOURCE_ROOTS) {
+    walk(join(root, directory), directory);
+  }
   return found;
 };
 

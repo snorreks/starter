@@ -1,10 +1,25 @@
 # Toolchain
 
-Three files decide which Bun this repository runs on, and they have to agree.
+`config/toolchain.json` decides which Bun this repository runs on. Its mirrors
+must agree, and the flake now uses its version **and per-platform release hashes**,
+not whichever Bun nixpkgs happens to supply.
+
+```bash
+bun run update --yes --verify           # Nix + Bun + exact workspace packages
+bun run update --packages --yes         # npm packages only, all workspaces
+bun run update --nix --yes              # flake.lock only
+bun run update --bun --yes              # latest stable verified Bun + mirrors/lock
+```
+
+No `--yes` means an offline preview. Bun builds through Nix, and the selected
+runtime generates the lockfile. Package-only updates work without Nix. Updates
+stop at the first failure, retaining partial changes for review rather than
+silently rolling back unrelated work. Browser/Worker/E2E remain separate checks.
 
 | File | Read by | Should it be edited? |
 |---|---|---|
-| `.bun-version` | `oven-sh/setup-bun` in CI, and `proto` when Moon resolves the `bun` toolchain | Yes — the single source of truth |
+| `config/toolchain.json` | Nix, doctor, update command | Authority; update through the CLI |
+| `.bun-version` | `oven-sh/setup-bun` in CI, and `proto` when Moon resolves the `bun` toolchain | Generated mirror |
 | `.github/workflows/ci.yml` → `BUN_VERSION` | CI | Only in step with `.bun-version` |
 | `.moon/toolchains.yml` | Moon | **No.** The `version` key is deliberately absent; see below |
 
@@ -37,10 +52,8 @@ Either install the version through proto:
 proto install bun "$(cat .bun-version)"
 ```
 
-or delete `.bun-version` and accept an unpinned CI. Do not do neither — the first
-option keeps CI reproducible, the second keeps the repository usable, and skipping
-both means `bun run test` fails for a reason that has nothing to do with your
-change.
+or re-enter the pinned Nix shell (`nix develop`). Do not delete `.bun-version` to
+work around a missing tool: it is a verified CI mirror, not disposable local state.
 
 This error is the single most confusing thing a new contributor will hit here, and
 it is a consequence of a genuine trade-off rather than a bug.

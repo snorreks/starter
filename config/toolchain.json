@@ -34,6 +34,11 @@
     "would report `ok` on real drift."
   ],
   "bun": "1.4.2",
+  "bunSources": {
+    "aarch64-darwin": "sha256-kJh6OhbX21VtiGrD1VHnttPt8KHPQ6yu1iLoZ2vh0S8=",
+    "aarch64-linux": "sha256-VDKLvC2cjgyfiSxUTWbFeoO4QTnjSQnl7oF1jxrI/ac=",
+    "x86_64-linux": "sha256-xngEDxT+BEDrg503y9DOTAUaMtpygGrJfeamqra/co8="
+  },
   "//toolchain": [
     "What else is pinned, and why, is written in docs/toolchain.md rather than",
     "repeated here: this file is the authority for *versions*, not for the",
