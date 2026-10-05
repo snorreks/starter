@@ -45,16 +45,26 @@ import {
 const WRANGLER_CONFIG = `${CLIENT_DIR_RELATIVE}/wrangler.jsonc`;
 
 /**
- * The text of `"env": { "<environment>": { … } }`, or `null` when the config has no
- * such block.
+ * The text of `"env": { "<environment>": { … } }` **with its span in the file**, or
+ * `null` when the config has no such block.
  *
- * Brace-matched by hand rather than by parsing, because `wrangler.jsonc` is JSONC:
- * stripping the comments to parse it and writing the parsed form back would delete
- * every comment in the file — and those comments are where this repository records
- * *why* the file is shaped as it is. Only the `database_id` inside the matched
- * span is ever rewritten, so the rest is preserved byte for byte.
+ * The span is the point. Brace-matched by hand rather than by parsing, because
+ * `wrangler.jsonc` is JSONC: stripping the comments to parse it and writing the
+ * parsed form back would delete every comment in the file — and those comments are
+ * where this repository records *why* the file is shaped as it is.
+ *
+ * It used to return the matched text alone, and the writer then handed that text
+ * to `writeFileSync` as if it were the whole file. Provisioning any environment
+ * with an `env.<name>` block therefore replaced an 8 KB config with the 1 KB
+ * fragment that happened to start at `"staging": {` — 146 lines deleted, including
+ * every comment, and it printed `D1 database id written to wrangler.jsonc`. The
+ * claim that "the rest is preserved byte for byte" was only true of the function,
+ * not of the caller.
  */
-const extractEnvBlock = (text: string, environment: DeploymentEnvironment): string | null => {
+const extractEnvBlock = (
+  text: string,
+  environment: DeploymentEnvironment,
+): { start: number; end: number; source: string } | null => {
   const marker = new RegExp(`"${environment}"\\s*:\\s*\\{`);
   const match = marker.exec(text);
   if (match === null) {
@@ -70,7 +80,7 @@ const extractEnvBlock = (text: string, environment: DeploymentEnvironment): stri
       depth -= 1;
     }
     if (depth === 0) {
-      return text.slice(match.index, index + 1);
+      return { start: match.index, end: index + 1, source: text.slice(match.index, index + 1) };
     }
   }
 
@@ -348,7 +358,33 @@ export const provisionDatabase = (
         ? source.replace(/("database_id"\s*:\s*)"[^"]*"/, `$1"${id}"`)
         : source.replace(/("database_name"\s*:\s*"[^"]*",)/, `$1\n      "database_id": "${id}",`);
 
-    const updated = scoped === null ? withId(text) : withId(scoped);
+    // Splice, never replace. Everything outside the matched span is copied through
+    // untouched, which is the property the previous version of this function only
+    // claimed to have.
+    const updated =
+      scoped === null
+        ? withId(text)
+        : text.slice(0, scoped.start) + withId(scoped.source) + text.slice(scoped.end);
+
+    // A last check that the edit was surgical: everything before the block and
+    // everything after it must be exactly what it was. Cheap, and it turns a silent
+    // truncation of a tracked config into a refusal that names itself.
+    //
+    // Anchored on the ends, not on the block's length: the replacement is *longer*
+    // than the block it replaces, so an index computed from the original length
+    // compares the wrong two spans — a guard that fires on every correct edit is
+    // worse than no guard, because it reads as a broken tool.
+    if (
+      scoped !== null &&
+      (!updated.startsWith(text.slice(0, scoped.start)) ||
+        !updated.endsWith(text.slice(scoped.end)))
+    ) {
+      process.stderr.write(
+        `Refusing to write ${WRANGLER_CONFIG}: the edit would have changed bytes outside ` +
+          `env.${environment}.\n  Nothing has been written.\n`,
+      );
+      return 1;
+    }
 
     if (updated !== text) {
       writeFileSync(wranglerPath, updated);
