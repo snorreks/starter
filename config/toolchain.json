@@ -35,9 +35,9 @@
   ],
   "bun": "1.4.2",
   "bunSources": {
-    "aarch64-darwin": "sha256-kJh6OhbX21VtiGrD1VHnttPt8KHPQ6yu1iLoZ2vh0S8=",
+    "x86_64-linux": "sha256-xngEDxT+BEDrg503y9DOTAUaMtpygGrJfeamqra/co8=",
     "aarch64-linux": "sha256-VDKLvC2cjgyfiSxUTWbFeoO4QTnjSQnl7oF1jxrI/ac=",
-    "x86_64-linux": "sha256-xngEDxT+BEDrg503y9DOTAUaMtpygGrJfeamqra/co8="
+    "aarch64-darwin": "sha256-kJh6OhbX21VtiGrD1VHnttPt8KHPQ6yu1iLoZ2vh0S8="
   },
   "//toolchain": [
     "What else is pinned, and why, is written in docs/toolchain.md rather than",
@@ -68,6 +68,8 @@
       "`error while loading shared libraries: libgbm.so.1`, which Playwright",
       "reports as `Target page, context or browser has been closed`."
     ],
-    "browsers": ["chromium"]
+    "browsers": [
+      "chromium"
+    ]
   }
 }
