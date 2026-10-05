@@ -1,0 +1,15 @@
+# SOPS configuration.
+#
+# Recipients are public keys identifying people, so they are yours to add and
+# yours to keep. This file is committed; the matching private keys are not.
+#
+# `age` is a list, not a folded scalar: `>-` joins lines with a space, so two
+# recipients become one unparseable key.
+#
+# `path_regex` is matched against the path as given on the command line, so a rule
+# for `\.env$` does not match `.dev.vars`. This one covers the names used here.
+creation_rules:
+  - path_regex: \.(dev\.vars|env(\.[a-z]+)?|json|ya?ml|toml)$
+    age:
+      - age1jml3kl64x4vvprgp0gnm2na06ypch9h25j6dtk3w68zn82m0k4hs8eay5t
+      - age10qhrq828sp2xtz9a23xjvxdr64l5fdgfm5knmga4hdzf23mu5fmsgdc5z4

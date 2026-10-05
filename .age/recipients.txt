@@ -1,0 +1,28 @@
+# .age/recipients.txt
+#
+# Public age keys authorised to decrypt this project's secrets. This file is the
+# human-readable roster; **`.sops.yaml` is the authority sops actually reads**, and
+# the two must agree. `bun run setup:secrets` reports the count from `.sops.yaml`.
+#
+# 🔴 Only PUBLIC keys go here. A private key in a committed file is a committed
+# secret, and no amount of `.gitignore` elsewhere undoes that.
+#
+# Format: age1<public-key-hex>  # <description>
+#
+# To add a person:
+#   1. They generate one:   age-keygen -o ~/.age/<their-name>_key.txt
+#   2. They send you ONLY the "Public key: age1…" line
+#   3. You add it here and to the config, then re-key the files that must become
+#      readable to them:
+#          bun run secrets:update-recipients -- age1…
+#          yes | sops updatekeys secrets/<file>.enc.env
+#      Adding a recipient does not re-key existing files, so step 3's second half
+#      is a decision per file, not an accident of joining.
+#
+# To remove a person: delete their line here AND their key from `.sops.yaml`, then
+# re-key. A file still naming a removed recipient can still be read by them until
+# it is re-encrypted without them.
+#
+# Current recipients:
+age1jml3kl64x4vvprgp0gnm2na06ypch9h25j6dtk3w68zn82m0k4hs8eay5t  # Maintainer (snorreks) — ~/.config/sops/age/keys.txt
+age10qhrq828sp2xtz9a23xjvxdr64l5fdgfm5knmga4hdzf23mu5fmsgdc5z4  # CI — GitHub Actions environment secret SOPS_AGE_KEY (private half: ~/.age/starter-ci_key.txt)
