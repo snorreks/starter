@@ -106,34 +106,37 @@ A Moon upgrade therefore cannot silently drop an architectural rule.
 
 ## What Moon's cache can and cannot see here
 
-Moon 2.6.0 cannot build a cache key equal to the set of files these commands
-read. Both halves were measured on this workspace, and **re-measured on 2026-10-05**
-when Moon went 2.5.5 → 2.6.0:
+Moon 2.6.0 can include shared files and dependency changes in a task key when
+configured to do so. The cache gate supplements the current task declarations:
 
-1. **A task cannot name a file outside its project.** `'../../biome.json'` fails
-   to parse with `parent directory traversal (..) is not supported`.
-   `fileGroups` are project-scope only in 2.6.0, and the workspace `hasher` block
-   offers only `ignorePatterns`, `ignoreMissingPatterns`, `optimization`,
-   `walkStrategy` and `warnOnMissingInputs` — none of which adds a file to a
-   key. So `bun.lock`, root `package.json`, `bunfig.toml`,
-   `biome.json`, `config/toolchain.json` and every
-   `config/tsconfig/*.json` is unreachable from any task, and they decide the
-   result of every task here.
-2. **A task's key does not include its dependencies' keys.** With `utils:test`
-   declaring `deps: ['logger:test']`, editing
-   `packages/shared/logger/src/index.ts` re-ran `logger:test` under a new hash
-   while `utils:test` reported `cached, 2b8e371c` — byte-identical to the run
-   before. `dependsOn` orders the graph; it does not propagate content.
+1. **Parent traversal is rejected; workspace-root-relative inputs are supported.**
+   `'../../biome.json'` fails to parse with
+   `parent directory traversal (..) is not supported`, but `'/biome.json'` is a
+   supported task input. `'/bun.lock'`, `'/package.json'`, `'/bunfig.toml'`,
+   `'/config/toolchain.json'` and `'/config/tsconfig/*.json'` can likewise name
+   shared configuration. The current task inputs do not consistently cover these
+   files; they are not unreachable from tasks.
+2. **Dependency invalidation depends on the edge's cache strategy and outputs.**
+   The 2026-10-05 scratch measurement on 2.6.0 used `liba:test` with no declared
+   outputs (`outputs: []`) and `libb:test` with `deps: ['liba:test']`. No
+   `cacheStrategy` was specified, so the effective strategy was `ignored`, the
+   default for a dependency without outputs. With the cache warm, editing
+   `liba/src/index.ts` re-ran `liba:test` under a new hash while `libb:test`
+   reported `cached` with the same hash as before. Editing `libb`'s own source
+   changed its hash. This observation establishes that the dependency hash did
+   not invalidate the dependent task **under those settings**.
 
-The 2026-10-05 re-measurement reproduced both in a two-project scratch workspace,
-because the original `utils:test` → `logger:test` example no longer has that shape
-in this workspace. `libb:test` declared `deps: ['liba:test']`; with the cache warm,
-editing `liba/src/index.ts` re-ran `liba:test` under a new hash while `libb:test`
-reported `cached` on a hash byte-identical to the two runs before it, and `libb:test`
-moved only once its own source changed. One difference worth recording: 2.6.0 added
-`hasher.warnOnMissingInputs`, so the enumerated key list above is no longer
-exhaustive — it warns instead of widening a key, which is why the conclusion is
-unchanged while the list is not.
+An explicit `cacheStrategy: hash` includes the dependency task's hash and is also
+the default for dependencies that declare outputs. `cacheStrategy: outputs`
+tracks changes to dependency outputs instead. See Moon's
+[dependency cache strategies](https://moonrepo.dev/docs/config/project#cache-strategy)
+and [workspace-relative inputs](https://moonrepo.dev/docs/concepts/file-pattern#workspace-relative).
+
+A 2026-10-06 scratch check with Moon 2.6.0 confirmed the settings through
+`moon task libb:test --json`: the edge reports `cacheStrategy: ignored` with
+`liba:test` outputs empty, and a declared `'/root.txt'` appears in `inputFiles`.
+Editing the dependency preserved the dependent cache hit; editing the declared
+root input changed the dependent task's hash.
 
 So the cache is not disabled globally, because that would be a habit rather than
 a decision. Every root script that fans out to Moon goes through:
@@ -142,8 +145,9 @@ a decision. Every root script that fans out to Moon goes through:
 bun run scripts/src/cli.ts cached -- <targets>
 ```
 
-It fingerprints exactly the files Moon cannot see — the list above plus every
-workspace package's sources and manifests — and picks Moon's own `--cache` mode:
+It fingerprints the shared files not consistently covered by the task inputs —
+the list above plus the package sources and manifests listed in
+`scripts/src/ci/cache_scope.ts` — and picks Moon's own `--cache` mode:
 
 | Fingerprint | Mode | Effect |
 |---|---|---|

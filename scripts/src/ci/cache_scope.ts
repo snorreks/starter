@@ -2,30 +2,25 @@
 //
 // Whether Moon's cache may be trusted for this run.
 //
-// Moon 2.6.0 builds a task's cache key from that task's declared `inputs` plus
-// its command and its `env`. Two classes of file that decide the result of every
-// task in this workspace are outside that set, and both were measured rather
-// than assumed — and re-measured on 2026-10-05 when Moon went 2.5.5 → 2.6.0:
+// Moon 2.6.0 supports workspace-root-relative task inputs such as '/bun.lock'.
+// Parent traversal ('../') is rejected, but that does not make root files
+// unreachable. The current task declarations do not consistently include the
+// root configuration and cross-project sources fingerprinted here.
 //
-//   1. Files at the workspace root. A task input may not contain `..`
-//      (`parent directory traversal (..) is not supported`), `fileGroups` are
-//      project-scope only in 2.6.0, and the workspace `hasher` block offers no
-//      additive input (`warnOnMissingInputs` was added in 2.6.0; it warns, it
-//      does not widen a key). So `bun.lock`, root `package.json`, `bunfig.toml`,
-//      `biome.json`, `config/toolchain.json` and `config/tsconfig/**` cannot
-//      appear in any key.
-//
-//   2. A dependency project's sources. `dependsOn` orders the graph; it does not
-//      propagate content into a dependent task's key. Measured: a source edit in
-//      `packages/shared/logger` re-ran `logger:test` under a new hash while
-//      `utils:test` reported the same cached hash as before. Reproduced on
-//      2.6.0 on 2026-10-05 with a dependent task that reported a byte-identical
-//      `cached` hash while its dependency re-ran under a new one.
+// The 2026-10-05 scratch measurement used liba:test with outputs: [] and
+// libb:test with deps: ['liba:test']. The effective cacheStrategy was 'ignored'
+// (the default for a dependency without outputs). Editing liba/src/index.ts
+// re-ran liba:test under a new hash while libb:test retained its cached hash.
+// This observation applies to those settings: cacheStrategy: hash includes the
+// dependency hash and is the default when the dependency declares outputs;
+// cacheStrategy: outputs tracks dependency output changes instead.
+// Rechecked on 2026-10-06: Moon's task JSON confirms 'ignored', and changing a
+// declared workspace-root input changes the dependent task's hash.
 //
 // This module fingerprints exactly those files. `resolveCacheMode` then picks
 // Moon's own `--cache` mode for the run:
 //
-//   'read-write'  nothing it cannot see moved; cached hits are sound.
+//   'read-write'  nothing in the supplemental fingerprint moved.
 //   'off'         something moved, or the fingerprint could not be read.
 //
 // It fails closed on purpose. An unreadable fingerprint means `off`, because
@@ -58,18 +53,10 @@ export const SHARED_INPUTS = [
   'config/tsconfig/tsconfig.backend.json',
   'config/tsconfig/tsconfig.frontend.json',
   'config/tsconfig/tsconfig.svelte-kit.json',
-  // The browser resolver. It decides which Chromium `client:test-browser` and
-  // `e2e:e2e` launch, and it lives in `scripts/`, so Moon cannot name it in either
-  // project's inputs. Without it here, editing it left both lanes' cached results
-  // eligible — the exact failure this module exists to prevent, one file further
-  // out. `scripts/moon.yml` also cannot reference it: that is the `..` restriction
-  // documented in `.moon/workspace.yml`.
+  // Shared implementation used by the browser lanes and the client build.
+  // These can be declared as workspace-root-relative inputs; the gate covers
+  // them across the current task declarations.
   'scripts/src/shared/browser_path.ts',
-  // The Worker bundler `client:build` runs after Vite. It decides what is cached
-  // as the closed Worker artifact and what `check:bundle` then inspects, and it
-  // lives in `scripts/`, so Moon cannot name it in the client's inputs — for the
-  // same `..` reason as the resolver above. Editing it changed what a build
-  // produced while the previous build's output stayed eligible to be restored.
   'scripts/src/artifacts/bundle_worker.ts',
 ] as const;
 
@@ -258,7 +245,8 @@ const PURGED_DIRS = ['hashes', 'outputs'] as const;
  * Empty Moon's cache so a stale entry cannot become eligible again.
  *
  * `--cache off` for one run is not enough, and the reason is specific. Moon's own
- * key does not contain `bun.lock` or a dependency project's sources, so a result
+ * key in the measured configuration omitted `bun.lock` and the dependency
+ * sources (the edge used cacheStrategy: ignored), so a result
  * stored before those changed keeps exactly the key it had. Measured on this
  * workspace:
  *

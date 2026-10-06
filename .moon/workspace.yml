@@ -109,55 +109,38 @@ vcs:
 
 # ── What Moon's cache can and cannot see here ──────────────────────────────────
 #
-# Every project sets `options.cache: false`. That is not caution, and it is not
-# that the tasks are impure; it is that Moon 2.6.0 cannot build a key equal to
-# the set of files these commands read. Both halves were measured on this
-# workspace, not inferred from documentation.
+# The cache gate supplements the inputs declared by this workspace's tasks.
+# Moon 2.6.0 supports workspace-root-relative inputs; the observations below
+# describe the measured task configuration, not a limit on all Moon tasks.
 #
-# Re-measured against 2.6.0 on 2026-10-05, from 2.5.5. All four conclusions held.
-# One enumerated list did not: `hasher` gained `warnOnMissingInputs`, which
-# warns rather than adding a file to any key, so the conclusion below is
-# unchanged while the list is no longer exhaustive. A list that reads as
-# current and is not is how the next reader trusts a claim that stopped being
-# true.
-#
-# 1. A task cannot name a file outside its project. `'../../biome.json'` is
-#    rejected at parse time:
+# 1. Parent traversal such as '../../biome.json' is rejected at parse time:
 #
 #      tasks.probe.inputs[0]: parent directory traversal (..) is not supported
 #
-#    and `fileGroups` are accepted only at project scope in 2.6.0 — the
-#    workspace schema has no `fileGroups` key, and its `hasher` block offers
-#    only `ignorePatterns`, `ignoreMissingPatterns`, `optimization`,
-#    `walkStrategy` and `warnOnMissingInputs`, none of which adds a file to a
-#    key. So `bun.lock`, root `package.json`, `bunfig.toml`,
-#    `biome.json`, `config/toolchain.json` and every `config/tsconfig/*.json` is
-#    unreachable from any task. Those files decide the result of every task in
-#    this workspace: the lockfile fixes the compiler, the linter and the test
-#    runner, and `config/tsconfig/` is the `extends` chain for nine projects.
+#    This does not prevent workspace-root-relative inputs such as '/biome.json'
+#    or '/bun.lock'. Root package.json, bunfig.toml, biome.json,
+#    config/toolchain.json and config/tsconfig/*.json can also be declared that
+#    way. The gate fingerprints these shared files because the current task
+#    inputs do not consistently cover them.
 #
-# 2. A task's key does not include its dependencies' keys. With
-#    `utils:test` declaring `deps: ['logger:test']`, editing
-#    `packages/shared/logger/src/index.ts` re-ran `logger:test` under a new hash
-#    while `utils:test` reported `cached, 2b8e371c` — the same hash as before.
-#    `dependsOn` orders the graph; it does not propagate content.
+# 2. The 2026-10-05 two-project measurement on 2.6.0 used liba:test with no
+#    declared outputs (outputs: []) and libb:test with deps: ['liba:test'].
+#    With no explicit cacheStrategy, this edge effectively uses 'ignored'
+#    because liba:test has no outputs. Editing liba/src/index.ts re-ran
+#    liba:test under a new hash (00b5db61), while libb:test still reported
+#    'cached, cd620ceb'. Editing libb's own source moved its hash (f79a698f).
+#    The cache hit shows that dependency hashes do not invalidate libb:test
+#    with these settings. An edge using cacheStrategy: hash includes the
+#    dependency hash; a dependency with outputs defaults to that strategy.
+#    cacheStrategy: outputs instead tracks changes to dependency outputs.
 #
-#    Re-measured on 2.6.0 the same way, in a two-project scratch workspace,
-#    because the original measurement named a hash from a graph that no longer
-#    exists in this form. `libb:test` declared `deps: ['liba:test']`; with the
-#    cache warm, editing `liba/src/index.ts` re-ran `liba:test` under a new hash
-#    (`00b5db61`) while `libb:test` reported `cached, cd620ceb` — byte-identical
-#    to the two runs before it. Editing `libb`'s own source then moved it
-#    (`f79a698f`). It moves when its own content moves, and not before.
+# Rechecked on 2026-10-06 with Moon 2.6.0: `moon task libb:test --json`
+# reports the edge as 'ignored' for outputs: [], and '/root.txt' appears in
+# inputFiles. Editing the dependency leaves libb:test cached; editing the
+# declared root input changes its hash.
 #
-# A cached hit therefore asserts something about files Moon never looked at. The
-# cache is not disabled globally, because that would be a habit rather than a
-# decision: `bun run scripts/src/cli.ts cached -- <targets>` turns Moon's own
-# `--cache` mode on and off from a fingerprint over exactly the files listed in
-# (1) plus every workspace package's sources. When the fingerprint is unchanged
-# the tasks run `--cache read-write` and hit; when anything it cannot see moved,
-# they run `--cache off` and everything re-runs. It fails closed: an unreadable
-# fingerprint means `--cache off`.
-#
-# `scripts/tests/cache_scope.test.ts` proves both halves of that on this
-# workspace, including the negative control.
+# `bun run scripts/src/cli.ts cached -- <targets>` selects Moon's --cache mode
+# from a fingerprint over the shared files in (1) and the package sources listed
+# in scripts/src/ci/cache_scope.ts. Unchanged inputs permit read-write; changed
+# or unreadable inputs select off. This is a conservative gate for the current
+# declarations. scripts/tests/cache_scope.test.ts covers its transitions.
