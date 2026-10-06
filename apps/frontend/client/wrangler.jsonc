@@ -16,7 +16,8 @@
   "observability": { "enabled": true },
   // Deployment mode is explicit; only local may derive auth origin/defaults.
   // Compute stays disabled until a resolved target supplies all its bindings.
-  "vars": { "DEPLOYMENT_ENV": "local", "JOBS_PROFILE": "disabled" },
+  // Chat model defaults to `echo` (no binding needed) unless overridden.
+  "vars": { "DEPLOYMENT_ENV": "local", "JOBS_PROFILE": "disabled", "CHAT_MODEL_PROFILE": "echo" },
   "d1_databases": [
     {
       "binding": "DB",
@@ -25,7 +26,7 @@
     }
   ],
   "env": {
-    "staging": { "vars": { "DEPLOYMENT_ENV": "staging", "JOBS_PROFILE": "disabled" } },
-    "production": { "vars": { "DEPLOYMENT_ENV": "production", "JOBS_PROFILE": "disabled" } }
+    "staging": { "vars": { "DEPLOYMENT_ENV": "staging", "JOBS_PROFILE": "disabled", "CHAT_MODEL_PROFILE": "echo" } },
+    "production": { "vars": { "DEPLOYMENT_ENV": "production", "JOBS_PROFILE": "disabled", "CHAT_MODEL_PROFILE": "echo" } }
   }
 }

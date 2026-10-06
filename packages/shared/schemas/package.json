@@ -9,6 +9,7 @@
     ".": "./src/index.ts",
     "./logging": "./src/logging/index.ts",
     "./notes": "./src/notes/index.ts",
+    "./chat": "./src/chat/index.ts",
     "./auth": "./src/auth/index.ts",
     "./registry": "./src/registry/index.ts",
     "./common": "./src/common/index.ts",
