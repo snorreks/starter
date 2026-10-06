@@ -85,13 +85,13 @@ describe('dev port environment overrides', () => {
   test('the retired API_PORT is not read', async () => {
     // Set, ignored, and absent from the module. A caller that still exports
     // API_PORT has reintroduced a proxy target that no longer exists.
-    process.env['API_PORT'] = '8787';
+    process.env.API_PORT = '8787';
     try {
       const ports = await loadPorts('5200');
       expect(ports.CLIENT_DEV_PORT).toBe(5200);
       expect(Object.keys(ports)).not.toContain('API_DEV_PORT');
     } finally {
-      delete process.env['API_PORT'];
+      delete process.env.API_PORT;
     }
   });
 });

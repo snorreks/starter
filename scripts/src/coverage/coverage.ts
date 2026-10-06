@@ -29,7 +29,7 @@
 //      crates — deliberately outside `:test`, for the reasons their moon.yml
 //      records — pass as measured.
 
-import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join, relative } from 'node:path';
 import { readWorkspacePackages } from '../guards/module_graph.ts';
 import { REPO_ROOT } from '../shared/paths.ts';
@@ -180,14 +180,7 @@ export const runCoverage = async (options: CoverageRunOptions): Promise<Coverage
     }
     const result = await run({
       command: moon,
-      args: [
-        'run',
-        '--cache',
-        'off',
-        ':test',
-        '--',
-        ...COVERAGE_TEST_ARGS,
-      ],
+      args: ['run', '--cache', 'off', ':test', '--', ...COVERAGE_TEST_ARGS],
       cwd: root,
     });
     if (result.code !== 0) {
@@ -248,7 +241,10 @@ export const runCoverage = async (options: CoverageRunOptions): Promise<Coverage
     Math.max(column.length, ...rows.map((row) => Object.values(row)[index]?.length ?? 0)),
   );
   const line = (cells: readonly string[]): string =>
-    cells.map((cell, index) => cell.padEnd(widths[index] ?? 0)).join('  ').trimEnd();
+    cells
+      .map((cell, index) => cell.padEnd(widths[index] ?? 0))
+      .join('  ')
+      .trimEnd();
 
   const summary = [
     line(header),
@@ -268,9 +264,11 @@ export const runCoverage = async (options: CoverageRunOptions): Promise<Coverage
   ].join('\n');
 
   write(summary);
-  write(`\nlines ${formatPercent(totals.linesHit, totals.linesFound)} · ` +
-    `functions ${formatPercent(totals.functionsHit, totals.functionsFound)} · ` +
-    `merged report: ${relative(root, mergedPath)}`);
+  write(
+    `\nlines ${formatPercent(totals.linesHit, totals.linesFound)} · ` +
+      `functions ${formatPercent(totals.functionsHit, totals.functionsFound)} · ` +
+      `merged report: ${relative(root, mergedPath)}`,
+  );
   write(
     'No branch figure: Bun writes no BRDA records, so there is no branch data to\n' +
       'aggregate. Reporting one would mean inventing it.',
@@ -292,7 +290,9 @@ export const runCoverage = async (options: CoverageRunOptions): Promise<Coverage
         'that exercises them, and it is not in this number either.',
     );
   }
-  write('\nThis reports. It does not gate: no threshold is checked, so an untested new\nfile lowers the number without failing anything.');
+  write(
+    '\nThis reports. It does not gate: no threshold is checked, so an untested new\nfile lowers the number without failing anything.',
+  );
 
   return { code: 0, summary };
 };

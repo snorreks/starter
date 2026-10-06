@@ -10,7 +10,7 @@
 // question instead of a validation error.
 
 import { describe, expect, test } from 'bun:test';
-import { Value } from '@sinclair/typebox/value';
+import { Value } from 'typebox/value';
 import {
   CreateEncodeJobSchema,
   IDEMPOTENCY_KEY_HEADER,

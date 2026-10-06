@@ -22,7 +22,7 @@
 // object, for the same reason `JobDtoSchema` is closed: an open schema here would
 // let a future column become a browser contract by accident.
 
-import { type Static, Type } from '@sinclair/typebox';
+import { type Static, Type } from 'typebox';
 import { literalUnion } from './job.ts';
 
 /** The two things that can start a run. Mirrors the repository's union. */

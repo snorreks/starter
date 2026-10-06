@@ -139,7 +139,21 @@ export abstract class BaseClass<Options extends BaseClassOptions = BaseClassOpti
     return instance;
   }
 
-  constructor(protected readonly options: Options) {}
+  /**
+   * Declared and assigned, never a constructor parameter property.
+   *
+   * Node 22 strips types without transforming them, and a parameter property is
+   * a transform — `constructor(protected readonly options: Options)` is a 500 on
+   * every request under `vite dev`, and no amount of correct TypeScript gets past
+   * it. The field plus the assignment is the same semantics in syntax that both
+   * strip-only Node and a bundler accept, so this package stays loadable in the
+   * one runtime that cannot rewrite it.
+   */
+  protected readonly options: Options;
+
+  constructor(options: Options) {
+    this.options = options;
+  }
 
   get className(): string {
     return this.options.className;

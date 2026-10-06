@@ -21,7 +21,13 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { discoverReports, runCoverage } from '../src/coverage/coverage.ts';
-import { mergeReports, parseReport, renderLcov, resolveReportPath, total } from '../src/coverage/lcov.ts';
+import {
+  mergeReports,
+  parseReport,
+  renderLcov,
+  resolveReportPath,
+  total,
+} from '../src/coverage/lcov.ts';
 
 const roots: string[] = [];
 

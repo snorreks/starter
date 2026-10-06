@@ -111,11 +111,7 @@ export const bunPinEdits = (options: {
 };
 
 /** Dependency fields a pinned range may be written back into. */
-const PINNED_FIELDS = [
-  'dependencies',
-  'devDependencies',
-  'optionalDependencies',
-] as const;
+const PINNED_FIELDS = ['dependencies', 'devDependencies', 'optionalDependencies'] as const;
 
 /**
  * The pinned ranges declared by `.syncpackrc`, keyed by package name.
@@ -247,7 +243,9 @@ const lockedVersion = (root: string, name: string): string | null => {
   // Whitespace between the key and its array is Bun's formatting to choose, not
   // ours: matching it exactly would pass against this repository's lockfile and
   // fail against any writer that does not indent it the same way.
-  const found = new RegExp(`"${escaped}":\\s*\\["${escaped}@([^"@]+)`).exec(readFileSync(lockPath, 'utf8'));
+  const found = new RegExp(`"${escaped}":\\s*\\["${escaped}@([^"@]+)`).exec(
+    readFileSync(lockPath, 'utf8'),
+  );
   return found?.[1] ?? null;
 };
 

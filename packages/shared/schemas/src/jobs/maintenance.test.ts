@@ -8,7 +8,7 @@
 // properties" would silently publish to every browser.
 
 import { describe, expect, test } from 'bun:test';
-import { Value } from '@sinclair/typebox/value';
+import { Value } from 'typebox/value';
 import { LatestMaintenanceSchema, MaintenanceEvidenceSchema } from './maintenance.ts';
 
 // The literal rather than `@starter/jobs`'s `MAINTENANCE_CRON`: this package is

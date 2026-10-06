@@ -16,10 +16,10 @@
 // identity does not get one.
 
 import { describe, expect, test } from 'bun:test';
-import { Value } from '@sinclair/typebox/value';
 import { createHttpTelemetryTransport } from '@starter/logger';
 import type { LogEvent } from '@starter/schemas/logging';
 import { createId } from '@starter/utils';
+import { Value } from 'typebox/value';
 import type { Container } from '#lib/server/container.ts';
 import type { RequestContext, RequestUser } from './request_context.ts';
 import {

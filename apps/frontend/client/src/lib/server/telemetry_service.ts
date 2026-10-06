@@ -31,7 +31,6 @@
 // what lets `storeRecord` be unit-tested with no HTTP involved. Reading the body
 // by hand inside the service would be the second code path to the same parse.
 
-import { type Static, Type } from '@sinclair/typebox';
 import { redactValue } from '@starter/logger';
 import {
   type ClientReportedContext,
@@ -39,6 +38,7 @@ import {
   type LogEvent,
   LogEventSchema,
 } from '@starter/schemas/logging';
+import { type Static, Type } from 'typebox';
 import type { RequestContext } from './request_context.ts';
 
 /** Hard ceiling on one submission, in bytes. Rejected by the route before parsing. */

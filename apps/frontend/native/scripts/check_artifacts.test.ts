@@ -94,7 +94,13 @@ describe('the ZIP reader', () => {
 describe('artifact names carry their provenance', () => {
   test('an unsigned Android APK names platform, target, revision and its own state', () => {
     expect(
-      artifactName({ platform: 'android', target: 'aarch64', revision: REVISION, extension: 'apk', signed: false }),
+      artifactName({
+        platform: 'android',
+        target: 'aarch64',
+        revision: REVISION,
+        extension: 'apk',
+        signed: false,
+      }),
     ).toBe(`starter-android-aarch64-${REVISION.slice(0, 12)}-unsigned.apk`);
   });
 
@@ -142,7 +148,9 @@ describe('origin verification reads the bytes', () => {
     });
     const dir = place(name, apkWith([]));
 
-    expect(verifyArtifacts({ dir, expectedOrigin: ORIGIN, revision: REVISION, platform: 'android' })).toEqual([]);
+    expect(
+      verifyArtifacts({ dir, expectedOrigin: ORIGIN, revision: REVISION, platform: 'android' }),
+    ).toEqual([]);
   });
 
   test('an APK built against another API fails, naming both', () => {
@@ -179,10 +187,7 @@ describe('origin verification reads the bytes', () => {
       extension: 'apk',
       signed: false,
     });
-    const dir = place(
-      name,
-      writeStoredZip([{ name: 'assets/index.html', data: '<html></html>' }]),
-    );
+    const dir = place(name, writeStoredZip([{ name: 'assets/index.html', data: '<html></html>' }]));
 
     const problems = verifyArtifacts({
       dir,
@@ -195,7 +200,7 @@ describe('origin verification reads the bytes', () => {
     expect(problems[0]?.remedy).toContain('VITE_NATIVE_API_ORIGIN');
   });
 
-  test('the shell\'s own ipc and asset origins are not mistaken for API origins', () => {
+  test("the shell's own ipc and asset origins are not mistaken for API origins", () => {
     const name = artifactName({
       platform: 'android',
       target: 'aarch64',
@@ -453,7 +458,11 @@ describe('what counts as a foreign origin', () => {
   test('loopback is only ignored because a packaged app cannot reach it', () => {
     // And it is ignored *only* when it is not the expected origin — a development
     // build legitimately targets loopback, and that must still be found.
-    for (const loopback of ['http://127.0.0.1:1420', 'http://localhost:5173', 'http://[::1]:5173']) {
+    for (const loopback of [
+      'http://127.0.0.1:1420',
+      'http://localhost:5173',
+      'http://[::1]:5173',
+    ]) {
       expect(isForeignOrigin(loopback, expected)).toBe(false);
       expect(isForeignOrigin(loopback, loopback)).toBe(false);
     }

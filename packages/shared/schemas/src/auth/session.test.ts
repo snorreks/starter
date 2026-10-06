@@ -9,7 +9,7 @@
 // closed, and projected.
 
 import { describe, expect, test } from 'bun:test';
-import { Value } from '@sinclair/typebox/value';
+import { Value } from 'typebox/value';
 import { SessionUserWireSchema, toSessionUser } from './session.ts';
 
 /** The row Better Auth returns: every field on the `users` table, serialized. */

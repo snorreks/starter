@@ -222,6 +222,7 @@ against a real built Worker in real workerd:
 | Two concurrent sessions isolated | Same lane: two real sign-ups, two concurrent submissions, each record mapped to its own session | `bun run test:worker` | distinct user ids per session |
 | Local NDJSON record | Real Node 22.23.3 process writing through `createNdjsonStdoutEmitter`, then read back by the log CLI | `node --experimental-strip-types` + `bun run logs web --mode local` | one line per record; CLI rendered both |
 | Verification asks readiness | `apply` driven with a recording `fetch` that answers 200 liveness and 503 readiness | `cd scripts && bun test tests/deployment_pipeline.test.ts` | **32 pass, 0 fail** (7 new); verify fails and still records |
+| Node dev server serves the app | Real Node 22.23.3 running `vite dev` through `bun run dev`; the three routes a signed-out browser reaches, requested over HTTP | `bun run dev` | `GET /` **200**, `GET /login` **200**, `GET /notes` **303** to sign-in; no `ERR_UNSUPPORTED_TYPESCRIPT_SYNTAX` |
 
 **NOT RUN, with the reason:**
 
@@ -230,7 +231,35 @@ against a real built Worker in real workerd:
 | Remote log history (`bun run logs --mode staging\|production`) | Needs a deployed Worker and a Cloudflare account with Workers Observability access. No deployment was performed in this round. The local lane above proves emission; it says nothing about provider retention. |
 | `wrangler tail` against a live Worker | Same. `wrangler dev` output is the same console stream, but it is not the provider's index. |
 | `bun run deploy apply` / a live verification | This round writes no remote state by instruction. The verification logic is proven against a recording `fetch`, and a live run is the remaining step. |
-| `bun run dev` (Node dev server) | **Broken on `main` too, independently of this branch.** Node 22.23.3 strips types without transforming, and `packages/shared/utils/src/lib/common/base_class.ts:142` uses a TypeScript parameter property (`constructor(protected readonly options: Options)`), which strip-only mode refuses. The Node record was therefore proven with a real Node process driving the emitter directly, and the app-level Node lane remains broken until that line is rewritten. |
+
+### The Node dev server was broken, and the class of bug is now refused
+
+`bun run dev` answered **500 on every request** and the row above was a *known gap*
+until the cause was removed. It is worth stating what it was, because every other
+lane stayed green while it was broken.
+
+Node 22.23.3 loads the **TypeScript source** of every workspace package — each
+`exports` entry points at a `.ts` file, so there is no build step in front of it — and
+Node *strips* types rather than transforming them.
+`packages/shared/utils/src/lib/common/base_class.ts:142` was
+`constructor(protected readonly options: Options)`, and a parameter property's field
+assignment is generated code, so Node raised `ERR_UNSUPPORTED_TYPESCRIPT_SYNTAX`. Only
+the Node runtime ever reached that line: `bun run test`, `test:worker` and `e2e` all
+passed throughout, which is exactly why a green suite did not mean a working dev
+server.
+
+Two changes, and the second is the one that matters:
+
+1. The constructor is a field declaration plus an assignment — same semantics, syntax
+   both strip-only Node and a bundler accept.
+2. `noParameterProperties`, `noEnum` and `noNamespace` are `error` in `biome.json`, so
+   all three transform-only constructs are refused at the file that introduces them
+   rather than at the first request that loads it. See [lint.md](lint.md).
+
+NOT RE-RECORDED in `docs/evidence/current.json`: that file carries the revision the
+lanes were executed against, and this fix is not committed, so adding a row here would
+claim an observation against a revision that does not exist. Re-record the matrix when
+this lands.
 
 ### A historical log query has never been sent
 

@@ -61,8 +61,8 @@
 // them: a secret in a repository variable is a secret in every workflow log that
 // echoes the resolved target.
 
-import { Value } from '@sinclair/typebox/value';
 import type { DeploymentEnvironment } from '@starter/schemas';
+import { Value } from 'typebox/value';
 import {
   DeploymentEnvironmentMapSchema,
   ENVIRONMENT_TARGET_FIELDS,

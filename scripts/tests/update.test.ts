@@ -300,8 +300,11 @@ const pinnedFixture = (
 };
 
 const declaredTypeScript = (root: string, dir = 'package.json'): string | undefined =>
-  (JSON.parse(readFileSync(join(root, dir), 'utf8')) as { devDependencies?: Record<string, string> })
-    .devDependencies?.typescript;
+  (
+    JSON.parse(readFileSync(join(root, dir), 'utf8')) as {
+      devDependencies?: Record<string, string>;
+    }
+  ).devDependencies?.typescript;
 
 test('a pinned package resolved to a new major is restored before anything installs', async () => {
   const root = pinnedFixture();
@@ -315,7 +318,11 @@ test('a pinned package resolved to a new major is restored before anything insta
       // time the install runs is what determines the tree, so the restore has to
       // have happened already.
       if (options.args[0] === 'update') {
-        for (const dir of ['package.json', 'apps/frontend/client/package.json', 'scripts/package.json']) {
+        for (const dir of [
+          'package.json',
+          'apps/frontend/client/package.json',
+          'scripts/package.json',
+        ]) {
           const manifest = JSON.parse(readFileSync(join(root, dir), 'utf8')) as {
             devDependencies: Record<string, string>;
           };
@@ -342,8 +349,11 @@ test('an unpinned package is left on the version the update resolved', async () 
   const restored = restorePinnedRanges({ root, pins: readPinnedRanges(root) });
   expect(restored).toEqual([]);
   expect(
-    (JSON.parse(readFileSync(join(root, 'package.json'), 'utf8')) as { devDependencies: Record<string, string> })
-      .devDependencies['@biomejs/biome'],
+    (
+      JSON.parse(readFileSync(join(root, 'package.json'), 'utf8')) as {
+        devDependencies: Record<string, string>;
+      }
+    ).devDependencies['@biomejs/biome'],
   ).toBe('2.5.13');
 });
 

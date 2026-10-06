@@ -2,18 +2,18 @@
 //
 // The small set of things every API route adapter needs, in one place.
 //
-// Elysia used to supply all three — a JSON error shape, a body size limit and
-// schema-driven request validation — declaratively, from the route definition.
-// SvelteKit's `+server.ts` is a plain `Request`/`Response` pair, so they are
-// explicit here instead. Explicit is also what lets the *response* side stay
-// honest: a route that forgets `readJsonBody` is visible in review, whereas a
-// route that forgets a validation option was invisible.
+// A JSON error shape, a body size limit and schema-driven request validation
+// are explicit here. SvelteKit's `+server.ts` is a plain `Request`/`Response`
+// pair, so they cannot be declarative route options. Explicit is also what
+// lets the *response* side stay honest: a route that forgets `readJsonBody`
+// is visible in review, whereas a route that forgets a validation option was
+// invisible.
 //
 // TypeBox is still the validator, and still the same schema the browser
 // validates against, so there is no second hand-written validation to drift.
 
-import type { TSchema } from '@sinclair/typebox';
-import { Value } from '@sinclair/typebox/value';
+import type { TSchema } from 'typebox';
+import { Value } from 'typebox/value';
 
 /** The one error shape every API route returns. */
 export interface ApiErrorBody {

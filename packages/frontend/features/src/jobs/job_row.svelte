@@ -51,7 +51,7 @@ const ERROR_TEXT: Record<'encode_failed' | 'attempts_exhausted' | 'internal_erro
 
 /** `1 Oct 2026, 17:04` — absolute and locale-stable, not "3 minutes ago". */
 const timestamp = (epochMs: number): string =>
-  new Date(epochMs).toISOString().replace('T', ' ').slice(0, 16) + ' UTC';
+  `${new Date(epochMs).toISOString().replace('T', ' ').slice(0, 16)} UTC`;
 </script>
 
 <li class="job" data-testid="job-row" data-job-id={job.id} data-status={job.status}>

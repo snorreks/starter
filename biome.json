@@ -16,6 +16,7 @@
       "!**/test-results",
       "!**/playwright-report",
       "!**/.evidence",
+      "!**/drizzle-d1/meta",
       "!**/*.min.js"
     ],
     "ignoreUnknown": true
@@ -61,12 +62,12 @@
   "linter": {
     "enabled": true,
     "rules": {
-      "recommended": true,
+      "preset": "recommended",
       "a11y": {
-        "recommended": true
+        "preset": "recommended"
       },
       "complexity": {
-        "recommended": true,
+        "preset": "recommended",
         "noForEach": "error",
         "noUselessTernary": "error",
         "useArrowFunction": "error",
@@ -74,22 +75,22 @@
         "noAdjacentSpacesInRegex": "error"
       },
       "correctness": {
-        "recommended": true,
+        "preset": "recommended",
         "noUnusedVariables": "error",
         "noUnusedImports": "error"
       },
       "nursery": {
-        "recommended": true
+        "preset": "recommended"
       },
       "performance": {
-        "recommended": true,
+        "preset": "recommended",
         "noDelete": "error"
       },
       "security": {
-        "recommended": true
+        "preset": "recommended"
       },
       "style": {
-        "recommended": true,
+        "preset": "recommended",
         "noNonNullAssertion": "error",
         "noNestedTernary": "error",
         "useBlockStatements": "error",
@@ -108,7 +109,7 @@
         "useNamingConvention": "off"
       },
       "suspicious": {
-        "recommended": true,
+        "preset": "recommended",
         "noConsole": {
           "level": "error",
           "options": {
@@ -132,6 +133,30 @@
           },
           "suspicious": {
             "noExplicitAny": "error"
+          }
+        }
+      }
+    },
+    {
+      "includes": ["**", "!**/*.d.ts"],
+      "linter": {
+        "rules": {
+          "style": {
+            "noParameterProperties": "error",
+            "noEnum": "error",
+            "noNamespace": "error"
+          }
+        }
+      }
+    },
+    {
+      "includes": ["scripts/**/*.ts", ".pi/**/*.ts"],
+      "linter": {
+        "rules": {
+          "style": {
+            "noParameterProperties": "off",
+            "noEnum": "off",
+            "noNamespace": "off"
           }
         }
       }
@@ -211,12 +236,7 @@
               "options": {
                 "patterns": [
                   {
-                    "group": [
-                      "svelte",
-                      "@sveltejs/kit",
-                      "@sveltejs/vite-plugin-svelte",
-                      "svelte/"
-                    ],
+                    "group": ["svelte", "@sveltejs/kit", "@sveltejs/vite-plugin-svelte", "svelte/"],
                     "message": "The server plane must not depend on Svelte. Shared view logic belongs in packages/frontend, which this plane may not import."
                   },
                   {

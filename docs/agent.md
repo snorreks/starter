@@ -355,15 +355,11 @@ concurrency, then silent failure, then boundary violations. It is told to state
 plainly when it found nothing in a category rather than inventing a finding — an
 invented finding costs more than a missed stylistic one.
 
-## One TypeBox exception
+## One TypeBox
 
-The extensions import `typebox` (1.x) while the rest of the repository uses
-`@sinclair/typebox` (0.34).
-
-This is forced. Pi's `registerTool` consumes a TypeBox 1.x schema object and
-cannot read a 0.34 one, and an extension that does not touch the server has no
-reason to depend on Elysia. The two meet only at this boundary, so the exception
-stops at `.pi/` and is recorded in `.pi/tsconfig.json`.
+The extensions and the rest of the repository both import `typebox` (1.x).
+Pi's `registerTool` consumes a TypeBox 1.x schema object, so the whole
+repository uses one version.
 
 `typebox/value` is used for the dispatch-time validation in
 `lib/tool_namespace.ts`, so `params` are checked against each action's own schema
