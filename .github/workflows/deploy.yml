@@ -222,7 +222,7 @@ jobs:
           # another process can read it" rule the deploy path enforces on argv.
           persist-credentials: false
 
-      - uses: oven-sh/setup-bun@7b8f5b94c955a854e6f8b8dc76b2b8c6bca29f45 # v2.2.2
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
           bun-version: ${{ env.BUN_VERSION }}
 
@@ -325,7 +325,7 @@ jobs:
           fi
           echo "Deploying $SOURCE_SHA from $DEPLOY_REF to $DEPLOY_ENVIRONMENT."
 
-      - uses: oven-sh/setup-bun@7b8f5b94c955a854e6f8b8dc76b2b8c6bca29f45 # v2.2.2
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
           bun-version: ${{ env.BUN_VERSION }}
 

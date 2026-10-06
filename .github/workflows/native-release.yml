@@ -515,7 +515,7 @@ jobs:
         with:
           bun-version: ${{ env.BUN_VERSION }}
 
-      - uses: ./.github/actions/install-native-linux-deps
+      - uses: ./.github/actions/install-native-linux-deps # zizmor: ignore[self-repository] actionlint 1.7.12 rejects GitHub's new $/ syntax
 
       - name: Install
         run: bun install --frozen-lockfile

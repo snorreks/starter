@@ -76,7 +76,7 @@ jobs:
       # it `cargo test` dies inside `glib-sys`'s build script, on the job whose
       # entire subject is this crate's own Rust — naming a crate rather than the
       # package that provides it, which is the failure this action prevents.
-      - uses: ./.github/actions/install-native-linux-deps
+      - uses: ./.github/actions/install-native-linux-deps # zizmor: ignore[self-repository] actionlint 1.7.12 rejects GitHub's new $/ syntax
 
       - name: Format
         # `cargo fmt --check`, never a write: a formatter that rewrites on CI hides
@@ -141,7 +141,7 @@ jobs:
       # the `rust` job: see the action's own comment for why it is not copied.
       - name: Install Linux webview libraries
         if: runner.os == 'Linux'
-        uses: ./.github/actions/install-native-linux-deps
+        uses: ./.github/actions/install-native-linux-deps # zizmor: ignore[self-repository] actionlint 1.7.12 rejects GitHub's new $/ syntax
 
       - name: Report what this host can build
         # The same command a contributor runs, and it must pass: a doctor that fails
@@ -392,10 +392,12 @@ jobs:
         # revision; the name this repository ships is the one that has to carry
         # them, so that is the name that has to be checked. Running this first —
         # against paths that did not exist — is what it did before.
+        env:
+          ARTIFACT_DIR: ${{ steps.artifact.outputs.dist }}
         run: |
           set -euo pipefail
           bun run --cwd apps/frontend/native check:artifacts -- \
-            -- "${{ steps.artifact.outputs.dist }}" \
+            -- "$ARTIFACT_DIR" \
             --origin "$VITE_NATIVE_API_ORIGIN" \
             --revision "$GITHUB_SHA" --platform android
 
@@ -563,6 +565,8 @@ jobs:
           echo "activity=$activity" >> "$GITHUB_OUTPUT"
 
       - name: The Android back button navigates the app and does not kill it
+        env:
+          ANDROID_PACKAGE: ${{ steps.launch.outputs.package }}
         run: |
           set -euo pipefail
           # Back on the root of a single-page app leaves the app; the property
@@ -574,11 +578,11 @@ jobs:
           # debug build is `com.example.starter.debug`.
           adb shell input keyevent KEYCODE_BACK
           sleep 3
-          if ! adb shell pm list packages | tr -d '\r' | grep -q "^package:${{ steps.launch.outputs.package }}$"; then
+          if ! adb shell pm list packages | tr -d '\r' | grep -Fqx "package:$ANDROID_PACKAGE"; then
             echo "::error::the app is no longer registered after two back presses"
             exit 1
           fi
-          echo "KEYCODE_BACK delivered twice; ${{ steps.launch.outputs.package }} is still installed"
+          echo "KEYCODE_BACK delivered twice; $ANDROID_PACKAGE is still installed"
 
       - name: Record what this run did and did not prove
         run: |
