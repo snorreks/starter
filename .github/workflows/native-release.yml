@@ -3,8 +3,9 @@
 # Separate from `.github/workflows/native.yml` on purpose, and for one reason
 # rather than for tidiness:
 #
-#   * `native.yml` runs on `pull_request`. A job that references `secrets.*` in a
-#     workflow that runs pull-request code is refused by `bun run workflows`,
+#   * `native.yml` is the unsigned, manually dispatched validation lane. A job
+#     that references `secrets.*` in a workflow that runs pull-request code is
+#     refused by `bun run workflows`,
 #     because a fork cannot supply a secret and the step then fails there and
 #     passes on branches — a credentialed lane that behaves differently depending
 #     on who opened the pull request is not a credentialed lane.

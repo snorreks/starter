@@ -5,7 +5,7 @@
 <script lang="ts">
 import '@starter/ui/tokens.css';
 import '../app.css';
-import '#lib/runtime/logger';
+import '#logger';
 import { setDialogCapabilities } from '@starter/ui';
 import type { Snippet } from 'svelte';
 import { untrack } from 'svelte';

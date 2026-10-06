@@ -29,6 +29,7 @@
 // Workflow step, which the platform owns end to end — the caller may disconnect the
 // instant it gets its 202 and the encode still finishes.
 
+import '#logger';
 import { EncodeContainer } from './encode_container.ts';
 import type { JobsEnv } from './env.ts';
 import { EncodeWorkflow } from './workflows/encode_workflow.ts';

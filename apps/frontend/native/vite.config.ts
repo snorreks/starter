@@ -38,7 +38,7 @@ import adapter from '@sveltejs/adapter-static';
 import { sveltekit } from '@sveltejs/kit/vite';
 import { vitePreprocess } from '@sveltejs/vite-plugin-svelte';
 import tailwindcss from '@tailwindcss/vite';
-import { defineConfig, loadEnv, type PluginOption } from 'vite';
+import { defineConfig, loadEnv } from 'vite';
 import { NATIVE_DEV_HOST, NATIVE_DEV_PORT } from './dev_ports.ts';
 
 export default defineConfig(({ command, mode }) => {
@@ -86,10 +86,7 @@ export default defineConfig(({ command, mode }) => {
           // See the header: a route that cannot be prerendered fails the build.
           strict: true,
         }),
-        alias: {
-          '#lib': 'src/lib',
-        },
-      }) as PluginOption,
+      }),
     ],
 
     // The port `src-tauri/tauri.conf.json` names as `devUrl`. `strictPort` so a

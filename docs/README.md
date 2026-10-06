@@ -7,6 +7,7 @@ Start here. Nothing below is required reading before running a command — the
 
 | If you want to… | Read |
 |---|---|
+| configure GitHub branches, protections and automation | [github.md](github.md) |
 | run something | [../AGENTS.md](../AGENTS.md) |
 | know what is actually verified | [capability-matrix.md](capability-matrix.md) |
 | write or run tests | [testing.md](testing.md) |

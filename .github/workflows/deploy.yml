@@ -1,9 +1,8 @@
 # Deploy.
 #
-# Manual only, on purpose. An unconfigured template must not publish itself when
-# a commit lands, and "the checks passed" and "this was published" are different
-# decisions with different authority — so CI never deploys, and this file is the
-# only path that does.
+# Promotion pushes deploy the matching protected environment. `main` remains the
+# development branch; merging it into `staging` and then `production` is the release
+# decision. Manual dispatch remains available for a deliberate recovery/redeploy.
 #
 # ── Why the plan job is credential-free and configuration-complete ───────────────
 #
@@ -32,7 +31,8 @@
 # `apply` holds a Cloudflare API token and a database. Anything that can reach it
 # can write production. So:
 #
-#   * it runs only from a revision on the default branch, named in `github.ref`;
+#   * automatic deploys run only from their matching promotion branch;
+#   * manual deploys run only from the development branch, named in `github.ref`;
 #   * it never runs from a pull request, and this workflow does not trigger on one
 #     at all — a fork's code gets no credential of any kind;
 #   * it declares `environment:`, so the environment's protection rules — reviewers,
@@ -62,8 +62,8 @@
 name: Deploy
 
 on:
-  # `workflow_dispatch` only. A push to main does not deploy: this is an
-  # unconfigured template, and the first deploy is an act with a resource bill.
+  push:
+    branches: [staging, production]
   workflow_dispatch:
     inputs:
       environment:
@@ -128,7 +128,9 @@ env:
   # commit message on the policy check.
   STARTER_DEPLOYMENT_TARGETS: ${{ vars.STARTER_DEPLOYMENT_TARGETS }}
   CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
-  DEPLOY_ENVIRONMENT: ${{ inputs.environment }}
+  # Dispatch selects an environment explicitly. Promotion pushes derive it from
+  # the branch name; `main` itself never deploys.
+  DEPLOY_ENVIRONMENT: ${{ inputs.environment || github.ref_name }}
   # Optional per-field overrides, applied to `DEPLOY_ENVIRONMENT` only. Empty by
   # default: the repository map is the source of truth and these exist for a run that
   # must target something else.
@@ -144,12 +146,69 @@ env:
   CLOUDFLARE_NATIVE_API_ORIGIN: ${{ vars.CLOUDFLARE_NATIVE_API_ORIGIN }}
 
 jobs:
+  # A cheap, credential-free gate runs before Bun setup or dependency installation.
+  # Unknown paths are deployable by default; only known documentation, tooling,
+  # GitHub metadata and native-only changes can take the early exit.
+  changes:
+    name: Check for deployable changes
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    outputs:
+      deploy_required: ${{ steps.scope.outputs.deploy_required }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Decide whether the web deployment can change
+        id: scope
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BEFORE_SHA: ${{ github.event.before }}
+        run: |
+          set -euo pipefail
+          if [ "$EVENT_NAME" = workflow_dispatch ]; then
+            echo 'deploy_required=true' >> "$GITHUB_OUTPUT"
+            echo 'Manual deploy requested; change detection does not suppress it.' >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+
+          if [[ ! "$BEFORE_SHA" =~ ^0+$ ]]; then
+            changed_files="$(git diff --name-only --no-renames "$BEFORE_SHA" "$GITHUB_SHA")"
+          else
+            # The first push to a new promotion branch has no usable base. Run the
+            # plan rather than guessing that it contains no deployable code.
+            changed_files='initial-promotion-branch'
+          fi
+
+          deploy_required=false
+          while IFS= read -r path; do
+            [ -n "$path" ] || continue
+            case "$path" in
+              docs/*|.github/*|.pi/*|apps/frontend/native/*|README.md|AGENTS.md)
+                ;;
+              *) deploy_required=true; break ;;
+            esac
+          done <<< "$changed_files"
+
+          echo "deploy_required=$deploy_required" >> "$GITHUB_OUTPUT"
+          if [ "$deploy_required" = true ]; then
+            echo 'Deployable inputs changed; continuing to the offline plan.' >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo 'Only documentation, GitHub metadata, agent tooling, or native-only inputs changed. Skipping dependency install, build, and environment approval.' >> "$GITHUB_STEP_SUMMARY"
+          fi
+
   # ── plan: offline ──────────────────────────────────────────────────────────
   #
   # No `environment:` and therefore no secrets. This is the job a reviewer can
   # read: it proves what *would* happen without needing authority to do it.
   plan:
     name: Plan
+    needs: changes
+    if: needs.changes.outputs.deploy_required == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -166,6 +225,14 @@ jobs:
       - uses: oven-sh/setup-bun@7b8f5b94c955a854e6f8b8dc76b2b8c6bca29f45 # v2.2.2
         with:
           bun-version: ${{ env.BUN_VERSION }}
+
+      - name: Restore Bun's download cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.bun/install/cache
+          key: bun-${{ runner.os }}-${{ env.BUN_VERSION }}-${{ hashFiles('bun.lock') }}
+          restore-keys: |
+            bun-${{ runner.os }}-${{ env.BUN_VERSION }}-
 
       - name: Install
         run: bun install --frozen-lockfile
@@ -199,9 +266,6 @@ jobs:
       - name: Guards
         run: bun run guard
 
-      - name: Build the artifact
-        run: bun run build && bun run check:bundle
-
   # ── apply: the only mutating job ───────────────────────────────────────────
   #
   # `environment:` gives this job the environment's secrets *and* the environment's
@@ -209,14 +273,15 @@ jobs:
   # without any logic in this file. It is also what makes `concurrency.group`
   # globally serialising: the group name is resolved from the same input.
   apply:
-    name: Apply (${{ inputs.environment }})
-    needs: plan
+    name: Apply (${{ inputs.environment || github.ref_name }})
+    needs: [changes, plan]
+    if: needs.changes.outputs.deploy_required == 'true'
     runs-on: ubuntu-latest
     # Long enough for a real migration and a real deploy, short enough that a hang
     # does not hold the queue for a day. This bound is the *only* thing stopping a
     # stuck run from blocking every later apply to this environment.
     timeout-minutes: 30
-    environment: ${{ inputs.environment }}
+    environment: ${{ inputs.environment || github.ref_name }}
     permissions:
       contents: read
 
@@ -227,7 +292,7 @@ jobs:
     # `cancel-in-progress: false` is the load-bearing line. True would kill a run
     # mid-migration.
     concurrency:
-      group: deploy-${{ inputs.environment }}
+      group: deploy-${{ inputs.environment || github.ref_name }}
       cancel-in-progress: false
 
     steps:
@@ -235,48 +300,52 @@ jobs:
         with:
           persist-credentials: false
 
-      - uses: oven-sh/setup-bun@7b8f5b94c955a854e6f8b8dc76b2b8c6bca29f45 # v2.2.2
-        with:
-          bun-version: ${{ env.BUN_VERSION }}
-
-      - name: Install
-        run: bun install --frozen-lockfile
-
-      # The revision this run is about to publish. Named once, compared below, and
-      # recorded in the release record. A workflow_dispatch always resolves a ref on
-      # the default branch, but "always" is a property of the trigger rather than a
-      # guarantee about what was checked out.
+      # Reject a manually selected feature branch before installing dependencies
+      # or running checkout code. Also restrict the GitHub environment to its
+      # intended branch in repository settings.
       - name: Record the source revision
         id: source
         run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
-      # A deploy of an unreviewed revision is the one thing the protected environment
-      # cannot catch on its own: an environment can require reviewers without saying
-      # *what* is being reviewed. This refuses unless the checkout is the default
-      # branch's head.
-      # `github.ref` arrives through `env:`, never as `${{ }}` inside the script.
-      #
-      # A `${{ }}` expression is substituted into the shell source *before* the shell
-      # runs, so a ref containing a metacharacter would execute before the comparison
-      # that was supposed to refuse it. Passing it through the environment keeps the
-      # comparison and the refusal intact, which is the whole point of the check.
       - name: Refuse an unreviewed revision
         env:
           DEPLOY_REF: ${{ github.ref }}
+          EVENT_NAME: ${{ github.event_name }}
+          DEPLOY_ENVIRONMENT: ${{ env.DEPLOY_ENVIRONMENT }}
           SOURCE_SHA: ${{ steps.source.outputs.sha }}
         run: |
-          if [ "$DEPLOY_REF" != "refs/heads/main" ]; then
-            echo "::error::Refusing to deploy $DEPLOY_REF. A release may only publish the default branch."
+          if [ "$EVENT_NAME" = workflow_dispatch ]; then
+            expected_ref=refs/heads/main
+          else
+            expected_ref="refs/heads/$DEPLOY_ENVIRONMENT"
+          fi
+          if [ "$DEPLOY_REF" != "$expected_ref" ]; then
+            echo "::error::Refusing to deploy $DEPLOY_REF to $DEPLOY_ENVIRONMENT; expected $expected_ref."
             exit 3
           fi
-          echo "Deploying $SOURCE_SHA from the default branch."
+          echo "Deploying $SOURCE_SHA from $DEPLOY_REF to $DEPLOY_ENVIRONMENT."
+
+      - uses: oven-sh/setup-bun@7b8f5b94c955a854e6f8b8dc76b2b8c6bca29f45 # v2.2.2
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+
+      - name: Restore Bun's download cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.bun/install/cache
+          key: bun-${{ runner.os }}-${{ env.BUN_VERSION }}-${{ hashFiles('bun.lock') }}
+          restore-keys: |
+            bun-${{ runner.os }}-${{ env.BUN_VERSION }}-
+
+      - name: Install
+        run: bun install --frozen-lockfile
 
       # In the environment, never in a step's `run:` line. A token echoed in a
       # command lands in the run log; this assignment never prints.
       - name: Credential
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          DEPLOY_ENVIRONMENT: ${{ inputs.environment }}
+          DEPLOY_ENVIRONMENT: ${{ env.DEPLOY_ENVIRONMENT }}
           FIRST_DEPLOY: ${{ inputs.first_deploy && 'yes' || 'no' }}
         run: |
           if [ -z "$CLOUDFLARE_API_TOKEN" ]; then
@@ -310,10 +379,10 @@ jobs:
       # command with the values absent, which fails as a missing secret rather than as
       # the wrong command.
       - name: Provision
-        if: ${{ inputs.first_deploy || inputs.install_secrets }}
+        if: ${{ github.event_name == 'workflow_dispatch' && (inputs.first_deploy || inputs.install_secrets) }}
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          DEPLOY_ENVIRONMENT: ${{ inputs.environment }}
+          DEPLOY_ENVIRONMENT: ${{ env.DEPLOY_ENVIRONMENT }}
           INSTALL_SECRETS: ${{ inputs.install_secrets }}
           # The runtime secrets are supplied **only** when the operator asked to install
           # them AND asked for the GitHub source. With `secrets_source: sops` the
@@ -366,8 +435,8 @@ jobs:
       - name: Apply
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          DEPLOY_ENVIRONMENT: ${{ inputs.environment }}
-          APPLY_MIGRATIONS: ${{ inputs.migrate && 'yes' || 'no' }}
+          DEPLOY_ENVIRONMENT: ${{ env.DEPLOY_ENVIRONMENT }}
+          APPLY_MIGRATIONS: ${{ github.event_name != 'workflow_dispatch' && 'yes' || inputs.migrate && 'yes' || 'no' }}
         run: |
           bun run deploy:apply --env "$DEPLOY_ENVIRONMENT" --yes \
             $([ "$APPLY_MIGRATIONS" = yes ] || echo --skip-migrations)
@@ -382,11 +451,30 @@ jobs:
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: release-record-${{ inputs.environment }}
-          path: .starter/releases/${{ inputs.environment }}.json
+          name: release-record-${{ env.DEPLOY_ENVIRONMENT }}
+          path: .starter/releases/${{ env.DEPLOY_ENVIRONMENT }}.json
           if-no-files-found: error
 
       # And the same record in the run summary, which is where someone lands first.
       - name: Summarise the release
         if: always()
         run: bun run deploy:status >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Notify the release channel
+        if: success()
+        continue-on-error: true
+        env:
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          DEPLOY_ENVIRONMENT: ${{ env.DEPLOY_ENVIRONMENT }}
+          SOURCE_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          if [ -z "$DISCORD_WEBHOOK_URL" ]; then
+            echo 'DISCORD_WEBHOOK_URL is not configured; release notification skipped.' >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          content="✅ $DEPLOY_ENVIRONMENT deployed from ${SOURCE_SHA:0:12}"
+          payload="$(jq -n --arg content "$content" '{content: $content}')"
+          curl --fail --silent --show-error --max-time 10 \
+            -H 'Content-Type: application/json' \
+            --data "$payload" "$DISCORD_WEBHOOK_URL"

@@ -41,8 +41,9 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [main, staging, production]
   pull_request:
+    branches: [main, staging, production]
   # Lets a maintainer verify a template change without pushing a commit nobody
   # wants.
   workflow_dispatch:

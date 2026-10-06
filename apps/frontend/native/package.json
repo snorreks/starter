@@ -4,6 +4,10 @@
   "private": true,
   "type": "module",
   "license": "MIT",
+  "imports": {
+    "#logger": "./src/lib/runtime/logger.ts",
+    "#lib/*": "./src/lib/*"
+  },
   "scripts": {
     "dev": "vite dev",
     "build": "vite build",
@@ -18,7 +22,8 @@
     "tauri": "tauri"
   },
   "dependencies": {
-    "typebox": "^1.3.36",
+    "typebox": "1.3.36",
+    "@starter/logger": "workspace:*",
     "@starter/features": "workspace:*",
     "@starter/platform": "workspace:*",
     "@starter/schemas": "workspace:*",
@@ -29,14 +34,14 @@
   },
   "devDependencies": {
     "@sveltejs/adapter-static": "4.0.0",
-    "@sveltejs/kit": "3.0.0",
+    "@sveltejs/kit": "3.0.1",
     "@sveltejs/vite-plugin-svelte": "7.3.1",
     "@tailwindcss/vite": "4.3.3",
     "@tauri-apps/cli": "2.12.1",
-    "svelte": "5.57.1",
+    "svelte": "5.57.2",
     "svelte-check": "4.7.6",
     "tailwindcss": "4.3.3",
     "typescript": "6.0.3",
-    "vite": "8.3.2"
+    "vite": "8.3.3"
   }
 }

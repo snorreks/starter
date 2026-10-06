@@ -55,7 +55,10 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { dirname, join } from 'node:path';
+import { MOCK_USER } from '@starter/fixtures';
 import { killTree } from '@starter/utils/process';
+import { runWrangler } from './cloudflare/wrangler.ts';
+import { SEED_STATEMENTS } from './db/seed.ts';
 import { EXIT, fail } from './shared/command.ts';
 import { CLIENT_DIR, REPO_ROOT } from './shared/paths.ts';
 import { viteBin, wranglerBin } from './shared/tools.ts';
@@ -256,6 +259,30 @@ export const buildTarget = (mode: DevMode): Target => {
  * `await`s this knows nothing of the server's is left running.
  */
 export const main = (mode: DevMode = 'app'): Promise<number> => {
+  if (mode === 'app') {
+    const configArgs = ['--config', WRANGLER_CONFIG];
+    const migrated = runWrangler(['d1', 'migrations', 'apply', 'DB', '--local', ...configArgs]);
+    if (migrated !== 0) {
+      return Promise.resolve(
+        fail('Could not prepare the emulator database (local D1 migrations failed).'),
+      );
+    }
+    const seeded = runWrangler([
+      'd1',
+      'execute',
+      'DB',
+      '--local',
+      ...configArgs,
+      '--command',
+      SEED_STATEMENTS.join('; '),
+    ]);
+    if (seeded !== 0) {
+      return Promise.resolve(
+        fail('Could not populate the emulator database (local D1 seed failed).'),
+      );
+    }
+  }
+
   const target = buildTarget(mode);
 
   if (target.bin === null) {
@@ -305,7 +332,15 @@ export const main = (mode: DevMode = 'app'): Promise<number> => {
     cwd: target.cwd,
     detached: false,
     stdio: ['ignore', 'pipe', 'pipe'],
-    env: { ...process.env },
+    env: {
+      ...process.env,
+      ...(mode === 'app'
+        ? {
+            STARTER_EMULATOR_MOCKS: 'true',
+            STARTER_EMULATOR_USER_ID: MOCK_USER.id,
+          }
+        : {}),
+    },
   });
 
   const childPid = child.pid ?? 0;

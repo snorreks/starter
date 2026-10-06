@@ -1,0 +1,46 @@
+$schema: 'https://moonrepo.dev/schemas/v2/project.json'
+
+layer: 'library'
+
+fileGroups:
+  sources:
+    - 'src/**/*'
+  configs:
+    - 'package.json'
+    - 'tsconfig*.json'
+    - 'moon.yml'
+
+toolchains:
+  bun:
+  javascript:
+
+tasks:
+  typecheck:
+    command: 'bun'
+    args: ['run', 'typecheck']
+    inputs:
+      - '@group(sources)'
+      - '@group(configs)'
+  lint:
+    command: 'bun'
+    args: ['run', 'lint']
+    inputs:
+      - '@group(sources)'
+      - '@group(configs)'
+  format:
+    command: 'bun'
+    args: ['run', 'format']
+    inputs:
+      - '@group(sources)'
+      - '@group(configs)'
+  fix:
+    command: 'bun'
+    args: ['run', 'fix']
+    inputs:
+      - '@group(sources)'
+      - '@group(configs)'
+  validate:
+    deps:
+      - '~:lint'
+      - '~:format'
+      - '~:typecheck'

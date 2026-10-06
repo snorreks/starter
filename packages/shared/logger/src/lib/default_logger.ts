@@ -12,7 +12,12 @@
 // reports the wrong app is worse than one that reports a generic one, because
 // the first gets trusted in a triage that the second would have prompted.
 
-import type { DeploymentEnvironment, LogApp, LogSource } from '@starter/schemas/logging';
+import type {
+  DeploymentEnvironment,
+  LogApp,
+  LoggerInterface,
+  LogSource,
+} from '@starter/schemas/logging';
 import { ConsoleLogger } from './console_logger.ts';
 import { resolveRelease } from './event_log.ts';
 
@@ -82,14 +87,39 @@ export const createDefaultLogger = (): ConsoleLogger =>
     { logLevel: toLogLevel(readEnv('PUBLIC_LOG_LEVEL') ?? readEnv('LOG_LEVEL')) },
   );
 
-let current: ConsoleLogger | undefined;
+let current: LoggerInterface | undefined;
 
 /** Install the app's real logger. Call once, at startup, before any logging. */
-export const setLogger = (logger: ConsoleLogger): void => {
+export const setLogger = (logger: LoggerInterface): void => {
   current = logger;
 };
 
-export const getLogger = (): ConsoleLogger => (current ??= createDefaultLogger());
+export const getLogger = (): LoggerInterface => (current ??= createDefaultLogger());
+
+/**
+ * A stable logger facade for shared packages.
+ *
+ * Resolve the installed logger per call so imports remain safe before an app's
+ * runtime adapter has registered its implementation.
+ */
+export const logger: LoggerInterface = {
+  get logLevel() {
+    return getLogger().logLevel;
+  },
+  set logLevel(level) {
+    getLogger().logLevel = level;
+  },
+  setLogLevel: (level) => getLogger().setLogLevel(level),
+  addSink: (sink) => getLogger().addSink(sink),
+  log: (...args) => getLogger().log(...args),
+  debug: (...args) => getLogger().debug(...args),
+  info: (...args) => getLogger().info(...args),
+  warn: (...args) => getLogger().warn(...args),
+  error: (...args) => getLogger().error(...args),
+  spam: (id, ...args) => getLogger().spam(id, ...args),
+  write: (entry, ...data) => getLogger().write(entry, ...data),
+  createTimer: () => getLogger().createTimer(),
+};
 
 /** Drop the installed logger. Used by tests to isolate logger state. */
 export const resetLogger = (): void => {

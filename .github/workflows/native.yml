@@ -33,9 +33,9 @@
 name: Native
 
 on:
-  push:
-    branches: [main]
-  pull_request:
+  # Native builds are intentionally opt-in: the desktop matrix is expensive and
+  # the ordinary PR/main gates cover the web application. Run this when changing
+  # the Tauri shell or when preparing a native release candidate.
   workflow_dispatch:
 
 concurrency:
