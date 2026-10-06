@@ -21,6 +21,10 @@
     "./jobs": {
       "svelte": "./src/jobs/index.ts",
       "default": "./src/jobs/index.ts"
+    },
+    "./chat": {
+      "svelte": "./src/chat/index.ts",
+      "default": "./src/chat/index.ts"
     }
   },
   "scripts": {
