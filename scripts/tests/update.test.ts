@@ -281,6 +281,7 @@ const pinnedFixture = (
         name: 'root',
         private: true,
         workspaces: ['apps/frontend/*', 'scripts'],
+        dependencies: { unpinned: '1.0.0' },
         devDependencies: { typescript: '6.0.3', '@biomejs/biome': '2.5.13' },
       },
       null,
@@ -296,6 +297,15 @@ const pinnedFixture = (
       `${JSON.stringify({ name, private: true, devDependencies: { typescript: '6.0.3' } }, null, 2)}\n`,
     );
   }
+  writeFileSync(
+    join(root, 'bun.lock'),
+    JSON.stringify({
+      packages: {
+        typescript: ['typescript@6.0.3', '', {}, 'sha512-x'],
+        '@biomejs/biome': ['@biomejs/biome@2.5.13', '', {}, 'sha512-y'],
+      },
+    }),
+  );
   return root;
 };
 
@@ -330,6 +340,15 @@ test('a pinned package resolved to a new major is restored before anything insta
           writeFileSync(join(root, dir), `${JSON.stringify(manifest, null, 2)}\n`);
         }
       }
+      if (options.args[0] === 'install') {
+        for (const path of [
+          'package.json',
+          'apps/frontend/client/package.json',
+          'scripts/package.json',
+        ]) {
+          expect(declaredTypeScript(root, path)).toBe('6.0.3');
+        }
+      }
       return { code: 0, stdout: '', stderr: '' };
     },
   });
@@ -344,17 +363,16 @@ test('a pinned package resolved to a new major is restored before anything insta
   expect(installAt).toBe(1);
 });
 
-test('an unpinned package is left on the version the update resolved', async () => {
+test('an unpinned package is left on the version the update resolved', () => {
   const root = pinnedFixture();
+  const path = join(root, 'package.json');
+  const manifest = JSON.parse(readFileSync(path, 'utf8'));
+  manifest.dependencies.unpinned = '2.0.0';
+  manifest.devDependencies.typescript = '7.0.2';
+  writeFileSync(path, JSON.stringify(manifest));
   const restored = restorePinnedRanges({ root, pins: readPinnedRanges(root) });
-  expect(restored).toEqual([]);
-  expect(
-    (
-      JSON.parse(readFileSync(join(root, 'package.json'), 'utf8')) as {
-        devDependencies: Record<string, string>;
-      }
-    ).devDependencies['@biomejs/biome'],
-  ).toBe('2.5.13');
+  expect(restored.map((entry) => entry.name)).toEqual(['typescript']);
+  expect(JSON.parse(readFileSync(path, 'utf8')).dependencies.unpinned).toBe('2.0.0');
 });
 
 test('a pin that the install puts back off the pin is reported with both versions', async () => {
@@ -396,7 +414,7 @@ test('a lockfile holding the pin reports nothing', () => {
   const root = pinnedFixture();
   writeFileSync(
     join(root, 'bun.lock'),
-    `${JSON.stringify({ packages: { typescript: ['typescript@6.0.3', '', {}, 'sha512-x'] } })}\n`,
+    `${JSON.stringify({ packages: { typescript: ['typescript@6.0.3', '', {}, 'sha512-x'], '@biomejs/biome': ['@biomejs/biome@2.5.13', '', {}, 'sha512-y'] } })}\n`,
   );
   expect(() => verifyPinnedRanges({ root, pins: readPinnedRanges(root) })).not.toThrow();
 });
@@ -416,8 +434,61 @@ test('a syncpackrc pinning one package to two ranges refuses', () => {
 });
 
 test('a repository with no syncpackrc still updates every workspace', async () => {
-  const root = fixture();
-  expect(readPinnedRanges(root).size).toBe(0);
-  expect(() => restorePinnedRanges({ root, pins: readPinnedRanges(root) })).not.toThrow();
-  expect(() => verifyPinnedRanges({ root, pins: readPinnedRanges(root) })).not.toThrow();
+  const root = pinnedFixture();
+  rmSync(join(root, '.syncpackrc'));
+  const commands: string[][] = [];
+  const code = await runUpdate(parseUpdateArgs(['--packages', '--yes']), {
+    root,
+    write: () => {},
+    run: async (options) => {
+      expect(options.command).toBe(process.execPath);
+      expect(options.cwd).toBe(root);
+      commands.push([...options.args]);
+      return { code: 0, stdout: '', stderr: '' };
+    },
+  });
+  expect(code).toBe(0);
+  expect(commands).toEqual([
+    ['update', '--recursive', '--latest', '--exact', '--lockfile-only'],
+    ['install'],
+    ['run', 'guard'],
+  ]);
+});
+
+for (const missingLockfile of [false, true]) {
+  test(`an exact pin with ${missingLockfile ? 'no lockfile' : 'no resolution'} is reported`, () => {
+    const root = pinnedFixture();
+    if (missingLockfile) {
+      rmSync(join(root, 'bun.lock'));
+    } else {
+      writeFileSync(join(root, 'bun.lock'), '{"packages":{}}');
+    }
+    expect(() => verifyPinnedRanges({ root, pins: readPinnedRanges(root) })).toThrow(
+      'bun.lock has no resolution for typescript, expected the pinned 6.0.3',
+    );
+  });
+}
+
+test('a peer dependency is restored and verified against its pin', () => {
+  const root = pinnedFixture();
+  const path = join(root, 'scripts/package.json');
+  const manifest = JSON.parse(readFileSync(path, 'utf8'));
+  Reflect.deleteProperty(manifest.devDependencies, 'typescript');
+  manifest.peerDependencies = { typescript: '7.0.2' };
+  writeFileSync(path, JSON.stringify(manifest));
+  const pins = readPinnedRanges(root);
+  expect(() => verifyPinnedRanges({ root, pins })).toThrow('typescript 7.0.2');
+  expect(restorePinnedRanges({ root, pins })).toEqual([
+    { path: 'scripts/package.json', name: 'typescript', from: '7.0.2', to: '6.0.3' },
+  ]);
+  expect(JSON.parse(readFileSync(path, 'utf8')).peerDependencies.typescript).toBe('6.0.3');
+  expect(() => verifyPinnedRanges({ root, pins })).not.toThrow();
+});
+
+test('a range pin does not require an exact lockfile resolution', () => {
+  const root = pinnedFixture({ semverGroups: [{ packages: ['typescript'], range: '^6.0.3' }] });
+  const pins = readPinnedRanges(root);
+  restorePinnedRanges({ root, pins });
+  rmSync(join(root, 'bun.lock'));
+  expect(() => verifyPinnedRanges({ root, pins })).not.toThrow();
 });

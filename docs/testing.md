@@ -729,8 +729,10 @@ body where a plain `fetch` does not. Each is written down where it is fixed.
 
 `bun run coverage` runs the credential-free unit lane with Bun's lcov reporter,
 merges every report into `coverage/lcov.info`, and prints the totals. It reports
-and it does not gate: no threshold is checked, so an untested new file lowers the
-number without failing anything.
+and it does not gate: no threshold is checked. Bun reports only files loaded by
+tests. A new file that no test loads is absent from LCOV and does not lower the
+reported percentage; an unchanged percentage does not show that the new file
+was measured.
 
 The number is one figure over the projects that reported, and the output names
 every project that did not. Three things it deliberately does not do:

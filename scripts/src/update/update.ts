@@ -111,7 +111,12 @@ export const bunPinEdits = (options: {
 };
 
 /** Dependency fields a pinned range may be written back into. */
-const PINNED_FIELDS = ['dependencies', 'devDependencies', 'optionalDependencies'] as const;
+const PINNED_FIELDS = [
+  'dependencies',
+  'devDependencies',
+  'optionalDependencies',
+  'peerDependencies',
+] as const;
 
 /**
  * The pinned ranges declared by `.syncpackrc`, keyed by package name.
@@ -290,7 +295,9 @@ export const verifyPinnedRanges = (options: {
       continue;
     }
     const locked = lockedVersion(options.root, name);
-    if (locked !== null && locked !== pin) {
+    if (locked === null) {
+      problems.push(`bun.lock has no resolution for ${name}, expected the pinned ${pin}`);
+    } else if (locked !== pin) {
       problems.push(`bun.lock resolves ${name} to ${locked}, not the pinned ${pin}`);
     }
   }

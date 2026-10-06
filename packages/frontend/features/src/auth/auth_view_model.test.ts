@@ -296,6 +296,20 @@ describe('a duplicate submission', () => {
 });
 
 describe('client-side validation', () => {
+  test('missing required properties are reported on each field before any request', async () => {
+    const signUp = mock(() => Promise.resolve());
+    const { viewModel } = build({ mode: 'sign-up', signUp });
+    // Simulate incomplete runtime data while retaining the sign-up schema selector.
+    Reflect.deleteProperty(viewModel.form, 'email');
+    Reflect.deleteProperty(viewModel.form, 'password');
+
+    expect(await viewModel.handleSubmit()).toBe(false);
+    expect(viewModel.errors.email).toBeDefined();
+    expect(viewModel.errors.password).toBeDefined();
+    expect(viewModel.errors._form).toBeUndefined();
+    expect(signUp).not.toHaveBeenCalled();
+  });
+
   test('a short password is refused before any request', async () => {
     const signUp = mock(() => Promise.resolve());
     const { viewModel } = build({ mode: 'sign-up', signUp });

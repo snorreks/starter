@@ -382,6 +382,12 @@ const validate = (values: SignInInput | SignUpInput): Record<string, string> | u
 
   const errors: Record<string, string> = {};
   for (const issue of Value.Errors(schema, values)) {
+    if (issue.keyword === 'required') {
+      for (const field of issue.params.requiredProperties) {
+        errors[field] ??= issue.message;
+      }
+      continue;
+    }
     const field = issue.instancePath.replace(/^\//, '') || '_form';
     errors[field] ??= issue.message;
   }
