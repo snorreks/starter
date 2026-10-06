@@ -354,8 +354,11 @@ jobs:
           fi
           # Confirm the token resolves to the account this project is configured
           # for, before the migration job has a chance to touch it.
-          bun run deploy:preflight --env "$DEPLOY_ENVIRONMENT" \
-            $([ "$FIRST_DEPLOY" = yes ] && echo --allow-new-worker)
+          preflight_args=()
+          if [ "$FIRST_DEPLOY" = yes ]; then
+            preflight_args+=(--allow-new-worker)
+          fi
+          bun run deploy:preflight --env "$DEPLOY_ENVIRONMENT" "${preflight_args[@]}"
 
       # Idempotent, so running it on every apply is cheaper than tracking whether it
       # ran before. Creates the database, the private bucket and uploads the fixture;
@@ -438,8 +441,11 @@ jobs:
           DEPLOY_ENVIRONMENT: ${{ env.DEPLOY_ENVIRONMENT }}
           APPLY_MIGRATIONS: ${{ github.event_name != 'workflow_dispatch' && 'yes' || inputs.migrate && 'yes' || 'no' }}
         run: |
-          bun run deploy:apply --env "$DEPLOY_ENVIRONMENT" --yes \
-            $([ "$APPLY_MIGRATIONS" = yes ] || echo --skip-migrations)
+          apply_args=()
+          if [ "$APPLY_MIGRATIONS" != yes ]; then
+            apply_args+=(--skip-migrations)
+          fi
+          bun run deploy:apply --env "$DEPLOY_ENVIRONMENT" --yes "${apply_args[@]}"
 
       # The release record is the artifact of this workflow. Uploading it keeps the
       # provenance readable from the run page — by anyone reviewing a deploy months

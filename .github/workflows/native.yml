@@ -485,7 +485,16 @@ jobs:
           # must fail here rather than in the install step four minutes later. The
           # log goes with it, because "it never booted" and "it booted and
           # crashed" need different fixes.
-          if ! timeout 420 bash -c 'until [ "$(adb shell getprop sys.boot_completed 2>/dev/null | tr -d "\r")" = "1" ]; do sleep 5; done'; then
+          boot_deadline=$((SECONDS + 420))
+          boot_complete=false
+          while [ "$SECONDS" -lt "$boot_deadline" ]; do
+            if [ "$(timeout 10 adb shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')" = "1" ]; then
+              boot_complete=true
+              break
+            fi
+            sleep 5
+          done
+          if [ "$boot_complete" != true ]; then
             echo "::error::the emulator did not report sys.boot_completed within 420s"
             adb devices || true
             tail -n 40 "$RUNNER_TEMP/emulator.log" || true
@@ -573,12 +582,14 @@ jobs:
 
       - name: Record what this run did and did not prove
         run: |
-          echo "### Android" >> "$GITHUB_STEP_SUMMARY"
-          echo "- debug APK and release AAB: **built**, unsigned." >> "$GITHUB_STEP_SUMMARY"
-          echo "- installed and launched on an API ${ANDROID_API:-34} emulator: **yes**." >> "$GITHUB_STEP_SUMMARY"
-          echo "- signed with a real keystore: **NOT RUN** — no keystore credential is reachable from an untrusted pull request. Use .github/workflows/native-release.yml." >> "$GITHUB_STEP_SUMMARY"
-          echo "- Google Play upload: **NOT RUN**, deliberately. This repository does not publish to a store." >> "$GITHUB_STEP_SUMMARY"
-          echo "- authenticated sign-in and the notes path: **NOT RUN** — no deployed API is configured in this template. The steps that need one are named in docs/native.md." >> "$GITHUB_STEP_SUMMARY"
+          {
+            echo "### Android"
+            echo "- debug APK and release AAB: **built**, unsigned."
+            echo "- installed and launched on an API ${ANDROID_API:-34} emulator: **yes**."
+            echo "- signed with a real keystore: **NOT RUN** — no keystore credential is reachable from an untrusted pull request. Use .github/workflows/native-release.yml."
+            echo "- Google Play upload: **NOT RUN**, deliberately. This repository does not publish to a store."
+            echo "- authenticated sign-in and the notes path: **NOT RUN** — no deployed API is configured in this template. The steps that need one are named in docs/native.md."
+          } >> "$GITHUB_STEP_SUMMARY"
 
   # ── iOS ────────────────────────────────────────────────────────────────────
   #
@@ -629,7 +640,11 @@ jobs:
         # major, rather than trusting a symlink whose target moves.
         run: |
           set -euo pipefail
-          newest="$(ls -d /Applications/Xcode_*.app | sort -V | tail -n 1)"
+          newest="$(find /Applications -path '/Applications/*/*' -prune -o -type d -name 'Xcode_*.app' -print | sort -V | tail -n 1)"
+          if [ -z "$newest" ]; then
+            echo "::error::no /Applications/Xcode_*.app installation was found."
+            exit 1
+          fi
           echo "newest installed Xcode: $newest"
           sudo xcode-select -s "$newest"
           version="$(xcodebuild -version | head -n 1)"
@@ -749,10 +764,12 @@ jobs:
 
       - name: Record what this run did and did not prove
         run: |
-          echo "### iOS" >> "$GITHUB_STEP_SUMMARY"
-          echo "- simulator build, unsigned, from \`macos-14\` with full Xcode: **built**." >> "$GITHUB_STEP_SUMMARY"
-          echo "- installed and launched on a simulator: **yes**." >> "$GITHUB_STEP_SUMMARY"
-          echo "- physical device run: **NOT RUN** — needs a provisioned device and an Apple Developer account." >> "$GITHUB_STEP_SUMMARY"
-          echo "- signed archive for App Store Connect / TestFlight: **NOT RUN** — needs a development team, certificates and a profile. See .github/workflows/native-release.yml." >> "$GITHUB_STEP_SUMMARY"
-          echo "- App Store upload: **NOT RUN**, deliberately." >> "$GITHUB_STEP_SUMMARY"
-          echo "- authenticated sign-in and the notes path: **NOT RUN** — no deployed API is configured in this template." >> "$GITHUB_STEP_SUMMARY"
+          {
+            echo "### iOS"
+            echo "- simulator build, unsigned, from \`macos-14\` with full Xcode: **built**."
+            echo "- installed and launched on a simulator: **yes**."
+            echo "- physical device run: **NOT RUN** — needs a provisioned device and an Apple Developer account."
+            echo "- signed archive for App Store Connect / TestFlight: **NOT RUN** — needs a development team, certificates and a profile. See .github/workflows/native-release.yml."
+            echo "- App Store upload: **NOT RUN**, deliberately."
+            echo "- authenticated sign-in and the notes path: **NOT RUN** — no deployed API is configured in this template."
+          } >> "$GITHUB_STEP_SUMMARY"

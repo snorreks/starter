@@ -370,7 +370,19 @@ jobs:
           # `-s` *replaces* the search list; without the existing entries a
           # runner where the login keychain is not the default cannot find its own
           # certificates and `codesign` fails naming nothing.
-          security list-keychains -d user -s "$KEYCHAIN_PATH" $(security list-keychains -d user | tr -d '"')
+          existing_keychains="$(security list-keychains -d user)"
+          keychains=()
+          while IFS= read -r keychain; do
+            keychain="${keychain#"${keychain%%[![:space:]]*}"}"
+            keychain="${keychain#\"}"
+            keychain="${keychain%\"}"
+            [ -n "$keychain" ] && keychains+=("$keychain")
+          done <<< "$existing_keychains"
+          if [ "${#keychains[@]}" -gt 0 ]; then
+            security list-keychains -d user -s "$KEYCHAIN_PATH" "${keychains[@]}"
+          else
+            security list-keychains -d user -s "$KEYCHAIN_PATH"
+          fi
           rm -f "$CERT_PATH"
 
       - name: Store the notarization credentials on this runner
@@ -399,7 +411,19 @@ jobs:
               --key-id "$APPLE_NOTARY_KEY_ID" \
               --issuer "$APPLE_NOTARY_ISSUER_ID" \
               --keychain "$RUNNER_TEMP/notary.keychain-db"
-            security list-keychains -d user -s "$RUNNER_TEMP/notary.keychain-db" $(security list-keychains -d user | tr -d '"')
+            existing_keychains="$(security list-keychains -d user)"
+            keychains=()
+            while IFS= read -r keychain; do
+              keychain="${keychain#"${keychain%%[![:space:]]*}"}"
+              keychain="${keychain#\"}"
+              keychain="${keychain%\"}"
+              [ -n "$keychain" ] && keychains+=("$keychain")
+            done <<< "$existing_keychains"
+            if [ "${#keychains[@]}" -gt 0 ]; then
+              security list-keychains -d user -s "$RUNNER_TEMP/notary.keychain-db" "${keychains[@]}"
+            else
+              security list-keychains -d user -s "$RUNNER_TEMP/notary.keychain-db"
+            fi
             rm -f "$RUNNER_TEMP/AuthKey_${APPLE_NOTARY_KEY_ID}.p8"
             echo "notary profile '$APPLE_NOTARY_PROFILE' created on this runner"
           else
@@ -749,7 +773,11 @@ jobs:
         # format 77, which Xcode 15 refuses. Pick the newest, then assert the major.
         run: |
           set -euo pipefail
-          newest="$(ls -d /Applications/Xcode_*.app | sort -V | tail -n 1)"
+          newest="$(find /Applications -path '/Applications/*/*' -prune -o -type d -name 'Xcode_*.app' -print | sort -V | tail -n 1)"
+          if [ -z "$newest" ]; then
+            echo "::error::no /Applications/Xcode_*.app installation was found."
+            exit 1
+          fi
           echo "newest installed Xcode: $newest"
           sudo xcode-select -s "$newest"
           version="$(xcodebuild -version | head -n 1)"
@@ -812,7 +840,19 @@ jobs:
           # `-s` replaces the search list, so the existing entries are appended
           # rather than dropped: on a runner whose login keychain is not already
           # in it, replacing the list removes the runner's own certificates.
-          security list-keychains -d user -s "$IOS_KEYCHAIN" $(security list-keychains -d user | tr -d '"')
+          existing_keychains="$(security list-keychains -d user)"
+          keychains=()
+          while IFS= read -r keychain; do
+            keychain="${keychain#"${keychain%%[![:space:]]*}"}"
+            keychain="${keychain#\"}"
+            keychain="${keychain%\"}"
+            [ -n "$keychain" ] && keychains+=("$keychain")
+          done <<< "$existing_keychains"
+          if [ "${#keychains[@]}" -gt 0 ]; then
+            security list-keychains -d user -s "$IOS_KEYCHAIN" "${keychains[@]}"
+          else
+            security list-keychains -d user -s "$IOS_KEYCHAIN"
+          fi
           rm -f "$CERT_PATH"
 
       - name: Generate the Xcode project
@@ -919,7 +959,11 @@ jobs:
             done
             echo ""
             echo "Each lane uploaded its own artifact under its own SHA-pinned name; this job collects them into one:"
-            ls -1 out 2>/dev/null | sed 's/^/- /' || echo "- (none)"
+            if [ -d out ] && [ -n "$(find out -mindepth 1 -maxdepth 1 -print -quit)" ]; then
+              find out -mindepth 1 -maxdepth 1 -print | sed 's#^out/#- #'
+            else
+              echo "- (none)"
+            fi
             echo ""
             echo "Never performed by this workflow: Google Play upload, App Store Connect upload, TestFlight submission, physical-device testing. A lane that reported \`skipped\` was not in the requested \`targets\`; a lane that reported \`failure\` produced no release artifact."
           } >> "$GITHUB_STEP_SUMMARY"
