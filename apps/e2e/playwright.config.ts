@@ -35,7 +35,9 @@
 import { fileURLToPath } from 'node:url';
 import { defineConfig, devices } from '@playwright/test';
 import { playwrightLaunchOptions } from '../../scripts/src/shared/browser_path.ts';
-import { worktreePort } from '../../scripts/src/shared/run_scope.ts';
+import { resolveE2EPort } from '../../scripts/src/shared/e2e_port.ts';
+import { REPO_ROOT } from '../../scripts/src/shared/paths.ts';
+import { runScope } from '../../scripts/src/shared/run_scope.ts';
 
 /**
  * Which Chromium this run uses.
@@ -56,38 +58,30 @@ import { worktreePort } from '../../scripts/src/shared/run_scope.ts';
 const launchOptions = playwrightLaunchOptions();
 
 /**
- * Port.
- *
- * One, because there is one server. Derived from the **repository root** by
- * `worktreePort`, so two worktrees — a Herdr worktree, a second clone, a CI matrix
- * leg — do not fight over one port, and the same checkout always gets the same one.
- * A fixed 4183 was shared by every checkout on the machine, and the failure that
- * produced is silent: the second run starts nothing, connects to the first one's
- * server, and every spec passes against a stale D1.
- *
- * The key is the repository root, deliberately, not this file's directory.
- * `apps/e2e` has the same path suffix in every checkout, so keying on
- * `import.meta.dirname` derives the *same* port for two checkouts — which is the
- * collision this exists to remove. The default argument is the repository root, so
- * passing nothing is what keeps the two apart.
- *
- * `E2E_APP_PORT` still wins, for a deliberate port choice — but only when it is
- * non-empty. `Number('')` is `0`, which asks the OS for an arbitrary port that the
- * preflight then cannot find, and `E2E_APP_PORT=` is exactly the shape a CI variable
- * takes when it is declared and left unset.
- *
- * The port is still only *chosen* here; `preflight.ts` proves the server answering
- * on it is this run's, by run id. Allocation and identity are separate checks on
- * purpose: the port says where to look, the run id says who answered.
+ * Each invocation derives candidates from its run id and probes for an available
+ * port. An explicit port is also probed and refused when occupied. The health
+ * preflight then proves that this run's Worker answered there.
  */
-const explicitPort = process.env.E2E_APP_PORT;
-export const APP_PORT =
-  explicitPort === undefined || explicitPort === '' ? worktreePort(4183) : Number(explicitPort);
+export const TEST_RUN_ID = process.env.E2E_RUN_ID ?? `e2e_${crypto.randomUUID()}`;
+const inheritedIdentity = process.env.E2E_RUN_INITIALIZED === '1';
+const inheritedPort = process.env.E2E_APP_PORT;
+export const APP_PORT = inheritedIdentity
+  ? Number(inheritedPort)
+  : await resolveE2EPort(TEST_RUN_ID, inheritedPort, REPO_ROOT);
+if (!Number.isInteger(APP_PORT) || APP_PORT < 1 || APP_PORT > 65_535) {
+  throw new Error('E2E_APP_PORT must be an integer between 1 and 65535.');
+}
+
+// Playwright test workers are separate Node processes. Publish the identity before
+// they start so helpers never regenerate a run id or port by importing this config.
+process.env.E2E_RUN_ID = TEST_RUN_ID;
+process.env.E2E_APP_PORT = String(APP_PORT);
+process.env.E2E_RUN_INITIALIZED = '1';
 
 const appBaseUrl = `http://127.0.0.1:${APP_PORT}`;
 
 /**
- * This run's id, generated here at module load.
+ * This run's id, generated once by the parent config and inherited by workers.
  *
  * It has to be here rather than in `global-setup.ts`: Playwright loads the config
  * file *before* running global setup, so anything global-setup writes to
@@ -95,10 +89,10 @@ const appBaseUrl = `http://127.0.0.1:${APP_PORT}`;
  * ordering cost a debugging cycle once — the Worker started with no run id and the
  * preflight correctly refused to proceed.
  *
- * `global-setup.ts` imports this value, so both halves agree by construction
- * rather than by a value being passed between them.
+ * The id and port are copied into the parent environment so test workers do not
+ * regenerate either value when they load helpers.
  */
-export const TEST_RUN_ID = `e2e_${crypto.randomUUID()}`;
+const RUN_SCOPE = runScope(TEST_RUN_ID);
 
 /**
  * Sign-in budget for the run.
@@ -166,6 +160,9 @@ export default defineConfig({
         // than merging with it, so anything the Worker needs must be listed here
         // explicitly — including these, which the preflight compares against.
         TEST_RUN_ID,
+        E2E_RUN_ID: TEST_RUN_ID,
+        STARTER_LOG_DIR: RUN_SCOPE.logDir,
+        E2E_EVIDENCE_DIR: `${RUN_SCOPE.artifactDir}/visual`,
         AUTH_RATE_LIMIT_MAX,
         // The sign-in rate limit is real and stays on; the budget is raised for the
         // run rather than disabled, for the reasons documented in playwright.config.

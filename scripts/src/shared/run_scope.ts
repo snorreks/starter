@@ -154,7 +154,14 @@ export interface RunScope {
 export const newRunId = (prefix: string): string =>
   `${prefix}_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
 
+const RUN_ID = /^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$/;
+
 export const runScope = (runId: string, root: string = REPO_ROOT): RunScope => {
+  if (!RUN_ID.test(runId)) {
+    throw new Error(
+      `Invalid run id ${JSON.stringify(runId)}. Use 1–64 letters, numbers, underscores, or hyphens, beginning with a letter or number.`,
+    );
+  }
   const dir = join(root, '.wrangler', 'runs', runId);
   return {
     runId,
