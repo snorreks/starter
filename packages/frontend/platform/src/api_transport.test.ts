@@ -16,6 +16,94 @@ interface Call {
   init: RequestInit;
 }
 
+test('HTML refusals retain their HTTP classification in every response mode', async () => {
+  for (const status of [401, 429]) {
+    for (const mode of ['request', 'fetchBytes', 'openStream'] as const) {
+      const { transport } = recording(() => new Response('<html>proxy</html>', { status }));
+      const failure = await transport[mode]('/api/resource').catch((error: unknown) => error);
+      expect(failure).toBeInstanceOf(AppError);
+      expect((failure as AppError).errorType).toBe(
+        status === 401 ? 'unauthorized' : 'rate_limited',
+      );
+      expect((failure as AppError).status).toBe(status);
+      expect((failure as AppError).message).not.toContain('<html>');
+    }
+  }
+});
+
+test('malformed error envelopes cannot become user-facing messages', async () => {
+  for (const body of [{ message: { raw: 'proxy' } }, { message: 123 }, null]) {
+    const { transport } = recording(() => jsonResponse(body, 401));
+    const failure = await transport.request('/api/resource').catch((error: unknown) => error);
+    expect((failure as AppError).message).toBe('The request failed.');
+    expect((failure as AppError).errorType).toBe('unauthorized');
+  }
+});
+
+test('classified provider errors retain their machine code for the auth boundary', async () => {
+  const { transport } = recording(() => jsonResponse({ code: 'EMAIL_NOT_VERIFIED' }, 403));
+  const failure = await transport
+    .request('/api/auth/sign-in/email')
+    .catch((error: unknown) => error);
+  expect((failure as AppError).message).toBe('The request failed.');
+  expect((failure as AppError).cause).toEqual({ code: 'EMAIL_NOT_VERIFIED' });
+});
+
+test('body consumption errors are normalized after successful headers', async () => {
+  for (const mode of ['request', 'fetchBytes', 'openStream'] as const) {
+    const { transport } = recording(
+      () =>
+        new Response(
+          new ReadableStream({
+            start(controller) {
+              controller.error(new DOMException('cancelled', 'AbortError'));
+            },
+          }),
+        ),
+    );
+    const failure = await (async () => {
+      if (mode === 'openStream') {
+        return (await transport.openStream('/api/resource')).text();
+      }
+      return transport[mode]('/api/resource');
+    })().catch((error: unknown) => error);
+    expect((failure as AppError).errorType).toBe('aborted');
+  }
+});
+
+test('network failure while reading an error envelope is not hidden by its status', async () => {
+  const { transport } = recording(
+    () =>
+      new Response(
+        new ReadableStream<Uint8Array>({
+          start(controller) {
+            controller.error(new TypeError('connection reset'));
+          },
+        }),
+        { status: 401 },
+      ),
+  );
+  const failure = await transport.request('/api/resource').catch((error: unknown) => error);
+  expect((failure as AppError).errorType).toBe('network');
+  expect((failure as AppError).message).toBe('Could not reach the server.');
+});
+
+test('stream requests use the configured origin and request policy', async () => {
+  const { transport, calls } = recording(() => new Response('data: {}\n\n'));
+  const controller = new AbortController();
+  await transport.openStream('/api/chat', {
+    method: 'POST',
+    body: { content: 'hi' },
+    signal: controller.signal,
+    headers: { authorization: 'Bearer current' },
+  });
+  expect(calls[0]?.url).toBe('https://api.example.test/api/chat');
+  expect(calls[0]?.init.credentials).toBe('include');
+  expect(calls[0]?.init.signal).toBe(controller.signal);
+  expect(new Headers(calls[0]?.init.headers).get('accept')).toBe('text/event-stream');
+  expect(new Headers(calls[0]?.init.headers).get('authorization')).toBe('Bearer current');
+});
+
 const jsonResponse = (body: unknown, status = 200): Response =>
   new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
 

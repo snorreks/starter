@@ -75,8 +75,8 @@ const featuresMember = (files: Record<string, string>): Member => ({
 
 const FEATURE_FILES: Record<string, string> = {
   'src/notes/notes_view_model.svelte.ts':
-    "import type { Note } from '@starter/schemas/notes';\nimport { notesService } from './notes_service.svelte.ts';\nexport class NotesViewModel {\n  service = notesService;\n  list: () => Note[] = () => [];\n}\n",
-  'src/notes/notes_service.svelte.ts':
+    "import type { Note } from '@starter/schemas/notes';\nimport { notesService } from './notes_service.ts';\nexport class NotesViewModel {\n  service = notesService;\n  list: () => Note[] = () => [];\n}\n",
+  'src/notes/notes_service.ts':
     "import type { Note } from '@starter/schemas/notes';\nexport type NotesService = { list: () => Note[] };\nexport const notesService: NotesService = { list: () => [] };\n",
   'src/notes/note_card.svelte':
     '<script lang="ts">\n  import type { NotesViewModel } from \'./notes_view_model.svelte.ts\';\n  let { model }: { model: NotesViewModel } = $props();\n</script>\n<article>{model.list().length}</article>\n',
@@ -99,7 +99,7 @@ describe('roots: packages/frontend/features keeps the feature layers', () => {
         featuresMember({
           ...FEATURE_FILES,
           'src/notes/note_card.svelte':
-            '<script lang="ts">\n  import { notesService } from \'./notes_service.svelte.ts\';\n</script>\n<article>{notesService.list().length}</article>\n',
+            '<script lang="ts">\n  import { notesService } from \'./notes_service.ts\';\n</script>\n<article>{notesService.list().length}</article>\n',
         }),
       ]),
     );
@@ -121,8 +121,8 @@ describe('roots: packages/frontend/features keeps the feature layers', () => {
     // (`@starter/platform`) and take it as a constructor argument.
     const features = featuresMember({
       ...FEATURE_FILES,
-      'src/notes/notes_service.svelte.ts':
-        "import { notesService } from '../../../../../apps/frontend/client/src/lib/features/notes/notes_service.svelte.ts';\nexport const leaked = notesService;\n",
+      'src/notes/notes_service.ts':
+        "import { notesService } from '../../../../../apps/frontend/client/src/lib/features/notes/notes_service.ts';\nexport const leaked = notesService;\n",
     });
 
     const violation = firstOf(
@@ -130,7 +130,7 @@ describe('roots: packages/frontend/features keeps the feature layers', () => {
       'cross-workspace-relative-import',
     );
     expect(violation, 'expected cross-workspace-relative-import').toBeDefined();
-    expect(violation?.file).toBe('packages/frontend/features/src/notes/notes_service.svelte.ts');
+    expect(violation?.file).toBe('packages/frontend/features/src/notes/notes_service.ts');
     expect(violation?.message).toContain('apps/frontend/client');
     expect(violation?.message).toContain('exports');
   });
@@ -461,7 +461,7 @@ describe('roots: the policy table classifies a path with no file behind it', () 
   test.each<[string, Plane, Role]>([
     ['packages/frontend/features/src/notes/note_card.svelte', 'browser', 'view'],
     ['packages/frontend/features/src/notes/notes_view_model.svelte.ts', 'browser', 'view-model'],
-    ['packages/frontend/features/src/notes/notes_service.svelte.ts', 'browser', 'service'],
+    ['packages/frontend/features/src/notes/notes_service.ts', 'browser', 'service'],
     ['packages/frontend/platform/src/transport.ts', 'browser', 'module'],
     ['apps/frontend/native/src/routes/+page.svelte', 'browser', 'route-view'],
     ['apps/frontend/native/src/lib/platform/bridge.ts', 'browser', 'native-bridge'],

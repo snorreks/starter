@@ -15,7 +15,7 @@
 
 import { describe, expect, test } from 'bun:test';
 import type { Note } from '@starter/schemas/notes';
-import type { NotesService } from './notes_service.svelte.ts';
+import type { NotesService } from './notes_service.ts';
 import { NotesViewModel } from './notes_view_model.svelte.ts';
 
 /**

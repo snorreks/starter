@@ -67,8 +67,6 @@ $effect(() => {
     }
     instance.mounted = true;
 
-    let stillMounted = true;
-    let initializeSettled = false;
     let disposed = false;
 
     const disposeOnce = (): void => {
@@ -82,23 +80,12 @@ $effect(() => {
       });
     };
 
-    void instance
-      .initialize()
-      .catch((error: unknown) => {
-        reportLifecycleFailure('initialize', instance, error);
-      })
-      .finally(() => {
-        initializeSettled = true;
-        if (!stillMounted) {
-          disposeOnce();
-        }
-      });
+    void instance.initialize().catch((error: unknown) => {
+      reportLifecycleFailure('initialize', instance, error);
+    });
 
     return () => {
-      stillMounted = false;
-      if (initializeSettled) {
-        disposeOnce();
-      }
+      disposeOnce();
     };
   });
 });

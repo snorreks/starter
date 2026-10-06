@@ -43,6 +43,13 @@ export class StaleGuard {
     return !this.#cancelled && token === this.#generation;
   }
 
+  /** Abort and invalidate the current read while keeping the owner reusable. */
+  invalidate(): void {
+    this.#controller?.abort();
+    this.#controller = undefined;
+    this.#generation += 1;
+  }
+
   /**
    * Abort the in-flight operation and invalidate every outstanding token.
    * Call from `dispose()` so a torn-down screen cannot be written to.

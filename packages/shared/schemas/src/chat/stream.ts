@@ -64,7 +64,7 @@ export interface SseFrame {
  * the decoder agree without any streams involved; a streaming decoder is only
  * correct in the presence of a byte boundary a unit test cannot reproduce
  * faithfully. The browser's live reader is `readChatFrames` in
- * `packages/frontend/features/src/chat/chat_service.svelte.ts`, and it implements
+ * `packages/frontend/features/src/chat/chat_service.ts`, and it implements
  * the same field rules, so the two cannot disagree about a frame's shape.
  *
  * Rules implemented, all from the WHATWG event stream format:

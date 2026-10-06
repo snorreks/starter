@@ -11,9 +11,9 @@
 // No network and no server: services are faked, which is the point of the
 // composition seam.
 
-import { NoteCard, type NotesService, NotesViewModel } from '@starter/features/notes';
+import { NoteCard, NoteForm, type NotesService, NotesViewModel } from '@starter/features/notes';
 import type { Note } from '@starter/schemas/notes';
-import { ErrorState, ScreenContainer } from '@starter/ui';
+import { AsyncOperation, ErrorState, ScreenContainer, ScreenScope } from '@starter/ui';
 import { StaleGuard } from '@starter/utils';
 import { flushSync } from 'svelte';
 import { describe, expect, test } from 'vitest';
@@ -31,12 +31,12 @@ const note = (overrides: Partial<Note> = {}): Note => ({
 
 /** A fake service whose responses the test controls, so races are reproducible. */
 const fakeNotesService = (
-  behaviour: Partial<Pick<NotesService, 'list' | 'remove'>> = {},
+  behaviour: Partial<Pick<NotesService, 'list' | 'remove' | 'create'>> = {},
 ): NotesService =>
   ({
     list: behaviour.list ?? (() => Promise.resolve([])),
     remove: behaviour.remove ?? (() => Promise.resolve()),
-    create: () => Promise.reject(new Error('create is not exercised here')),
+    create: behaviour.create ?? (() => Promise.reject(new Error('create is not exercised here'))),
     update: () => Promise.reject(new Error('update is not exercised here')),
   }) as unknown as NotesService;
 
@@ -275,6 +275,94 @@ describe('ErrorState', () => {
 // ── Container lifecycle ─────────────────────────────────────────────────────
 
 describe('ScreenContainer lifecycle', () => {
+  test('closing an operation prevents late failure state after unmount', async () => {
+    let reject!: (error: Error) => void;
+    const pending = new Promise<void>((_resolve, rejectPromise) => {
+      reject = rejectPromise;
+    });
+    const operation = new AsyncOperation();
+    const running = operation.run(() => pending).catch(() => undefined);
+    expect(operation.isPending).toBe(true);
+    operation.close();
+    reject(new Error('late failure'));
+    await running;
+    flushSync();
+    expect(operation.isPending).toBe(false);
+    expect(operation.error).toBeNull();
+  });
+
+  test('unmount aborts and disposes immediately while initialization is pending', async () => {
+    const viewModel = makeViewModel(fakeNotesService());
+    let finish!: () => void;
+    viewModel.initialize = () =>
+      new Promise<void>((resolve) => {
+        finish = resolve;
+      });
+    let disposed = 0;
+    viewModel.dispose = async () => {
+      disposed += 1;
+      viewModel.scope.close();
+    };
+    const mounted = mountInDocument(ScreenContainer, { screen: viewModel, children: emptySnippet });
+    await Promise.resolve();
+    mounted.destroy();
+    expect(disposed).toBe(1);
+    expect(viewModel.requests.cancelled).toBe(true);
+    finish();
+    await tick();
+    expect(disposed).toBe(1);
+  });
+
+  test('cleanup registered after scope closure runs immediately', () => {
+    const scope = new ScreenScope();
+    scope.close();
+    let released = 0;
+    scope.onClose(() => {
+      released += 1;
+    });
+    expect(released).toBe(1);
+  });
+
+  test('the notes submit button reacts while a save is pending', async () => {
+    let finish!: () => void;
+    const service = fakeNotesService({
+      create: () =>
+        new Promise<Note>((resolve) => {
+          finish = () => resolve(note({ title: 'A title' }));
+        }),
+    });
+    const viewModel = makeViewModel(service);
+    viewModel.seed([]);
+    const mounted = mountInDocument(NoteForm, {
+      viewModel,
+      note: undefined,
+      onCancelEdit: () => {},
+    });
+    const title = mounted.target.querySelector<HTMLInputElement>(
+      '[data-testid="note-title-input"]',
+    );
+    if (title === null) {
+      throw new Error('Note title input is missing.');
+    }
+    title.value = 'A title';
+    title.dispatchEvent(new Event('input', { bubbles: true }));
+    mounted.target
+      .querySelector<HTMLFormElement>('[data-testid="note-form"]')
+      ?.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+    flushSync();
+    expect(
+      mounted.target.querySelector<HTMLButtonElement>('[data-testid="note-submit"]')?.disabled,
+    ).toBe(true);
+    expect(mounted.target.textContent).toContain('Saving');
+    finish();
+    await tick();
+    flushSync();
+    expect(
+      mounted.target.querySelector<HTMLButtonElement>('[data-testid="note-submit"]')?.disabled,
+    ).toBe(false);
+    mounted.destroy();
+  });
+
   test('initializes on mount and disposes exactly once on unmount', async () => {
     const viewModel = makeViewModel(fakeNotesService());
     let initializations = 0;

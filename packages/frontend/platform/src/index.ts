@@ -16,6 +16,8 @@ export {
   type FetchLike,
   HttpTransport,
   type HttpTransportOptions,
+  normalizeTransportError,
+  type StreamingTransport,
 } from './api_transport.ts';
 export type { ExternalBrowser, Navigation } from './capabilities.ts';
 export { parseDto } from './dto.ts';

@@ -13,7 +13,7 @@
 
 export { default as NoteCard } from './note_card.svelte';
 export { default as NoteForm } from './note_form.svelte';
-export { NotesService } from './notes_service.svelte.ts';
+export { NotesService } from './notes_service.ts';
 export { default as NotesView } from './notes_view.svelte';
 export {
   type NotesScreenOptions,

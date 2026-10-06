@@ -29,6 +29,7 @@ import {
   type ArtifactRequestOptions,
   type ArtifactTransport,
   HttpTransport,
+  type StreamingTransport,
   type TransportRequestOptions,
 } from '@starter/platform';
 
@@ -47,7 +48,6 @@ export interface BearerTransportOptions {
   readonly getToken: TokenReader;
   /** Injected so a test replaces it rather than the global. */
   readonly fetch?: typeof globalThis.fetch;
-  readonly className?: string;
 }
 
 /**
@@ -64,49 +64,46 @@ export interface BearerTransportOptions {
  * credential is attached in a header and nowhere else — no token in a URL, no
  * second code path that could forget it.
  */
-export const createBearerTransport = (options: BearerTransportOptions): ArtifactTransport => {
+export const createBearerTransport = (
+  options: BearerTransportOptions,
+): ArtifactTransport & StreamingTransport => {
   const inner = new HttpTransport({
     baseUrl: options.origin,
     credentials: 'omit',
     ...(options.fetch === undefined ? {} : { fetch: options.fetch }),
-    className: options.className ?? 'NativeBearerTransport',
   });
 
+  const authenticated = (headers: Readonly<Record<string, string>> | undefined) => {
+    const result = new Headers(headers);
+    result.delete('authorization');
+    const token = options.getToken();
+    if (token !== null) {
+      result.set('authorization', `Bearer ${token}`);
+    }
+    return Object.fromEntries(result);
+  };
+
   return {
-    request: <T>(path: string, requestOptions: TransportRequestOptions = {}): Promise<T> => {
-      const token = options.getToken();
-
-      return inner.request<T>(path, {
-        credentials: 'omit',
+    request: <T>(path: string, requestOptions: TransportRequestOptions = {}): Promise<T> =>
+      inner.request<T>(path, {
         ...requestOptions,
-        // Caller headers first, then the credential: a per-call `authorization`
-        // header is not a thing any caller has, and letting one through would be
-        // a way to present somebody else's token.
-        headers: {
-          ...requestOptions.headers,
-          ...(token === null ? {} : { authorization: `Bearer ${token}` }),
-        },
-      });
-    },
-
+        credentials: 'omit',
+        headers: authenticated(requestOptions.headers),
+      }),
     fetchBytes: (
       path: string,
       requestOptions: ArtifactRequestOptions = {},
-    ): Promise<ArtifactBytes> => {
-      const token = options.getToken();
-
-      // The credential is added here rather than being inherited from the
-      // constructor, for the same reason as `request`: a sign-out has to take
-      // effect on the very next byte fetch. This is also the one method where
-      // forgetting it would be invisible — the request would simply answer 401,
-      // and the screen would read as signed out rather than as a bug.
-      return inner.fetchBytes(path, {
+    ): Promise<ArtifactBytes> =>
+      inner.fetchBytes(path, {
         ...requestOptions,
-        headers: {
-          ...requestOptions.headers,
-          ...(token === null ? {} : { authorization: `Bearer ${token}` }),
-        },
-      });
-    },
+        credentials: 'omit',
+        headers: authenticated(requestOptions.headers),
+      }),
+    openStream: (path: string, requestOptions: TransportRequestOptions = {}): Promise<Response> =>
+      inner.openStream(path, {
+        ...requestOptions,
+        credentials: 'omit',
+        headers: authenticated(requestOptions.headers),
+      }),
   };
 };

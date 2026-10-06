@@ -10,17 +10,31 @@
 
 import type { Navigation } from '@starter/platform';
 import type { Conversation, ConversationCreate } from '@starter/schemas/chat';
-import { disposeScreen, type ScreenGuards, type ScreenOwner } from '@starter/ui/screen';
-import { MutationGuard, StaleGuard, toAppError } from '@starter/utils';
-import type { ChatService } from './chat_service.svelte.ts';
+import { AsyncOperation } from '@starter/ui/async_operation.svelte';
+import {
+  disposeScreen,
+  type ScreenGuards,
+  type ScreenOwner,
+  ScreenScope,
+} from '@starter/ui/screen';
+import { toAppError } from '@starter/utils';
+import type { ChatService } from './chat_service.ts';
+
+type ChatListService = Pick<ChatService, 'listConversations' | 'createConversation'>;
 
 export type ChatListStatus =
   | { kind: 'loading' }
   | { kind: 'ready' }
   | { kind: 'error'; message: string; retryable: boolean };
 
+export type CreateConversationResult =
+  | { kind: 'created'; conversation: Conversation }
+  | { kind: 'created-navigation-failed'; conversation: Conversation; message: string }
+  | { kind: 'rejected'; message: string }
+  | { kind: 'unknown-outcome'; message: string };
+
 export interface ChatListScreenOptions {
-  readonly chat: ChatService;
+  readonly chat: ChatListService;
   /** How this host moves between screens. */
   readonly navigation: Navigation;
   /** The list the server already rendered, so the first paint is not empty. */
@@ -40,13 +54,19 @@ export class ChatListViewModel implements ScreenOwner, ScreenGuards {
   /** Claimed by `ScreenContainer`; never written from here. */
   mounted = false;
 
-  readonly requests = new StaleGuard();
-  readonly mutations = new MutationGuard();
+  readonly scope = new ScreenScope();
+  get requests() {
+    return this.scope.requests;
+  }
+  get mutations() {
+    return this.scope.mutations;
+  }
+  readonly operation = new AsyncOperation();
 
-  readonly #chat: ChatService;
+  readonly #chat: ChatListService;
   readonly #navigation: Navigation;
   #seeded = false;
-  #inFlight = $state(0);
+  #localCreates = new Map<string, Conversation>();
 
   constructor(options: ChatListScreenOptions) {
     this.#chat = options.chat;
@@ -61,7 +81,7 @@ export class ChatListViewModel implements ScreenOwner, ScreenGuards {
   }
 
   get isCreating(): boolean {
-    return this.#inFlight > 0;
+    return this.operation.isPending;
   }
 
   get canCreate(): boolean {
@@ -69,7 +89,15 @@ export class ChatListViewModel implements ScreenOwner, ScreenGuards {
   }
 
   seed(conversations: readonly Conversation[]): void {
-    this.conversations = [...conversations];
+    this.requests.invalidate();
+    const received = new Set(conversations.map(({ id }) => id));
+    for (const id of received) {
+      this.#localCreates.delete(id);
+    }
+    this.conversations = [
+      ...conversations,
+      ...[...this.#localCreates.values()].filter(({ id }) => !received.has(id)),
+    ];
     this.status = { kind: 'ready' };
     this.#seeded = true;
   }
@@ -94,7 +122,14 @@ export class ChatListViewModel implements ScreenOwner, ScreenGuards {
       if (!this.requests.isCurrent(token)) {
         return;
       }
-      this.conversations = conversations;
+      const received = new Set(conversations.map(({ id }) => id));
+      for (const id of received) {
+        this.#localCreates.delete(id);
+      }
+      this.conversations = [
+        ...conversations,
+        ...[...this.#localCreates.values()].filter(({ id }) => !received.has(id)),
+      ];
       this.status = { kind: 'ready' };
     } catch (error) {
       if (!this.requests.isCurrent(token)) {
@@ -126,41 +161,50 @@ export class ChatListViewModel implements ScreenOwner, ScreenGuards {
    * and the user is told to retry the navigation — reporting "could not create"
    * would be a lie about state that exists.
    */
-  async create(): Promise<boolean> {
+  async create(): Promise<CreateConversationResult> {
     const title = this.draftTitle.trim();
-    if (title.length === 0 || this.mutations.disposed) {
-      return false;
+    if (title.length === 0 || this.mutations.disposed || this.isCreating) {
+      return { kind: 'rejected', message: 'A conversation cannot be created right now.' };
     }
 
     const handle = this.mutations.begin();
     if (handle === null) {
-      return false;
+      return { kind: 'rejected', message: 'A conversation cannot be created right now.' };
     }
 
-    this.#inFlight += 1;
     this.createError = null;
     try {
-      const created = await this.#chat.createConversation(
-        { title } as ConversationCreate,
-        handle.signal,
+      const created = await this.operation.run(
+        () => this.#chat.createConversation({ title } as ConversationCreate, handle.signal),
+        { singleFlight: true },
       );
+      if (created === undefined) {
+        return { kind: 'rejected', message: 'Creation is already in progress.' };
+      }
       if (this.mutations.disposed) {
-        return false;
+        return { kind: 'unknown-outcome', message: 'The result arrived after this screen closed.' };
       }
 
       this.draftTitle = '';
+      this.#localCreates.set(created.id, created);
       this.conversations = [created, ...this.conversations];
-      await this.#navigation.go(`/chat/${encodeURIComponent(created.id)}`);
-      return true;
+      try {
+        await this.#navigation.go(`/chat/${encodeURIComponent(created.id)}`);
+        return { kind: 'created', conversation: created };
+      } catch {
+        const message = 'Conversation created. Open it from the list to continue.';
+        this.createError = message;
+        return { kind: 'created-navigation-failed', conversation: created, message };
+      }
     } catch (error) {
       const appError = toAppError(error, 'Could not create the conversation.');
-      if (appError.errorType === 'aborted') {
-        return false;
+      if (!this.mutations.disposed) {
+        this.createError = appError.message;
       }
-      this.createError = appError.message;
-      return false;
+      return appError.errorType === 'network' || appError.errorType === 'aborted'
+        ? { kind: 'unknown-outcome', message: appError.message }
+        : { kind: 'rejected', message: appError.message };
     } finally {
-      this.#inFlight -= 1;
       this.mutations.end();
     }
   }
@@ -171,6 +215,7 @@ export class ChatListViewModel implements ScreenOwner, ScreenGuards {
   }
 
   async dispose(): Promise<void> {
+    this.operation.close();
     await disposeScreen(this);
   }
 }

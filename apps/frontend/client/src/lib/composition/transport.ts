@@ -32,5 +32,4 @@ import { clientConfig } from '#lib/runtime/config.ts';
 export const webTransport = new HttpTransport({
   baseUrl: clientConfig.apiBaseUrl,
   credentials: 'include',
-  className: 'WebApiTransport',
 });

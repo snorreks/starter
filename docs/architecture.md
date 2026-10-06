@@ -412,7 +412,7 @@ That last check matches **minification-surviving identifiers**, not library name
 `BETTER_AUTH_SECRET`, `BETTER_AUTH_URL`, `cloudflare:workers`, `notes_owner_id_idx`,
 `notes_owner_updated_idx`, `device_codes`, `account_id`, `emailVerified`,
 `email_verified`. A name-based list was measured and is not sufficient — a single
-`import { notes } from '@starter/database'` in `notes_service.svelte.ts` produced a
+`import { notes } from '@starter/database'` in `notes_service.ts` produced a
 green `vite build` and a green check while the client chunk carried
 `notes_owner_id_idx`, because minification drops the library name and keeps the
 index. `check_bundle.test.ts` locks that in with a negative control.
@@ -497,3 +497,24 @@ where it is, and the image and the Workflows are a separate deploy.
 - [capability-matrix.md](capability-matrix.md) — verified, fixture-verified, or not run
 - [lint.md](lint.md) — what the linter enforces, and what it cannot
 - [adding-a-feature.md](adding-a-feature.md) — the order that works, and why
+
+## Frontend screen runtime
+
+Features keep their views, view models and feature services together. Application
+composition owns the host-specific transport, session, navigation and persistence
+capabilities. JSON, bytes and streams use `@starter/platform` transport contracts;
+feature services do not call global `fetch` or inspect credentials.
+
+Each screen owns a single-use `ScreenScope`. Unmount closes it synchronously, aborting
+loads and writes; cleanup registered after closure runs immediately. `AsyncOperation`
+provides reactive pending/error state, while each caller chooses single-flight or
+concurrent behavior explicitly. Mutation completion and follow-up navigation are
+separate outcomes. A refreshed server snapshot invalidates older reads and merges by
+stable identity while retaining drafts, queued writes and active streams.
+
+Use `.svelte.ts` only for modules containing Svelte runes. Prefer narrow service
+contracts at injection boundaries. Render operation errors beside the action that can
+recover from them. Ordinary navigation uses links; imperative navigation after a
+mutation reports navigation failure without claiming the mutation failed. See the
+[frontend architecture review](frontend-architecture-review.md) and the canonical
+chat and notes features for examples.

@@ -9,14 +9,27 @@
 // reader pass, and the frame reader is the part most likely to be wrong.
 
 import { describe, expect, test } from 'bun:test';
-import type { ApiTransport, FetchLike, TransportRequestOptions } from '@starter/platform';
+import {
+  type ApiTransport,
+  type FetchLike,
+  HttpTransport,
+  type StreamingTransport,
+  type TransportRequestOptions,
+} from '@starter/platform';
 import {
   type ChatStreamEvent,
   encodeSseDone,
   encodeSseFrame,
   type Message,
 } from '@starter/schemas/chat';
-import { ChatService } from './chat_service.svelte.ts';
+import { ChatService } from './chat_service.ts';
+
+const streamTransport = (transport: ApiTransport, fetchImpl: FetchLike): StreamingTransport => ({
+  ...transport,
+  openStream: (path: string, options?: TransportRequestOptions) =>
+    new HttpTransport({ fetch: fetchImpl }).openStream(path, options),
+});
+
 import { ChatViewModel } from './chat_view_model.svelte.ts';
 
 const conversation = {
@@ -95,7 +108,7 @@ const harness = (options: HarnessOptions = {}) => {
 
   return {
     calls,
-    service: new ChatService({ transport, fetch: fetchImpl }),
+    service: new ChatService({ transport: streamTransport(transport, fetchImpl) }),
   };
 };
 
@@ -174,17 +187,19 @@ describe('a turn that succeeds', () => {
     const seen: string[] = [];
     const h = harness({ events });
     const service = new ChatService({
-      transport: {
-        async request<T>(): Promise<T> {
-          return { messages: [], serverTime: 0 } as T;
-        },
-      },
-      fetch: async () => bodyFrom(events),
       onUpdate: (update) => {
-        if (update.delta !== undefined) {
+        if (update.type === 'delta') {
           seen.push(update.delta);
         }
       },
+      transport: streamTransport(
+        {
+          async request<T>(): Promise<T> {
+            return { messages: [], serverTime: 0 } as T;
+          },
+        },
+        async () => bodyFrom(events),
+      ),
     });
     const vm = new ChatViewModel({ chat: service, conversation, newClientId: idsFrom('cid_1') });
 
@@ -297,37 +312,39 @@ describe('a message that never reached the server', () => {
     const calls: { content: string }[] = [];
 
     const service = new ChatService({
-      transport: {
-        async request<T>(): Promise<T> {
-          return { messages: [], serverTime: 0 } as T;
+      transport: streamTransport(
+        {
+          async request<T>(): Promise<T> {
+            return { messages: [], serverTime: 0 } as T;
+          },
         },
-      },
-      fetch: async (_input, init) => {
-        const sent = JSON.parse(String(init?.body ?? '{}')) as {
-          content: string;
-          clientId: string;
-        };
-        calls.push({ content: sent.content });
-        if (!online) {
-          throw new TypeError('network down');
-        }
-        return bodyFrom([
-          {
-            type: 'user-message',
-            clientId: sent.clientId,
-            message: message({ id: `m_${sent.content}`, content: sent.content }),
-          },
-          { type: 'start', messageId: `r_${sent.content}` },
-          {
-            type: 'complete',
-            message: message({
-              id: `r_${sent.content}`,
-              role: 'assistant',
-              content: `re: ${sent.content}`,
-            }),
-          },
-        ]);
-      },
+        async (_input, init) => {
+          const sent = JSON.parse(String(init?.body ?? '{}')) as {
+            content: string;
+            clientId: string;
+          };
+          calls.push({ content: sent.content });
+          if (!online) {
+            throw new TypeError('network down');
+          }
+          return bodyFrom([
+            {
+              type: 'user-message',
+              clientId: sent.clientId,
+              message: message({ id: `m_${sent.content}`, content: sent.content }),
+            },
+            { type: 'start', messageId: `r_${sent.content}` },
+            {
+              type: 'complete',
+              message: message({
+                id: `r_${sent.content}`,
+                role: 'assistant',
+                content: `re: ${sent.content}`,
+              }),
+            },
+          ]);
+        },
+      ),
     });
 
     const vm = new ChatViewModel({
@@ -415,15 +432,14 @@ describe('guards on the screen', () => {
 
     const h = harness({ events: [] });
     const service = new ChatService({
-      transport: h.service as unknown as ApiTransport,
-      fetch: async () => {
+      transport: streamTransport(h.service as unknown as ApiTransport, async () => {
         await gate;
         return bodyFrom([
           { type: 'user-message', clientId: 'cid_1', message: message() },
           { type: 'start', messageId: 'r1' },
           { type: 'complete', message: message({ id: 'r1', role: 'assistant', content: 'ok' }) },
         ]);
-      },
+      }),
     });
     const vm = new ChatViewModel({
       chat: service,
@@ -453,9 +469,9 @@ describe('guards on the screen', () => {
   test('disposing mid-turn prevents late state changes', async () => {
     const h = harness({ events: [] });
     const service = new ChatService({
-      transport: h.service as unknown as ApiTransport,
-      fetch: async () =>
+      transport: streamTransport(h.service as unknown as ApiTransport, async () =>
         bodyFrom([{ type: 'user-message', clientId: 'cid_1', message: message() }]),
+      ),
     });
     const vm = new ChatViewModel({ chat: service, conversation, newClientId: idsFrom('cid_1') });
 
@@ -495,7 +511,7 @@ describe('loading the history', () => {
     expect(vm.transcript).toHaveLength(1);
   });
 
-  test('seeding clears the queue, rather than showing two conversations', async () => {
+  test('a refreshed snapshot preserves unsent queue entries', async () => {
     const failing = harness({ failWith: new TypeError('down') });
     const vm = viewModel(failing, idsFrom('cid_1'));
 
@@ -505,7 +521,7 @@ describe('loading the history', () => {
 
     vm.seed([message({ content: 'server view' })]);
 
-    expect(vm.queue).toHaveLength(0);
+    expect(vm.queue.map((entry) => entry.content)).toEqual(['typed but unsent']);
     expect(vm.transcript.map((m) => m.content)).toEqual(['server view']);
   });
 });
@@ -520,8 +536,7 @@ describe('the two halves of the contract agree', () => {
     });
     const h = harness({ events: [] });
     const service = new ChatService({
-      transport: h.service as unknown as ApiTransport,
-      fetch: async () => response,
+      transport: streamTransport(h.service as unknown as ApiTransport, async () => response),
     });
 
     // Refused rather than skipped: a skipped frame loses a turn, and the symptom is
@@ -545,26 +560,28 @@ describe('the two halves of the contract agree', () => {
 test('unsent retries retain queue order, and failed replies never requeue stored messages', async () => {
   let online = false;
   const service = new ChatService({
-    transport: {
-      async request<T>() {
-        return {} as T;
-      },
-    },
-    fetch: async (_input, init) => {
-      if (!online) {
-        throw new TypeError('offline');
-      }
-      const input = JSON.parse(String(init?.body)) as { clientId: string; content: string };
-      return bodyFrom([
-        {
-          type: 'user-message',
-          clientId: input.clientId,
-          message: message({ content: input.content }),
+    transport: streamTransport(
+      {
+        async request<T>() {
+          return {} as T;
         },
-        { type: 'start', messageId: 'reply' },
-        { type: 'error', code: 'model_failed', message: 'unavailable' },
-      ]);
-    },
+      },
+      async (_input, init) => {
+        if (!online) {
+          throw new TypeError('offline');
+        }
+        const input = JSON.parse(String(init?.body)) as { clientId: string; content: string };
+        return bodyFrom([
+          {
+            type: 'user-message',
+            clientId: input.clientId,
+            message: message({ content: input.content }),
+          },
+          { type: 'start', messageId: 'reply' },
+          { type: 'error', code: 'model_failed', message: 'unavailable' },
+        ]);
+      },
+    ),
   });
   const vm = new ChatViewModel({ chat: service, conversation, newClientId: idsFrom('one', 'two') });
   for (const content of ['one', 'two']) {
@@ -598,24 +615,26 @@ test('live updates preserve unrelated pending messages and are not replayed at c
     sawDelta = resolve;
   });
   const service = new ChatService({
-    transport: {
-      async request<T>() {
-        return {} as T;
-      },
-    },
-    fetch: async () =>
-      new Response(
-        new ReadableStream<Uint8Array>({
-          start(value) {
-            controller = value;
-          },
-        }),
-      ),
     onUpdate(update) {
-      if (update.delta !== undefined) {
+      if (update.type === 'delta') {
         sawDelta();
       }
     },
+    transport: streamTransport(
+      {
+        async request<T>() {
+          return {} as T;
+        },
+      },
+      async () =>
+        new Response(
+          new ReadableStream<Uint8Array>({
+            start(value) {
+              controller = value;
+            },
+          }),
+        ),
+    ),
   });
   const vm = new ChatViewModel({ chat: service, conversation, newClientId: idsFrom('cid_1') });
   vm.messages = [

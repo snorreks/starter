@@ -6,11 +6,16 @@ import { getChatViewModel } from '#lib/composition/chat.ts';
 
 let { conversation, messages }: { conversation: Conversation; messages: Message[] } = $props();
 
-// The route keys this component by conversation ID. Seed only when it mounts so
-// unrelated page-data reloads preserve the draft, queue, and active reply.
+// The route keys this component by conversation ID. Refreshed snapshots merge by
+// server identity; the ViewModel retains its drafts and queue during a live turn.
 const viewModel = getChatViewModel({
   conversation: untrack(() => conversation),
   initialMessages: untrack(() => messages),
+});
+
+$effect(() => {
+  const snapshot = messages;
+  untrack(() => viewModel.reconcileServerSnapshot(snapshot));
 });
 </script>
 

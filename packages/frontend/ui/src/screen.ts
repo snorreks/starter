@@ -1,33 +1,45 @@
 // packages/frontend/ui/src/screen.ts
 //
-// Screen lifecycle, by composition.
-//
-// What this replaces, and why
-// --------------------------
-// This was a three-deep inheritance chain — `BaseFrontendClass` → `BaseViewModel`
-// → `BaseFormViewModel` — in a package called `@starter/frontend-services` that
-// had exactly three subclasses in the whole repository, two of which overrode the
-// method they inherited and never called `super`.
-//
-// The audit of that chain found thirteen members with no caller anywhere:
-// `openConfirmDialog`, `requestSignIn`, `runCommand`, `registerEffectRoot`,
-// `isValid`, `handleChange`, `getInitialValues`, `onSubmit`, `setLogLevel`,
-// `info`, `log`, `spam`, and both observer factories. `BaseFormViewModel`'s
-// validation and error mapping were unreachable in practice, because
-// `AuthViewModel.handleSubmit` overrode it without calling up.
-//
-// What survives is the part that was actually load-bearing, and it already lived
-// somewhere better: `StaleGuard`, `MutationGuard` and `OptimisticUpdate` are in
-// `@starter/utils`, are framework-free, and are the three rules that fix real
-// bugs — a superseded load cannot write, a write cannot outlive its owner, and a
-// failed optimistic change yields to a newer one. A ViewModel now *holds* those
-// objects instead of inheriting a way to reach them.
-//
-// What is left here is only what a container genuinely needs from whatever it
-// mounts, stated as a structural shape rather than a class. A ViewModel satisfies
-// it by holding two guards and implementing two methods.
+// Screen lifecycle primitives are composed into feature view models. The container
+// owns a structural lifecycle contract; screens keep domain state and operation policy.
 
 import type { MutationGuard, StaleGuard } from '@starter/utils';
+import { MutationGuard as MutationGuardImpl, StaleGuard as StaleGuardImpl } from '@starter/utils';
+
+/** Owns the abortable work and cleanup callbacks for one single-use screen. */
+export class ScreenScope {
+  readonly requests = new StaleGuardImpl();
+  readonly mutations = new MutationGuardImpl();
+  #closed = false;
+  #cleanups = new Set<() => void>();
+
+  get closed(): boolean {
+    return this.#closed;
+  }
+
+  /** Register a release action; resources acquired after closure are released immediately. */
+  onClose(cleanup: () => void): () => void {
+    if (this.#closed) {
+      cleanup();
+      return () => {};
+    }
+    this.#cleanups.add(cleanup);
+    return () => this.#cleanups.delete(cleanup);
+  }
+
+  close(): void {
+    if (this.#closed) {
+      return;
+    }
+    this.#closed = true;
+    this.requests.cancelAll();
+    this.mutations.dispose();
+    for (const cleanup of this.#cleanups) {
+      cleanup();
+    }
+    this.#cleanups.clear();
+  }
+}
 
 /**
  * The minimum a container needs in order to own an object's lifecycle.
@@ -48,7 +60,7 @@ export interface ScreenOwner {
   mounted: boolean;
   /** Runs once per mount, on the client, after the container has claimed it. */
   initialize(): Promise<void>;
-  /** Runs once per mount, after `initialize()` has settled. */
+  /** Runs once on unmount, including while `initialize()` is pending. */
   dispose(): Promise<void>;
 }
 
@@ -59,12 +71,9 @@ export interface ScreenGuards {
 }
 
 /**
- * Tear a screen down, in the only order that is safe.
+ * Tear a screen down synchronously.
  *
- * Loads first, then writes, then anything else. Reversed, a mutation that
- * completes between the two lines would assign state onto an object whose
- * requests were still live, and a `finally` in that mutation would clear a counter
- * the next one had already incremented.
+ * Scopes cancel reads and writes together before the owner releases resources.
  *
  * A function rather than a protected method on a base class: it takes the guards
  * as arguments, so a ViewModel composes it instead of inheriting the ability to
@@ -75,8 +84,12 @@ export interface ScreenGuards {
  * a teardown that has already happened.
  */
 export const disposeScreen = (guards: ScreenGuards, after?: () => void | Promise<void>): void => {
-  guards.requests.cancelAll();
-  guards.mutations.dispose();
+  if ('scope' in guards && guards.scope instanceof ScreenScope) {
+    guards.scope.close();
+  } else {
+    guards.requests.cancelAll();
+    guards.mutations.dispose();
+  }
   void after?.();
 };
 

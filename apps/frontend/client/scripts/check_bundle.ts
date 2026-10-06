@@ -68,7 +68,7 @@ const NATIVE_SPECIFIER = '@tauri-apps/';
  * because it was measured rather than assumed: a client module that imports
  * `@starter/database` bundles cleanly and the library *name* is gone, while the
  * schema it carries survives as a string. A negative control (`import { notes }
- * from '@starter/database'` in `notes_service.svelte.ts`) produced a green
+ * from '@starter/database'` in `notes_service.ts`) produced a green
  * `vite build`, a green `check:bundle` under a name-based list, and a client chunk
  * containing the `notes_owner_id_idx` DDL.
  *

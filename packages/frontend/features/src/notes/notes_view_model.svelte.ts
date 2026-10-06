@@ -26,14 +26,17 @@
 
 import type { Note, NoteCreate, NoteUpdate } from '@starter/schemas/notes';
 import { reportError } from '@starter/ui';
+import { AsyncOperation } from '@starter/ui/async_operation.svelte';
 import {
   disposeScreen,
-  runScreenWrite,
   type ScreenGuards,
   type ScreenOwner,
+  ScreenScope,
 } from '@starter/ui/screen';
-import { MutationGuard, OptimisticUpdate, StaleGuard, toAppError } from '@starter/utils';
-import type { NotesService } from './notes_service.svelte.ts';
+import { OptimisticUpdate, toAppError } from '@starter/utils';
+import type { NotesService } from './notes_service.ts';
+
+type NotesScreenService = Pick<NotesService, 'list' | 'create' | 'update' | 'remove'>;
 
 export type NotesStatus =
   | { kind: 'loading' }
@@ -41,7 +44,7 @@ export type NotesStatus =
   | { kind: 'error'; message: string; retryable: boolean };
 
 export interface NotesScreenOptions {
-  notes: NotesService;
+  notes: NotesScreenService;
   /** The list the server already rendered, so the first paint is not empty. */
   initialNotes?: readonly Note[];
 }
@@ -55,17 +58,24 @@ export class NotesViewModel implements ScreenOwner, ScreenGuards {
    * Read-only in practice: `disposeScreen` and `runScreenWrite` accept them as a
    * `ScreenGuards`, and nothing outside this file passes them anywhere.
    */
-  readonly requests = new StaleGuard();
-  readonly mutations = new MutationGuard();
+  readonly scope = new ScreenScope();
+  get requests() {
+    return this.scope.requests;
+  }
+  get mutations() {
+    return this.scope.mutations;
+  }
 
   status = $state<NotesStatus>({ kind: 'loading' });
+  readonly operation = new AsyncOperation();
+  mutationError = $state<string | null>(null);
   /** Id being edited, or null when the composer is creating. */
   editingId = $state<string | null>(null);
 
   /** Claimed by `ScreenContainer`; never written from here. */
   mounted = false;
 
-  readonly #notes: NotesService;
+  readonly #notes: NotesScreenService;
   readonly #optimistic = new OptimisticUpdate<Note>();
 
   /**
@@ -100,7 +110,7 @@ export class NotesViewModel implements ScreenOwner, ScreenGuards {
 
   /** True while at least one write is in the air. Two deletes is still true. */
   get isMutating(): boolean {
-    return this.mutations.busy;
+    return this.operation.isPending;
   }
 
   /** Replace the list with one the server already sent. */
@@ -108,6 +118,7 @@ export class NotesViewModel implements ScreenOwner, ScreenGuards {
     // Any outstanding rollback is now stale: the server's list is authoritative,
     // so a pending optimistic delete must not resurrect a row it just removed.
     this.#optimistic.supersede();
+    this.requests.invalidate();
     this.status = { kind: 'ready', notes: sortByRecency(notes) };
     this.#seeded = true;
   }
@@ -166,7 +177,10 @@ export class NotesViewModel implements ScreenOwner, ScreenGuards {
   }
 
   async createNote(input: NoteCreate): Promise<boolean> {
-    const created = await this.#mutate(() => this.#notes.create(input), 'Could not save the note.');
+    const created = await this.#mutate(
+      (signal) => this.#notes.create(input, signal),
+      'Could not save the note.',
+    );
     if (created) {
       await this.load();
     }
@@ -175,7 +189,7 @@ export class NotesViewModel implements ScreenOwner, ScreenGuards {
 
   async updateNote(id: string, input: NoteUpdate): Promise<boolean> {
     const updated = await this.#mutate(
-      () => this.#notes.update(id, input),
+      (signal) => this.#notes.update(id, input, signal),
       'Could not update the note.',
     );
     if (updated) {
@@ -209,15 +223,17 @@ export class NotesViewModel implements ScreenOwner, ScreenGuards {
 
     const { list, receipt } = this.#optimistic.apply(this.status.notes, [id]);
     this.status = { kind: 'ready', notes: list };
+    this.mutationError = null;
 
     const handle = this.mutations.begin();
     if (handle === null) {
       this.status = { kind: 'ready', notes: receipt.rollback(list) };
       return false;
     }
+    this.mutationError = null;
 
     try {
-      await this.#notes.remove(id, handle.signal);
+      await this.operation.run(() => this.#notes.remove(id, handle.signal));
       receipt.commit();
       if (this.requests.cancelled) {
         return false;
@@ -228,6 +244,9 @@ export class NotesViewModel implements ScreenOwner, ScreenGuards {
       return true;
     } catch (error) {
       const appError = toAppError(error, 'Could not delete the note.');
+      if (!this.mutations.disposed) {
+        this.mutationError = appError.message;
+      }
 
       // A **definite** failure is a definite answer: the server refused, and the
       // row is still there. Roll it back and say so.
@@ -255,6 +274,7 @@ export class NotesViewModel implements ScreenOwner, ScreenGuards {
   }
 
   async dispose(): Promise<void> {
+    this.operation.close();
     disposeScreen(this);
   }
 
@@ -265,13 +285,30 @@ export class NotesViewModel implements ScreenOwner, ScreenGuards {
    * finishes is the bug `MutationGuard`'s counter exists to prevent, so the
    * counting is not repeated at each call site.
    */
-  async #mutate(write: () => Promise<unknown>, failureMessage: string): Promise<boolean> {
-    try {
-      const completed = await runScreenWrite(this, write);
-      return completed && !this.mutations.disposed;
-    } catch (error) {
-      reportError(error, failureMessage);
+  async #mutate(
+    write: (signal: AbortSignal) => Promise<unknown>,
+    failureMessage: string,
+  ): Promise<boolean> {
+    if (this.mutations.disposed) {
       return false;
+    }
+    const handle = this.mutations.begin();
+    if (handle === null) {
+      return false;
+    }
+    this.mutationError = null;
+    try {
+      await this.operation.run(() => write(handle.signal));
+      return !this.mutations.disposed;
+    } catch (error) {
+      const appError = toAppError(error, failureMessage);
+      if (!this.mutations.disposed) {
+        this.mutationError = appError.message;
+      }
+      reportError(appError);
+      return false;
+    } finally {
+      this.mutations.end();
     }
   }
 }
