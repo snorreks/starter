@@ -33,6 +33,7 @@
  */
 export class MutationGuard {
   #inFlight = 0;
+  #nextId = 0;
   #disposed = false;
   #controller: AbortController | undefined;
 
@@ -50,7 +51,7 @@ export class MutationGuard {
 
     this.#inFlight += 1;
     return {
-      id: this.#inFlight,
+      id: ++this.#nextId,
       /** Aborted when the owner is disposed, for callers that can cancel. */
       signal: this.#disposeController().signal,
     };

@@ -58,7 +58,6 @@ export const apiOrigin = nativeConfig.apiOrigin;
 export const nativeTransport = createBearerTransport({
   origin: apiOrigin,
   getToken: () => memory.token,
-  className: 'NativeApiTransport',
 });
 
 /** Shared with the web host's own singleton, and for the same reason. */

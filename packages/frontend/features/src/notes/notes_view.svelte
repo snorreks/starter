@@ -5,8 +5,7 @@
   state. Everything else — what the notes are, whether a save is in flight,
   which error to show — belongs to the ViewModel.
 
-  The `#if` chain below is exhaustive over the status union, so adding a status
-  is a compile error in exactly one place rather than a silently blank screen.
+  Explicit branches keep loading, failure and empty states visible in one place.
 
   Hydration note: the server rendered this exact list from `+page.server.ts`, and
   the ViewModel is seeded with it. Nothing here fetches on mount, so what a user
@@ -50,6 +49,9 @@ let { viewModel }: Props = $props();
     note={viewModel.noteBeingEdited}
     onCancelEdit={() => viewModel.startEditing(null)}
   />
+  {#if viewModel.mutationError !== null}
+    <p role="alert" class="notes__error" data-testid="notes-mutation-error">{viewModel.mutationError}</p>
+  {/if}
 
   <div class="notes__body">
     {#if viewModel.status.kind === 'loading'}
@@ -126,4 +128,6 @@ let { viewModel }: Props = $props();
     gap: var(--space-3);
     color: var(--color-text-muted);
   }
+
+  .notes__error { color: var(--color-danger-text); }
 </style>

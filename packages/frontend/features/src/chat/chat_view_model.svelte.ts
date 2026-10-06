@@ -27,9 +27,16 @@
 // flushing after reconnecting sends exactly what was written.
 
 import type { Conversation, Message, MessageRole } from '@starter/schemas/chat';
-import { disposeScreen, type ScreenGuards, type ScreenOwner } from '@starter/ui/screen';
-import { createClientId, MutationGuard, StaleGuard, toAppError } from '@starter/utils';
-import type { ChatService, ChatStreamUpdate, StreamTurnResult } from './chat_service.svelte.ts';
+import {
+  disposeScreen,
+  type ScreenGuards,
+  type ScreenOwner,
+  ScreenScope,
+} from '@starter/ui/screen';
+import { createClientId, toAppError } from '@starter/utils';
+import type { ChatService, ChatStreamUpdate, StreamTurnResult } from './chat_service.ts';
+
+type ChatScreenService = Pick<ChatService, 'listMessages' | 'streamTurn'>;
 
 /**
  * A message as this screen holds it.
@@ -58,7 +65,7 @@ export type ChatStatus =
   | { kind: 'error'; message: string; retryable: boolean };
 
 export interface ChatScreenOptions {
-  readonly chat: ChatService;
+  readonly chat: ChatScreenService;
   /** The conversation this screen shows, or `null` before one exists. */
   readonly conversation: Conversation | null;
   /** The history the server already rendered, so the first paint is not empty. */
@@ -94,14 +101,20 @@ export class ChatViewModel implements ScreenOwner, ScreenGuards {
   /** Claimed by `ScreenContainer`; never written from here. */
   mounted = false;
 
-  readonly requests = new StaleGuard();
-  readonly mutations = new MutationGuard();
+  readonly scope = new ScreenScope();
+  get requests() {
+    return this.scope.requests;
+  }
+  get mutations() {
+    return this.scope.mutations;
+  }
 
-  readonly #chat: ChatService;
+  readonly #chat: ChatScreenService;
   readonly #newClientId: () => string;
 
   #conversation: Conversation | null;
   #seeded = false;
+  #deferredSnapshot: readonly Message[] | null = null;
   /** The in-flight turn's abort controller, or `null` when nothing is streaming. */
   #turn = $state<AbortController | null>(null);
   #inFlight = $state(0);
@@ -155,10 +168,17 @@ export class ChatViewModel implements ScreenOwner, ScreenGuards {
    * exists and the one they are typing into.
    */
   seed(messages: readonly Message[]): void {
-    this.messages = messages.map((message) => toView(message));
-    this.queue = [];
-    this.status = { kind: 'ready' };
+    this.reconcileServerSnapshot(messages);
     this.#seeded = true;
+  }
+
+  /** Merge refreshed server history while retaining local drafts, queue entries and active turns. */
+  reconcileServerSnapshot(messages: readonly Message[]): void {
+    if (this.isStreaming) {
+      this.#deferredSnapshot = messages;
+      return;
+    }
+    this.#applyServerSnapshot(messages);
   }
 
   async initialize(): Promise<void> {
@@ -186,7 +206,7 @@ export class ChatViewModel implements ScreenOwner, ScreenGuards {
       if (!this.requests.isCurrent(token)) {
         return;
       }
-      this.messages = messages.map((message) => toView(message));
+      this.reconcileServerSnapshot(messages);
       this.status = { kind: 'ready' };
     } catch (error) {
       if (!this.requests.isCurrent(token)) {
@@ -371,7 +391,7 @@ export class ChatViewModel implements ScreenOwner, ScreenGuards {
           if (this.mutations.disposed) {
             return;
           }
-          if (update.userMessage !== undefined && update.clientId === clientId) {
+          if (update.type === 'user-message' && update.clientId === clientId) {
             delivered = true;
           }
           this.#applyUpdate(update);
@@ -403,6 +423,11 @@ export class ChatViewModel implements ScreenOwner, ScreenGuards {
       if (!this.mutations.disposed) {
         this.#turn = null;
         this.#inFlight -= 1;
+        if (this.#deferredSnapshot !== null) {
+          const snapshot = this.#deferredSnapshot;
+          this.#deferredSnapshot = null;
+          this.#applyServerSnapshot(snapshot);
+        }
       }
       this.mutations.end();
     }
@@ -422,7 +447,7 @@ export class ChatViewModel implements ScreenOwner, ScreenGuards {
   }
 
   #applyUpdate(update: ChatStreamUpdate): void {
-    if (update.userMessage !== undefined) {
+    if (update.type === 'user-message') {
       // Matched on the client id the caller sent, which the `user-message` frame
       // echoes. Not on the server id: the optimistic row does not have one yet,
       // and matching by position would swap one message for another whenever two
@@ -438,7 +463,7 @@ export class ChatViewModel implements ScreenOwner, ScreenGuards {
       return;
     }
 
-    if (update.replyId !== undefined) {
+    if (update.type === 'start') {
       // The reply is announced before any of its text. Creating the row here is
       // what makes the UI show a streaming placeholder rather than nothing at all
       // between the user's message and the first chunk.
@@ -456,22 +481,39 @@ export class ChatViewModel implements ScreenOwner, ScreenGuards {
       return;
     }
 
-    if (update.delta !== undefined) {
-      this.messages = this.messages.map((message) =>
-        message.state === 'streaming'
-          ? { ...message, content: message.content + update.delta }
-          : message,
-      );
+    if (update.type === 'delta') {
+      const index = this.messages.findIndex((message) => message.state === 'streaming');
+      const current = this.messages[index];
+      if (current !== undefined) {
+        this.messages[index] = { ...current, content: current.content + update.delta };
+      }
       return;
     }
 
-    if (update.complete !== undefined) {
+    if (update.type === 'complete') {
       this.messages = this.messages.map((message) =>
         message.serverId === update.complete?.id
           ? { ...message, content: update.complete?.content ?? message.content, state: 'sent' }
           : message,
       );
     }
+  }
+
+  #applyServerSnapshot(messages: readonly Message[]): void {
+    const serverIds = new Set(messages.map(({ id }) => id));
+    const local = this.messages.filter(
+      (entry) => entry.serverId === null || !serverIds.has(entry.serverId),
+    );
+    this.messages = [
+      ...messages.map((message) => {
+        const prior = this.messages.find((entry) => entry.serverId === message.id);
+        return prior === undefined
+          ? toView(message)
+          : { ...prior, ...toView(message), clientId: prior.clientId };
+      }),
+      ...local,
+    ];
+    this.status = { kind: 'ready' };
   }
 
   // ---------------------------------------------------------------------------

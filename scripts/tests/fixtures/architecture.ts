@@ -159,8 +159,8 @@ export const BASE_PROJECT: Project = {
         'src/lib/server/service.ts':
           "import { notes } from '@starter/database';\nimport { createId } from '@starter/utils';\nexport const save = () => [notes, createId];\n",
         'src/lib/features/notes/notes_view_model.svelte.ts':
-          "import type { Note } from '@starter/schemas/notes';\nimport { notesService } from './notes_service.svelte.ts';\nexport class NotesViewModel {\n  notes: Note[] = [];\n  service = notesService;\n}\n",
-        'src/lib/features/notes/notes_service.svelte.ts':
+          "import type { Note } from '@starter/schemas/notes';\nimport { notesService } from './notes_service.ts';\nexport class NotesViewModel {\n  notes: Note[] = [];\n  service = notesService;\n}\n",
+        'src/lib/features/notes/notes_service.ts':
           "import type { Note } from '@starter/schemas/notes';\nexport type NotesService = { list: () => Note[] };\nexport const notesService: NotesService = { list: () => [] };\n",
         // A value import alongside the type, mirroring the real `note_form.svelte`: this
         // is the edge that makes the barrel test below meaningful, because a type-only

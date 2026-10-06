@@ -19,7 +19,7 @@ import { describe, expect, test } from 'bun:test';
 import type { ApiTransport, TransportRequestOptions } from '@starter/platform';
 import type { Note } from '@starter/schemas/notes';
 import { AppError } from '@starter/utils';
-import { NotesService } from './notes_service.svelte.ts';
+import { NotesService } from './notes_service.ts';
 
 const note = (overrides: Partial<Note> = {}): Note => ({
   id: 'note_1',

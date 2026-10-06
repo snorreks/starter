@@ -290,7 +290,7 @@ describe('architecture: the feature-local layers', () => {
     const root = makeProject(
       withClientFiles({
         'src/lib/features/notes/note_card.svelte': `<script lang="ts">
-  import { notesService } from './notes_service.svelte.ts';
+  import { notesService } from './notes_service.ts';
   import type { NotesViewModel } from './notes_view_model.svelte.ts';
   let { model }: { model: NotesViewModel } = $props();
 </script>
@@ -308,7 +308,7 @@ describe('architecture: the feature-local layers', () => {
   test('rejects a service that imports a view model', () => {
     const root = makeProject(
       withClientFiles({
-        'src/lib/features/notes/notes_service.svelte.ts':
+        'src/lib/features/notes/notes_service.ts':
           "import { NotesViewModel } from './notes_view_model.svelte.ts';\nexport type NotesService = { model: NotesViewModel };\nexport const notesService = {} as NotesService;\n",
       }),
     );

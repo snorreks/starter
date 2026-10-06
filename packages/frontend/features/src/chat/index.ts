@@ -19,7 +19,7 @@ export {
   type ChatStreamUpdate,
   readChatFrames,
   type StreamTurnResult,
-} from './chat_service.svelte.ts';
+} from './chat_service.ts';
 export { default as ChatView } from './chat_view.svelte';
 export {
   type ChatMessageView,

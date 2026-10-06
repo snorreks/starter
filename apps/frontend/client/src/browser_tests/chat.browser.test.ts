@@ -5,6 +5,13 @@ import {
   ChatView,
   ChatViewModel,
 } from '@starter/features/chat';
+import {
+  type ApiTransport,
+  type FetchLike,
+  HttpTransport,
+  type StreamingTransport,
+  type TransportRequestOptions,
+} from '@starter/platform';
 import type { Conversation, Message } from '@starter/schemas/chat';
 import { encodeSseFrame } from '@starter/schemas/chat';
 import { flushSync } from 'svelte';
@@ -12,6 +19,13 @@ import { createSubscriber } from 'svelte/reactivity';
 import { expect, test } from 'vitest';
 import ChatPage from '../routes/chat/[id]/+page.svelte';
 import { mountInDocument } from './mount_helper.ts';
+
+const streamTransport = (transport: ApiTransport, fetchImpl: FetchLike): StreamingTransport => ({
+  ...transport,
+  openStream: (path: string, options?: TransportRequestOptions) =>
+    new HttpTransport({ fetch: fetchImpl }).openStream(path, options),
+});
+
 import { installOfflineGuard } from './setup.ts';
 
 const conversation: Conversation = {
@@ -45,20 +59,22 @@ test('streaming controls and partial text update before completion', async () =>
     reachedDelta = resolve;
   });
   const service = new ChatService({
-    transport,
-    fetch: async () =>
-      new Response(
-        new ReadableStream({
-          start(value) {
-            controller = value;
-          },
-        }),
-      ),
     onUpdate(update) {
-      if (update.delta !== undefined) {
+      if (update.type === 'delta') {
         reachedDelta();
       }
     },
+    transport: streamTransport(
+      transport,
+      async () =>
+        new Response(
+          new ReadableStream({
+            start(value) {
+              controller = value;
+            },
+          }),
+        ),
+    ),
   });
   const vm = new ChatViewModel({
     chat: service,
@@ -105,11 +121,14 @@ test('creating label reacts while the request is outstanding', async () => {
     resolve = done;
   });
   const service = new ChatService({
-    transport: {
-      async request<T>() {
-        return (await waiting) as T;
+    transport: streamTransport(
+      {
+        async request<T>() {
+          return (await waiting) as T;
+        },
       },
-    },
+      async () => new Response(new ReadableStream<Uint8Array>()),
+    ),
   });
   const vm = new ChatListViewModel({
     chat: service,

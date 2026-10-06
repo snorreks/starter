@@ -29,6 +29,27 @@ const ok = (body: unknown = {}): Response =>
     headers: { 'content-type': 'application/json' },
   });
 
+test('every response mode enforces cookie omission and case-insensitive session authorization', async () => {
+  for (const mode of ['request', 'fetchBytes', 'openStream'] as const) {
+    for (const token of ['current', null]) {
+      const { fetch, seen } = capture([ok()]);
+      const transport = createBearerTransport({
+        origin: 'https://api.example.test',
+        getToken: () => token,
+        fetch,
+      });
+      await transport[mode]('/api/resource', {
+        credentials: 'include',
+        headers: { Authorization: 'Bearer other', authorization: 'Bearer stale' },
+      });
+      expect(seen[0]?.init?.credentials).toBe('omit');
+      expect(new Headers(seen[0]?.init?.headers).get('authorization')).toBe(
+        token === null ? null : 'Bearer current',
+      );
+    }
+  }
+});
+
 describe('the bearer transport', () => {
   test('addresses an absolute origin, not the shell', async () => {
     // A relative URL here would resolve against the custom protocol the shell

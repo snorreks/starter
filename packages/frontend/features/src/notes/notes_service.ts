@@ -1,4 +1,4 @@
-// packages/frontend/features/src/notes/notes_service.svelte.ts
+// packages/frontend/features/src/notes/notes_service.ts
 //
 // Transport for notes. The *only* place that knows the notes HTTP shape.
 //

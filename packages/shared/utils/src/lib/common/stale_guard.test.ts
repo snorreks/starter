@@ -12,6 +12,16 @@ import { describe, expect, test } from 'bun:test';
 import { StaleGuard } from './stale_guard.ts';
 
 describe('StaleGuard', () => {
+  test('an authoritative snapshot invalidates an old read without closing the owner', () => {
+    const guard = new StaleGuard();
+    const old = guard.begin();
+    guard.invalidate();
+    expect(old.signal.aborted).toBe(true);
+    expect(guard.isCurrent(old.token)).toBe(false);
+    const next = guard.begin();
+    expect(guard.isCurrent(next.token)).toBe(true);
+    expect(guard.cancelled).toBe(false);
+  });
   test('the first operation is current', () => {
     const guard = new StaleGuard();
 

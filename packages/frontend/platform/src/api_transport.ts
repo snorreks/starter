@@ -30,8 +30,7 @@
 // contract — pointed at an MP4 it would either throw or hand back a truncated
 // string that reads as success. See `ArtifactTransport`.
 
-import type { ApiError } from '@starter/schemas/auth';
-import { AppError, BaseClass, errorTypeForStatus } from '@starter/utils';
+import { AppError, errorTypeForStatus } from '@starter/utils';
 
 export type TransportMethod = 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
 
@@ -60,6 +59,11 @@ export interface TransportRequestOptions {
  * Small on purpose. It is the part of `fetch` this repository actually uses, so a
  * fake in a test is four lines and a real transport in production is one class.
  */
+/** A streamed response opened using the same host policy as JSON and bytes. */
+export interface StreamingTransport extends ApiTransport {
+  openStream(path: string, options?: TransportRequestOptions): Promise<Response>;
+}
+
 export interface ApiTransport {
   request<T>(path: string, options?: TransportRequestOptions): Promise<T>;
 }
@@ -86,6 +90,7 @@ export interface ArtifactTransport extends ApiTransport {
 
 /** One byte fetch, and only what varies about one. */
 export interface ArtifactRequestOptions {
+  readonly credentials?: RequestCredentials;
   readonly signal?: AbortSignal;
   /** Inclusive on both ends, per RFC 9110. */
   readonly range?: { startInclusive: number; endInclusive: number };
@@ -137,63 +142,16 @@ export interface HttpTransportOptions {
   readonly credentials?: RequestCredentials;
   /** Sent on every call, under the call's own headers. */
   readonly headers?: Readonly<Record<string, string>>;
-  readonly className?: string;
 }
 
-const buildHeaders = (
-  transportHeaders: Readonly<Record<string, string>> | undefined,
-  options: TransportRequestOptions,
-): Headers => {
-  const headers = new Headers({ accept: 'application/json', ...transportHeaders });
-
-  if (options.body !== undefined) {
-    headers.set('content-type', 'application/json');
-  }
-  if (options.traceId !== undefined) {
-    headers.set('x-trace-id', options.traceId);
-  }
-  for (const [name, value] of Object.entries(options.headers ?? {})) {
-    headers.set(name, value);
-  }
-
-  return headers;
-};
-
-const parseBody = async (response: Response): Promise<unknown> => {
-  if (response.status === 204) {
-    return undefined;
-  }
-
-  const text = await response.text();
-  if (text.length === 0) {
-    return undefined;
-  }
-
-  try {
-    return JSON.parse(text);
-  } catch {
-    throw new AppError('server', 'The server returned a response that was not JSON.', {
-      status: response.status,
-    });
-  }
-};
-
-/**
- * The reusable HTTP transport.
- *
- * Uniform errors are the point. Every non-2xx becomes an `AppError` with a
- * classified `errorType`, so a ViewModel decides "recoverable, offer retry" vs
- * "not recoverable" from data rather than from a status-code switch at each call
- * site, and a host-specific transport does not have to re-derive the mapping.
- */
-export class HttpTransport extends BaseClass implements ArtifactTransport {
+// All response modes open through one host-policy and status-classification path.
+export class HttpTransport implements ArtifactTransport, StreamingTransport {
   readonly #baseUrl: string;
   readonly #fetch: FetchLike;
   readonly #credentials: RequestCredentials | undefined;
   readonly #headers: Readonly<Record<string, string>> | undefined;
 
   constructor(options: HttpTransportOptions = {}) {
-    super({ className: options.className ?? 'HttpTransport' });
     this.#baseUrl = options.baseUrl ?? '';
     this.#fetch = options.fetch ?? ((input, init) => fetch(input, init));
     this.#credentials = options.credentials;
@@ -204,113 +162,96 @@ export class HttpTransport extends BaseClass implements ArtifactTransport {
     return this.#baseUrl;
   }
 
-  async request<T>(path: string, options: TransportRequestOptions = {}): Promise<T> {
-    const { method = 'GET', body, signal, credentials } = options;
+  async #open(path: string, options: TransportRequestOptions, accept: string): Promise<Response> {
+    const headers = new Headers(this.#headers);
+    headers.set('accept', accept);
+    if (options.body !== undefined) {
+      headers.set('content-type', 'application/json');
+    }
+    if (options.traceId !== undefined) {
+      headers.set('x-trace-id', options.traceId);
+    }
+    for (const [name, value] of Object.entries(options.headers ?? {})) {
+      headers.set(name, value);
+    }
+    const mode = options.credentials ?? this.#credentials;
     const url = `${this.#baseUrl}${path.startsWith('/') ? path : `/${path}`}`;
-
-    this.debug('request', method, path);
-
-    const mode = credentials ?? this.#credentials;
-
     let response: Response;
     try {
       response = await this.#fetch(url, {
-        method,
-        headers: buildHeaders(this.#headers, options),
-        ...(body === undefined ? {} : { body: JSON.stringify(body) }),
-        ...(mode === undefined ? {} : { credentials: mode }),
-        ...(signal === undefined ? {} : { signal }),
-      });
-    } catch (error) {
-      // A dead network and a cancelled request both land here; the AbortError
-      // branch is what keeps a cancellation from being reported as an outage.
-      if (error instanceof DOMException && error.name === 'AbortError') {
-        throw new AppError('aborted', 'The request was cancelled.', { cause: error });
-      }
-      throw new AppError('network', 'Could not reach the server.', { cause: error });
-    }
-
-    const parsed = await parseBody(response);
-
-    if (!response.ok) {
-      const errorPayload = parsed as Partial<ApiError> | undefined;
-      throw new AppError(
-        errorTypeForStatus(response.status),
-        errorPayload?.message ?? 'The request failed.',
-        {
-          status: response.status,
-          cause: parsed,
-        },
-      );
-    }
-
-    return parsed as T;
-  }
-
-  /**
-   * The byte path.
-   *
-   * Deliberately not built on `request()`: that method's contract ends at JSON.
-   * This one calls `fetch` itself and therefore owns three things `request()`
-   * cannot: the `Range` header, the binary body, and the fact that a **failed**
-   * response is still a JSON error envelope that must be turned into an
-   * `AppError` the same way a failed JSON call would be.
-   *
-   * A refusal therefore looks identical to every other refusal in the
-   * application: 410 for an aged-out artifact and 404 for somebody else's job
-   * both arrive as an `AppError` with the server's `message`, and neither
-   * arrives as bytes.
-   */
-  async fetchBytes(path: string, options: ArtifactRequestOptions = {}): Promise<ArtifactBytes> {
-    const url = `${this.#baseUrl}${path.startsWith('/') ? path : `/${path}`}`;
-    this.debug('fetchBytes', path);
-
-    let response: Response;
-    try {
-      // Built by hand rather than through `buildHeaders`: that helper's second
-      // argument is a *call's* options, and this request has none of the JSON
-      // ones. Merge order is the same as everywhere else — the transport's
-      // defaults, then this call's — so a decorator can add a credential here.
-      const headers = new Headers({
-        accept: 'application/octet-stream',
-        ...this.#headers,
-        ...options.headers,
-      });
-      if (options.range !== undefined) {
-        headers.set('range', `bytes=${options.range.startInclusive}-${options.range.endInclusive}`);
-      }
-
-      response = await this.#fetch(url, {
-        method: 'GET',
+        method: options.method ?? 'GET',
         headers,
-        ...(this.#credentials === undefined ? {} : { credentials: this.#credentials }),
+        ...(options.body === undefined ? {} : { body: JSON.stringify(options.body) }),
+        ...(mode === undefined ? {} : { credentials: mode }),
         ...(options.signal === undefined ? {} : { signal: options.signal }),
       });
     } catch (error) {
-      if (error instanceof DOMException && error.name === 'AbortError') {
-        throw new AppError('aborted', 'The request was cancelled.', { cause: error });
-      }
-      throw new AppError('network', 'Could not reach the server.', { cause: error });
+      throw normalizeTransportError(error, options.signal);
     }
-
     if (!response.ok) {
-      // The body here is the same `{ error, message }` envelope every other
-      // route returns, and it is read as text rather than parsed as JSON: a 503
-      // from a proxy is HTML, and `parseBody` would turn that into a confusing
-      // "not JSON" error instead of the server's actual message.
-      const text = await response.text();
-      const payload = safeJson(text) as Partial<ApiError> | undefined;
-      throw new AppError(
-        errorTypeForStatus(response.status),
-        payload?.message ?? 'The request failed.',
-        {
-          status: response.status,
-          cause: payload,
-        },
-      );
+      let payload: unknown;
+      try {
+        payload = JSON.parse(await response.text());
+      } catch (error) {
+        if (!(error instanceof SyntaxError)) {
+          throw normalizeTransportError(error, options.signal);
+        }
+      }
+      const message =
+        typeof payload === 'object' &&
+        payload !== null &&
+        'message' in payload &&
+        typeof payload.message === 'string' &&
+        payload.message.trim().length > 0
+          ? payload.message
+          : 'The request failed.';
+      throw new AppError(errorTypeForStatus(response.status), message, {
+        status: response.status,
+        cause: payload,
+      });
     }
+    return response;
+  }
 
-    const buffer = await response.arrayBuffer();
+  async request<T>(path: string, options: TransportRequestOptions = {}): Promise<T> {
+    const response = await this.#open(path, options, 'application/json');
+    if (response.status === 204) {
+      return undefined as T;
+    }
+    let text: string;
+    try {
+      text = await response.text();
+    } catch (error) {
+      throw normalizeTransportError(error, options.signal);
+    }
+    if (text.length === 0) {
+      return undefined as T;
+    }
+    try {
+      return JSON.parse(text) as T;
+    } catch {
+      throw new AppError('server', 'The server returned a response that was not JSON.', {
+        status: response.status,
+      });
+    }
+  }
+
+  async fetchBytes(path: string, options: ArtifactRequestOptions = {}): Promise<ArtifactBytes> {
+    const headers = new Headers(options.headers);
+    if (options.range !== undefined) {
+      headers.set('range', `bytes=${options.range.startInclusive}-${options.range.endInclusive}`);
+    }
+    const response = await this.#open(
+      path,
+      { ...options, headers: Object.fromEntries(headers) },
+      'application/octet-stream',
+    );
+    let buffer: ArrayBuffer;
+    try {
+      buffer = await response.arrayBuffer();
+    } catch (error) {
+      throw normalizeTransportError(error, options.signal);
+    }
     const declared = response.headers.get('content-length');
     return {
       bytes: new Uint8Array(buffer),
@@ -318,12 +259,88 @@ export class HttpTransport extends BaseClass implements ArtifactTransport {
       contentLength: declared === null ? null : Number(declared),
     };
   }
+
+  async openStream(path: string, options: TransportRequestOptions = {}): Promise<Response> {
+    const response = await this.#open(path, options, 'text/event-stream');
+    if (response.body === null) {
+      throw new AppError('server', 'The server sent a reply with no body.', {
+        status: response.status,
+      });
+    }
+    // Normalize failures that occur after headers and cancel the source reader on abort.
+    const reader = response.body.getReader();
+    let released = false;
+    const release = () => {
+      if (released) {
+        return;
+      }
+      released = true;
+      options.signal?.removeEventListener('abort', abort);
+      reader.releaseLock();
+    };
+    let output: ReadableStreamDefaultController<Uint8Array>;
+    const abort = () => {
+      if (released) {
+        return;
+      }
+      output.error(
+        normalizeTransportError(new DOMException('cancelled', 'AbortError'), options.signal),
+      );
+      void reader
+        .cancel()
+        .catch(() => {})
+        .finally(release);
+    };
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        output = controller;
+        options.signal?.addEventListener('abort', abort, { once: true });
+        if (options.signal?.aborted) {
+          abort();
+        }
+      },
+      async pull(controller) {
+        try {
+          const { done, value } = await reader.read();
+          if (released || options.signal?.aborted) {
+            return;
+          }
+          if (done) {
+            controller.close();
+            release();
+          } else {
+            controller.enqueue(value);
+          }
+        } catch (error) {
+          if (!released && !options.signal?.aborted) {
+            controller.error(normalizeTransportError(error, options.signal));
+            release();
+          }
+        }
+      },
+      async cancel(reason) {
+        try {
+          await reader.cancel(reason);
+        } finally {
+          release();
+        }
+      },
+    });
+    return new Response(body, {
+      status: response.status,
+      statusText: response.statusText,
+      headers: response.headers,
+    });
+  }
 }
 
-const safeJson = (text: string): unknown => {
-  try {
-    return JSON.parse(text);
-  } catch {
-    return undefined;
+/** Classify both opening and consuming a response; keep cancellation distinct from outages. */
+export const normalizeTransportError = (error: unknown, signal?: AbortSignal): AppError => {
+  if (error instanceof AppError) {
+    return error;
   }
+  if (signal?.aborted || (error instanceof Error && error.name === 'AbortError')) {
+    return new AppError('aborted', 'The request was cancelled.', { cause: error });
+  }
+  return new AppError('network', 'Could not reach the server.', { cause: error });
 };

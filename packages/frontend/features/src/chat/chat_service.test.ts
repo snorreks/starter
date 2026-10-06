@@ -8,9 +8,21 @@
 // is a reply that stops halfway with nothing in the console.
 
 import { describe, expect, test } from 'bun:test';
-import type { ApiTransport, FetchLike, TransportRequestOptions } from '@starter/platform';
+import {
+  type ApiTransport,
+  type FetchLike,
+  HttpTransport,
+  type StreamingTransport,
+  type TransportRequestOptions,
+} from '@starter/platform';
 import { type ChatStreamEvent, encodeSseDone, encodeSseFrame } from '@starter/schemas/chat';
-import { ChatService, readChatFrames } from './chat_service.svelte.ts';
+import { ChatService, readChatFrames } from './chat_service.ts';
+
+const streamTransport = (transport: ApiTransport, fetchImpl: FetchLike): StreamingTransport => ({
+  ...transport,
+  openStream: (path: string, options?: TransportRequestOptions) =>
+    new HttpTransport({ fetch: fetchImpl }).openStream(path, options),
+});
 
 const conversation = {
   id: 'cnv_1',
@@ -35,7 +47,9 @@ const message = {
 const transportReturning = (
   body: unknown,
   calls: { path: string; options?: TransportRequestOptions }[] = [],
-): ApiTransport => ({
+): StreamingTransport => ({
+  openStream: (path: string, options?: TransportRequestOptions) =>
+    new HttpTransport().openStream(path, options),
   async request<T>(path: string, options?: TransportRequestOptions): Promise<T> {
     calls.push({ path, options });
     return body as T;
@@ -117,8 +131,8 @@ describe('the stream reader', () => {
       { type: 'complete', message: { ...message, role: 'assistant', content: 'ab' } },
     ];
     const service = new ChatService({
-      transport: transportReturning({}),
-      fetch: async () => streamOf(events),
+      transport: streamTransport(transportReturning({}), async () => streamOf(events)),
+      retainEvents: true,
     });
 
     const result = await service.streamTurn('cnv_1', { content: 'hi', clientId: 'c1' });
@@ -138,8 +152,7 @@ describe('the stream reader', () => {
       { type: 'complete', message: { ...message, role: 'assistant', content: 'hello' } },
     ];
     const service = new ChatService({
-      transport: transportReturning({}),
-      fetch: async () => streamOf(events, 1),
+      transport: streamTransport(transportReturning({}), async () => streamOf(events, 1)),
     });
 
     expect((await service.streamTurn('cnv_1', { content: 'hi', clientId: 'c1' })).text).toBe(
@@ -172,8 +185,10 @@ describe('the stream reader', () => {
     let started = false;
 
     const service = new ChatService({
-      transport: transportReturning({}),
-      fetch: async () => new Response(body, { status: 200 }),
+      transport: streamTransport(
+        transportReturning({}),
+        async () => new Response(body, { status: 200 }),
+      ),
     });
 
     const result = await service.streamTurn('cnv_1', { content: 'hi', clientId: 'c1' });
@@ -183,12 +198,13 @@ describe('the stream reader', () => {
 
   test('the done sentinel produces no frame', async () => {
     const service = new ChatService({
-      transport: transportReturning({}),
-      fetch: async () =>
+      transport: streamTransport(transportReturning({}), async () =>
         streamOf([
           { type: 'delta', text: 'x' },
           { type: 'complete', message: { ...message, role: 'assistant', content: 'x' } },
         ]),
+      ),
+      retainEvents: true,
     });
 
     const result = await service.streamTurn('cnv_1', { content: 'hi', clientId: 'c1' });
@@ -205,11 +221,10 @@ describe('the stream reader', () => {
     ];
     const seen: string[] = [];
     const service = new ChatService({
-      transport: transportReturning({}),
-      fetch: async () => streamOf(events),
       onUpdate: (update) => {
         seen.push(update.delta ?? update.replyId ?? '');
       },
+      transport: streamTransport(transportReturning({}), async () => streamOf(events)),
     });
 
     await service.streamTurn('cnv_1', { content: 'hi', clientId: 'c1' });
@@ -222,14 +237,14 @@ describe('the stream reader', () => {
     // out, so a rejection here would be the transport's error rather than the
     // model's, and the caller would report the wrong thing.
     const service = new ChatService({
-      transport: transportReturning({}),
-      fetch: async () =>
+      transport: streamTransport(transportReturning({}), async () =>
         streamOf([
           { type: 'user-message', clientId: 'c1', message },
           { type: 'start', messageId: 'r1' },
           { type: 'delta', text: 'partial' },
           { type: 'error', code: 'model_failed', message: 'The model is unavailable.' },
         ]),
+      ),
     });
 
     const result = await service.streamTurn('cnv_1', { content: 'hi', clientId: 'c1' });
@@ -241,8 +256,10 @@ describe('the stream reader', () => {
 
   test('a response with no body is refused', async () => {
     const service = new ChatService({
-      transport: transportReturning({}),
-      fetch: async () => new Response(null, { status: 200 }),
+      transport: streamTransport(
+        transportReturning({}),
+        async () => new Response(null, { status: 200 }),
+      ),
     });
 
     await expect(service.streamTurn('cnv_1', { content: 'hi', clientId: 'c1' })).rejects.toThrow(
@@ -254,14 +271,16 @@ describe('the stream reader', () => {
 describe('a refusal before the first frame', () => {
   test('a 404 is reported as not found, with the server own message', async () => {
     const service = new ChatService({
-      transport: transportReturning({}),
-      fetch: async () =>
-        new Response(
-          JSON.stringify({ error: 'not_found', message: 'That conversation does not exist.' }),
-          {
-            status: 404,
-          },
-        ),
+      transport: streamTransport(
+        transportReturning({}),
+        async () =>
+          new Response(
+            JSON.stringify({ error: 'not_found', message: 'That conversation does not exist.' }),
+            {
+              status: 404,
+            },
+          ),
+      ),
     });
 
     await expect(
@@ -271,14 +290,15 @@ describe('a refusal before the first frame', () => {
 
   test('an HTML error page does not become the message', async () => {
     const service = new ChatService({
-      transport: transportReturning({}),
-      fetch: async () => new Response('<html><body>502 Bad Gateway</body></html>', { status: 502 }),
+      transport: streamTransport(
+        transportReturning({}),
+        async () => new Response('<html><body>502 Bad Gateway</body></html>', { status: 502 }),
+      ),
     });
 
-    // The HTML is reported, not a parse error: what the reader needs to act on is
-    // what the server actually said.
+    // Proxy HTML stays out of the message shown to a user.
     await expect(service.streamTurn('cnv_1', { content: 'hi', clientId: 'c1' })).rejects.toThrow(
-      /502 Bad Gateway/,
+      /The request failed/,
     );
   });
 
@@ -288,7 +308,9 @@ describe('a refusal before the first frame', () => {
       seen.push({ headers: init?.headers, body: init?.body });
       return streamOf([{ type: 'complete', message }]);
     };
-    const service = new ChatService({ transport: transportReturning({}), fetch: fetchImpl });
+    const service = new ChatService({
+      transport: streamTransport(transportReturning({}), fetchImpl),
+    });
 
     await service.streamTurn('cnv_1', { content: 'hi', clientId: 'c1' });
 
@@ -341,8 +363,7 @@ test('EOF without a terminal frame reports truncation', async () => {
     ],
   ] as ChatStreamEvent[][]) {
     const service = new ChatService({
-      transport: transportReturning({}),
-      fetch: async () => streamOf(events),
+      transport: streamTransport(transportReturning({}), async () => streamOf(events)),
     });
     const result = await service.streamTurn('cnv_1', { content: 'hi', clientId: 'cid' });
     expect(result.failure?.code).toBe('truncated');
@@ -361,10 +382,87 @@ test('rejecting a frame cancels the unfinished reader and releases its lock', as
     },
   });
   const service = new ChatService({
-    transport: transportReturning({}),
-    fetch: async () => new Response(body),
+    transport: streamTransport(transportReturning({}), async () => new Response(body)),
   });
   await expect(service.streamTurn('cnv_1', { content: 'hi', clientId: 'cid' })).rejects.toThrow();
   expect(cancelled).toBe(true);
   expect(body.locked).toBe(false);
+});
+
+test('chat streaming goes through the injected transport origin and credentials', async () => {
+  const calls: { url: string; init?: RequestInit }[] = [];
+  const service = new ChatService({
+    transport: new HttpTransport({
+      baseUrl: 'https://host.example.test',
+      credentials: 'omit',
+      headers: { authorization: 'Bearer current' },
+      fetch: async (url, init) => {
+        calls.push({ url: String(url), init });
+        return streamOf([{ type: 'complete', message }]);
+      },
+    }),
+  });
+  await service.streamTurn('cnv_1', { content: 'hi', clientId: 'cid' });
+  expect(calls[0]?.url).toBe('https://host.example.test/api/chat/conversations/cnv_1/messages');
+  expect(calls[0]?.init?.credentials).toBe('omit');
+  expect(new Headers(calls[0]?.init?.headers).get('authorization')).toBe('Bearer current');
+});
+
+test('a stream keeps no event history unless explicitly requested', async () => {
+  const service = new ChatService({
+    transport: new HttpTransport({
+      fetch: async () =>
+        streamOf([
+          { type: 'delta', text: 'partial' },
+          { type: 'complete', message },
+        ]),
+    }),
+  });
+  expect(
+    (await service.streamTurn('cnv_1', { content: 'hi', clientId: 'cid' })).events,
+  ).toHaveLength(0);
+});
+
+test('an oversized unfinished frame is refused and its reader cancelled', async () => {
+  let cancelled = false;
+  const body = new ReadableStream<Uint8Array>({
+    start(controller) {
+      controller.enqueue(new TextEncoder().encode(`data: ${'x'.repeat(1_048_577)}\n\n`));
+    },
+    cancel() {
+      cancelled = true;
+    },
+  });
+  const consume = async () => {
+    for await (const _frame of readChatFrames(body)) {
+      /* consume */
+    }
+  };
+  await expect(consume()).rejects.toThrow(/too large/);
+  expect(cancelled).toBe(true);
+  expect(body.locked).toBe(false);
+});
+
+test('CRLF delimiters split across chunks preserve complete frames', async () => {
+  const bytes = new TextEncoder().encode(
+    'data: {"type":"delta","text":"hi"}\r\n\r\ndata: {"type":"delta","text":"again"}\n\n',
+  );
+  let offset = 0;
+  const body = new ReadableStream<Uint8Array>({
+    pull(controller) {
+      if (offset === bytes.length) {
+        controller.close();
+      } else {
+        controller.enqueue(bytes.slice(offset, ++offset));
+      }
+    },
+  });
+  const frames = [];
+  for await (const frame of readChatFrames(body)) {
+    frames.push(frame);
+  }
+  expect(frames).toEqual([
+    { type: 'delta', text: 'hi' },
+    { type: 'delta', text: 'again' },
+  ]);
 });

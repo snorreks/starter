@@ -7,6 +7,7 @@
 // Prefer a subpath import (`@starter/ui/feedback`) over the barrel: the barrel
 // pulls every component into every graph.
 
+export * from './async_operation.svelte.ts';
 export * from './dialogs.ts';
 export * from './feedback/index.ts';
 export * from './format.ts';

@@ -93,18 +93,17 @@ const fieldId = 'chat-new-title';
     <ul class="list__items" data-testid="chat-list">
       {#each viewModel.conversations as conversation (conversation.id)}
         <li class="list__item" data-testid="chat-list-item" data-conversation-id={conversation.id}>
-          <button
-            type="button"
+          <a
+            href={`/chat/${encodeURIComponent(conversation.id)}`}
             class="list__open"
             data-testid="chat-list-open"
-            onclick={() => void viewModel.open(conversation)}
           >
             <span class="list__item-title">{conversation.title}</span>
             <span class="list__item-count">
               {conversation.messageCount}
               message{conversation.messageCount === 1 ? '' : 's'}
             </span>
-          </button>
+          </a>
         </li>
       {/each}
     </ul>
@@ -175,6 +174,7 @@ const fieldId = 'chat-new-title';
     align-items: baseline;
     gap: var(--space-2);
     width: 100%;
+    text-decoration: none;
     text-align: left;
     font: inherit;
     cursor: pointer;
