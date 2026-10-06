@@ -303,7 +303,10 @@ describe('a message that never reached the server', () => {
         },
       },
       fetch: async (_input, init) => {
-        const sent = JSON.parse(String(init?.body ?? '{}')) as { content: string };
+        const sent = JSON.parse(String(init?.body ?? '{}')) as {
+          content: string;
+          clientId: string;
+        };
         calls.push({ content: sent.content });
         if (!online) {
           throw new TypeError('network down');
@@ -311,7 +314,7 @@ describe('a message that never reached the server', () => {
         return bodyFrom([
           {
             type: 'user-message',
-            clientId: sent.content,
+            clientId: sent.clientId,
             message: message({ id: `m_${sent.content}`, content: sent.content }),
           },
           { type: 'start', messageId: `r_${sent.content}` },
@@ -447,7 +450,7 @@ describe('guards on the screen', () => {
     expect(await vm.send()).toBe(false);
   });
 
-  test('disposing mid-turn leaves the message queued rather than claiming it was sent', async () => {
+  test('disposing mid-turn prevents late state changes', async () => {
     const h = harness({ events: [] });
     const service = new ChatService({
       transport: h.service as unknown as ApiTransport,
@@ -459,11 +462,11 @@ describe('guards on the screen', () => {
     vm.setDraft('hi');
     const pending = vm.send();
     await vm.dispose();
+    const transcript = [...vm.transcript];
     await pending;
 
-    // Nothing proves the server stored it, and re-sending is safe because `clientId`
-    // is the idempotency key.
-    expect(vm.queue).toHaveLength(1);
+    expect(vm.queue).toHaveLength(0);
+    expect(vm.transcript).toEqual(transcript);
   });
 });
 
@@ -537,4 +540,110 @@ describe('the two halves of the contract agree', () => {
     expect(frame).toContain('data: {"type":"delta","text":"hi"}');
     expect(frame.endsWith('\n\n')).toBe(true);
   });
+});
+
+test('unsent retries retain queue order, and failed replies never requeue stored messages', async () => {
+  let online = false;
+  const service = new ChatService({
+    transport: {
+      async request<T>() {
+        return {} as T;
+      },
+    },
+    fetch: async (_input, init) => {
+      if (!online) {
+        throw new TypeError('offline');
+      }
+      const input = JSON.parse(String(init?.body)) as { clientId: string; content: string };
+      return bodyFrom([
+        {
+          type: 'user-message',
+          clientId: input.clientId,
+          message: message({ content: input.content }),
+        },
+        { type: 'start', messageId: 'reply' },
+        { type: 'error', code: 'model_failed', message: 'unavailable' },
+      ]);
+    },
+  });
+  const vm = new ChatViewModel({ chat: service, conversation, newClientId: idsFrom('one', 'two') });
+  for (const content of ['one', 'two']) {
+    vm.setDraft(content);
+    await vm.send();
+  }
+  await vm.flush();
+  expect(vm.queue.map((entry) => entry.clientId)).toEqual(['one', 'two']);
+  expect(vm.queue[0]?.failure).toBe('Could not reach the server.');
+  online = true;
+  await vm.flush();
+  expect(vm.queue.map((entry) => entry.clientId)).toEqual(['two']);
+  expect(vm.transcript.find((entry) => entry.clientId === 'one')?.state).toBe('sent');
+});
+
+test('an abort before acknowledgement queues the original message for retry', async () => {
+  const vm = viewModel(
+    harness({ failWith: new DOMException('cancelled', 'AbortError') }),
+    idsFrom('cid_1'),
+  );
+  vm.setDraft('hi');
+  expect(await vm.send()).toBe(false);
+  expect(vm.queue[0]?.clientId).toBe('cid_1');
+  expect(vm.transcript).toHaveLength(0);
+});
+
+test('live updates preserve unrelated pending messages and are not replayed at completion', async () => {
+  let controller!: ReadableStreamDefaultController<Uint8Array>;
+  let sawDelta!: () => void;
+  const delta = new Promise<void>((resolve) => {
+    sawDelta = resolve;
+  });
+  const service = new ChatService({
+    transport: {
+      async request<T>() {
+        return {} as T;
+      },
+    },
+    fetch: async () =>
+      new Response(
+        new ReadableStream<Uint8Array>({
+          start(value) {
+            controller = value;
+          },
+        }),
+      ),
+    onUpdate(update) {
+      if (update.delta !== undefined) {
+        sawDelta();
+      }
+    },
+  });
+  const vm = new ChatViewModel({ chat: service, conversation, newClientId: idsFrom('cid_1') });
+  vm.messages = [
+    {
+      clientId: 'other',
+      serverId: null,
+      content: 'other',
+      role: 'user',
+      state: 'pending',
+      createdAt: 0,
+    },
+  ];
+  vm.setDraft('hi');
+  const sending = vm.send();
+  const emit = (event: ChatStreamEvent) =>
+    controller.enqueue(new TextEncoder().encode(encodeSseFrame(event)));
+  emit({ type: 'user-message', clientId: 'cid_1', message: message() });
+  emit({ type: 'start', messageId: 'reply' });
+  emit({ type: 'delta', text: 'partial' });
+  await delta;
+  expect(vm.isStreaming).toBe(true);
+  expect(vm.transcript[0]?.serverId).toBeNull();
+  expect(vm.transcript[2]?.content).toBe('partial');
+  emit({
+    type: 'complete',
+    message: message({ id: 'reply', role: 'assistant', content: 'partial' }),
+  });
+  expect(await sending).toBe(true);
+  expect(vm.transcript).toHaveLength(3);
+  expect(vm.transcript[2]?.content).toBe('partial');
 });

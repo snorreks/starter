@@ -37,6 +37,7 @@ import { AppError } from '@starter/utils';
 export interface ChatStreamUpdate {
   /** The submitted message, once the server has stored it. */
   readonly userMessage?: Message;
+  readonly clientId?: string;
   /** The id of the reply the model is producing. Announced once. */
   readonly replyId?: string;
   /** One chunk of reply text. Appended in arrival order. */
@@ -136,6 +137,7 @@ export class ChatService {
     conversationId: string,
     input: { content: string; clientId: string },
     signal?: AbortSignal,
+    onUpdate?: (update: ChatStreamUpdate) => void,
   ): Promise<StreamTurnResult> {
     const path = `/api/chat/conversations/${encodeURIComponent(conversationId)}/messages`;
     const headers: Record<string, string> = {
@@ -176,6 +178,7 @@ export class ChatService {
     }
 
     const events: ChatStreamUpdate[] = [];
+    let terminal = false;
     let text = '';
     let message: Message | undefined;
     let failure: { code: string; message: string } | undefined;
@@ -197,7 +200,7 @@ export class ChatService {
 
       switch (event.type) {
         case 'user-message':
-          events.push({ userMessage: event.message });
+          events.push({ userMessage: event.message, clientId: event.clientId });
           break;
         case 'start':
           events.push({ replyId: event.messageId });
@@ -207,16 +210,31 @@ export class ChatService {
           events.push({ delta: event.text });
           break;
         case 'complete':
+          terminal = true;
           message = event.message;
           events.push({ complete: event.message });
           break;
         case 'error':
+          terminal = true;
           failure = { code: event.code, message: event.message };
           events.push({ failure });
           break;
       }
 
-      this.#onUpdate?.(events[events.length - 1] as ChatStreamUpdate);
+      const update = events[events.length - 1] as ChatStreamUpdate;
+      onUpdate?.(update);
+      this.#onUpdate?.(update);
+      if (terminal) {
+        break;
+      }
+    }
+
+    if (!terminal) {
+      failure = { code: 'truncated', message: 'The reply ended before the turn completed.' };
+      const update = { failure };
+      events.push(update);
+      onUpdate?.(update);
+      this.#onUpdate?.(update);
     }
 
     return {
@@ -260,11 +278,13 @@ export async function* readChatFrames(body: ReadableStream<Uint8Array>): AsyncGe
   const reader = body.getReader();
   const decoder = new TextDecoder('utf-8');
   let buffer = '';
+  let ended = false;
 
   try {
     for (;;) {
       const { done, value } = await reader.read();
       if (done) {
+        ended = true;
         break;
       }
       buffer += decoder.decode(value, { stream: true });
@@ -293,9 +313,13 @@ export async function* readChatFrames(body: ReadableStream<Uint8Array>): AsyncGe
       yield tail;
     }
   } finally {
-    // Releasing the lock is what lets the caller's abort actually cancel the
-    // request; without it the response body stays open after the reader is done.
-    reader.releaseLock();
+    try {
+      if (!ended) {
+        await reader.cancel();
+      }
+    } finally {
+      reader.releaseLock();
+    }
   }
 }
 

@@ -6,15 +6,8 @@
 // which transport a host has is the host's decision. A route imports from here,
 // never from the feature package's defaults.
 //
-// The one thing this file adds is the **stream callback**. `ChatService` takes an
-// `onUpdate` so a caller can append a chunk as it arrives, and the browser's answer
-// is "nothing" — the ViewModel reads the result and applies the updates itself.
-//
-// That is deliberate rather than an oversight. If the callback drove the ViewModel's
-// state, a `ChatService` built for the browser would only work with one particular
-// ViewModel, and the tests that inject a `fetch` would need a real ViewModel to
-// observe anything. With the callback unset, the same service is the same object in
-// the lane that drives a real `ReadableStream` and in the browser.
+// Each ViewModel supplies its own per-turn update callback, so the shared service
+// can stream into the active screen without retaining a ViewModel between calls.
 
 import { ChatListViewModel, ChatService, ChatViewModel } from '@starter/features/chat';
 import type { Navigation } from '@starter/platform';

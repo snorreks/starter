@@ -81,7 +81,9 @@ export const messages = sqliteTable(
      */
     clientId: text('client_id').notNull(),
     /** Epoch milliseconds, as an integer. D1 is SQLite; `Date` is Drizzle's view. */
-    createdAt: integer('created_at', { mode: 'timestamp' }).notNull().default(sql`(unixepoch())`),
+    createdAt: integer('created_at', { mode: 'timestamp_ms' })
+      .notNull()
+      .default(sql`(cast(unixepoch('subsec') * 1000 as integer))`),
   },
   (table) => [
     index('messages_conversation_created_idx').on(table.conversationId, table.createdAt),

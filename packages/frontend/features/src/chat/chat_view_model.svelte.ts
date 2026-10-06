@@ -103,7 +103,8 @@ export class ChatViewModel implements ScreenOwner, ScreenGuards {
   #conversation: Conversation | null;
   #seeded = false;
   /** The in-flight turn's abort controller, or `null` when nothing is streaming. */
-  #turn: AbortController | null = null;
+  #turn = $state<AbortController | null>(null);
+  #inFlight = $state(0);
 
   constructor(options: ChatScreenOptions) {
     this.#chat = options.chat;
@@ -128,7 +129,7 @@ export class ChatViewModel implements ScreenOwner, ScreenGuards {
   }
 
   get isBusy(): boolean {
-    return this.mutations.busy || this.isStreaming;
+    return this.#inFlight > 0 || this.isStreaming;
   }
 
   /** Messages the user can see: the transcript, newest last. */
@@ -142,7 +143,7 @@ export class ChatViewModel implements ScreenOwner, ScreenGuards {
 
   /** True when the composer has text worth sending. */
   get canSend(): boolean {
-    return this.draft.trim().length > 0 && !this.isStreaming;
+    return this.draft.trim().length > 0 && !this.isBusy;
   }
 
   /**
@@ -221,7 +222,7 @@ export class ChatViewModel implements ScreenOwner, ScreenGuards {
    */
   async send(): Promise<boolean> {
     const content = this.draft.trim();
-    if (content.length === 0 || this.isStreaming) {
+    if (content.length === 0 || this.isBusy || this.mutations.disposed) {
       return false;
     }
 
@@ -230,7 +231,7 @@ export class ChatViewModel implements ScreenOwner, ScreenGuards {
     this.#appendOptimistic({ clientId, role: 'user', content, state: 'pending' });
     this.#turn = new AbortController();
 
-    return this.#attempt(clientId, content, this.#turn.signal);
+    return (await this.#attempt(clientId, content, this.#turn.signal)) === 'delivered';
   }
 
   /**
@@ -243,7 +244,12 @@ export class ChatViewModel implements ScreenOwner, ScreenGuards {
    */
   async flush(): Promise<void> {
     const conversationId = this.conversationId;
-    if (conversationId === null || this.queue.length === 0 || this.isStreaming) {
+    if (
+      conversationId === null ||
+      this.queue.length === 0 ||
+      this.isBusy ||
+      this.mutations.disposed
+    ) {
       return;
     }
 
@@ -251,6 +257,10 @@ export class ChatViewModel implements ScreenOwner, ScreenGuards {
     // iteration would skip or repeat entries.
     const pending = [...this.queue];
     for (const entry of pending) {
+      const position = this.queue.findIndex((queued) => queued.clientId === entry.clientId);
+      if (position === -1) {
+        continue;
+      }
       this.#dequeue(entry.clientId);
 
       // Each retry is a fresh optimistic row, because the queued entry has no row on
@@ -265,12 +275,15 @@ export class ChatViewModel implements ScreenOwner, ScreenGuards {
 
       const controller = new AbortController();
       this.#turn = controller;
-      const sent = await this.#attempt(entry.clientId, entry.content, controller.signal);
-      if (!sent) {
-        // Re-queued with the new reason. Stopping is deliberate: the failure that
-        // stopped it will probably stop the next one, and retrying into the same
-        // wall is how a queue turns into a hot loop.
-        this.#enqueue(entry.clientId, entry.content, 'The message could not be sent.');
+      const outcome = await this.#attempt(
+        entry.clientId,
+        entry.content,
+        controller.signal,
+        position,
+      );
+      if (outcome !== 'delivered' || this.mutations.disposed) {
+        // Unsent entries were restored in place; delivered messages must never be
+        // queued again just because their assistant reply failed.
         return;
       }
     }
@@ -299,6 +312,7 @@ export class ChatViewModel implements ScreenOwner, ScreenGuards {
   async dispose(): Promise<void> {
     this.#turn?.abort();
     this.#turn = null;
+    this.#inFlight = 0;
     await disposeScreen(this);
   }
 
@@ -320,72 +334,82 @@ export class ChatViewModel implements ScreenOwner, ScreenGuards {
    *     into the queue. Rolling it back and removing it would lose what the user
    *     typed on a bad connection, which is the case the queue exists for.
    */
-  async #attempt(clientId: string, content: string, signal: AbortSignal): Promise<boolean> {
+  async #attempt(
+    clientId: string,
+    content: string,
+    signal: AbortSignal,
+    queuePosition = this.queue.length,
+  ): Promise<'delivered' | 'turn-failed' | 'unsent'> {
+    if (this.mutations.disposed) {
+      return 'unsent';
+    }
+    const unsent = (failure: string): 'unsent' => {
+      this.#enqueue(clientId, content, failure, queuePosition);
+      this.#removeOptimistic(clientId);
+      return 'unsent';
+    };
     const conversationId = this.conversationId;
     if (conversationId === null) {
-      // No conversation. Queued rather than dropped: the user wrote it before there
-      // was anywhere to put it, and the next `flush` will send it.
-      this.#enqueue(clientId, content, 'There is no conversation yet.');
-      return false;
+      this.#turn = null;
+      return unsent('There is no conversation yet.');
     }
 
-    // One `MutationGuard` for the whole turn, held across the send *and* the
-    // reply: the turn is one unit of work, and two overlapping turns in one
-    // conversation interleave their replies in the transcript.
     const handle = this.mutations.begin();
     if (handle === null) {
-      this.#turn = null;
-      this.#enqueue(clientId, content, 'The screen was closed.');
-      return false;
+      return 'unsent';
     }
-
-    // The turn's own abort controller and the mutation guard's signal are combined
-    // so that *either* ends the stream: the user cancelling, and the screen being
-    // torn down, are different events with the same consequence for the model.
+    this.#inFlight += 1;
     const combined = AbortSignal.any([handle.signal, signal]);
+    let delivered = false;
 
     try {
-      const result = await this.#chat.streamTurn(conversationId, { content, clientId }, combined);
+      const result = await this.#chat.streamTurn(
+        conversationId,
+        { content, clientId },
+        combined,
+        (update) => {
+          if (this.mutations.disposed) {
+            return;
+          }
+          if (update.userMessage !== undefined && update.clientId === clientId) {
+            delivered = true;
+          }
+          this.#applyUpdate(update);
+        },
+      );
 
       if (this.mutations.disposed) {
-        // The screen was torn down mid-turn. The message is queued because nothing
-        // proves the server stored it, and re-sending is safe: `clientId` is the
-        // idempotency key, so a duplicate submission returns the same row.
-        this.#enqueue(clientId, content, 'The screen was closed.');
-        return false;
+        return 'unsent';
       }
 
       this.#reconcile(result);
-      // False when the turn ended in an `error` frame: the caller's message was
-      // delivered, so it must not be queued for a resend, but the turn did not
-      // succeed and the caller is entitled to know that.
-      return result.failure === undefined;
-    } catch (error) {
-      const appError = toAppError(error, 'Could not send the message.');
-      if (appError.errorType === 'aborted') {
-        // Not proof of failure either way. The message is marked failed and left in
-        // place, because re-sending here could duplicate a turn the server did
-        // store; the next reload reconciles against what it actually holds.
-        this.#markPending(clientId);
-        return false;
+      if (!delivered) {
+        return unsent(result.failure?.message ?? 'The message was not acknowledged.');
       }
-      this.#enqueue(clientId, content, appError.message);
-      this.#removeOptimistic(clientId);
-      return false;
+      return result.failure === undefined ? 'delivered' : 'turn-failed';
+    } catch (error) {
+      if (this.mutations.disposed) {
+        return 'unsent';
+      }
+      this.#markStreamingFailed();
+      if (delivered) {
+        return 'turn-failed';
+      }
+      // An abort before acknowledgement has the same retry semantics as a lost
+      // connection. The original client ID makes the retry idempotent.
+      const appError = toAppError(error, 'Could not send the message.');
+      return unsent(appError.message);
     } finally {
-      // Cleared on every path, including the ones that return early above: leaving
-      // it set would make `isStreaming` permanently true and block every later send.
-      this.#turn = null;
+      if (!this.mutations.disposed) {
+        this.#turn = null;
+        this.#inFlight -= 1;
+      }
       this.mutations.end();
     }
   }
 
   /** Apply a completed stream to the transcript. */
   #reconcile(result: StreamTurnResult): void {
-    for (const update of result.events) {
-      this.#applyUpdate(update);
-    }
-
     if (result.failure !== undefined) {
       this.#markStreamingFailed();
     } else {
@@ -405,7 +429,9 @@ export class ChatViewModel implements ScreenOwner, ScreenGuards {
       // were written in the same millisecond.
       const stored = update.userMessage;
       this.messages = this.messages.map((message) =>
-        message.serverId === null && message.state === 'pending'
+        message.serverId === null &&
+        message.state === 'pending' &&
+        message.clientId === update.clientId
           ? { ...toView(stored, message.clientId) }
           : message,
       );
@@ -475,13 +501,6 @@ export class ChatViewModel implements ScreenOwner, ScreenGuards {
     this.messages = this.messages.filter((message) => message.clientId !== clientId);
   }
 
-  /** Mark one optimistic message as not delivered. Its text stays on screen. */
-  #markPending(clientId: string): void {
-    this.messages = this.messages.map((message) =>
-      message.clientId === clientId ? { ...message, state: 'failed' } : message,
-    );
-  }
-
   /**
    * Mark the half-written reply as incomplete.
    *
@@ -508,11 +527,15 @@ export class ChatViewModel implements ScreenOwner, ScreenGuards {
     );
   }
 
-  #enqueue(clientId: string, content: string, failure: string): void {
+  #enqueue(clientId: string, content: string, failure: string, position: number): void {
     if (this.queue.some((entry) => entry.clientId === clientId)) {
       return;
     }
-    this.queue = [...this.queue, { clientId, content, failure }];
+    this.queue = [
+      ...this.queue.slice(0, position),
+      { clientId, content, failure },
+      ...this.queue.slice(position),
+    ];
   }
 
   #dequeue(clientId: string): void {

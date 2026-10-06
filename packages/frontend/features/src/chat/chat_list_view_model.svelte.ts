@@ -46,6 +46,7 @@ export class ChatListViewModel implements ScreenOwner, ScreenGuards {
   readonly #chat: ChatService;
   readonly #navigation: Navigation;
   #seeded = false;
+  #inFlight = $state(0);
 
   constructor(options: ChatListScreenOptions) {
     this.#chat = options.chat;
@@ -60,7 +61,7 @@ export class ChatListViewModel implements ScreenOwner, ScreenGuards {
   }
 
   get isCreating(): boolean {
-    return this.mutations.busy;
+    return this.#inFlight > 0;
   }
 
   get canCreate(): boolean {
@@ -136,6 +137,7 @@ export class ChatListViewModel implements ScreenOwner, ScreenGuards {
       return false;
     }
 
+    this.#inFlight += 1;
     this.createError = null;
     try {
       const created = await this.#chat.createConversation(
@@ -158,6 +160,7 @@ export class ChatListViewModel implements ScreenOwner, ScreenGuards {
       this.createError = appError.message;
       return false;
     } finally {
+      this.#inFlight -= 1;
       this.mutations.end();
     }
   }

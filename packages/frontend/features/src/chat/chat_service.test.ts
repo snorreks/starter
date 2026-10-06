@@ -153,7 +153,7 @@ describe('the stream reader', () => {
     // user reads would differ from the one the model produced.
     const text = 'a€b';
     const bytes = new TextEncoder().encode(
-      `${encodeSseFrame({ type: 'delta', text })}${encodeSseDone()}`,
+      `${encodeSseFrame({ type: 'delta', text })}${encodeSseFrame({ type: 'complete', message: { ...message, role: 'assistant', content: text } })}${encodeSseDone()}`,
     );
     const euroIndex = bytes.indexOf(0xe2);
 
@@ -184,12 +184,16 @@ describe('the stream reader', () => {
   test('the done sentinel produces no frame', async () => {
     const service = new ChatService({
       transport: transportReturning({}),
-      fetch: async () => streamOf([{ type: 'delta', text: 'x' }]),
+      fetch: async () =>
+        streamOf([
+          { type: 'delta', text: 'x' },
+          { type: 'complete', message: { ...message, role: 'assistant', content: 'x' } },
+        ]),
     });
 
     const result = await service.streamTurn('cnv_1', { content: 'hi', clientId: 'c1' });
 
-    expect(result.events).toHaveLength(1);
+    expect(result.events).toHaveLength(2);
   });
 
   test('onUpdate is called once per frame, as it arrives', async () => {
@@ -197,6 +201,7 @@ describe('the stream reader', () => {
       { type: 'start', messageId: 'r1' },
       { type: 'delta', text: 'a' },
       { type: 'delta', text: 'b' },
+      { type: 'complete', message: { ...message, role: 'assistant', content: 'ab' } },
     ];
     const seen: string[] = [];
     const service = new ChatService({
@@ -209,7 +214,7 @@ describe('the stream reader', () => {
 
     await service.streamTurn('cnv_1', { content: 'hi', clientId: 'c1' });
 
-    expect(seen).toEqual(['r1', 'a', 'b']);
+    expect(seen).toEqual(['r1', 'a', 'b', '']);
   });
 
   test('a terminal error frame resolves with a failure rather than rejecting', async () => {
@@ -325,4 +330,41 @@ describe('the reader as a unit', () => {
 
     expect(frames).toHaveLength(0);
   });
+});
+
+test('EOF without a terminal frame reports truncation', async () => {
+  for (const events of [
+    [],
+    [
+      { type: 'start', messageId: 'reply' },
+      { type: 'delta', text: 'partial' },
+    ],
+  ] as ChatStreamEvent[][]) {
+    const service = new ChatService({
+      transport: transportReturning({}),
+      fetch: async () => streamOf(events),
+    });
+    const result = await service.streamTurn('cnv_1', { content: 'hi', clientId: 'cid' });
+    expect(result.failure?.code).toBe('truncated');
+    expect(result.message).toBeUndefined();
+  }
+});
+
+test('rejecting a frame cancels the unfinished reader and releases its lock', async () => {
+  let cancelled = false;
+  const body = new ReadableStream<Uint8Array>({
+    start(controller) {
+      controller.enqueue(new TextEncoder().encode('data: {"type":"unknown"}\n\n'));
+    },
+    cancel() {
+      cancelled = true;
+    },
+  });
+  const service = new ChatService({
+    transport: transportReturning({}),
+    fetch: async () => new Response(body),
+  });
+  await expect(service.streamTurn('cnv_1', { content: 'hi', clientId: 'cid' })).rejects.toThrow();
+  expect(cancelled).toBe(true);
+  expect(body.locked).toBe(false);
 });

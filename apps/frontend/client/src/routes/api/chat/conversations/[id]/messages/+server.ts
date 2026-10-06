@@ -217,22 +217,15 @@ const streamTurn = (options: StreamTurnOptions): Response => {
     controller: ReadableStreamDefaultController<Uint8Array>,
   ): Promise<void> => {
     const stored = await options.persistAssistantReply(collected, options.replyId, createdAt);
-    finish(controller, {
-      type: 'complete',
-      message: stored ?? {
-        // The persistence path refused, which means the conversation is not this
-        // caller's any more. The frame says so rather than reporting a message
-        // that was never stored, and the text the user already read is returned
-        // so the turn is not rendered as a total loss.
-        id: options.replyId,
-        conversationId: options.conversationId,
-        authorId: '',
-        role: 'assistant',
-        content: collected,
-        status: 'complete',
-        createdAt,
-      },
-    });
+    if (stored === null) {
+      finish(controller, {
+        type: 'error',
+        code: 'not_persisted',
+        message: 'The reply could not be saved.',
+      });
+      return;
+    }
+    finish(controller, { type: 'complete', message: stored });
   };
 
   const stream = new ReadableStream<Uint8Array>({
@@ -274,6 +267,20 @@ const streamTurn = (options: StreamTurnOptions): Response => {
         iterator ??= options.model.generate(options.prompt, options.signal)[Symbol.asyncIterator]();
 
         const next = await iterator.next();
+
+        if (done) {
+          return;
+        }
+        if (options.signal.aborted) {
+          done = true;
+          finish(controller, {
+            type: 'error',
+            code: 'aborted',
+            message: 'The request was cancelled.',
+          });
+          void iterator.return?.();
+          return;
+        }
 
         if (next.done === true) {
           exhausted = true;

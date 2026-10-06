@@ -255,7 +255,14 @@ export const createChatService = (db: ChatDatabase): ChatService => ({
       const winner = await db
         .select({ message: messages })
         .from(messages)
-        .where(and(eq(messages.conversationId, conversationId), eq(messages.clientId, clientId)))
+        .innerJoin(conversations, eq(conversations.id, messages.conversationId))
+        .where(
+          and(
+            eq(messages.conversationId, conversationId),
+            eq(messages.clientId, clientId),
+            eq(conversations.ownerId, ownerId),
+          ),
+        )
         .limit(1);
 
       const row2 = winner[0];

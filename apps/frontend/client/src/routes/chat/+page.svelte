@@ -1,4 +1,3 @@
-// apps/frontend/client/src/routes/chat/+page.svelte
 <!--
   The conversation list.
 
