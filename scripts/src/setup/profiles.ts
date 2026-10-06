@@ -88,11 +88,11 @@ const ANDROID_ENV_HINTS = [
  * at it. None of them is "is a file present" where running it is possible, because
  * that distinction is the entire reason `doctor.ts` exists.
  */
-export const profileChecks = (profile: Profile): Check[] => {
+export const profileChecks = (profile: Profile, runProbe = probe): Check[] => {
   const out: Check[] = [];
 
   if (profile === 'native' || profile === 'android' || profile === 'ios') {
-    const rustc = probe('rustc', ['--version']);
+    const rustc = runProbe('rustc', ['--version']);
     const pinned = join(NATIVE_DIR, 'src-tauri', 'rust-toolchain.toml');
     out.push({
       name: 'rust',
@@ -117,7 +117,7 @@ export const profileChecks = (profile: Profile): Check[] => {
     // exists — reported a required capability it could never satisfy. The remedy text
     // even said so, which made the failure read as a bug in the checker.
     if (process.platform === 'linux') {
-      const webview = probe('pkg-config', ['--exists', 'webkit2gtk-4.1']);
+      const webview = runProbe('pkg-config', ['--exists', 'webkit2gtk-4.1']);
       out.push({
         name: 'webview',
         severity: 'required',
@@ -171,7 +171,7 @@ export const profileChecks = (profile: Profile): Check[] => {
           }),
     });
 
-    const javac = probe('javac', ['-version']);
+    const javac = runProbe('javac', ['-version']);
     out.push({
       name: 'android-jdk',
       severity: 'required',
@@ -205,9 +205,9 @@ export const profileChecks = (profile: Profile): Check[] => {
       // machine simply cannot build an iOS bundle and saying otherwise is the
       // "an unavailable lane reported as healthy" failure.
       severity: 'required',
-      ok: mac && probe('xcodebuild', ['-version']) !== null,
+      ok: mac && runProbe('xcodebuild', ['-version']) !== null,
       detail: mac
-        ? (probe('xcodebuild', ['-version']) ?? 'xcodebuild does not run')
+        ? (runProbe('xcodebuild', ['-version']) ?? 'xcodebuild does not run')
         : `host is ${process.platform}, not macOS`,
       ...(mac
         ? {}
@@ -232,7 +232,7 @@ export const profileChecks = (profile: Profile): Check[] => {
   }
 
   if (profile === 'compute') {
-    const docker = probe('docker', ['--version']);
+    const docker = runProbe('docker', ['--version']);
     out.push({
       name: 'docker',
       severity: 'required',
@@ -253,7 +253,7 @@ export const profileChecks = (profile: Profile): Check[] => {
     // and a check that reports "the daemon is not answering" when the daemon is
     // answering is worse than no check, because it sends an operator to start a
     // service that is already running.
-    const reachable = docker === null ? null : probe('docker', ['info']);
+    const reachable = docker === null ? null : runProbe('docker', ['info']);
     out.push({
       name: 'docker-engine',
       severity: 'required',
@@ -291,12 +291,12 @@ export const profileChecks = (profile: Profile): Check[] => {
 /**
  * The names of the checks `profileChecks` emits for a profile.
  *
- * Read off the checks themselves rather than a second hand-written list, so the
- * header `setup` prints cannot name a check that does not run — or omit one that
- * does.
+ * Reuse the check construction without launching host tools: names do not depend
+ * on probe results. The real doctor uses the default probe and still runs every
+ * capability check. Listing names must not wait for toolchain downloads or Docker.
  */
 export const platformCheckNames = (profile: Profile): string[] =>
-  profileChecks(profile).map((check) => check.name);
+  profileChecks(profile, () => null).map((check) => check.name);
 
 /**
  * Every check a profile asks about: the core ones it draws on, plus the platform ones
