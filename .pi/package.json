@@ -7,7 +7,7 @@
     "lint": "biome lint extensions lib tests",
     "format": "biome format extensions lib tests",
     "fix": "biome check --write extensions lib tests --error-on-warnings",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "tsgo --noemit",
     "test": "bun test tests",
     "loader:smoke": "bun test tests/pi_loader.test.ts"
   },

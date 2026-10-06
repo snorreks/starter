@@ -22,8 +22,13 @@ bun run deploy verify --env staging
 
 No environment means staging. Unknown environments/flags are refused, not guessed.
 `apply` and `provision` require `--yes`; an interactive terminal is not consent.
-A push to main does not deploy. CI uses `workflow_dispatch` and its apply job is
-restricted to main and a protected GitHub environment.
+`main` is the development branch. Promote reviewed revisions through `staging` and
+`production`, then manually dispatch the Deploy workflow from `main` and select the
+target environment. Deployments run only through that dispatch, after a
+credential-free offline plan.
+Manual recovery dispatch remains available from `main` for either environment.
+See [github.md](github.md) for branch protection, environment and notification
+setup.
 
 ## Resolve the whole environment
 

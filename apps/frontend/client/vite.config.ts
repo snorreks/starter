@@ -21,19 +21,16 @@
 // obtained for real. A proxy left in place would hide exactly the class of bug
 // this change is supposed to make impossible.
 //
-// No `alias` block for the workspace packages beyond what SvelteKit needs: they
-// resolve through `node_modules`, because each package's `exports` points at its
-// TypeScript source. `#lib` is the one alias, because SvelteKit 3 dropped the
-// built-in `$lib` alias and subpath imports are the supported replacement; it
-// appears here because SvelteKit turns `alias` entries into the generated
-// tsconfig's `paths`, so TypeScript and the bundler resolve the same specifier
-// from one place.
+// Workspace packages resolve through `node_modules`, because each package's
+// `exports` points at its TypeScript source. The app's `#lib/*` and `#logger`
+// package imports are defined in package.json so Vite, Node and TypeScript share
+// one mapping.
 
 import adapter from '@sveltejs/adapter-cloudflare';
 import { sveltekit } from '@sveltejs/kit/vite';
 import { vitePreprocess } from '@sveltejs/vite-plugin-svelte';
 import tailwindcss from '@tailwindcss/vite';
-import { type PluginOption, defineConfig } from 'vite';
+import { defineConfig } from 'vite';
 import { CLIENT_DEV_PORT, DEV_HOST } from './dev_ports.ts';
 
 export default defineConfig({
@@ -52,23 +49,7 @@ export default defineConfig({
         // the distinction is visible.
         fallback: 'plaintext',
       }),
-      // SvelteKit 3 removed the built-in `$lib` alias. The supported replacement
-      // is a subpath import, and this is what makes it work: SvelteKit turns
-      // `alias` entries into the generated tsconfig's `paths`, so TypeScript and
-      // the bundler resolve the same specifier from one declaration.
-      //
-      // `alias` is deprecated in favour of a `package.json` `imports` map, and that
-      // was tried first: `"imports": { "#lib/*": "./src/lib/*" }` with
-      // `resolvePackageJsonImports` set resolves in Vite and Node and then reports
-      // `Cannot find module '#lib/…'` for every import in the program under
-      // `svelte-check`. A specifier the bundler understands and the type checker
-      // does not is the worst of the three outcomes — the build succeeds and the
-      // types are wrong — so the deprecated key stays, and this is the note that
-      // says why until the two agree.
-      alias: {
-        '#lib': 'src/lib',
-      },
-    }) as PluginOption,
+    }),
   ],
 
   server: {

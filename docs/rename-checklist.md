@@ -149,8 +149,14 @@ this one records only that there is nothing to find.
   `moon.yml` files, and change the root scripts to call the packages directly.
   Nothing else depends on it — the guards and the linter enforce the
   architecture. See [toolchain.md](toolchain.md).
-- **CI** in `.github/workflows/ci.yml` is three jobs and no secrets. Adjust the
-  Bun version pin alongside `.bun-version` and `.moon/toolchains.yml`.
+- **CI** in `.github/workflows/ci.yml` runs credential-free application lanes on
+  PRs and on `main`, `staging`, and `production`. Update the Bun version authority
+  in `config/toolchain.json` and its mirrors in `.bun-version` and
+  `.moon/toolchains.yml`.
+- **GitHub**: make `main` the default branch, create `staging` and `production`,
+  configure protections and deployment environments, replace the owner and
+  security-advisory placeholders, and add an optional `DISCORD_WEBHOOK_URL` to
+  deployment environments. See [github.md](github.md).
 - **direnv**: `.envrc` is plain bash. `layout dotenv` also manages PATH if you
   want it; `direnv allow` once per clone.
 

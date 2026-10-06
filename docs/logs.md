@@ -24,6 +24,25 @@ No credentials are needed for `--mode local`. That is deliberate: local log
 verification is part of ordinary CI, and a check that needs an account is a check
 nobody runs.
 
+## Logging in code
+
+Use the same import in app and shared code:
+
+```ts
+import { logger } from '#logger';
+
+logger.info('Cache refreshed');
+```
+
+Each app's `package.json` maps `#logger` to its runtime adapter. Shared packages
+that log map it to the `@starter/logger` facade, which delegates to the app logger
+registered at startup. The shared contract is `LoggerInterface`; an app selects the
+console, browser, or Worker implementation.
+
+For a server request, use `locals.context.logger` when the record needs request
+context such as its trace or verified user. That logger is created per request;
+the imported app logger is process-wide and must not hold request-specific values.
+
 ## Where the events are
 
 | Source | Local | staging / production |

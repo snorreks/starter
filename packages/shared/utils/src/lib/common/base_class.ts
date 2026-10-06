@@ -7,8 +7,8 @@
 // and keeps the "you must go through the factory" rule enforceable rather than
 // conventional.
 
-import { getLogger } from '@starter/logger';
 import type { LogEntry, LogLevel } from '@starter/schemas/logging';
+import { logger } from '#logger';
 import {
   createLiteObserver,
   createObserver,
@@ -57,7 +57,7 @@ export abstract class BaseClass<Options extends BaseClassOptions = BaseClassOpti
   implements BaseClassInterface
 {
   private static get _logger() {
-    return getLogger();
+    return logger;
   }
 
   static setLogLevel(level: LogLevel): void {

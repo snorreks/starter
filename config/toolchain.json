@@ -68,7 +68,9 @@
       "`error while loading shared libraries: libgbm.so.1`, which Playwright",
       "reports as `Target page, context or browser has been closed`."
     ],
-    "browsers": ["chromium"]
+    "browsers": [
+      "chromium"
+    ]
   },
   "proto": {
     "//": [

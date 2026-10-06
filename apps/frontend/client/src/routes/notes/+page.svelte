@@ -1,5 +1,6 @@
-// apps/frontend/client/src/routes/notes/+page.svelte
 <!--
+  apps/frontend/client/src/routes/notes/+page.svelte
+
   The authenticated notes route.
 
   A route page owns exactly one thing: constructing the ViewModel and handing it to
