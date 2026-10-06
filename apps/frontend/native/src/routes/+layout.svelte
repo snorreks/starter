@@ -18,6 +18,7 @@
 <script lang="ts">
 import '@starter/ui/tokens.css';
 import '../app.css';
+import '#logger';
 import { onMount, type Snippet, untrack } from 'svelte';
 import {
   authSessionService,

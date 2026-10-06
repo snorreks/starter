@@ -4,6 +4,9 @@
   "private": true,
   "type": "module",
   "license": "MIT",
+  "imports": {
+    "#logger": "./src/runtime/logger.ts"
+  },
   "main": "./src/index.ts",
   "scripts": {
     "build": "bun run scripts/build.ts",
@@ -11,7 +14,7 @@
     "lint": "biome lint src tests scripts",
     "format": "biome format src tests scripts",
     "fix": "biome check --write src tests scripts --error-on-warnings",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "tsgo --noemit",
     "test": "bun run test:unit",
     "test:unit": "bun test src",
     "test:worker": "bun run test:compute",
@@ -19,15 +22,16 @@
     "check:config": "bun run scripts/check_config.ts"
   },
   "dependencies": {
+    "@starter/logger": "workspace:*",
     "@starter/jobs": "workspace:*",
     "@starter/schemas": "workspace:*",
     "@starter/utils": "workspace:*"
   },
   "devDependencies": {
-    "@cloudflare/workers-types": "5.20261005.1",
+    "@cloudflare/workers-types": "5.20261006.1",
     "@types/bun": "1.4.2",
-    "miniflare": "5.20261001.0-alpha",
+    "miniflare": "5.20261006.0-alpha",
     "typescript": "6.0.3",
-    "wrangler": "4.147.0"
+    "wrangler": "4.148.0"
   }
 }

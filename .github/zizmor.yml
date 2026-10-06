@@ -1,0 +1,11 @@
+# Keep suppressions close to the workflow step when possible. File-level ignores
+# below are limited to the cache designs documented in the affected workflows.
+rules:
+  unpinned-uses:
+    config:
+      policies:
+        "*": hash-pin
+  cache-poisoning:
+    ignore:
+      - "ci.yml"
+      - "deploy.yml"

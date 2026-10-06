@@ -1,0 +1,30 @@
+name: Setup or developer experience
+description: Report setup, tooling, documentation, or CI friction.
+body:
+  - type: textarea
+    id: command
+    attributes:
+      label: What did you try?
+      description: Include the exact command and complete error output.
+      render: shell
+    validations:
+      required: true
+  - type: input
+    id: documentation
+    attributes:
+      label: Which setup guide or document were you following?
+    validations:
+      required: false
+  - type: input
+    id: environment
+    attributes:
+      label: OS, shell, and tool versions
+      placeholder: Linux / bash / Bun 1.4.2
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What did you expect to happen?
+    validations:
+      required: false

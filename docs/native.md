@@ -166,13 +166,14 @@ Tauri API, and the whole native app may not reach `@starter/database`,
 
 ## Desktop builds, and what is not claimed
 
-`bun run native:build` and `.github/workflows/native.yml` produce an **unsigned
-binary** on Ubuntu, macOS and Windows.
+`bun run native:build` and a manual run of `.github/workflows/native.yml` produce
+an **unsigned binary** on Ubuntu, macOS and Windows. Native builds are not part of
+routine pull request or `main` checks.
 
 | Capability | State |
 |---|---|
-| Compiles on Linux, macOS, Windows | Proven by CI; artifacts are named with target, revision and the word `unsigned`. |
-| Formatted, clippy-clean, unit-tested | Proven by CI (`rust` job), with the passing count asserted. |
+| Compiles on Linux, macOS, Windows | Proven by the manual CI workflow; artifacts are named with target, revision and the word `unsigned`. |
+| Formatted, clippy-clean, unit-tested | Proven by the manual CI workflow (`rust` job), with the passing count asserted. |
 | Signed installer, notarized `.dmg`, app-store upload | **Not implemented here.** `.github/workflows/native-release.yml` implements the signing lanes; they need credentials this repository does not have, and a workflow that referenced them on `pull_request` would fail for every contributor. |
 | The packaged app **launching** | **Not proved on desktop.** CI builds; it does not run. The mobile lanes below *do* launch, on an emulator and a simulator. |
 | An authenticated workflow inside the shell | **Not proved end to end.** The flow is proven from both sides — device approval, bearer access, revocation — against the built Worker; the last mile needs a signed-in shell and a deployed API. |

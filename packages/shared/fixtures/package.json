@@ -1,5 +1,5 @@
 {
-  "name": "@starter/database",
+  "name": "@starter/fixtures",
   "version": "0.1.0",
   "private": true,
   "type": "module",
@@ -9,18 +9,9 @@
     ".": "./src/index.ts"
   },
   "scripts": {
-    "db:generate": "drizzle-kit generate",
     "lint": "biome lint src",
     "format": "biome format src",
     "fix": "biome check --write src --error-on-warnings",
-    "typecheck": "tsgo --noemit",
-    "test": "bun test"
-  },
-  "dependencies": {
-    "@starter/schemas": "workspace:*",
-    "drizzle-orm": "0.45.3"
-  },
-  "devDependencies": {
-    "drizzle-kit": "0.31.11"
+    "typecheck": "tsgo --noemit"
   }
 }

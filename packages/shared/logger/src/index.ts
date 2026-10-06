@@ -11,6 +11,7 @@
 // Subpath entrypoints keep the rest of the graph small too: a CLI should not
 // pull in the browser forwarder.
 
+export type { LoggerInterface } from '@starter/schemas/logging';
 export { BaseLoggerService } from './lib/base.ts';
 export {
   BrowserLogger,
@@ -19,7 +20,13 @@ export {
 } from './lib/browser_logger.ts';
 export { ConsoleLogger } from './lib/console_logger.ts';
 export { type CreateLoggerOptions, createLogger, createMemorySink } from './lib/create_logger.ts';
-export { createDefaultLogger, getLogger, resetLogger, setLogger } from './lib/default_logger.ts';
+export {
+  createDefaultLogger,
+  getLogger,
+  logger,
+  resetLogger,
+  setLogger,
+} from './lib/default_logger.ts';
 export { type LogContext, resolveRelease, toLogEvent } from './lib/event_log.ts';
 export { MemoryLogSink } from './lib/memory_sink.ts';
 export {

@@ -12,6 +12,7 @@
 // request ends. A route that needs a trace id reads `locals.context`, which the
 // hook already built — it does not resolve the session a second time.
 
+import { users } from '@starter/database';
 import {
   type ConsoleLogger,
   createLogger,
@@ -22,6 +23,7 @@ import {
 } from '@starter/logger';
 import { type DeploymentEnvironment, isDeploymentEnvironment } from '@starter/schemas/logging';
 import { createId } from '@starter/utils';
+import { eq } from 'drizzle-orm';
 import type { Container } from './container.ts';
 import { unauthorized } from './http.ts';
 
@@ -224,6 +226,42 @@ export const resolveUser = async (
 };
 
 /**
+ * Resolve the explicitly seeded emulator identity from D1. The fixture itself is
+ * owned by the launcher; the application reads the user record through its normal
+ * database binding just like it reads notes.
+ */
+const emulatorUserFor = async (
+  container: Container,
+  runtime: LogRuntime,
+): Promise<RequestUser | null> => {
+  const nodeProcess = (globalThis as { process?: { env?: Record<string, string | undefined> } })
+    .process;
+  const userId = nodeProcess?.env?.STARTER_EMULATOR_USER_ID;
+  const bindHost = nodeProcess?.env?.DEV_HOST ?? '127.0.0.1';
+  if (
+    runtime !== 'node' ||
+    !container.isLocal ||
+    !new Set(['127.0.0.1', 'localhost', '::1', '[::1]']).has(bindHost) ||
+    nodeProcess?.env?.STARTER_EMULATOR_MOCKS !== 'true' ||
+    userId === undefined ||
+    userId.length === 0
+  ) {
+    return null;
+  }
+
+  const user = await container.db.query.users.findFirst({ where: eq(users.id, userId) });
+  return user === undefined
+    ? null
+    : {
+        id: user.id,
+        email: user.email,
+        displayName: user.name,
+        provider: 'email',
+        emailVerified: user.emailVerified,
+      };
+};
+
+/**
  * Build the context for one request.
  *
  * `container` comes first because it is the authority: the environment, the
@@ -246,8 +284,11 @@ export const buildRequestContext = async (
   // site remembering to pass it.
   const { logger, emitter } = createServerRecordLogger(context, options.runtime, { traceId });
 
+  const runtime = options.runtime ?? detectLogRuntime();
   return {
-    user: await resolveUser(container, request.headers),
+    user:
+      (await emulatorUserFor(container, runtime)) ??
+      (await resolveUser(container, request.headers)),
     traceId,
     requestId: boundCorrelationLabel(request.headers.get('cf-ray')),
     clientTraceId: boundCorrelationLabel(request.headers.get('x-trace-id')),

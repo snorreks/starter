@@ -1,4 +1,3 @@
-// apps/frontend/client/src/routes/+page.svelte
 <!--
   The public landing page.
 

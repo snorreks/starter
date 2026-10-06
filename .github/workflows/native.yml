@@ -33,9 +33,9 @@
 name: Native
 
 on:
-  push:
-    branches: [main]
-  pull_request:
+  # Native builds are intentionally opt-in: the desktop matrix is expensive and
+  # the ordinary PR/main gates cover the web application. Run this when changing
+  # the Tauri shell or when preparing a native release candidate.
   workflow_dispatch:
 
 concurrency:
@@ -76,7 +76,7 @@ jobs:
       # it `cargo test` dies inside `glib-sys`'s build script, on the job whose
       # entire subject is this crate's own Rust — naming a crate rather than the
       # package that provides it, which is the failure this action prevents.
-      - uses: ./.github/actions/install-native-linux-deps
+      - uses: ./.github/actions/install-native-linux-deps # zizmor: ignore[self-repository] actionlint 1.7.12 rejects GitHub's new $/ syntax
 
       - name: Format
         # `cargo fmt --check`, never a write: a formatter that rewrites on CI hides
@@ -141,7 +141,7 @@ jobs:
       # the `rust` job: see the action's own comment for why it is not copied.
       - name: Install Linux webview libraries
         if: runner.os == 'Linux'
-        uses: ./.github/actions/install-native-linux-deps
+        uses: ./.github/actions/install-native-linux-deps # zizmor: ignore[self-repository] actionlint 1.7.12 rejects GitHub's new $/ syntax
 
       - name: Report what this host can build
         # The same command a contributor runs, and it must pass: a doctor that fails
@@ -392,10 +392,12 @@ jobs:
         # revision; the name this repository ships is the one that has to carry
         # them, so that is the name that has to be checked. Running this first —
         # against paths that did not exist — is what it did before.
+        env:
+          ARTIFACT_DIR: ${{ steps.artifact.outputs.dist }}
         run: |
           set -euo pipefail
           bun run --cwd apps/frontend/native check:artifacts -- \
-            -- "${{ steps.artifact.outputs.dist }}" \
+            -- "$ARTIFACT_DIR" \
             --origin "$VITE_NATIVE_API_ORIGIN" \
             --revision "$GITHUB_SHA" --platform android
 
@@ -485,7 +487,16 @@ jobs:
           # must fail here rather than in the install step four minutes later. The
           # log goes with it, because "it never booted" and "it booted and
           # crashed" need different fixes.
-          if ! timeout 420 bash -c 'until [ "$(adb shell getprop sys.boot_completed 2>/dev/null | tr -d "\r")" = "1" ]; do sleep 5; done'; then
+          boot_deadline=$((SECONDS + 420))
+          boot_complete=false
+          while [ "$SECONDS" -lt "$boot_deadline" ]; do
+            if [ "$(timeout 10 adb shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')" = "1" ]; then
+              boot_complete=true
+              break
+            fi
+            sleep 5
+          done
+          if [ "$boot_complete" != true ]; then
             echo "::error::the emulator did not report sys.boot_completed within 420s"
             adb devices || true
             tail -n 40 "$RUNNER_TEMP/emulator.log" || true
@@ -554,6 +565,8 @@ jobs:
           echo "activity=$activity" >> "$GITHUB_OUTPUT"
 
       - name: The Android back button navigates the app and does not kill it
+        env:
+          ANDROID_PACKAGE: ${{ steps.launch.outputs.package }}
         run: |
           set -euo pipefail
           # Back on the root of a single-page app leaves the app; the property
@@ -565,20 +578,22 @@ jobs:
           # debug build is `com.example.starter.debug`.
           adb shell input keyevent KEYCODE_BACK
           sleep 3
-          if ! adb shell pm list packages | tr -d '\r' | grep -q "^package:${{ steps.launch.outputs.package }}$"; then
+          if ! adb shell pm list packages | tr -d '\r' | grep -Fqx "package:$ANDROID_PACKAGE"; then
             echo "::error::the app is no longer registered after two back presses"
             exit 1
           fi
-          echo "KEYCODE_BACK delivered twice; ${{ steps.launch.outputs.package }} is still installed"
+          echo "KEYCODE_BACK delivered twice; $ANDROID_PACKAGE is still installed"
 
       - name: Record what this run did and did not prove
         run: |
-          echo "### Android" >> "$GITHUB_STEP_SUMMARY"
-          echo "- debug APK and release AAB: **built**, unsigned." >> "$GITHUB_STEP_SUMMARY"
-          echo "- installed and launched on an API ${ANDROID_API:-34} emulator: **yes**." >> "$GITHUB_STEP_SUMMARY"
-          echo "- signed with a real keystore: **NOT RUN** — no keystore credential is reachable from an untrusted pull request. Use .github/workflows/native-release.yml." >> "$GITHUB_STEP_SUMMARY"
-          echo "- Google Play upload: **NOT RUN**, deliberately. This repository does not publish to a store." >> "$GITHUB_STEP_SUMMARY"
-          echo "- authenticated sign-in and the notes path: **NOT RUN** — no deployed API is configured in this template. The steps that need one are named in docs/native.md." >> "$GITHUB_STEP_SUMMARY"
+          {
+            echo "### Android"
+            echo "- debug APK and release AAB: **built**, unsigned."
+            echo "- installed and launched on an API ${ANDROID_API:-34} emulator: **yes**."
+            echo "- signed with a real keystore: **NOT RUN** — no keystore credential is reachable from an untrusted pull request. Use .github/workflows/native-release.yml."
+            echo "- Google Play upload: **NOT RUN**, deliberately. This repository does not publish to a store."
+            echo "- authenticated sign-in and the notes path: **NOT RUN** — no deployed API is configured in this template. The steps that need one are named in docs/native.md."
+          } >> "$GITHUB_STEP_SUMMARY"
 
   # ── iOS ────────────────────────────────────────────────────────────────────
   #
@@ -629,7 +644,11 @@ jobs:
         # major, rather than trusting a symlink whose target moves.
         run: |
           set -euo pipefail
-          newest="$(ls -d /Applications/Xcode_*.app | sort -V | tail -n 1)"
+          newest="$(find /Applications -path '/Applications/*/*' -prune -o -type d -name 'Xcode_*.app' -print | sort -V | tail -n 1)"
+          if [ -z "$newest" ]; then
+            echo "::error::no /Applications/Xcode_*.app installation was found."
+            exit 1
+          fi
           echo "newest installed Xcode: $newest"
           sudo xcode-select -s "$newest"
           version="$(xcodebuild -version | head -n 1)"
@@ -749,10 +768,12 @@ jobs:
 
       - name: Record what this run did and did not prove
         run: |
-          echo "### iOS" >> "$GITHUB_STEP_SUMMARY"
-          echo "- simulator build, unsigned, from \`macos-14\` with full Xcode: **built**." >> "$GITHUB_STEP_SUMMARY"
-          echo "- installed and launched on a simulator: **yes**." >> "$GITHUB_STEP_SUMMARY"
-          echo "- physical device run: **NOT RUN** — needs a provisioned device and an Apple Developer account." >> "$GITHUB_STEP_SUMMARY"
-          echo "- signed archive for App Store Connect / TestFlight: **NOT RUN** — needs a development team, certificates and a profile. See .github/workflows/native-release.yml." >> "$GITHUB_STEP_SUMMARY"
-          echo "- App Store upload: **NOT RUN**, deliberately." >> "$GITHUB_STEP_SUMMARY"
-          echo "- authenticated sign-in and the notes path: **NOT RUN** — no deployed API is configured in this template." >> "$GITHUB_STEP_SUMMARY"
+          {
+            echo "### iOS"
+            echo "- simulator build, unsigned, from \`macos-15\` with full Xcode: **built**."
+            echo "- installed and launched on a simulator: **yes**."
+            echo "- physical device run: **NOT RUN** — needs a provisioned device and an Apple Developer account."
+            echo "- signed archive for App Store Connect / TestFlight: **NOT RUN** — needs a development team, certificates and a profile. See .github/workflows/native-release.yml."
+            echo "- App Store upload: **NOT RUN**, deliberately."
+            echo "- authenticated sign-in and the notes path: **NOT RUN** — no deployed API is configured in this template."
+          } >> "$GITHUB_STEP_SUMMARY"

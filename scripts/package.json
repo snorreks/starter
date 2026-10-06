@@ -10,7 +10,7 @@
     "lint": "biome lint src tests",
     "format": "biome format src tests",
     "fix": "biome check --write src tests --error-on-warnings",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "tsgo --noemit",
     "test": "bun run test:unit",
     "test:unit": "bun test --path-ignore-patterns='tests/browser_launch.test.ts'",
     "test:browser-launch": "bun test tests/browser_launch.test.ts",
@@ -19,13 +19,14 @@
   },
   "dependencies": {
     "@starter/logger": "workspace:*",
+    "@starter/fixtures": "workspace:*",
     "@starter/schemas": "workspace:*",
     "@starter/utils": "workspace:*",
     "yaml": "2.9.1"
   },
   "devDependencies": {
-    "svelte": "5.57.1",
+    "svelte": "5.57.2",
     "typescript": "6.0.3",
-    "wrangler": "4.147.0"
+    "wrangler": "4.148.0"
   }
 }

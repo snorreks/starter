@@ -45,6 +45,7 @@ projects:
   schemas: 'packages/shared/schemas'
   logger: 'packages/shared/logger'
   utils: 'packages/shared/utils'
+  fixtures: 'packages/shared/fixtures'
 
   # Frontend packages: browser code. Shared only.
   #

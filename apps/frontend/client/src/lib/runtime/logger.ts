@@ -17,28 +17,58 @@
 // cannot work in a browser (and broke the bundle by pulling `node:fs` in).
 // Forwarding to the Worker is the only route that actually produces a file.
 
-import { BrowserLogger, createHttpTelemetryTransport } from '@starter/logger';
+import {
+  BrowserLogger,
+  createHttpTelemetryTransport,
+  createLogger,
+  createStructuredConsoleEmitter,
+  type LoggerInterface,
+  setLogger,
+} from '@starter/logger';
 import { clientConfig } from './config.ts';
 
-const transport =
-  clientConfig.telemetryEndpoint === undefined
-    ? undefined
-    : createHttpTelemetryTransport({
-        endpoint: clientConfig.telemetryEndpoint,
-        context: () => ({
-          appVersion: clientConfig.release,
-          platform: navigator.userAgent.slice(0, 100),
-          userAgent: navigator.userAgent.slice(0, 200),
-        }),
-      });
+const createBrowserLogger = (): BrowserLogger => {
+  const transport =
+    clientConfig.telemetryEndpoint === undefined
+      ? undefined
+      : createHttpTelemetryTransport({
+          endpoint: clientConfig.telemetryEndpoint,
+          context: () => ({
+            appVersion: clientConfig.release,
+            platform: navigator.userAgent.slice(0, 100),
+            userAgent: navigator.userAgent.slice(0, 200),
+          }),
+        });
 
-export const clientLogger = new BrowserLogger({
-  app: 'web',
-  environment: clientConfig.environment,
-  source: 'browser',
-  release: clientConfig.release,
-  logLevel: clientConfig.logLevel,
-  transport,
-});
+  return new BrowserLogger({
+    app: 'web',
+    environment: clientConfig.environment,
+    source: 'browser',
+    release: clientConfig.release,
+    logLevel: clientConfig.logLevel,
+    transport,
+  });
+};
 
-export { clientLogger as logger };
+const createServerLogger = () => {
+  const context = {
+    app: 'web' as const,
+    environment: clientConfig.environment,
+    source: 'worker' as const,
+    release: clientConfig.release,
+  };
+
+  return createLogger({
+    ...context,
+    logLevel: clientConfig.logLevel,
+    silent: true,
+    sinks: [createStructuredConsoleEmitter(context)],
+  });
+};
+
+/** Browser telemetry logger or the server's console logger, selected per bundle. */
+const isBrowser = typeof window !== 'undefined';
+export const logger: LoggerInterface = isBrowser ? createBrowserLogger() : createServerLogger();
+
+// BaseClass and other shared services use the package logger indirection.
+setLogger(logger);
