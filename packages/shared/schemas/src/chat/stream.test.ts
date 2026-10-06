@@ -16,10 +16,10 @@ import {
   type ChatStreamEvent,
   isChatStreamEvent,
   isTerminalChatStreamEvent,
-  type Message,
   MESSAGE_CONTENT_MAX_LENGTH,
-  MessageCreateSchema,
   MESSAGE_ROLES,
+  type Message,
+  MessageCreateSchema,
   MessageRoleSchema,
   validateMessageInput,
 } from './message.ts';
