@@ -1,8 +1,8 @@
 # Deploy.
 #
-# Promotion pushes deploy the matching protected environment. `main` remains the
+# Manual dispatch deploys a selected protected environment. `main` remains the
 # development branch; merging it into `staging` and then `production` is the release
-# decision. Manual dispatch remains available for a deliberate recovery/redeploy.
+# decision, followed by a deliberate dispatch to deploy that promotion.
 #
 # ── Why the plan job is credential-free and configuration-complete ───────────────
 #
@@ -31,15 +31,14 @@
 # `apply` holds a Cloudflare API token and a database. Anything that can reach it
 # can write production. So:
 #
-#   * automatic deploys run only from their matching promotion branch;
 #   * manual deploys run only from the development branch, named in `github.ref`;
 #   * it never runs from a pull request, and this workflow does not trigger on one
 #     at all — a fork's code gets no credential of any kind;
 #   * it declares `environment:`, so the environment's protection rules — reviewers,
 #     wait timers, branch restrictions — decide whether it may proceed, and that
 #     decision is made in the repository settings rather than in this file;
-#   * the revision it deploys is asserted against the merge commit below, so a run
-#     that somehow checked out something else fails before the migration.
+#   * dispatch selects the promoted branch for the chosen environment, and the apply
+#     job records the exact revision it deploys before the migration.
 #
 # ── Serialisation ───────────────────────────────────────────────────────────────
 #
@@ -62,8 +61,6 @@
 name: Deploy
 
 on:
-  push:
-    branches: [staging, production]
   workflow_dispatch:
     inputs:
       environment:
@@ -128,8 +125,8 @@ env:
   # commit message on the policy check.
   STARTER_DEPLOYMENT_TARGETS: ${{ vars.STARTER_DEPLOYMENT_TARGETS }}
   CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
-  # Dispatch selects an environment explicitly. Promotion pushes derive it from
-  # the branch name; `main` itself never deploys.
+  # Dispatch selects an environment explicitly; `main` itself never deploys
+  # automatically.
   DEPLOY_ENVIRONMENT: ${{ inputs.environment || github.ref_name }}
   # Optional per-field overrides, applied to `DEPLOY_ENVIRONMENT` only. Empty by
   # default: the repository map is the source of truth and these exist for a run that
@@ -146,69 +143,12 @@ env:
   CLOUDFLARE_NATIVE_API_ORIGIN: ${{ vars.CLOUDFLARE_NATIVE_API_ORIGIN }}
 
 jobs:
-  # A cheap, credential-free gate runs before Bun setup or dependency installation.
-  # Unknown paths are deployable by default; only known documentation, tooling,
-  # GitHub metadata and native-only changes can take the early exit.
-  changes:
-    name: Check for deployable changes
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    permissions:
-      contents: read
-    outputs:
-      deploy_required: ${{ steps.scope.outputs.deploy_required }}
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          fetch-depth: 0
-          persist-credentials: false
-
-      - name: Decide whether the web deployment can change
-        id: scope
-        env:
-          EVENT_NAME: ${{ github.event_name }}
-          BEFORE_SHA: ${{ github.event.before }}
-        run: |
-          set -euo pipefail
-          if [ "$EVENT_NAME" = workflow_dispatch ]; then
-            echo 'deploy_required=true' >> "$GITHUB_OUTPUT"
-            echo 'Manual deploy requested; change detection does not suppress it.' >> "$GITHUB_STEP_SUMMARY"
-            exit 0
-          fi
-
-          if [[ ! "$BEFORE_SHA" =~ ^0+$ ]]; then
-            changed_files="$(git diff --name-only --no-renames "$BEFORE_SHA" "$GITHUB_SHA")"
-          else
-            # The first push to a new promotion branch has no usable base. Run the
-            # plan rather than guessing that it contains no deployable code.
-            changed_files='initial-promotion-branch'
-          fi
-
-          deploy_required=false
-          while IFS= read -r path; do
-            [ -n "$path" ] || continue
-            case "$path" in
-              docs/*|.github/*|.pi/*|apps/frontend/native/*|README.md|AGENTS.md)
-                ;;
-              *) deploy_required=true; break ;;
-            esac
-          done <<< "$changed_files"
-
-          echo "deploy_required=$deploy_required" >> "$GITHUB_OUTPUT"
-          if [ "$deploy_required" = true ]; then
-            echo 'Deployable inputs changed; continuing to the offline plan.' >> "$GITHUB_STEP_SUMMARY"
-          else
-            echo 'Only documentation, GitHub metadata, agent tooling, or native-only inputs changed. Skipping dependency install, build, and environment approval.' >> "$GITHUB_STEP_SUMMARY"
-          fi
-
   # ── plan: offline ──────────────────────────────────────────────────────────
   #
   # No `environment:` and therefore no secrets. This is the job a reviewer can
   # read: it proves what *would* happen without needing authority to do it.
   plan:
     name: Plan
-    needs: changes
-    if: needs.changes.outputs.deploy_required == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -216,6 +156,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ inputs.environment || github.ref_name }}
           # This job reads the repository and never pushes. Leaving the token in the
           # local git config would put a credential in `.git/config` for every
           # later step, including the build — which is exactly the "secret in a place
@@ -274,8 +215,7 @@ jobs:
   # globally serialising: the group name is resolved from the same input.
   apply:
     name: Apply (${{ inputs.environment || github.ref_name }})
-    needs: [changes, plan]
-    if: needs.changes.outputs.deploy_required == 'true'
+    needs: plan
     runs-on: ubuntu-latest
     # Long enough for a real migration and a real deploy, short enough that a hang
     # does not hold the queue for a day. This bound is the *only* thing stopping a
@@ -298,32 +238,14 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ inputs.environment || github.ref_name }}
           persist-credentials: false
 
-      # Reject a manually selected feature branch before installing dependencies
-      # or running checkout code. Also restrict the GitHub environment to its
-      # intended branch in repository settings.
+      # Record the selected promotion branch's exact revision before installing
+      # dependencies or running checkout code.
       - name: Record the source revision
         id: source
         run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
-
-      - name: Refuse an unreviewed revision
-        env:
-          DEPLOY_REF: ${{ github.ref }}
-          EVENT_NAME: ${{ github.event_name }}
-          DEPLOY_ENVIRONMENT: ${{ env.DEPLOY_ENVIRONMENT }}
-          SOURCE_SHA: ${{ steps.source.outputs.sha }}
-        run: |
-          if [ "$EVENT_NAME" = workflow_dispatch ]; then
-            expected_ref=refs/heads/main
-          else
-            expected_ref="refs/heads/$DEPLOY_ENVIRONMENT"
-          fi
-          if [ "$DEPLOY_REF" != "$expected_ref" ]; then
-            echo "::error::Refusing to deploy $DEPLOY_REF to $DEPLOY_ENVIRONMENT; expected $expected_ref."
-            exit 3
-          fi
-          echo "Deploying $SOURCE_SHA from $DEPLOY_REF to $DEPLOY_ENVIRONMENT."
 
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
@@ -439,7 +361,7 @@ jobs:
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           DEPLOY_ENVIRONMENT: ${{ env.DEPLOY_ENVIRONMENT }}
-          APPLY_MIGRATIONS: ${{ github.event_name != 'workflow_dispatch' && 'yes' || inputs.migrate && 'yes' || 'no' }}
+          APPLY_MIGRATIONS: ${{ inputs.migrate && 'yes' || 'no' }}
         run: |
           apply_args=()
           if [ "$APPLY_MIGRATIONS" != yes ]; then
@@ -472,7 +394,7 @@ jobs:
         env:
           DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
           DEPLOY_ENVIRONMENT: ${{ env.DEPLOY_ENVIRONMENT }}
-          SOURCE_SHA: ${{ github.sha }}
+          SOURCE_SHA: ${{ steps.source.outputs.sha }}
         run: |
           set -euo pipefail
           if [ -z "$DISCORD_WEBHOOK_URL" ]; then

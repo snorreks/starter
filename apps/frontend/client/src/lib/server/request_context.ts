@@ -237,9 +237,11 @@ const emulatorUserFor = async (
   const nodeProcess = (globalThis as { process?: { env?: Record<string, string | undefined> } })
     .process;
   const userId = nodeProcess?.env?.STARTER_EMULATOR_USER_ID;
+  const bindHost = nodeProcess?.env?.DEV_HOST ?? '127.0.0.1';
   if (
     runtime !== 'node' ||
     !container.isLocal ||
+    !new Set(['127.0.0.1', 'localhost', '::1', '[::1]']).has(bindHost) ||
     nodeProcess?.env?.STARTER_EMULATOR_MOCKS !== 'true' ||
     userId === undefined ||
     userId.length === 0

@@ -19,8 +19,9 @@
 
 import {
   BrowserLogger,
-  ConsoleLogger,
   createHttpTelemetryTransport,
+  createLogger,
+  createStructuredConsoleEmitter,
   type LoggerInterface,
   setLogger,
 } from '@starter/logger';
@@ -49,16 +50,21 @@ const createBrowserLogger = (): BrowserLogger => {
   });
 };
 
-const createServerLogger = (): ConsoleLogger =>
-  new ConsoleLogger(
-    {
-      app: 'web',
-      environment: clientConfig.environment,
-      source: 'worker',
-      release: clientConfig.release,
-    },
-    { logLevel: clientConfig.logLevel },
-  );
+const createServerLogger = () => {
+  const context = {
+    app: 'web' as const,
+    environment: clientConfig.environment,
+    source: 'worker' as const,
+    release: clientConfig.release,
+  };
+
+  return createLogger({
+    ...context,
+    logLevel: clientConfig.logLevel,
+    silent: true,
+    sinks: [createStructuredConsoleEmitter(context)],
+  });
+};
 
 /** Browser telemetry logger or the server's console logger, selected per bundle. */
 const isBrowser = typeof window !== 'undefined';

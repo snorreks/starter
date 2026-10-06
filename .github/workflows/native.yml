@@ -770,7 +770,7 @@ jobs:
         run: |
           {
             echo "### iOS"
-            echo "- simulator build, unsigned, from \`macos-14\` with full Xcode: **built**."
+            echo "- simulator build, unsigned, from \`macos-15\` with full Xcode: **built**."
             echo "- installed and launched on a simulator: **yes**."
             echo "- physical device run: **NOT RUN** — needs a provisioned device and an Apple Developer account."
             echo "- signed archive for App Store Connect / TestFlight: **NOT RUN** — needs a development team, certificates and a profile. See .github/workflows/native-release.yml."

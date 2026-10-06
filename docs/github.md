@@ -13,22 +13,20 @@ protection, so set these once after creating a repository from the template.
 3. Require reviews on promotion branches. Restrict who can merge to `production`.
 
 CI runs on PRs to each long-lived branch and on pushes to `main`, `staging`, and
-`production`. A promotion PR from `main` to `staging` deploys staging after merge;
-a promotion PR from `staging` to `production` deploys production after merge.
-Each push first checks its changed paths. Documentation,
-GitHub metadata, `.pi` tooling, and native-only changes exit before dependency
-installation and environment approval. All unknown paths are treated as
-deployable. Manual deploy dispatch is available for recovery and deliberate
-redeploys; it is run from `main` and selects an environment explicitly.
+`production`. A promotion PR from `main` to `staging` or from `staging` to
+`production` records the reviewed revision. After merge, manually dispatch the
+Deploy workflow from `main` and select the destination environment; the workflow
+checks out that environment's promotion branch. Manual dispatch is available for
+recovery and deliberate redeploys; it always runs from `main`.
 
 Configure `staging` and `production` GitHub environments. Add the Cloudflare
 credentials to each environment and configure the repository variable
 `STARTER_DEPLOYMENT_TARGETS` as described in [deployment.md](deployment.md).
-Restrict the `staging` environment to the `staging` branch, and the `production`
-environment to the `production` branch. If manual deploys from `main` should also
-be allowed for either environment, include `main` in that environment's allowed
-branches. Require production reviewers in the `production` environment. Keep the
-two environments pointed at distinct resources.
+Allow `main` and `staging` in the `staging` environment, and allow `main` and
+`production` in the `production` environment. The promotion branch remains allowed
+for its environment, and `main` permits manual recovery dispatches. Require
+production reviewers in the `production` environment. Keep the two environments
+pointed at distinct resources.
 
 ## Native builds
 

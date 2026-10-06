@@ -150,8 +150,9 @@ this one records only that there is nothing to find.
   Nothing else depends on it — the guards and the linter enforce the
   architecture. See [toolchain.md](toolchain.md).
 - **CI** in `.github/workflows/ci.yml` runs credential-free application lanes on
-  PRs and on `main`, `staging`, and `production`. Adjust the Bun version pin
-  alongside `.bun-version` and `.moon/toolchains.yml`.
+  PRs and on `main`, `staging`, and `production`. Update the Bun version authority
+  in `config/toolchain.json` and its mirrors in `.bun-version` and
+  `.moon/toolchains.yml`.
 - **GitHub**: make `main` the default branch, create `staging` and `production`,
   configure protections and deployment environments, replace the owner and
   security-advisory placeholders, and add an optional `DISCORD_WEBHOOK_URL` to
