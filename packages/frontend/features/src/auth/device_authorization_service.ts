@@ -35,7 +35,6 @@
 // where the user goes (`ExternalBrowser`) and where the token lands
 // (`SessionStore`); this file only asks a server a question and waits.
 
-import { Value } from '@sinclair/typebox/value';
 import type { ApiTransport } from '@starter/platform';
 import { parseDto } from '@starter/platform';
 import {
@@ -50,6 +49,7 @@ import {
   SLOW_DOWN_INCREMENT_MS,
 } from '@starter/schemas/auth';
 import { AppError } from '@starter/utils';
+import { Value } from 'typebox/value';
 
 /**
  * RFC 8628's device-code grant type, verbatim.

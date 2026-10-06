@@ -232,9 +232,7 @@ export const renderLcov = (files: readonly FileCoverage[]): string => {
       out.push(`DA:${line},${count}`);
     }
     out.push(`LF:${file.lines.size}`);
-    out.push(
-      `LH:${[...file.lines.values()].filter((count) => count > 0).length}`,
-    );
+    out.push(`LH:${[...file.lines.values()].filter((count) => count > 0).length}`);
     out.push('end_of_record');
   }
   return out.length === 0 ? '' : `${out.join('\n')}\n`;

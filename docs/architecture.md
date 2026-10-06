@@ -420,7 +420,6 @@ index. `check_bundle.test.ts` locks that in with a negative control.
 ## Deliberate non-goals
 
 - **No second production router.** One SvelteKit server owns the HTML and `/api/*`.
-  The Elysia app is gone, not shimmed.
 - **No Vite dev proxy.** It existed because the browser ran on one port and the API
   on another. A proxy left in place would hide exactly the class of bug this change
   is supposed to make impossible.

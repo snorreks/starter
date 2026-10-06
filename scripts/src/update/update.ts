@@ -115,6 +115,7 @@ const PINNED_FIELDS = [
   'dependencies',
   'devDependencies',
   'optionalDependencies',
+  'peerDependencies',
 ] as const;
 
 /**
@@ -247,7 +248,9 @@ const lockedVersion = (root: string, name: string): string | null => {
   // Whitespace between the key and its array is Bun's formatting to choose, not
   // ours: matching it exactly would pass against this repository's lockfile and
   // fail against any writer that does not indent it the same way.
-  const found = new RegExp(`"${escaped}":\\s*\\["${escaped}@([^"@]+)`).exec(readFileSync(lockPath, 'utf8'));
+  const found = new RegExp(`"${escaped}":\\s*\\["${escaped}@([^"@]+)`).exec(
+    readFileSync(lockPath, 'utf8'),
+  );
   return found?.[1] ?? null;
 };
 
@@ -292,7 +295,9 @@ export const verifyPinnedRanges = (options: {
       continue;
     }
     const locked = lockedVersion(options.root, name);
-    if (locked !== null && locked !== pin) {
+    if (locked === null) {
+      problems.push(`bun.lock has no resolution for ${name}, expected the pinned ${pin}`);
+    } else if (locked !== pin) {
       problems.push(`bun.lock resolves ${name} to ${locked}, not the pinned ${pin}`);
     }
   }

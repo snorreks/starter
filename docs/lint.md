@@ -85,6 +85,47 @@ checks the same fact by capability, which additionally covers a Node-only helper
 through a portable package's declared subpath — a statement Biome cannot see and
 `node:*` matching would miss, because the specifier is not a Node built-in.
 
+## One runtime strips TypeScript and cannot transform it
+
+`bun run dev` and `vite preview` run the SSR half in **Node**, which loads the
+TypeScript **source** of every workspace package — each `exports` entry points at
+`.ts`, so there is no build step in front of Node. Node 22 removes type annotations
+and leaves everything else alone. Three constructs need a *transform* rather than an
+erasure, and Node refuses all three with `ERR_UNSUPPORTED_TYPESCRIPT_SYNTAX`, as a
+runtime error on every request rather than as a build or type error:
+
+| Rule | Construct |
+|---|---|
+| `noParameterProperties` | `constructor(private readonly x: T)` — the assignment is generated code |
+| `noEnum` | `enum`, which compiles to an object plus a variable |
+| `noNamespace` | `namespace`, which compiles to a function plus a variable |
+
+All three are `error` for every source file, with two exemptions:
+
+| Exempt | Why |
+|---|---|
+| `scripts/**`, `.pi/**` | Only Bun ever loads these. Bun transforms, so the constructs are correct there; rewriting four call sites to satisfy a runtime that does not read them would be a rule with no failure behind it. |
+| `**/*.d.ts` | Never evaluated. SvelteKit requires `declare namespace App` in `apps/frontend/client/src/app.d.ts`, and denying the ambient declaration the framework mandates would be a rule against the framework. |
+
+This is not a style preference. `packages/shared/utils/src/lib/common/base_class.ts`
+carried a parameter property for long enough that `bun run dev` answered every
+request with a 500 while the unit, Worker and E2E lanes stayed green — the syntax is
+only reached by the Node runtime, which is why no other check saw it. The
+declaration-plus-assignment form the rule asks for is the same semantics in syntax
+both Node and a bundler accept:
+
+```ts
+// refused by Node's strip-only mode
+constructor(protected readonly options: Options) {}
+
+// accepted, identical semantics
+protected readonly options: Options;
+
+constructor(options: Options) {
+  this.options = options;
+}
+```
+
 ## Scoped exemptions
 
 Each is a file whose purpose is to violate the rule it would trip.
@@ -116,6 +157,8 @@ The overrides that remain carry the architectural weight:
   or `node:*`/`bun:*`.
 - **`noExplicitAny`**, **`noNonNullAssertion`**, **`noParameterAssign`**,
   **`noConsole`** outside the exemptions.
+- **`noParameterProperties`**, **`noEnum`**, **`noNamespace`** outside the two
+  exemptions above, because Node's strip-only mode cannot load them.
 
 `bun run guard` adds what a linter cannot see: module-level request state, gitignored
 source, registry self-consistency, and the resolved module graph. The two are not
@@ -235,7 +278,37 @@ was mechanical:
 | `leadingUnderscore: "require"` | rule disabled; see above |
 | `noRestrictedGlobals` under `correctness` | under `style` |
 | `options: { globals: [...] }` | `options: { deniedGlobals: { name: "reason" } }` |
+| `"recommended": true` (root and every group) | `"preset": "recommended"` — 2.5.13 renamed the key and reports the old one as a `deserialize` info on every run |
+
+The `preset` rename is a drop-in only because `PresetConfig` is the enum
+`recommended | all | none`, and every group here used `recommended`. That is a claim
+about *this* config, so it was measured rather than assumed: the same probe file,
+linted against the old config and the new one, reports the **same eleven rules** —
+three `noConsole`, and one each of `useIterableCallbackReturn`, `noExplicitAny`,
+`noParameterProperties`, `noNonNullAssertion`, `noNestedTernary`, `noNamespace`,
+`noEnum`, `useArrowFunction`, `noForEach` — plus the same two explicitly-configured
+rules (`useLiteralKeys`, `noDelete`). "Zero diagnostics" is also what a config that
+silently disabled every rule would print, which is the whole reason the probe exists.
 
 **If you upgrade Biome, run `bun run lint` first.** A config that fails to
 deserialize reports nothing about your code, which reads exactly like "no lint
 problems".
+
+## The whole repository is formatted, and one tree is not ours to format
+
+`biome.json` claims `**`, so `biome format .` and `biome lint .` at the root cover
+every tracked file — `biome.json`, `config/toolchain.json`, `docs/evidence/current.json`,
+every `package.json`, `tsconfig.json`, `wrangler.jsonc` and the Tauri capability file, not
+only the `src/` and `tests/` the per-project `format` tasks reach. That was not true for
+a while: twenty-two committed files sat outside any `format` task and drifted.
+
+One tree is excluded, because formatting it is undone by the tool that owns it:
+
+| Exempt | Why |
+|---|---|
+| `**/drizzle-d1/meta` | `drizzle-kit generate` rewrites every snapshot and `_journal.json` without a trailing newline, so `biome format` re-adds one and the next `db:generate` removes it. The file belongs to drizzle-kit, not to this repository's style. |
+
+`GENERATED_TREES` in `scripts/src/guards/policy.ts` is deliberately **not** extended to
+cover it: that list decides what the module graph and the README guard refuse to
+reason about, and adding a committed, hand-reviewed migration history there would
+weaken a guard to tidy a formatter. The two lists answer different questions.

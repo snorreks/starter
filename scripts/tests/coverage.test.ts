@@ -21,7 +21,13 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { discoverReports, runCoverage } from '../src/coverage/coverage.ts';
-import { mergeReports, parseReport, renderLcov, resolveReportPath, total } from '../src/coverage/lcov.ts';
+import {
+  mergeReports,
+  parseReport,
+  renderLcov,
+  resolveReportPath,
+  total,
+} from '../src/coverage/lcov.ts';
 
 const roots: string[] = [];
 
@@ -114,7 +120,10 @@ test('a path outside the package resolves to the repository, not to a traversal'
 
 test('the merged file recomputes its own summary headers instead of summing them', () => {
   const merged = mergeReports([
-    { projectDir: 'a', text: 'SF:x.ts\nDA:1,1\nDA:2,0\nFNF:2\nFNH:1\nLF:2\nLH:1\nend_of_record\n' },
+    {
+      projectDir: 'a',
+      text: 'SF:x.ts\nDA:1,1\nDA:2,0\nFNF:2\nFNH:1\nLF:99\nLH:88\nend_of_record\n',
+    },
   ]);
   const rendered = renderLcov(merged);
   // The input claimed one function hit out of two found; the merge keeps that,

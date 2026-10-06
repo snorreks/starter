@@ -33,8 +33,14 @@ let { data }: { data: PageData } = $props();
 // value right now": reading `data.jobs` bare here would be flagged as a reactive
 // read captured outside a closure, and the usual fix — moving it into an effect —
 // would be wrong, because an effect does not run during the server render.
+//
+// `data.profile` is read untracked for the same reason. It is the *deployment*
+// mode the server already resolved, not a live binding: the capability cannot
+// change while this page is mounted, and a tracked read here would both warn and
+// imply a liveness the value does not have. The effect below re-reads it on
+// navigation, where re-running is the intent.
 const viewModel = getJobsViewModel(
-  data.profile === 'disabled'
+  untrack(() => data.profile) === 'disabled'
     ? {
         unavailableMessage:
           'This deployment has the jobs profile disabled, so jobs cannot be started or listed here.',

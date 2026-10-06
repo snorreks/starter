@@ -14,7 +14,8 @@
 // succeeded.
 
 import { describe, expect, test } from 'bun:test';
-import { Value } from '@sinclair/typebox/value';
+import type { TSchema } from 'typebox';
+import { Value } from 'typebox/value';
 import {
   NOTE_BODY_MAX_LENGTH,
   NOTE_TITLE_MAX_LENGTH,
@@ -34,8 +35,13 @@ const validNote = () => ({
   updatedAt: 1_700_000_000_000,
 });
 
-const accepts = (schema: Parameters<typeof Value.Check>[0], value: unknown): boolean =>
-  Value.Check(schema, value);
+/**
+ * `TSchema` rather than `Parameters<typeof Value.Check>[0]`: TypeBox 1.x gives
+ * `Value.Check` a second overload whose first parameter is a *context* of
+ * properties, and `Parameters` reads that one, so the derived type rejects
+ * every schema object. The parameter is a schema either way.
+ */
+const accepts = (schema: TSchema, value: unknown): boolean => Value.Check(schema, value);
 
 describe('NoteSchema', () => {
   test('accepts a well-formed note', () => {

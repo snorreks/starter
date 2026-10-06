@@ -24,8 +24,8 @@
 //   3. Environment -> adapter mapping is explicit, so "local" can never be served
 //      by a code path that needs remote credentials.
 
-import { type Static, Type } from '@sinclair/typebox';
 import type { DeploymentEnvironment } from '@starter/schemas/logging';
+import { type Static, Type } from 'typebox';
 
 /** How a given app's logs are obtained in a given environment. */
 export const LOG_ADAPTER_KINDS = [

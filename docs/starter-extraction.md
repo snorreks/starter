@@ -60,7 +60,7 @@ the implementations mostly were not.
 |---|---|
 | The layered architecture | Boundaries made explicit and enforced by a guard and the linter |
 | Structured logging | Redaction moved into the package so `utils` no longer depends on a cycle |
-| Schema-per-domain | One TypeBox, `@sinclair/typebox`, validated identically by the browser and the Worker |
+| Schema-per-domain | One TypeBox, `typebox`, validated identically by the browser and the Worker |
 | Ownership in the query | Kept as the rule, with a test that a cross-account read is refused |
 | A ViewModel/service/page split | Kept; `status` became a tagged union |
 | The log CLI family | Rebuilt; ~60 tests, capability declarations made explicit |

@@ -4,7 +4,7 @@
 // database all agree. `Brand` keeps a user id from being passed where a note id
 // belongs without needing a cast.
 
-import { type Static, Type } from '@sinclair/typebox';
+import { type Static, Type } from 'typebox';
 
 declare const brandSymbol: unique symbol;
 export type Brand<T, B extends string> = T & { readonly [brandSymbol]: B };

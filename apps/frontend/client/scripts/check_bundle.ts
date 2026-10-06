@@ -106,12 +106,7 @@ const SERVER_MARKERS = [
 ] as const;
 
 export interface BundleProblem {
-  code:
-    | 'no_output'
-    | 'no_worker'
-    | 'no_assets'
-    | 'native_import'
-    | 'server_code_in_client';
+  code: 'no_output' | 'no_worker' | 'no_assets' | 'native_import' | 'server_code_in_client';
   message: string;
   remedy: string;
 }
@@ -174,7 +169,7 @@ export const checkBundle = (dir: string = BUILD_DIR): BundleProblem[] => {
       message: `No ${WORKER_ENTRY} in the build output.`,
       remedy:
         'The deployable unit is a Cloudflare Worker plus its static assets, and the Worker ' +
-        "is what serves the HTML, the API and the session cookie. Without it, `wrangler " +
+        'is what serves the HTML, the API and the session cookie. Without it, `wrangler ' +
         'deploy` publishes assets alone and every route 404s. Check `main` and ' +
         '`assets.directory` in wrangler.jsonc, and that the adapter is @sveltejs/adapter-cloudflare.',
     });

@@ -8,7 +8,7 @@
 // mechanism, not a coercion mechanism: an unknown field is an error, never a
 // silently dropped value.
 
-import { type Static, Type } from '@sinclair/typebox';
+import { type Static, Type } from 'typebox';
 import { NoteIdSchema, UserIdSchema } from '../common/ids.ts';
 
 export const NOTE_TITLE_MAX_LENGTH = 120;

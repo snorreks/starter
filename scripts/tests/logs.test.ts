@@ -19,8 +19,8 @@
 // pins the wrong contract reads as evidence the code is correct.
 
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
-import { Value } from '@sinclair/typebox/value';
 import { LOG_SOURCES, type LogEvent, LogEventSchema } from '@starter/schemas';
+import { Value } from 'typebox/value';
 import { parseArgs, toQuery } from '../src/commands/logs.ts';
 import {
   buildHistoricalRequest,
