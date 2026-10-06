@@ -502,10 +502,7 @@ export class ChatViewModel implements ScreenOwner, ScreenGuards {
   #applyServerSnapshot(messages: readonly Message[]): void {
     const serverIds = new Set(messages.map(({ id }) => id));
     const local = this.messages.filter(
-      (entry) =>
-        entry.serverId === null ||
-        entry.state === 'streaming' ||
-        (entry.state === 'failed' && !serverIds.has(entry.serverId)),
+      (entry) => entry.serverId === null || !serverIds.has(entry.serverId),
     );
     this.messages = [
       ...messages.map((message) => {
@@ -514,7 +511,7 @@ export class ChatViewModel implements ScreenOwner, ScreenGuards {
           ? toView(message)
           : { ...prior, ...toView(message), clientId: prior.clientId };
       }),
-      ...local.filter((entry) => entry.serverId === null || !serverIds.has(entry.serverId)),
+      ...local,
     ];
     this.status = { kind: 'ready' };
   }

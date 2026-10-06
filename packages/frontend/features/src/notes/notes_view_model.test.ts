@@ -15,6 +15,7 @@
 
 import { describe, expect, test } from 'bun:test';
 import type { Note } from '@starter/schemas/notes';
+import { AppError } from '@starter/utils';
 import type { NotesService } from './notes_service.ts';
 import { NotesViewModel } from './notes_view_model.svelte.ts';
 
@@ -150,6 +151,49 @@ describe('NotesViewModel writes after disposal', () => {
 });
 
 describe('NotesViewModel overlapping optimistic deletions', () => {
+  test.each([new DOMException('cancelled', 'AbortError'), new AppError('aborted', 'cancelled')])(
+    'an aborted delete reloads without leaving a mutation alert: %s',
+    async (error) => {
+      const gate = new Deferred();
+      let reads = 0;
+      let removes = 0;
+      const model = new NotesViewModel({
+        initialNotes: [note('a')],
+        notes: service({
+          list: () => {
+            reads += 1;
+            return Promise.resolve([]);
+          },
+          remove: () => {
+            removes += 1;
+            return gate.promise;
+          },
+        }),
+      });
+
+      const deleting = model.deleteNote('a');
+      gate.reject(error);
+      expect(await deleting).toBe(false);
+      expect(reads).toBe(1);
+      expect(removes).toBe(1);
+      expect(ids(model)).toEqual([]);
+      expect(model.mutationError).toBeNull();
+    },
+  );
+
+  test('a definite delete failure restores the row and exposes an alert', async () => {
+    const model = new NotesViewModel({
+      initialNotes: [note('a')],
+      notes: service({
+        remove: () => Promise.reject(new AppError('forbidden', 'Deletion denied')),
+      }),
+    });
+
+    expect(await model.deleteNote('a')).toBe(false);
+    expect(ids(model)).toEqual(['a']);
+    expect(model.mutationError).toBe('Deletion denied');
+  });
+
   test('a failed delete does not resurrect a concurrent successful delete', async () => {
     const gateA = new Deferred();
     const gateB = new Deferred();

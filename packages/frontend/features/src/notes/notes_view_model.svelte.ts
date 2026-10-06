@@ -245,7 +245,7 @@ export class NotesViewModel implements ScreenOwner, ScreenGuards {
     } catch (error) {
       const appError = toAppError(error, 'Could not delete the note.');
       if (!this.mutations.disposed) {
-        this.mutationError = appError.message;
+        this.mutationError = appError.errorType === 'aborted' ? null : appError.message;
       }
 
       // A **definite** failure is a definite answer: the server refused, and the

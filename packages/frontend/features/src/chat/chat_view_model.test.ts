@@ -487,6 +487,60 @@ describe('guards on the screen', () => {
 });
 
 describe('loading the history', () => {
+  test('a snapshot deferred during a turn retains both newly sent rows', async () => {
+    const stored = message({ id: 'msg_new_user' });
+    const reply = message({ id: 'msg_new_reply', role: 'assistant', content: 'hello' });
+    const earlier = message({ id: 'msg_earlier', content: 'earlier' });
+    const started = Promise.withResolvers<void>();
+    const finish = Promise.withResolvers<void>();
+    const body = new ReadableStream<Uint8Array>({
+      async start(controller) {
+        await finish.promise;
+        for (const event of [
+          { type: 'user-message', clientId: 'cid_1', message: stored },
+          { type: 'start', messageId: reply.id },
+          { type: 'complete', message: reply },
+        ] satisfies ChatStreamEvent[]) {
+          controller.enqueue(new TextEncoder().encode(encodeSseFrame(event)));
+        }
+        controller.close();
+      },
+    });
+    const vm = new ChatViewModel({
+      chat: new ChatService({
+        transport: new HttpTransport({
+          fetch: async () => {
+            started.resolve();
+            return new Response(body);
+          },
+        }),
+      }),
+      conversation,
+      initialMessages: [earlier],
+      newClientId: idsFrom('cid_1'),
+    });
+
+    vm.setDraft('hi');
+    const sending = vm.send();
+    await started.promise;
+    expect(vm.isStreaming).toBe(true);
+    vm.reconcileServerSnapshot([{ ...earlier, content: 'refreshed' }]);
+    expect(vm.transcript[0]?.content).toBe('earlier');
+
+    finish.resolve();
+    expect(await sending).toBe(true);
+    expect(
+      vm.transcript.map(({ serverId, content, state }) => ({ serverId, content, state })),
+    ).toEqual([
+      { serverId: earlier.id, content: 'refreshed', state: 'sent' },
+      { serverId: stored.id, content: stored.content, state: 'sent' },
+      { serverId: reply.id, content: reply.content, state: 'sent' },
+    ]);
+    const clientIds = vm.transcript.map(({ clientId }) => clientId);
+    vm.reconcileServerSnapshot([earlier, stored, reply]);
+    expect(vm.transcript.map(({ clientId }) => clientId)).toEqual(clientIds);
+  });
+
   test('a seeded transcript is not re-fetched', async () => {
     const h = harness({ messages: [message({ content: 'earlier' })] });
     const vm = new ChatViewModel({
