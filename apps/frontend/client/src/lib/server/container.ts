@@ -34,13 +34,22 @@
 import { type BetterAuthInstance, createBetterAuth } from '@starter/auth';
 import {
   accounts,
+  conversations,
   createD1RateLimitStorage,
   deviceCodes,
+  messages,
   sessions,
   users,
 } from '@starter/database';
 
 import { type DrizzleD1Database, drizzle } from 'drizzle-orm/d1';
+import {
+  type ChatModel,
+  type ChatModelProfile,
+  createChatModel,
+  resolveChatModelProfile,
+  type WorkersAiBinding,
+} from './chat_model.ts';
 import { type CaptureMailService, createCaptureMailService } from './email/capture_transport.ts';
 import { type MailService, resolveMail } from './email/mail.ts';
 import { createResendMailService } from './email/resend_transport.ts';
@@ -79,6 +88,8 @@ export type AppSchema = {
   sessions: typeof sessions;
   accounts: typeof accounts;
   deviceCodes: typeof deviceCodes;
+  conversations: typeof conversations;
+  messages: typeof messages;
 };
 
 export interface Container {
@@ -109,6 +120,16 @@ export interface Container {
   jobs: JobsService;
   /** Resolved jobs capability. `disabled` unless `JOBS_PROFILE` says otherwise. */
   jobsProfile: JobsProfileName;
+  /**
+   * The chat model this deployment has, and the profile it resolved to.
+   *
+   * Held on the container for the same reason `db` and `auth` are: it is derived from
+   * the binding set, which is isolate-stable, so building one per request would
+   * rebuild an object that cannot change. It is *not* where a conversation's state
+   * lives — the prompt and the abort signal are passed per request.
+   */
+  chatModel: ChatModel;
+  chatModelProfile: ChatModelProfile;
 }
 
 /**
@@ -166,7 +187,9 @@ export const getContainer = (rawEnv: unknown, requestOrigin?: string): Container
     return existing;
   }
 
-  const db = drizzle(env.DB, { schema: { users, sessions, accounts, deviceCodes } });
+  const db = drizzle(env.DB, {
+    schema: { users, sessions, accounts, deviceCodes, conversations, messages },
+  });
 
   // Mail before auth, because an auth instance without a mailer cannot verify
   // anybody. A refusal here is the whole point: a deployed Worker with no
@@ -190,6 +213,16 @@ export const getContainer = (rawEnv: unknown, requestOrigin?: string): Container
   // a 500 on the first jobs request while notes and auth carry on.
   const jobsProfile = resolveJobsProfile(env);
 
+  // The model profile is resolved before the literal for the same reason as the
+  // jobs profile: an unrecognised value throws here, which refuses the whole
+  // container rather than answering 500 on the first chat request while notes and
+  // auth carry on.
+  const chatModelProfile = resolveChatModelProfile(env);
+  const chatModel = createChatModel({
+    profile: chatModelProfile,
+    binding: env.AI as WorkersAiBinding | undefined,
+  });
+
   const container: Container = {
     env,
     db,
@@ -198,6 +231,8 @@ export const getContainer = (rawEnv: unknown, requestOrigin?: string): Container
     baseUrl,
     mail: mailService,
     jobsProfile,
+    chatModel,
+    chatModelProfile,
     // No dispatch port and no artifact reader are passed, so this is the disabled
     // implementation of each until PR H supplies the real ones. That is the honest
     // configuration for this PR: `createJobsService` refuses rather than pretending,

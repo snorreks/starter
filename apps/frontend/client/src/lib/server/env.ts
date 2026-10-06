@@ -118,6 +118,22 @@ export interface AppEnv {
    * profile is disabled, because nothing writes to it then.
    */
   MEDIA?: R2Bucket;
+  /**
+   * Workers AI. Present only where `CHAT_MODEL_PROFILE=workers-ai` and the binding
+   * is declared; absent is a refusal `createWorkersAiChatModel` names, not a
+   * silent fallback to the local model.
+   */
+  AI?: unknown;
+  /**
+   * Which chat model this deployment has: absent (the local `echo` model),
+   * `echo`, or `workers-ai`.
+   *
+   * Absent means `echo`, and that default is the point: it is the only profile
+   * needing neither a binding nor a credential, so a fresh clone runs the whole
+   * streaming path with no configuration. The inverse default would be the one
+   * that spends money.
+   */
+  CHAT_MODEL_PROFILE?: string;
 }
 
 export const AUTH_SECRET_PLACEHOLDER = 'development-only-not-a-secret';

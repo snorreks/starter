@@ -462,6 +462,13 @@ export type NewJobRow = typeof jobs.$inferInsert;
 export type JobArtifactRetirementRow = typeof jobArtifactRetirements.$inferSelect;
 export type MaintenanceRunRow = typeof maintenanceRuns.$inferSelect;
 
+// The chat tables live in their own module — `schema.ts` is already the longest file
+// in this package — and are imported here so the database schema has one import
+// site. Imported rather than duplicated: two declarations of the same table would
+// produce two objects for one table, and Drizzle would not notice.
+export { conversations, messages } from './chat_tables.ts';
+export type { ConversationRow, MessageRow } from './chat_tables.ts';
+
 /**
  * Column->table map handed to Better Auth's Drizzle adapter. The adapter looks
  * tables up by its own singular model names (`user`, `session`, ...), which do
