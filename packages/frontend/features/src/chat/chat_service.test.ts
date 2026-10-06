@@ -9,11 +9,7 @@
 
 import { describe, expect, test } from 'bun:test';
 import type { ApiTransport, FetchLike, TransportRequestOptions } from '@starter/platform';
-import {
-  type ChatStreamEvent,
-  encodeSseDone,
-  encodeSseFrame,
-} from '@starter/schemas/chat';
+import { type ChatStreamEvent, encodeSseDone, encodeSseFrame } from '@starter/schemas/chat';
 import { ChatService, readChatFrames } from './chat_service.svelte.ts';
 
 const conversation = {
@@ -48,7 +44,9 @@ const transportReturning = (
 
 /** The frames the Worker sends, as a body split into `chunkSize`-byte reads. */
 const streamOf = (events: ChatStreamEvent[], chunkSize = 4096): Response => {
-  const bytes = new TextEncoder().encode(`${events.map(encodeSseFrame).join('')}${encodeSseDone()}`);
+  const bytes = new TextEncoder().encode(
+    `${events.map(encodeSseFrame).join('')}${encodeSseDone()}`,
+  );
   let offset = 0;
 
   return new Response(
@@ -242,9 +240,9 @@ describe('the stream reader', () => {
       fetch: async () => new Response(null, { status: 200 }),
     });
 
-    await expect(
-      service.streamTurn('cnv_1', { content: 'hi', clientId: 'c1' }),
-    ).rejects.toThrow(/no body/);
+    await expect(service.streamTurn('cnv_1', { content: 'hi', clientId: 'c1' })).rejects.toThrow(
+      /no body/,
+    );
   });
 });
 
@@ -253,9 +251,12 @@ describe('a refusal before the first frame', () => {
     const service = new ChatService({
       transport: transportReturning({}),
       fetch: async () =>
-        new Response(JSON.stringify({ error: 'not_found', message: 'That conversation does not exist.' }), {
-          status: 404,
-        }),
+        new Response(
+          JSON.stringify({ error: 'not_found', message: 'That conversation does not exist.' }),
+          {
+            status: 404,
+          },
+        ),
     });
 
     await expect(
@@ -271,9 +272,9 @@ describe('a refusal before the first frame', () => {
 
     // The HTML is reported, not a parse error: what the reader needs to act on is
     // what the server actually said.
-    await expect(
-      service.streamTurn('cnv_1', { content: 'hi', clientId: 'c1' }),
-    ).rejects.toThrow(/502 Bad Gateway/);
+    await expect(service.streamTurn('cnv_1', { content: 'hi', clientId: 'c1' })).rejects.toThrow(
+      /502 Bad Gateway/,
+    );
   });
 
   test('the request carries the body and the SSE accept header', async () => {
@@ -300,18 +301,25 @@ describe('the reader as a unit', () => {
     );
     const frames: unknown[] = [];
 
-    for await (const frame of readChatFrames(new Response(body).body as ReadableStream<Uint8Array>)) {
+    for await (const frame of readChatFrames(
+      new Response(body).body as ReadableStream<Uint8Array>,
+    )) {
       frames.push(frame);
     }
 
-    expect(frames).toEqual([{ type: 'delta', text: 'a' }, { type: 'delta', text: 'b' }]);
+    expect(frames).toEqual([
+      { type: 'delta', text: 'a' },
+      { type: 'delta', text: 'b' },
+    ]);
   });
 
   test('a frame with no data yields nothing', async () => {
     const body = new TextEncoder().encode(`: ${'__done__'}\n\nevent: ping\n\n`);
 
     const frames: unknown[] = [];
-    for await (const frame of readChatFrames(new Response(body).body as ReadableStream<Uint8Array>)) {
+    for await (const frame of readChatFrames(
+      new Response(body).body as ReadableStream<Uint8Array>,
+    )) {
       frames.push(frame);
     }
 

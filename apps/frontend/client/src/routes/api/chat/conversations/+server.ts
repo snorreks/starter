@@ -13,22 +13,24 @@
 // projection that decides their shape, and validating again per request would be a
 // second definition of the same contract to keep in step.
 
-import type { RequestHandler } from './$types';
-import { createChatService } from '#lib/server/chat_service.ts';
-import { json, jsonError, readJsonBody, unauthorized } from '#lib/server/http.ts';
 import {
   type Conversation,
   type ConversationCreate,
   ConversationCreateSchema,
-  ConversationListSchema,
+  type ConversationListSchema,
 } from '@starter/schemas/chat';
 import type { Static } from 'typebox';
+import { createChatService } from '#lib/server/chat_service.ts';
+import { json, jsonError, readJsonBody, unauthorized } from '#lib/server/http.ts';
+import type { RequestHandler } from './$types';
 
 /** A create body is one field; a conversation title is 120 characters. */
 const MAX_CREATE_BODY_BYTES = 4096;
 
 /** A 200 body, typed as what `ConversationListSchema` describes. */
-const conversationList = (conversations: Conversation[]): Static<typeof ConversationListSchema> => ({
+const conversationList = (
+  conversations: Conversation[],
+): Static<typeof ConversationListSchema> => ({
   conversations,
   serverTime: Date.now(),
 });

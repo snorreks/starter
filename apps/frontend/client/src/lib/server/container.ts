@@ -46,9 +46,9 @@ import { type DrizzleD1Database, drizzle } from 'drizzle-orm/d1';
 import {
   type ChatModel,
   type ChatModelProfile,
-  type WorkersAiBinding,
   createChatModel,
   resolveChatModelProfile,
+  type WorkersAiBinding,
 } from './chat_model.ts';
 import { type CaptureMailService, createCaptureMailService } from './email/capture_transport.ts';
 import { type MailService, resolveMail } from './email/mail.ts';

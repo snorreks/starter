@@ -13,9 +13,9 @@
 -->
 <script lang="ts">
 import { ChatListView } from '@starter/features/chat';
-import { goto } from '$app/navigation';
 import { untrack } from 'svelte';
 import { getChatListViewModel } from '#lib/composition/chat.ts';
+import { goto } from '$app/navigation';
 import type { PageData } from './$types';
 
 let { data }: { data: PageData } = $props();

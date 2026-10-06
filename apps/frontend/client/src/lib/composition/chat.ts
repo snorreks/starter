@@ -16,8 +16,8 @@
 // observe anything. With the callback unset, the same service is the same object in
 // the lane that drives a real `ReadableStream` and in the browser.
 
-import type { Navigation } from '@starter/platform';
 import { ChatListViewModel, ChatService, ChatViewModel } from '@starter/features/chat';
+import type { Navigation } from '@starter/platform';
 import type { Conversation, Message } from '@starter/schemas/chat';
 import { webTransport } from './transport.ts';
 

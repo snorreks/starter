@@ -8,7 +8,7 @@
 // through the injected `Navigation` capability, which is the same seam every other
 // screen uses and the reason this class can be tested without a router.
 
-import { type Navigation } from '@starter/platform';
+import type { Navigation } from '@starter/platform';
 import type { Conversation, ConversationCreate } from '@starter/schemas/chat';
 import { disposeScreen, type ScreenGuards, type ScreenOwner } from '@starter/ui/screen';
 import { MutationGuard, StaleGuard, toAppError } from '@starter/utils';

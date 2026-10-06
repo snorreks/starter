@@ -26,15 +26,10 @@
 // holds the *messages*, each with the client id the server will dedupe on, so
 // flushing after reconnecting sends exactly what was written.
 
-import {
-  type ChatStreamUpdate,
-  ChatService,
-  type StreamTurnResult,
-} from './chat_service.svelte.ts';
 import type { Conversation, Message, MessageRole } from '@starter/schemas/chat';
-import { createClientId } from '@starter/utils';
 import { disposeScreen, type ScreenGuards, type ScreenOwner } from '@starter/ui/screen';
-import { MutationGuard, StaleGuard, toAppError } from '@starter/utils';
+import { createClientId, MutationGuard, StaleGuard, toAppError } from '@starter/utils';
+import type { ChatService, ChatStreamUpdate, StreamTurnResult } from './chat_service.svelte.ts';
 
 /**
  * A message as this screen holds it.

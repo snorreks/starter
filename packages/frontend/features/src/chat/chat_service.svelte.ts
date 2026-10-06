@@ -27,9 +27,9 @@ import {
   type ConversationCreate,
   ConversationListSchema,
   ConversationSchema,
+  isChatStreamEvent,
   type Message,
   MessageListSchema,
-  isChatStreamEvent,
 } from '@starter/schemas/chat';
 import { AppError } from '@starter/utils';
 
@@ -185,10 +185,14 @@ export class ChatService {
         // A frame the protocol does not declare. Refused rather than skipped: a
         // skipped frame loses a turn, and the symptom is a reply that stops halfway
         // with no error anywhere.
-        throw new AppError('server', 'The server sent a stream frame this build does not understand.', {
-          status: response.status,
-          cause: event,
-        });
+        throw new AppError(
+          'server',
+          'The server sent a stream frame this build does not understand.',
+          {
+            status: response.status,
+            cause: event,
+          },
+        );
       }
 
       switch (event.type) {
@@ -217,7 +221,9 @@ export class ChatService {
 
     return {
       events,
-      ...(failure === undefined ? { text, ...(message === undefined ? {} : { message }) } : { failure }),
+      ...(failure === undefined
+        ? { text, ...(message === undefined ? {} : { message }) }
+        : { failure }),
     };
   }
 
@@ -250,9 +256,7 @@ export class ChatService {
  * chunk boundary would be a real hazard if it did — so `TextDecoder` is used with
  * `stream: true`, which carries an incomplete sequence over to the next chunk.
  */
-export async function* readChatFrames(
-  body: ReadableStream<Uint8Array>,
-): AsyncGenerator<unknown> {
+export async function* readChatFrames(body: ReadableStream<Uint8Array>): AsyncGenerator<unknown> {
   const reader = body.getReader();
   const decoder = new TextDecoder('utf-8');
   let buffer = '';
@@ -335,12 +339,24 @@ const parseOneFrame = (raw: string): unknown => {
 };
 
 const errorTypeFor = (status: number): AppError['errorType'] => {
-  if (status === 401) return 'unauthorized';
-  if (status === 403) return 'forbidden';
-  if (status === 404) return 'not_found';
-  if (status === 413) return 'validation';
-  if (status === 429) return 'rate_limited';
-  if (status >= 500) return 'server';
+  if (status === 401) {
+    return 'unauthorized';
+  }
+  if (status === 403) {
+    return 'forbidden';
+  }
+  if (status === 404) {
+    return 'not_found';
+  }
+  if (status === 413) {
+    return 'validation';
+  }
+  if (status === 429) {
+    return 'rate_limited';
+  }
+  if (status >= 500) {
+    return 'server';
+  }
   return 'validation';
 };
 

@@ -4,9 +4,9 @@
 //
 // `locals.user` was resolved by the composition root in `hooks.server.ts`.
 
-import type { RequestHandler } from './$types';
 import { createChatService } from '#lib/server/chat_service.ts';
 import { json, jsonError, unauthorized } from '#lib/server/http.ts';
+import type { RequestHandler } from './$types';
 
 export const GET: RequestHandler = async ({ locals, params }) => {
   const user = locals.user;

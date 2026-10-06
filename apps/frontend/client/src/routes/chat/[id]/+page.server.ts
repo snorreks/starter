@@ -13,8 +13,8 @@
 // that it exists, turning this page into an existence oracle for other users' data.
 
 import { error, redirect } from '@sveltejs/kit';
-import type { PageServerLoad } from './$types';
 import { createChatService } from '#lib/server/chat_service.ts';
+import type { PageServerLoad } from './$types';
 
 export const load: PageServerLoad = async ({ locals, params, url }) => {
   const user = locals.user;

@@ -9,13 +9,13 @@
 // reader pass, and the frame reader is the part most likely to be wrong.
 
 import { describe, expect, test } from 'bun:test';
+import type { ApiTransport, FetchLike, TransportRequestOptions } from '@starter/platform';
 import {
   type ChatStreamEvent,
-  type Message,
   encodeSseDone,
   encodeSseFrame,
+  type Message,
 } from '@starter/schemas/chat';
-import type { ApiTransport, FetchLike, TransportRequestOptions } from '@starter/platform';
 import { ChatService } from './chat_service.svelte.ts';
 import { ChatViewModel } from './chat_view_model.svelte.ts';
 
@@ -255,10 +255,7 @@ describe('a turn the model fails', () => {
 
 describe('a message that never reached the server', () => {
   test('a network failure queues the message instead of losing it', async () => {
-    const vm = viewModel(
-      harness({ failWith: new TypeError('network down') }),
-      idsFrom('cid_1'),
-    );
+    const vm = viewModel(harness({ failWith: new TypeError('network down') }), idsFrom('cid_1'));
 
     vm.setDraft('hi');
     expect(await vm.send()).toBe(false);
@@ -280,7 +277,10 @@ describe('a message that never reached the server', () => {
 
   test('an HTTP refusal queues it, and keeps the server own message', async () => {
     const vm = viewModel(
-      harness({ status: 503, responseBody: '{"error":"unavailable","message":"The model is down."}' }),
+      harness({
+        status: 503,
+        responseBody: '{"error":"unavailable","message":"The model is down."}',
+      }),
       idsFrom('cid_1'),
     );
 
@@ -348,14 +348,7 @@ describe('a message that never reached the server', () => {
     // because the property worth stating is that the *retries* kept the order they
     // were written in rather than the order they happened to complete.
     expect(vm.queue).toHaveLength(0);
-    expect(calls.map((c) => c.content)).toEqual([
-      'one',
-      'two',
-      'three',
-      'one',
-      'two',
-      'three',
-    ]);
+    expect(calls.map((c) => c.content)).toEqual(['one', 'two', 'three', 'one', 'two', 'three']);
     expect(vm.transcript.filter((m) => m.role === 'user').map((m) => m.content)).toEqual([
       'one',
       'two',
@@ -429,7 +422,11 @@ describe('guards on the screen', () => {
         ]);
       },
     });
-    const vm = new ChatViewModel({ chat: service, conversation, newClientId: idsFrom('cid_1', 'cid_2') });
+    const vm = new ChatViewModel({
+      chat: service,
+      conversation,
+      newClientId: idsFrom('cid_1', 'cid_2'),
+    });
 
     vm.setDraft('one');
     const first = vm.send();
@@ -454,7 +451,8 @@ describe('guards on the screen', () => {
     const h = harness({ events: [] });
     const service = new ChatService({
       transport: h.service as unknown as ApiTransport,
-      fetch: async () => bodyFrom([{ type: 'user-message', clientId: 'cid_1', message: message() }]),
+      fetch: async () =>
+        bodyFrom([{ type: 'user-message', clientId: 'cid_1', message: message() }]),
     });
     const vm = new ChatViewModel({ chat: service, conversation, newClientId: idsFrom('cid_1') });
 
@@ -525,9 +523,9 @@ describe('the two halves of the contract agree', () => {
 
     // Refused rather than skipped: a skipped frame loses a turn, and the symptom is
     // a reply that stops halfway with no error anywhere.
-    await expect(
-      service.streamTurn('cnv_1', { content: 'hi', clientId: 'c1' }),
-    ).rejects.toThrow(/does not understand/);
+    await expect(service.streamTurn('cnv_1', { content: 'hi', clientId: 'c1' })).rejects.toThrow(
+      /does not understand/,
+    );
   });
 
   test('the frames the Worker encodes are the frames the client accepts', async () => {

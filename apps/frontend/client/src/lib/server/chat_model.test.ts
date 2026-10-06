@@ -86,7 +86,10 @@ describe('the echo model', () => {
     const controller = new AbortController();
 
     const chunks: string[] = [];
-    for await (const chunk of model.generate('a long prompt that yields many chunks', controller.signal)) {
+    for await (const chunk of model.generate(
+      'a long prompt that yields many chunks',
+      controller.signal,
+    )) {
       chunks.push(chunk.text);
       if (chunks.length === 3) {
         controller.abort();
@@ -133,7 +136,9 @@ describe('the profile policy', () => {
   });
 
   test('the refusal names the valid values', () => {
-    expect(() => resolveChatModelProfile({ CHAT_MODEL_PROFILE: 'gpt' })).toThrow(/echo, workers-ai/);
+    expect(() => resolveChatModelProfile({ CHAT_MODEL_PROFILE: 'gpt' })).toThrow(
+      /echo, workers-ai/,
+    );
   });
 });
 
@@ -171,9 +176,11 @@ describe('the Workers AI adapter', () => {
 
   test('refuses a response shape it cannot read, naming the model', async () => {
     const model = createWorkersAiChatModel({
-      binding: { async run() {
-        return { nope: true };
-      } },
+      binding: {
+        async run() {
+          return { nope: true };
+        },
+      },
     });
 
     await expect(collect(model.generate('hi', new AbortController().signal))).rejects.toThrow(
@@ -206,17 +213,19 @@ describe('choosing the model', () => {
     const model = createChatModel({ profile: 'echo', binding: undefined });
 
     expect(model.profile).toBe('echo');
-    expect((await collect(model.generate('hi', new AbortController().signal))).length).toBeGreaterThan(
-      0,
-    );
+    expect(
+      (await collect(model.generate('hi', new AbortController().signal))).length,
+    ).toBeGreaterThan(0);
   });
 
   test('the workers-ai profile reaches the binding it was given', async () => {
     const model = createChatModel({
       profile: 'workers-ai',
-      binding: { async run() {
-        return { response: 'bound' };
-      } },
+      binding: {
+        async run() {
+          return { response: 'bound' };
+        },
+      },
     });
 
     expect(await collect(model.generate('hi', new AbortController().signal))).toEqual(['bound']);

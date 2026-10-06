@@ -94,9 +94,7 @@ export const ECHO_CHUNK_SIZE = 24;
  * a fresh clone runs the streaming path with no configuration at all. The inverse
  * default would be the one that spends money.
  */
-export const resolveChatModelProfile = (env: {
-  CHAT_MODEL_PROFILE?: string;
-}): ChatModelProfile => {
+export const resolveChatModelProfile = (env: { CHAT_MODEL_PROFILE?: string }): ChatModelProfile => {
   const raw = env.CHAT_MODEL_PROFILE?.trim();
 
   if (raw === undefined || raw.length === 0) {

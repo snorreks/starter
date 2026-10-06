@@ -38,12 +38,7 @@
 //     the one projection, so a database column cannot reach a response by accident.
 
 import { conversations, messages } from '@starter/database';
-import type {
-  Conversation,
-  ConversationCreate,
-  Message,
-  MessageRole,
-} from '@starter/schemas/chat';
+import type { Conversation, ConversationCreate, Message, MessageRole } from '@starter/schemas/chat';
 import { createId } from '@starter/utils';
 import { and, asc, desc, eq, sql } from 'drizzle-orm';
 import type { DrizzleD1Database } from 'drizzle-orm/d1';
@@ -323,5 +318,8 @@ const touchConversation = async (
   conversationId: string,
   now: Date,
 ): Promise<void> => {
-  await db.update(conversations).set({ updatedAt: now }).where(eq(conversations.id, conversationId));
+  await db
+    .update(conversations)
+    .set({ updatedAt: now })
+    .where(eq(conversations.id, conversationId));
 };

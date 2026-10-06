@@ -26,20 +26,22 @@
 // `request.signal` fires, the model stops generating, and no tokens are produced for
 // a reader who has gone.
 
-import type { RequestHandler } from './$types';
+import {
+  type ChatStreamEvent,
+  encodeSseDone,
+  encodeSseFrame,
+  MESSAGE_CONTENT_MAX_LENGTH,
+  type Message,
+  MessageCreateSchema,
+  type MessageListSchema,
+  SSE_CONTENT_TYPE,
+} from '@starter/schemas/chat';
+import { createId } from '@starter/utils';
+import type { Static } from 'typebox';
 import type { ChatModel } from '#lib/server/chat_model.ts';
 import { createChatService } from '#lib/server/chat_service.ts';
 import { json, jsonError, readJsonBody, unauthorized } from '#lib/server/http.ts';
-import {
-  type ChatStreamEvent,
-  type Message,
-  MessageCreateSchema,
-  MessageListSchema,
-  MESSAGE_CONTENT_MAX_LENGTH,
-} from '@starter/schemas/chat';
-import { encodeSseDone, encodeSseFrame, SSE_CONTENT_TYPE } from '@starter/schemas/chat';
-import { createId } from '@starter/utils';
-import type { Static } from 'typebox';
+import type { RequestHandler } from './$types';
 
 /**
  * A submitted message is one field; the ceiling is the schema's own bound plus slack
@@ -211,28 +213,26 @@ const streamTurn = (options: StreamTurnOptions): Response => {
     controller.close();
   };
 
-  const completeTurn = async (controller: ReadableStreamDefaultController<Uint8Array>): Promise<void> => {
+  const completeTurn = async (
+    controller: ReadableStreamDefaultController<Uint8Array>,
+  ): Promise<void> => {
     const stored = await options.persistAssistantReply(collected, options.replyId, createdAt);
-    finish(
-      controller,
-      {
-        type: 'complete',
-        message:
-          stored ?? {
-            // The persistence path refused, which means the conversation is not this
-            // caller's any more. The frame says so rather than reporting a message
-            // that was never stored, and the text the user already read is returned
-            // so the turn is not rendered as a total loss.
-            id: options.replyId,
-            conversationId: options.conversationId,
-            authorId: '',
-            role: 'assistant',
-            content: collected,
-            status: 'complete',
-            createdAt,
-          },
+    finish(controller, {
+      type: 'complete',
+      message: stored ?? {
+        // The persistence path refused, which means the conversation is not this
+        // caller's any more. The frame says so rather than reporting a message
+        // that was never stored, and the text the user already read is returned
+        // so the turn is not rendered as a total loss.
+        id: options.replyId,
+        conversationId: options.conversationId,
+        authorId: '',
+        role: 'assistant',
+        content: collected,
+        status: 'complete',
+        createdAt,
       },
-    );
+    });
   };
 
   const stream = new ReadableStream<Uint8Array>({
@@ -271,9 +271,7 @@ const streamTurn = (options: StreamTurnOptions): Response => {
           return;
         }
 
-        iterator ??= options.model
-          .generate(options.prompt, options.signal)
-          [Symbol.asyncIterator]();
+        iterator ??= options.model.generate(options.prompt, options.signal)[Symbol.asyncIterator]();
 
         const next = await iterator.next();
 
