@@ -4,7 +4,7 @@
 // Email + password is the only credential this application has, and the account
 // lifecycle is complete: sign-up, verification, sign-in, recovery, reset.
 
-import { type Static, Type } from '@sinclair/typebox';
+import { type Static, Type } from 'typebox';
 import { type Brand, UserIdSchema } from '../common/ids.ts';
 
 export const SESSION_USER_SCHEMA_VERSION = 1 as const;

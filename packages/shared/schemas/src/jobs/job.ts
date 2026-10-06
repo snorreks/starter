@@ -20,8 +20,18 @@
 // the same number, and so that changing one is a visible diff rather than a
 // search for the literal 5.
 
-import { type Static, type TLiteral, type TSchema, type TUnion, Type } from '@sinclair/typebox';
+import { type Static, type TLiteral, type TSchema, type TUnion, Type } from 'typebox';
 import type { Brand } from '../common/ids.ts';
+
+/**
+ * One `TLiteral` per value, in the same order, as a mutable tuple.
+ *
+ * `-readonly` because `T` is a `readonly` tuple (`as const`) while `TUnion`
+ * takes a mutable one.
+ */
+type LiteralTuple<T extends readonly string[]> = {
+  -readonly [K in keyof T]: TLiteral<T[K] & string>;
+};
 
 /**
  * A closed union of the given literal strings.
@@ -31,11 +41,25 @@ import type { Brand } from '../common/ids.ts';
  * literal types: `Static` of the result is `'a' | 'b'`, never `string`. A union
  * that widened to `string` would accept any value, which is exactly what the
  * closed schemas below exist to prevent.
+ *
+ * TypeBox 1.x resolves `Static` of a union by walking its members as a
+ * *tuple*, accumulating a union as it goes. An unbounded array type — what
+ * `Array.prototype.map` returns — is not a tuple, so the walk stops
+ * immediately and `Static` comes out `never`, which then rejects every value
+ * that is one of the literals. `LiteralTuple` exists for that walk.
  */
 export const literalUnion = <const T extends readonly string[]>(
   values: T,
-): TUnion<TLiteral<T[number]>[]> =>
-  Type.Union(values.map((value: T[number]) => Type.Literal(value)));
+): TUnion<LiteralTuple<T>> => {
+  // Two details, and both are about the tuple above. `map` always returns an
+  // array, so the tuple is asserted rather than inferred; and `Type.Union`
+  // infers an array from a bare tuple argument, so the tuple is spread to
+  // survive. Nothing past this line is asserted: `TERMINAL_JOB_STATUSES`
+  // further down only typechecks because `JobStatus` resolved to the four
+  // literals rather than to `never`.
+  const schemas = values.map((value) => Type.Literal(value)) as LiteralTuple<T>;
+  return Type.Union([...schemas]);
+};
 
 export const JobIdSchema = Type.String({ minLength: 1, maxLength: 64 });
 export type JobId = Static<typeof JobIdSchema> & Brand<string, 'JobId'>;

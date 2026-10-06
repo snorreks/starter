@@ -20,9 +20,20 @@
 // something this build does not understand" is a deployment or version problem,
 // and it has to read as one.
 
-import type { Static, TSchema } from '@sinclair/typebox';
-import { Value } from '@sinclair/typebox/value';
 import { AppError } from '@starter/utils';
+import type { Static, TSchema } from 'typebox';
+import { Value } from 'typebox/value';
+
+/**
+ * The schema's `$id`, for a failure report that says which contract broke.
+ *
+ * TypeBox 1.x still carries `$id` in a schema's options at runtime but no longer
+ * declares it on `TSchema`, so reading it is one cast. `typebox/schema` exports
+ * an `IsId` guard that would do this without one, but that entrypoint also
+ * carries every JSON Schema draft meta-schema, and a bundle that only wants a
+ * name has no use for them.
+ */
+const schemaName = (schema: TSchema): string => (schema as { $id?: string }).$id ?? 'anonymous';
 
 /**
  * Assert that `value` is `schema`, or throw.
@@ -37,6 +48,6 @@ export const parseDto = <T extends TSchema>(schema: T, value: unknown, what: str
 
   throw new AppError('server', `The server sent ${what} this build does not understand.`, {
     status: 200,
-    cause: { schema: schema.$id ?? 'anonymous', value },
+    cause: { schema: schemaName(schema), value },
   });
 };

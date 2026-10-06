@@ -23,6 +23,7 @@ const COMMANDS: Record<string, CommandLoader> = {
   ci: async () => (await import('./commands/ci.ts')).ciCommand,
   configure: async () => (await import('./commands/configure.ts')).configureCommand,
   contract: async () => (await import('./commands/contracts.ts')).contractCommand,
+  coverage: async () => (await import('./commands/coverage.ts')).coverageCommand,
   db: async () => (await import('./commands/db.ts')).dbCommand,
   deploy: async () => (await import('./commands/deploy.ts')).deployCommand,
   dev: async () => (await import('./commands/dev.ts')).devCommand,

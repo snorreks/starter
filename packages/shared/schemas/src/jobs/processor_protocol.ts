@@ -17,7 +17,7 @@
 // the other, so a field added on one side without the other is a mismatch this
 // schema refuses to paper over.
 
-import { type Static, Type } from '@sinclair/typebox';
+import { type Static, Type } from 'typebox';
 import { literalUnion } from './job.ts';
 
 /**

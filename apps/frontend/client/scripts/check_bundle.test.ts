@@ -160,11 +160,14 @@ describe('checkBundle', () => {
     // The check is about what the *browser* downloads. Failing `_worker.js` would
     // make this unpassable, and an assertion that can never pass is an assertion
     // nobody reads.
-    const dir = fixture({}, {
-      worker:
-        'import { env } from "cloudflare:workers";\nimport { drizzle } from "drizzle-orm/d1";\n' +
-        'const s = "BETTER_AUTH_SECRET";\nexport default { fetch() { return new Response(s + !!drizzle + !!env); } };\n',
-    });
+    const dir = fixture(
+      {},
+      {
+        worker:
+          'import { env } from "cloudflare:workers";\nimport { drizzle } from "drizzle-orm/d1";\n' +
+          'const s = "BETTER_AUTH_SECRET";\nexport default { fetch() { return new Response(s + !!drizzle + !!env); } };\n',
+      },
+    );
     withDir(dir, () => {
       expect(checkBundle(dir)).toEqual([]);
     });

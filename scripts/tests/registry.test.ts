@@ -12,7 +12,7 @@
 // tool that invents a target when it has none is worse than one that stops.
 
 import { describe, expect, test } from 'bun:test';
-import { Value } from '@sinclair/typebox/value';
+import { Value } from 'typebox/value';
 import {
   APP_IDS,
   APP_LOG_CONFIG,
@@ -37,7 +37,7 @@ describe('APP_LOG_CONFIG', () => {
       const config = APP_LOG_CONFIG[app];
       const errors = [...Value.Errors(AppLogConfigSchema, config)];
 
-      expect(errors.map((error) => `${error.path} ${error.message}`)).toEqual([]);
+      expect(errors.map((error) => `${error.instancePath} ${error.message}`)).toEqual([]);
     }
   });
 

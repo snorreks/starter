@@ -38,9 +38,8 @@ const readProfile = (
   }
   if (!isProfile(value)) {
     return {
-      error:
-        `"${value}" is not a profile. Profiles: ${PROFILES.join(', ')}.
-` + '  `web` is the credential-free core and the only one `bun run setup` requires.',
+      error: `"${value}" is not a profile. Profiles: ${PROFILES.join(', ')}.
+  \`web\` is the credential-free core and the only one \`bun run setup\` requires.`,
     };
   }
 

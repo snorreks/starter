@@ -112,10 +112,18 @@ lanes drive. `bun run check:bundle` is the check that it is deployable at all.
 
 ## Known gaps
 
-`bun run dev` currently fails on `main` with
-`ERR_UNSUPPORTED_TYPESCRIPT_SYNTAX` from a TypeScript parameter property in
-`@starter/utils`, because Node strips types without transforming them. `bun run
-dev:worker` and every test lane are unaffected. See `docs/capability-matrix.md`.
+None for `bun run dev`. It used to answer 500 on every request, because
+`@starter/utils` had a TypeScript parameter property and Node — which loads the
+packages' TypeScript source directly — strips types without transforming them.
+`noParameterProperties`, `noEnum` and `noNamespace` are now `error` in `biome.json`, so
+that class of failure is refused at the file that introduces it. See `docs/lint.md` and
+`docs/capability-matrix.md`.
+
+The one warning `bun run dev` still prints is
+`config_option_deprecated_alias`: `#lib` is spelled as a SvelteKit `alias` entry rather
+than a `package.json` `imports` map, because the `imports` form resolves in Vite and
+Node and then reports `Cannot find module '#lib/…'` for every import under
+`svelte-check`. The reason is written down at the alias in `vite.config.ts`.
 
 ## Boundaries
 

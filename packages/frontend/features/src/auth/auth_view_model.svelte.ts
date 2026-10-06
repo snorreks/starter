@@ -31,7 +31,6 @@
 // web host's implementation at module scope, and this file would work in a browser
 // and nowhere else, which is the situation this extraction exists to end.
 
-import { Value } from '@sinclair/typebox/value';
 import type { Navigation } from '@starter/platform';
 import {
   AccountErrorCode,
@@ -44,6 +43,7 @@ import {
 import { reportError } from '@starter/ui';
 import { disposeScreen, type ScreenGuards, type ScreenOwner } from '@starter/ui/screen';
 import { MutationGuard, StaleGuard, toAppError } from '@starter/utils';
+import { Value } from 'typebox/value';
 import type { AccountService } from './account_service.ts';
 import type { AuthSession } from './auth_session_service.svelte.ts';
 
@@ -382,7 +382,13 @@ const validate = (values: SignInInput | SignUpInput): Record<string, string> | u
 
   const errors: Record<string, string> = {};
   for (const issue of Value.Errors(schema, values)) {
-    const field = issue.path.replace(/^\//, '') || '_form';
+    if (issue.keyword === 'required') {
+      for (const field of issue.params.requiredProperties) {
+        errors[field] ??= issue.message;
+      }
+      continue;
+    }
+    const field = issue.instancePath.replace(/^\//, '') || '_form';
     errors[field] ??= issue.message;
   }
   return errors;

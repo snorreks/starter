@@ -89,7 +89,8 @@ export const NATIVE_DEV_HOST = (() => {
 })();
 
 /** True when the dev server is reachable from off this machine. */
-export const NATIVE_DEV_IS_PUBLIC = NATIVE_DEV_HOST !== '127.0.0.1' && NATIVE_DEV_HOST !== 'localhost';
+export const NATIVE_DEV_IS_PUBLIC =
+  NATIVE_DEV_HOST !== '127.0.0.1' && NATIVE_DEV_HOST !== 'localhost';
 
 /** The URL `src-tauri/tauri.conf.json`'s `devUrl` must name. */
 export const nativeDevUrl = (): string => `http://${NATIVE_DEV_HOST}:${NATIVE_DEV_PORT}`;

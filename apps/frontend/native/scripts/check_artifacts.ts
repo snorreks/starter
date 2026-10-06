@@ -116,8 +116,7 @@ export const readZip = (bytes: Buffer): ZipEntry[] => {
     const localExtraLength = bytes.readUInt16LE(localOffset + 28);
     const start = localOffset + 30 + localNameLength + localExtraLength;
     const raw = bytes.subarray(start, start + compressedSize);
-    const data =
-      method === 0 ? Buffer.from(raw) : method === 8 ? inflateRawSync(raw) : unsupported(name, method);
+    const data = decompress(name, method, raw);
 
     if (crc32(data) !== expectedCrc) {
       throw new Error(`${name}: CRC mismatch, so the container is corrupt`);
@@ -127,6 +126,24 @@ export const readZip = (bytes: Buffer): ZipEntry[] => {
   }
 
   return entries;
+};
+
+/**
+ * The two methods a ZIP produced by the native build pipeline can carry.
+ *
+ * A switch rather than a nested conditional because three branches on one value
+ * is the shape `noNestedTernary` exists to refuse, and a method this reader does
+ * not implement must be a named refusal rather than a silent `undefined`.
+ */
+const decompress = (name: string, method: number, raw: Buffer): Buffer => {
+  switch (method) {
+    case 0:
+      return Buffer.from(raw);
+    case 8:
+      return inflateRawSync(raw);
+    default:
+      return unsupported(name, method);
+  }
 };
 
 const unsupported = (name: string, method: number): never => {
@@ -246,13 +263,13 @@ export const parseArtifactName = (name: string): ParsedArtifactName | null => {
   }
   const groups = matched.groups;
   return {
-    platform: groups['platform'] ?? '',
-    target: groups['target'] ?? '',
-    revision: groups['revision'] ?? '',
+    platform: groups.platform ?? '',
+    target: groups.target ?? '',
+    revision: groups.revision ?? '',
     // The marker is required by the pattern above, so this reads what the name
     // says rather than inferring it from its absence.
-    signed: groups['signing'] === 'signed',
-    extension: (groups['extension'] ?? 'apk') as ArtifactExtension,
+    signed: groups.signing === 'signed',
+    extension: (groups.extension ?? 'apk') as ArtifactExtension,
   };
 };
 
@@ -374,7 +391,9 @@ export const verifyArtifacts = (options: VerifyOptions): ArtifactProblem[] => {
     ];
   }
 
-  const candidates = entries.filter((entry) => entry.endsWith('.apk') || entry.endsWith('.aab') || entry.endsWith('.ipa'));
+  const candidates = entries.filter(
+    (entry) => entry.endsWith('.apk') || entry.endsWith('.aab') || entry.endsWith('.ipa'),
+  );
   if (candidates.length === 0) {
     return [
       {
@@ -429,11 +448,7 @@ export const verifyArtifacts = (options: VerifyOptions): ArtifactProblem[] => {
   return problems;
 };
 
-const scanContainer = (
-  path: string,
-  name: string,
-  options: VerifyOptions,
-): ArtifactProblem[] => {
+const scanContainer = (path: string, name: string, options: VerifyOptions): ArtifactProblem[] => {
   let entries: ZipEntry[];
   try {
     entries = readZip(readFileSync(path));
@@ -478,7 +493,10 @@ const scanContainer = (
       // The local asset protocol and the packaged IPC channel are not API
       // origins. They are named in the CSP and would otherwise be reported as a
       // leaked deployment.
-      if (candidate.startsWith('http://ipc.localhost') || candidate.startsWith('http://asset.localhost')) {
+      if (
+        candidate.startsWith('http://ipc.localhost') ||
+        candidate.startsWith('http://asset.localhost')
+      ) {
         continue;
       }
       if (isForeignOrigin(candidate, expected)) {
@@ -503,7 +521,7 @@ const scanContainer = (
       message: `${name} also contains: ${[...foreign].join(', ')}.`,
       remedy:
         'One artifact talking to two origins means one build read two configurations. ' +
-        'The extra origin is either a stale value or somebody\'s real API; both are wrong.',
+        "The extra origin is either a stale value or somebody's real API; both are wrong.",
     });
   }
 

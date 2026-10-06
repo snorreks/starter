@@ -1,5 +1,6 @@
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
-import { delimiter, dirname, join } from 'node:path';
+import { delimiter, dirname, join, relative } from 'node:path';
+import { readWorkspacePackages } from '../guards/module_graph.ts';
 import { checkMirrors } from '../setup/pins.ts';
 import { REPO_ROOT } from '../shared/paths.ts';
 import { type BoundedResult, runBounded } from '../shared/run_bounded.ts';
@@ -109,6 +110,205 @@ export const bunPinEdits = (options: {
   return changes;
 };
 
+/** Dependency fields a pinned range may be written back into. */
+const PINNED_FIELDS = [
+  'dependencies',
+  'devDependencies',
+  'optionalDependencies',
+  'peerDependencies',
+] as const;
+
+/**
+ * The pinned ranges declared by `.syncpackrc`, keyed by package name.
+ *
+ * That file is the repository's stated policy for the packages whose newest major
+ * is not automatically safe — `typescript` and `@biomejs/biome` — and it is read
+ * rather than restated here, so a pin changed in one place is the pin this lane
+ * honours. It is read rather than *enforced* because no script in this repository
+ * runs `syncpack`: the config existed with nothing checking it, which is how
+ * `typescript` came to be installed at 7.x against a group pinning `6.0.3`.
+ */
+export const readPinnedRanges = (root: string): ReadonlyMap<string, string> => {
+  const path = join(root, '.syncpackrc');
+  if (!existsSync(path)) {
+    return new Map();
+  }
+  let raw: unknown;
+  try {
+    raw = JSON.parse(readFileSync(path, 'utf8'));
+  } catch (error) {
+    throw new Error(
+      `.syncpackrc is not readable JSON: ${error instanceof Error ? error.message : 'unknown cause'}`,
+    );
+  }
+  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) {
+    throw new Error('.syncpackrc must be a JSON object.');
+  }
+  const groups = (raw as { semverGroups?: unknown }).semverGroups;
+  if (!Array.isArray(groups)) {
+    throw new Error('.syncpackrc declares no semverGroups, so nothing holds a pin.');
+  }
+  const pins = new Map<string, string>();
+  for (const [index, group] of groups.entries()) {
+    if (typeof group !== 'object' || group === null || Array.isArray(group)) {
+      throw new Error(`.syncpackrc semverGroups[${index}] must be an object.`);
+    }
+    const { packages, range } = group as { packages?: unknown; range?: unknown };
+    if (!Array.isArray(packages) || packages.some((name) => typeof name !== 'string')) {
+      throw new Error(`.syncpackrc semverGroups[${index}] needs a packages array of names.`);
+    }
+    if (typeof range !== 'string' || range.length === 0) {
+      throw new Error(`.syncpackrc semverGroups[${index}] needs a non-empty range.`);
+    }
+    for (const name of packages as string[]) {
+      const held = pins.get(name);
+      if (held !== undefined && held !== range) {
+        throw new Error(
+          `.syncpackrc pins ${name} to both ${held} and ${range}. One package cannot hold two ranges.`,
+        );
+      }
+      pins.set(name, range);
+    }
+  }
+  return pins;
+};
+
+/**
+ * Every manifest that can declare a dependency: the root plus each workspace
+ * package, discovered from the root manifest rather than listed, so a package
+ * added to the repository is covered the moment it exists.
+ */
+const dependencyManifests = (root: string): string[] => [
+  join(root, 'package.json'),
+  ...[...readWorkspacePackages(root).values()].map((pkg) => join(root, pkg.dir, 'package.json')),
+];
+
+/** One declared range that the `--latest` sweep moved off its pin. */
+export interface PinRestore {
+  readonly path: string;
+  readonly name: string;
+  readonly from: string;
+  readonly to: string;
+}
+
+/**
+ * Put every pinned package back on its declared range, in every manifest that
+ * declares it.
+ *
+ * Runs after resolution and before anything installs. `--latest` resolves a
+ * pinned package to its newest major regardless of what the manifest says, and an
+ * install at that point runs every `prepare` script against a tree built from a
+ * range the repository has ruled out — so restoring afterwards would be restoring
+ * after the failure, not before it.
+ */
+export const restorePinnedRanges = (options: {
+  root: string;
+  pins: ReadonlyMap<string, string>;
+}): PinRestore[] => {
+  const restored: PinRestore[] = [];
+  for (const path of dependencyManifests(options.root)) {
+    if (!existsSync(path)) {
+      continue;
+    }
+    const manifest: unknown = JSON.parse(readFileSync(path, 'utf8'));
+    if (typeof manifest !== 'object' || manifest === null || Array.isArray(manifest)) {
+      throw new Error(`${relative(options.root, path)} is not a JSON object.`);
+    }
+    const record = manifest as Record<string, unknown>;
+    let changed = false;
+    for (const field of PINNED_FIELDS) {
+      const table = record[field];
+      if (typeof table !== 'object' || table === null || Array.isArray(table)) {
+        continue;
+      }
+      const declared = table as Record<string, unknown>;
+      for (const [name, pin] of options.pins) {
+        const current = declared[name];
+        if (typeof current === 'string' && current !== pin) {
+          declared[name] = pin;
+          restored.push({ path: relative(options.root, path), name, from: current, to: pin });
+          changed = true;
+        }
+      }
+    }
+    if (changed) {
+      writeFileSync(path, `${JSON.stringify(record, null, 2)}\n`);
+    }
+  }
+  return restored;
+};
+
+/** The version `bun.lock` resolved a package to, or null when it resolves none. */
+const lockedVersion = (root: string, name: string): string | null => {
+  const lockPath = join(root, 'bun.lock');
+  if (!existsSync(lockPath)) {
+    return null;
+  }
+  const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  // Whitespace between the key and its array is Bun's formatting to choose, not
+  // ours: matching it exactly would pass against this repository's lockfile and
+  // fail against any writer that does not indent it the same way.
+  const found = new RegExp(`"${escaped}":\\s*\\["${escaped}@([^"@]+)`).exec(
+    readFileSync(lockPath, 'utf8'),
+  );
+  return found?.[1] ?? null;
+};
+
+/**
+ * Fail when a pin did not survive the install.
+ *
+ * Restoring is not the same as holding: `bun install` rewrites a range it
+ * considers non-canonical, and the lockfile — not the manifest — decides the
+ * version that reaches `node_modules`. Both are checked, because the failure this
+ * exists to catch otherwise surfaces much later as whatever a consumer does with
+ * an API the wrong major does not have.
+ */
+export const verifyPinnedRanges = (options: {
+  root: string;
+  pins: ReadonlyMap<string, string>;
+}): void => {
+  const problems: string[] = [];
+  for (const path of dependencyManifests(options.root)) {
+    if (!existsSync(path)) {
+      continue;
+    }
+    const manifest = JSON.parse(readFileSync(path, 'utf8')) as Record<string, unknown>;
+    for (const field of PINNED_FIELDS) {
+      const table = manifest[field];
+      if (typeof table !== 'object' || table === null || Array.isArray(table)) {
+        continue;
+      }
+      for (const [name, pin] of options.pins) {
+        const declared = (table as Record<string, unknown>)[name];
+        if (typeof declared === 'string' && declared !== pin) {
+          problems.push(
+            `${relative(options.root, path)} declares ${name} ${declared}, not the pinned ${pin}`,
+          );
+        }
+      }
+    }
+  }
+  for (const [name, pin] of options.pins) {
+    // A range pin is a policy statement, not a resolvable version; only an exact
+    // pin says what the lockfile must contain.
+    if (!/^\d+\.\d+\.\d+$/.test(pin)) {
+      continue;
+    }
+    const locked = lockedVersion(options.root, name);
+    if (locked === null) {
+      problems.push(`bun.lock has no resolution for ${name}, expected the pinned ${pin}`);
+    } else if (locked !== pin) {
+      problems.push(`bun.lock resolves ${name} to ${locked}, not the pinned ${pin}`);
+    }
+  }
+  if (problems.length > 0) {
+    throw new Error(
+      `Pinned ranges did not hold after the update:\n  ${problems.join('\n  ')}\n` +
+        'A pin changed deliberately is a change to .syncpackrc and every manifest that declares it.',
+    );
+  }
+};
+
 interface UpdateDependencies {
   root?: string;
   run?: typeof runBounded;
@@ -154,7 +354,9 @@ export const runUpdate = async (
     write(
       `Update preview (no writes, no network): ${options.lanes.join(' → ')}\n` +
         'nix: update flake.lock; bun: pin stable release + verified Nix sources + CI mirrors;\n' +
-        'packages: bun update --recursive --latest --exact (including .pi workspace).\n' +
+        'packages: bun update --recursive --latest --exact --lockfile-only, then restore and\n' +
+        '  verify every .syncpackrc pin, then bun install. Major upgrades are included except\n' +
+        '  where a pin in .syncpackrc excludes one.\n' +
         'Apply with --yes; add --verify for lint, typecheck and unit tests. Major upgrades are included.',
     );
     return 0;
@@ -243,7 +445,28 @@ export const runUpdate = async (
     }
     if (options.lanes.includes('packages')) {
       write('Updating exact-pinned dependencies in every Bun workspace…');
-      await execute({ command: bun, args: ['update', '--recursive', '--latest', '--exact'] });
+      const pins = readPinnedRanges(root);
+      const held = pins.size > 0 ? [...pins.keys()].join(', ') : 'none';
+      write(`Pinned ranges from .syncpackrc: ${held}`);
+      // `--lockfile-only` resolves and writes every manifest without installing,
+      // so no `prepare` script runs against a tree built from a pinned major that
+      // is about to be restored. The install that follows is the first one that
+      // touches node_modules, and it installs the restored ranges.
+      await execute({
+        command: bun,
+        args: ['update', '--recursive', '--latest', '--exact', '--lockfile-only'],
+      });
+      const restored = restorePinnedRanges({ root, pins });
+      for (const entry of restored) {
+        write(`  restored ${entry.name} ${entry.from} → ${entry.to} in ${entry.path}`);
+      }
+      await execute({ command: bun, args: ['install'] });
+      verifyPinnedRanges({ root, pins });
+      write(
+        restored.length === 0
+          ? 'Every pinned range already held; nothing to restore.'
+          : `Restored ${restored.length} pinned range(s) and verified them against bun.lock.`,
+      );
     } else if (options.lanes.includes('bun')) {
       // Regenerate the shared lockfile with the selected runtime, not the old one.
       await execute({ command: bun, args: ['install'] });

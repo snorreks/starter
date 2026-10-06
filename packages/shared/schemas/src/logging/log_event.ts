@@ -13,7 +13,7 @@
 // iteration, and `_appUnionIsSynced`/`_levelUnionIsSynced` make the compiler
 // enforce that the two never drift.
 
-import { type Static, Type } from '@sinclair/typebox';
+import { type Static, Type } from 'typebox';
 
 // -----------------------------------------------------------------------------
 // Severity

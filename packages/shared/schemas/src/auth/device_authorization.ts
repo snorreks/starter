@@ -15,7 +15,7 @@
 // prevented is a client that treats an unknown error code as "keep polling",
 // because that turns a denial into an indefinite wait.
 
-import { type Static, Type } from '@sinclair/typebox';
+import { type Static, Type } from 'typebox';
 
 /**
  * The public client identifier.

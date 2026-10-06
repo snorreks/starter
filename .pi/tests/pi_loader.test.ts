@@ -101,9 +101,16 @@ describe('Pi extension discovery', () => {
       const extensionsDir = join(projectDir, '.pi', 'extensions');
       mkdirSync(extensionsDir, { recursive: true });
 
+      // `registerCommand(name, definition)`, not `registerCommand({...})`. Pi 1.0
+      // changed this signature, and the old shape now fails to load *itself* —
+      // which made `extensions` empty and turned this control into a false
+      // negative: it read as "the loader reports nothing" when in fact the
+      // control's own good extension was the thing that broke.
       writeFileSync(
         join(extensionsDir, 'good.ts'),
-        'export default function (pi: any): void { pi.registerCommand({ name: "noop", handler: async () => {} }); }\n',
+        'export default function (pi: any): void {\n' +
+          '  pi.registerCommand("noop", { description: "does nothing", handler: async () => {} });\n' +
+          '}\n',
       );
 
       // The exact defect this file's sibling test guards against.

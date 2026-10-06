@@ -23,12 +23,12 @@
 // serve notes and auth perfectly well while answering *this* endpoint with a name
 // for what is missing — not a 500, and not a 404 that reads like a wrong URL.
 
-import { Value } from '@sinclair/typebox/value';
 import {
   CreateEncodeJobSchema,
   IDEMPOTENCY_KEY_HEADER,
   IdempotencyKeySchema,
 } from '@starter/schemas/jobs';
+import { Value } from 'typebox/value';
 import { json, jsonError, readJsonBody, unauthorized } from '#lib/server/http.ts';
 import type { RequestHandler } from './$types';
 

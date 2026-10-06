@@ -149,7 +149,7 @@
       // duplicate slot; this keeps the *queue* from growing while an earlier
       // instance is still running, so a stalled sweep does not accumulate
       // followers that all find nothing to do.
-      "concurrency": { "limit": 1 },
+      "concurrency": { "limit": 1 }
       // NO `schedules` here, and that is deliberate.
       //
       // This is the whole "never deploy both schedules" requirement expressed as
