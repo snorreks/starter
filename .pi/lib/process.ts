@@ -48,6 +48,7 @@ export interface BoundedRunResult {
   artifactPath?: string;
   timedOut: boolean;
   cancelled: boolean;
+  stdinError?: string;
 }
 
 const ARTIFACT_ROOT = join(process.cwd(), '.pi', 'artifacts');
@@ -217,7 +218,11 @@ export const runBounded = (
       // rather than a request.
       detached: true,
     });
+    let stdinError: string | undefined;
     if (options.input !== undefined) {
+      child.stdin?.on('error', (error) => {
+        stdinError = `Subprocess stdin failed: ${error.message}`;
+      });
       child.stdin?.end(options.input);
     }
 
@@ -318,15 +323,18 @@ export const runBounded = (
       resolve({
         // A process killed by a signal has no code; report a distinct one rather
         // than 0, so "timed out" never reads as "succeeded".
-        code: code ?? (signal === null ? 0 : 124),
+        // A child that closes stdin early did not receive the requested input;
+        // do not report its otherwise-successful exit as a successful operation.
+        code: stdinError ? 125 : (code ?? (signal === null ? 0 : 124)),
         stdout: stdout.text,
-        stderr: stderr.text,
+        stderr: stdinError ? `${stderr.text}${stdinError}`.slice(0, options.maxBytes) : stderr.text,
         truncated: stdout.truncated || stderr.truncated,
         ...(stdout.artifactPath === undefined && stderr.artifactPath === undefined
           ? {}
           : { artifactPath: stdout.artifactPath ?? stderr.artifactPath }),
         timedOut,
         cancelled,
+        ...(stdinError === undefined ? {} : { stdinError }),
       });
     });
   });

@@ -10,6 +10,7 @@
     "doctor-built": {
       "executable": "bun",
       "args": ["run", "scripts/src/cli.ts", "agent", "doctor", "--profile", "built", "--json"],
+      "operation": "doctor",
       "timeoutMs": 10000,
       "maxOutputBytes": 32768
     },
@@ -22,6 +23,8 @@
     "review": {
       "executable": "bun",
       "args": ["run", "scripts/src/cli.ts", "agent", "visual", "review", "--json"],
+      "operation": "review",
+      "runIdArg": "--run",
       "timeoutMs": 1200000,
       "maxOutputBytes": 524288
     },

@@ -9,10 +9,12 @@
 // idea of them.
 
 import { afterEach, describe, expect, test } from 'bun:test';
+import { spawn } from 'node:child_process';
 import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
+import { fileURLToPath } from 'node:url';
 import { startJob } from '../lib/jobs.ts';
 import { runBounded } from '../lib/process.ts';
 
@@ -45,6 +47,38 @@ afterEach(() => {
 });
 
 describe('runBounded', () => {
+  test('reports early child stdin closure without crashing its Node host', async () => {
+    const root = artifactRoot();
+    cleanups.push(root);
+    const source = fileURLToPath(new URL('../lib/process.ts', import.meta.url));
+    const build = await Bun.build({
+      entrypoints: [source],
+      outdir: root,
+      target: 'node',
+      format: 'esm',
+    });
+    expect(build.success).toBe(true);
+    const helper = join(root, 'process.js');
+    const script = `import { runBounded } from ${JSON.stringify(helper)}; const r = await runBounded('sh', ['-c', 'exec 0<&-; sleep 0.1'], { cwd: process.cwd(), timeoutMs: 5000, maxBytes: 1024, input: 'x'.repeat(1024 * 1024) }); process.stdout.write(JSON.stringify({ code: r.code, stdinError: r.stdinError }));`;
+    const child = spawn(process.execPath, ['--input-type=module', '--eval', script], {
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    let stdout = '';
+    let stderr = '';
+    child.stdout.setEncoding('utf8').on('data', (chunk) => (stdout += chunk));
+    child.stderr.setEncoding('utf8').on('data', (chunk) => (stderr += chunk));
+    const code = await new Promise<number | null>((resolve, reject) => {
+      child.once('error', reject);
+      child.once('close', resolve);
+    });
+    expect(code).toBe(0);
+    expect(stderr).not.toContain('Unhandled');
+    expect(JSON.parse(stdout)).toMatchObject({
+      code: 125,
+      stdinError: expect.stringContaining('EPIPE'),
+    });
+  });
+
   test('writes a bounded JSON payload to child stdin without placing it in argv', async () => {
     const result = await runBounded('sh', ['-c', 'cat'], {
       cwd: process.cwd(),

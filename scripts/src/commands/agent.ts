@@ -510,6 +510,20 @@ const startRuntime = async (argv: string[]): Promise<number> => {
   }
   const origin = `http://127.0.0.1:${port}`;
   const runtimeEnvPath = join(scope.dir, 'runtime.env');
+  const previousRuntimeEnvFile = process.env.STARTER_RUNTIME_ENV_FILE;
+  const previousRuntimeStateDir = process.env.STARTER_RUNTIME_STATE_DIR;
+  const restoreRuntimeEnvironment = (): void => {
+    if (previousRuntimeEnvFile === undefined) {
+      delete process.env.STARTER_RUNTIME_ENV_FILE;
+    } else {
+      process.env.STARTER_RUNTIME_ENV_FILE = previousRuntimeEnvFile;
+    }
+    if (previousRuntimeStateDir === undefined) {
+      delete process.env.STARTER_RUNTIME_STATE_DIR;
+    } else {
+      process.env.STARTER_RUNTIME_STATE_DIR = previousRuntimeStateDir;
+    }
+  };
   const descriptor = {
     schemaVersion: 1 as const,
     runId,
@@ -541,6 +555,10 @@ const startRuntime = async (argv: string[]): Promise<number> => {
       join(REPO_ROOT, 'apps/frontend/client'),
       runtimeEnvPath,
     );
+    // getPlatformProxy accepts the Wrangler persistence root (normally
+    // `.wrangler/state/v3`), while CLI commands accept the parent directory
+    // and append that versioned layout themselves.
+    process.env.STARTER_RUNTIME_STATE_DIR = join(scope.stateDir, 'v3');
   }
   const { main: devAppMain } = await import('../dev-app.ts');
   let exited: number | undefined;
@@ -556,7 +574,7 @@ const startRuntime = async (argv: string[]): Promise<number> => {
     const summary = (error as Error).message;
     if (profile === 'dev') {
       await rm(runtimeEnvPath, { force: true });
-      delete process.env.STARTER_RUNTIME_ENV_FILE;
+      restoreRuntimeEnvironment();
     }
     process.stdout.write(
       `${JSON.stringify({
@@ -581,7 +599,7 @@ const startRuntime = async (argv: string[]): Promise<number> => {
   } catch (error) {
     if (profile === 'dev') {
       await rm(runtimeEnvPath, { force: true });
-      delete process.env.STARTER_RUNTIME_ENV_FILE;
+      restoreRuntimeEnvironment();
     }
     process.stdout.write(
       `${JSON.stringify({
@@ -633,7 +651,7 @@ const startRuntime = async (argv: string[]): Promise<number> => {
   } finally {
     if (profile === 'dev') {
       await rm(runtimeEnvPath, { force: true });
-      delete process.env.STARTER_RUNTIME_ENV_FILE;
+      restoreRuntimeEnvironment();
     }
   }
 };

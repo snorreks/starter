@@ -53,6 +53,9 @@ export default defineConfig({
           : {
               platformProxy: {
                 envFiles: ['.env', '.env.local', process.env.STARTER_RUNTIME_ENV_FILE],
+                ...(process.env.STARTER_RUNTIME_STATE_DIR === undefined
+                  ? {}
+                  : { persist: { path: process.env.STARTER_RUNTIME_STATE_DIR } }),
               },
             }),
       }),

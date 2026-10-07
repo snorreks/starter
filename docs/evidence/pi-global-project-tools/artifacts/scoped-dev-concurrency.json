@@ -1,0 +1,31 @@
+{
+  "schemaVersion": 1,
+  "command": "bun run scripts/src/cli.ts agent runtime start --profile dev --run <run-id> --json",
+  "runs": [
+    {
+      "runId": "reconcile_cap_a",
+      "origin": "http://127.0.0.1:4507",
+      "healthStatus": 200,
+      "healthRunId": "reconcile_cap_a",
+      "statePath": ".wrangler/runs/reconcile_cap_a/state/v3/d1",
+      "artifactRoot": ".wrangler/runs/reconcile_cap_a/artifacts",
+      "logRoot": ".wrangler/runs/reconcile_cap_a/logs",
+      "runtimeDescriptorSha256": "0fb4fb1928db43134b6d8d6bb1a0485d42d025a8388f189b22c52485f6b65d35",
+      "applicationLogSha256": "3cb5f7213f1fa317768a0b0178032119c7134169126e41b42baa265c2b75b984"
+    },
+    {
+      "runId": "reconcile_cap_b",
+      "origin": "http://127.0.0.1:4297",
+      "healthStatus": 200,
+      "healthRunId": "reconcile_cap_b",
+      "statePath": ".wrangler/runs/reconcile_cap_b/state/v3/d1",
+      "artifactRoot": ".wrangler/runs/reconcile_cap_b/artifacts",
+      "logRoot": ".wrangler/runs/reconcile_cap_b/logs",
+      "runtimeDescriptorSha256": "9b0d2245ef489782e612cb231b9986042d707e83a6d4a1e9d91fe8da2a62ad1f",
+      "applicationLogSha256": "a74c3a7eeb14577530aa4db8911c03d1dcc6991d0b3f76c7d062e37f03061d35"
+    }
+  ],
+  "concurrent": true,
+  "stop": "Both commands were stopped after health verification with SIGINT.",
+  "scope": "This verifies distinct direct CLI dev runtime state and output roots. It does not test Pi parent-captain cross-stop authority."
+}
