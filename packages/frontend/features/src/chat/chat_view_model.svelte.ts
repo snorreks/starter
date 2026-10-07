@@ -36,7 +36,7 @@ import {
 import { createClientId, toAppError } from '@starter/utils';
 import type { ChatService, ChatStreamUpdate, StreamTurnResult } from './chat_service.ts';
 
-type ChatScreenService = Pick<ChatService, 'listMessages' | 'streamTurn'>;
+type ChatScreenService = Pick<ChatService, 'listMessages' | 'listMessagesPage' | 'streamTurn'>;
 
 /**
  * A message as this screen holds it.
@@ -64,12 +64,19 @@ export type ChatStatus =
   | { kind: 'ready' }
   | { kind: 'error'; message: string; retryable: boolean };
 
+export type OlderStatus =
+  | { kind: 'idle' }
+  | { kind: 'loading' }
+  | { kind: 'error'; message: string };
+
 export interface ChatScreenOptions {
   readonly chat: ChatScreenService;
   /** The conversation this screen shows, or `null` before one exists. */
   readonly conversation: Conversation | null;
   /** The history the server already rendered, so the first paint is not empty. */
   readonly initialMessages?: readonly Message[];
+  readonly olderCursor?: string | null;
+  readonly hasOlder?: boolean;
   /**
    * Injected so a test drives real frames rather than a model of them.
    *
@@ -92,6 +99,7 @@ export class ChatViewModel implements ScreenOwner, ScreenGuards {
   readonly className = 'ChatViewModel';
 
   status = $state<ChatStatus>({ kind: 'loading' });
+  olderStatus = $state<OlderStatus>({ kind: 'idle' });
   messages = $state<ChatMessageView[]>([]);
   /** Queued messages, oldest first. Rendered below the transcript. */
   queue = $state<QueuedMessage[]>([]);
@@ -115,6 +123,8 @@ export class ChatViewModel implements ScreenOwner, ScreenGuards {
   #conversation: Conversation | null;
   #seeded = false;
   #deferredSnapshot: readonly Message[] | null = null;
+  olderCursor = $state<string | null>(null);
+  hasOlder = $state(false);
   /** The in-flight turn's abort controller, or `null` when nothing is streaming. */
   #turn = $state<AbortController | null>(null);
   #inFlight = $state(0);
@@ -123,6 +133,8 @@ export class ChatViewModel implements ScreenOwner, ScreenGuards {
     this.#chat = options.chat;
     this.#conversation = options.conversation;
     this.#newClientId = options.newClientId ?? createClientId;
+    this.olderCursor = options.olderCursor ?? null;
+    this.hasOlder = options.hasOlder ?? false;
     if (options.initialMessages !== undefined) {
       this.seed(options.initialMessages);
     }
@@ -221,6 +233,55 @@ export class ChatViewModel implements ScreenOwner, ScreenGuards {
         message: appError.message,
         retryable: appError.errorType !== 'forbidden' && appError.errorType !== 'unauthorized',
       };
+    }
+  }
+
+  async loadOlder(): Promise<void> {
+    if (
+      this.olderStatus.kind === 'loading' ||
+      !this.hasOlder ||
+      this.olderCursor === null ||
+      this.conversationId === null ||
+      this.requests.cancelled
+    ) {
+      return;
+    }
+    const { token, signal } = this.requests.begin();
+    const conversationId = this.conversationId;
+    this.olderStatus = { kind: 'loading' };
+    try {
+      const page = await this.#chat.listMessagesPage(conversationId, this.olderCursor, signal);
+      if (!this.requests.isCurrent(token)) {
+        return;
+      }
+      const byId = new Map<string, ChatMessageView>();
+      for (const message of page.items) {
+        byId.set(message.id, toView(message));
+      }
+      for (const message of this.messages) {
+        const key = message.serverId ?? message.clientId;
+        if (!byId.has(key)) {
+          byId.set(key, message);
+        }
+      }
+      this.messages = [...byId.values()].sort(
+        (a, b) =>
+          a.createdAt - b.createdAt ||
+          (a.serverId ?? a.clientId).localeCompare(b.serverId ?? b.clientId),
+      );
+      this.olderCursor = page.nextCursor;
+      this.hasOlder = page.hasMore;
+      this.olderStatus = { kind: 'idle' };
+    } catch (cause) {
+      if (!this.requests.isCurrent(token)) {
+        return;
+      }
+      const appError = toAppError(cause, 'Could not load older messages.');
+      if (appError.errorType === 'aborted') {
+        this.olderStatus = { kind: 'idle' };
+        return;
+      }
+      this.olderStatus = { kind: 'error', message: appError.message };
     }
   }
 

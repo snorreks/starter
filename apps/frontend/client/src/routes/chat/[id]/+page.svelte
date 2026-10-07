@@ -23,5 +23,5 @@ let { data }: { data: PageData } = $props();
 </svelte:head>
 
 {#key data.conversation.id}
-  <ChatScreen conversation={data.conversation} messages={data.messages} />
+  <ChatScreen conversation={data.conversation} messages={data.messages} olderCursor={data.olderCursor} hasOlder={data.hasOlder} />
 {/key}

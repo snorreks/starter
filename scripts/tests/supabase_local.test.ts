@@ -1,14 +1,18 @@
 import { describe, expect, test } from 'bun:test';
-import { mkdtemp, readlink, rm } from 'node:fs/promises';
+import { createServer } from 'node:net';
+import { mkdtemp, readFile, readlink, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
   allocateSupabaseLocal,
   assertSupabaseOwnership,
+  ensureSupabasePortsAvailable,
   persistSupabaseOwnership,
   requireContainerRuntime,
   resetSupabaseLocal,
   stopSupabaseLocal,
+  writeOwnedWorkerVars,
+  removeOwnedWorkerVars,
 } from '../src/db/supabase_local.ts';
 
 describe('isolated local Supabase allocation', () => {
@@ -46,6 +50,27 @@ describe('isolated local Supabase allocation', () => {
     expect(first.urls.pop3).toBe(`127.0.0.1:${first.ports.pop3}`);
   });
 
+  test('a local service already using one allocated port makes the run select a free block', async () => {
+    const allocation = allocateSupabaseLocal('/checkouts/port-conflict', 'same-run');
+    const occupiedPort = allocation.ports.mail;
+    const listener = createServer();
+    await new Promise<void>((resolve, reject) => {
+      listener.once('error', reject);
+      listener.listen(occupiedPort, '0.0.0.0', () => resolve());
+    });
+
+    try {
+      const selected = await ensureSupabasePortsAvailable(allocation);
+      expect(selected.ports.mail).not.toBe(occupiedPort);
+      expect(selected.urls.mail).toBe(`http://127.0.0.1:${selected.ports.mail}`);
+      expect(selected.ports.postgres).toBe(selected.ports.api + 1);
+    } finally {
+      await new Promise<void>((resolve, reject) => {
+        listener.close((error) => (error === undefined ? resolve() : reject(error)));
+      });
+    }
+  });
+
   test('stale ownership cannot stop or reset another allocation', async () => {
     const owner = allocateSupabaseLocal('/checkouts/owner', 'owner-run');
     const other = allocateSupabaseLocal('/checkouts/other', 'other-run');
@@ -59,5 +84,31 @@ describe('isolated local Supabase allocation', () => {
     expect(() => requireContainerRuntime({ dockerPath: undefined })).toThrow(
       /Docker-compatible container runtime is required/,
     );
+  });
+
+  test('user .dev.vars survives and generated vars are private, run-owned, and removed only unchanged', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'supabase-vars-'));
+    const allocation = allocateSupabaseLocal(root, 'owned-vars');
+    const userFile = join(root, '.dev.vars');
+    const userContents = 'user configuration fixture';
+    try {
+      await writeFile(userFile, userContents, { mode: 0o600 });
+      const generated = await writeOwnedWorkerVars(allocation, {
+        STARTER_BACKEND_PROFILE: 'supabase',
+      });
+      expect(generated.path).toBe(join(allocation.root, 'supabase.dev.vars'));
+      expect((await stat(generated.path)).mode & 0o777).toBe(0o600);
+      await removeOwnedWorkerVars(generated.path, generated.contents);
+      expect(await readFile(userFile, 'utf8')).toBe(userContents);
+
+      const second = await writeOwnedWorkerVars(allocation, { FIXTURE: 'one' });
+      await writeFile(second.path, 'changed by another owner');
+      await expect(removeOwnedWorkerVars(second.path, second.contents)).rejects.toThrow(
+        /changed before teardown/,
+      );
+      expect(await readFile(second.path, 'utf8')).toBe('changed by another owner');
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
   });
 });

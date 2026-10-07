@@ -2,7 +2,11 @@ import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { readFile } from 'node:fs/promises';
 import { createClient } from '@supabase/supabase-js';
 import postgres from 'postgres';
-import { createSupabaseNotesRepository, type Database } from '../src/supabase/index.ts';
+import {
+  createSupabaseJobRepository,
+  createSupabaseNotesRepository,
+  type Database,
+} from '../src/supabase/index.ts';
 
 const url = process.env.SUPABASE_URL;
 const anonKey = process.env.SUPABASE_ANON_KEY;
@@ -78,15 +82,15 @@ describe('the real local Supabase Data API enforces owner boundaries', () => {
     expect(noteB.id).toMatch(/^note_[0-9a-f-]{36}$/i);
     expect(noteB.createdAt).toBeGreaterThan(1_700_000_000_000);
 
-    const listA = await repoA.list(userA.id, 0);
+    const listA = await repoA.list(userA.id, null);
     expect(listA.notes.some((note) => note.id === noteB.id)).toBe(false);
     expect(listA.hasMore).toBe(false);
     const update = await repoA.update(userA.id, noteB.id, { title: 'spoofed' });
     expect(update).toBeNull();
     expect(await repoA.remove(userA.id, noteB.id)).toBe(false);
-    expect((await repoB.list(userB.id, 0)).notes.find((note) => note.id === noteB.id)?.title).toBe(
-      'Private to B',
-    );
+    expect(
+      (await repoB.list(userB.id, null)).notes.find((note) => note.id === noteB.id)?.title,
+    ).toBe('Private to B');
 
     const spoof = await fetch(`${url}/rest/v1/notes`, {
       method: 'POST',
@@ -195,6 +199,57 @@ describe('transactional admission and attempt fencing in Postgres', () => {
     expect(retried.error?.message ?? retried.data?.[0]?.outcome).toBe('admitted');
     expect(retried.data?.[0]?.assistant_message_id).toBe(admittedRow.assistant_message_id);
     expect(retried.data?.[0]?.attempt).toBe(admittedRow.attempt + 1);
+    await sql`update private.chat_generations set updated_at=now()-interval '61 seconds'
+      where owner_id=${userA.id} and conversation_id=${conversation.id} and client_id=${args.p_client_id}`;
+    const reclaimed = await userA.client.rpc('admit_chat_generation', args);
+    expect(reclaimed.data?.[0]?.outcome).toBe('admitted');
+    expect(reclaimed.data?.[0]?.attempt).toBe(admittedRow.attempt + 2);
+    const secondOwnerSlot = await userA.client.rpc('admit_chat_generation', {
+      ...args,
+      p_client_id: 'second-active-generation',
+      p_request_fingerprint: await digest('second active generation'),
+      p_user_message_id: crypto.randomUUID(),
+      p_content: 'second',
+    });
+    expect(secondOwnerSlot.data?.[0]?.outcome).toBe('admitted');
+    const thirdOwnerSlot = await userA.client.rpc('admit_chat_generation', {
+      ...args,
+      p_client_id: 'third-active-generation',
+      p_request_fingerprint: await digest('third active generation'),
+      p_user_message_id: crypto.randomUUID(),
+      p_content: 'third',
+    });
+    expect(thirdOwnerSlot.error?.message).toContain('owner chat concurrency limit reached');
+    const independentConversation = await userB.client
+      .from('conversations')
+      .insert({ owner_id: userB.id, title: 'Independent owner' })
+      .select('id')
+      .single();
+    if (independentConversation.error || !independentConversation.data) {
+      throw new Error(
+        `Independent owner fixture failed: ${independentConversation.error?.message}`,
+      );
+    }
+    const independentAdmission = await userB.client.rpc('admit_chat_generation', {
+      p_conversation_id: independentConversation.data.id,
+      p_client_id: 'independent-owner-generation',
+      p_request_fingerprint: await digest('independent owner generation'),
+      p_user_message_id: crypto.randomUUID(),
+      p_content: 'independent',
+    });
+    expect(independentAdmission.data?.[0]?.outcome).toBe('admitted');
+    await admin.rpc('fail_chat_generation', {
+      p_conversation_id: independentConversation.data.id,
+      p_client_id: 'independent-owner-generation',
+      p_attempt: independentAdmission.data?.[0]?.attempt ?? 0,
+      p_state: 'cancelled',
+    });
+    await admin.rpc('fail_chat_generation', {
+      p_conversation_id: conversation.id,
+      p_client_id: 'second-active-generation',
+      p_attempt: secondOwnerSlot.data?.[0]?.attempt ?? 0,
+      p_state: 'cancelled',
+    });
     const staleCompletion = await admin.rpc('complete_chat_generation', {
       p_conversation_id: conversation.id,
       p_client_id: args.p_client_id,
@@ -205,7 +260,7 @@ describe('transactional admission and attempt fencing in Postgres', () => {
     const completed = await admin.rpc('complete_chat_generation', {
       p_conversation_id: conversation.id,
       p_client_id: args.p_client_id,
-      p_attempt: admittedRow.attempt + 1,
+      p_attempt: reclaimed.data?.[0]?.attempt ?? 0,
       p_content: 'trusted server completion',
     });
     expect(completed.error).toBeNull();
@@ -232,9 +287,55 @@ describe('transactional admission and attempt fencing in Postgres', () => {
     );
     const counter =
       await sql`select admitted from private.admission_counters where owner_id=${userA.id}`;
+    expect(Number(counter[0]?.admitted)).toBeLessThanOrEqual(5);
+    const accepted = distinct.filter((result) => result.error === null).length;
+    expect(accepted).toBeGreaterThan(0);
+    expect(accepted).toBeLessThanOrEqual(3);
+    expect(distinct.filter((result) => result.error !== null).length).toBe(7 - accepted);
+  });
+
+  test('failed retries consume the same five-per-hour admission quota', async () => {
+    const { data: conversation, error } = await userB.client
+      .from('conversations')
+      .insert({ owner_id: userB.id, title: 'Retry quota fixture' })
+      .select('id')
+      .single();
+    if (error || !conversation) {
+      throw new Error(`Retry quota conversation fixture failed: ${error?.message}`);
+    }
+    const args = {
+      p_conversation_id: conversation.id,
+      p_client_id: 'quota-retry-key',
+      p_request_fingerprint: await digest('same retry content'),
+      p_user_message_id: crypto.randomUUID(),
+      p_content: 'retry',
+    };
+    const first = await userB.client.rpc('admit_chat_generation', args);
+    expect(first.data?.[0]?.outcome).toBe('admitted');
+    let attempt = first.data?.[0]?.attempt ?? 0;
+    for (let retry = 0; retry < 3; retry += 1) {
+      const failed = await admin.rpc('fail_chat_generation', {
+        p_conversation_id: conversation.id,
+        p_client_id: args.p_client_id,
+        p_attempt: attempt,
+        p_state: 'failed',
+      });
+      expect(failed.data).toBe(true);
+      const admitted = await userB.client.rpc('admit_chat_generation', args);
+      expect(admitted.data?.[0]?.outcome).toBe('admitted');
+      attempt = admitted.data?.[0]?.attempt ?? 0;
+    }
+    await admin.rpc('fail_chat_generation', {
+      p_conversation_id: conversation.id,
+      p_client_id: args.p_client_id,
+      p_attempt: attempt,
+      p_state: 'failed',
+    });
+    const overQuota = await userB.client.rpc('admit_chat_generation', args);
+    expect(overQuota.error?.message).toContain('chat admission limit reached');
+    const counter =
+      await sql`select admitted from private.admission_counters where owner_id=${userB.id}`;
     expect(Number(counter[0]?.admitted)).toBe(5);
-    expect(distinct.filter((result) => result.error === null).length).toBe(4);
-    expect(distinct.filter((result) => result.error !== null).length).toBe(3);
   });
 
   test('only one service lease wins and stale completion cannot overwrite the reclaimed attempt', async () => {
@@ -349,4 +450,46 @@ describe('transactional admission and attempt fencing in Postgres', () => {
       }[];
     expect(retainedJob).toEqual([{ status: 'succeeded', output_key: null }]);
   });
+});
+
+test('retention attempts are durable and fresh rows outrank unchanged refusals', async () => {
+  const cutoff = new Date(Date.now() - 10 * 86_400_000).toISOString();
+  const insertExpired = async (id: string) => {
+    await sql`insert into private.jobs
+      (id, owner_id, status, fixture, preset, idempotency_key, request_fingerprint,
+       workflow_id, output_key, output_expires_at)
+      values (${id}, ${userB.id}, 'succeeded', 'sample-v1', 'demo-180p-v1', ${id},
+        ${'a'.repeat(64)}, ${`encode-${id}`}, ${`media/v1/jobs/${id}/attempts/a.mp4`},
+        now()-interval '20 days')`;
+  };
+  const queue = async () => {
+    const result = await admin.rpc('queue_expired_job_artifacts', { p_cutoff: cutoff, p_limit: 1 });
+    expect(result.error).toBeNull();
+    return result.data;
+  };
+  await insertExpired('job_retention_refused');
+  expect((await queue())?.map((row) => row.job_id)).toEqual(['job_retention_refused']);
+  // Validation/R2 refusals leave this row unchanged; its issued attempt is durable.
+  expect(
+    await sql`select runs from private.job_artifact_retirements where job_id='job_retention_refused'`,
+  ).toMatchObject([{ runs: 1 }]);
+  await insertExpired('job_retention_fresh');
+  expect((await queue())?.map((row) => row.job_id)).toEqual(['job_retention_fresh']);
+  expect((await queue())?.map((row) => row.job_id)).toEqual(['job_retention_refused']);
+  expect(
+    await sql`select runs from private.job_artifact_retirements where job_id='job_retention_refused'`,
+  ).toMatchObject([{ runs: 2 }]);
+  const repository = createSupabaseJobRepository(userB.client, admin);
+  expect((await repository.getForOwner('job_retention_fresh'))?.dispatchState).toBe('pending');
+  await sql`update private.jobs set dispatch_state='dispatch_failed' where id='job_retention_fresh'`;
+  expect(
+    (await repository.listForOwner()).find((job) => job.id === 'job_retention_fresh')
+      ?.dispatchState,
+  ).toBe('dispatch_failed');
+  const retired = await admin.rpc('retire_job_artifact', {
+    p_job_id: 'job_retention_fresh',
+    p_output_key: 'media/v1/jobs/job_retention_fresh/attempts/a.mp4',
+  });
+  expect(retired.error).toBeNull();
+  expect(retired.data).toBe(true);
 });

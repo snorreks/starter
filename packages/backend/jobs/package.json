@@ -16,7 +16,8 @@
     "test": "bun test"
   },
   "dependencies": {
-    "@starter/schemas": "workspace:*"
+    "@starter/schemas": "workspace:*",
+    "jose": "6.2.12"
   },
   "devDependencies": {
     "@types/bun": "1.4.2"

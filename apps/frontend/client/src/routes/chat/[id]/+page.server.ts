@@ -32,10 +32,13 @@ export const load: PageServerLoad = async ({ locals, params, url }) => {
     throw error(404, 'That conversation does not exist.');
   }
 
+  const page = await service.messagePage(user.id, params.id, null);
   return {
     conversation,
     // The history travels with the page so the first paint is the whole transcript
     // rather than a spinner. The ViewModel is seeded with it and does not re-fetch.
-    messages: await service.messages(user.id, params.id),
+    messages: page.items,
+    olderCursor: page.nextCursor,
+    hasOlder: page.hasMore,
   };
 };

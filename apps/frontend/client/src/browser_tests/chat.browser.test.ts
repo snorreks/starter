@@ -155,7 +155,12 @@ test('creating label reacts while the request is outstanding', async () => {
 });
 
 test('same-conversation reload keeps the queue; navigation sends to the new conversation', async () => {
-  let current = { conversation, messages: [] as Message[] };
+  let current = {
+    conversation,
+    messages: [] as Message[],
+    olderCursor: null as string | null,
+    hasOlder: false,
+  };
   let update!: () => void;
   const subscribe = createSubscriber((notify) => {
     update = notify;
@@ -191,11 +196,21 @@ test('same-conversation reload keeps the queue; navigation sends to the new conv
     await expect
       .poll(() => mounted.target.querySelectorAll('[data-testid="chat-queue-item"]').length)
       .toBe(1);
-    current = { conversation: { ...conversation }, messages: [] };
+    current = {
+      conversation: { ...conversation },
+      messages: [],
+      olderCursor: null,
+      hasOlder: false,
+    };
     update();
     flushSync();
     expect(mounted.target.querySelectorAll('[data-testid="chat-queue-item"]')).toHaveLength(1);
-    current = { conversation: { ...conversation, id: 'two', title: 'Second' }, messages: [] };
+    current = {
+      conversation: { ...conversation, id: 'two', title: 'Second' },
+      messages: [],
+      olderCursor: null,
+      hasOlder: false,
+    };
     update();
     flushSync();
     expect(mounted.target.querySelector('h1')?.textContent).toBe('Second');

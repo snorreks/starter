@@ -76,6 +76,10 @@ test('build environment excludes credentials even when called from authenticated
       BETTER_AUTH_SECRET: 'fixture-auth',
       RESEND_API_KEY: 'fixture-mail',
       SOPS_AGE_KEY: 'fixture-identity',
+      OPENROUTER_API_KEY: 'fixture-review',
+      E2E_VISION_API_KEY: 'fixture-vision',
+      SUPABASE_SERVICE_ROLE_KEY: 'fixture-admin',
+      SUPABASE_DB_PASSWORD: 'fixture-database',
     }),
   ).toEqual({ PATH: '/bin', PUBLIC_LABEL: 'starter' });
 });
@@ -91,6 +95,9 @@ test('the bundler hands Wrangler no credential, not merely a filter that would r
       CLOUDFLARE_API_TOKEN: 'fixture-token',
       BETTER_AUTH_SECRET: 'fixture-auth',
       RESEND_API_KEY: 'fixture-mail',
+      OPENROUTER_API_KEY: 'fixture-review',
+      E2E_VISION_API_KEY: 'fixture-vision',
+      SUPABASE_SERVICE_ROLE_KEY: 'fixture-admin',
     },
     run: async (command) => {
       seen.push(command.env ?? {});

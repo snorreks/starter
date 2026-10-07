@@ -8,7 +8,7 @@
     "",
     "The mirrors that exist, and who owns them:",
     "",
-    "  .bun-version                      oven-sh/setup-bun in CI, proto locally",
+    "  .bun-version                      oven-sh/setup-bun in CI; validated locally",
     "  .github/workflows/*.yml BUN_VERSION  a LITERAL, not a read of .bun-version",
     "  flake.nix                         reads toolchain.json, writes none",
     "  .moon/toolchains.yml              names the package manager only",
@@ -71,30 +71,5 @@
     "browsers": [
       "chromium"
     ]
-  },
-  "proto": {
-    "//": [
-      "Moon's toolchain manager, and so a prerequisite for every task in a",
-      "project that declares a `toolchains:` block — which is most of them.",
-      "",
-      "Moon 2.6.0 refuses to run below `minimum`, and the refusal names neither",
-      "proto nor the version it wanted:",
-      "",
-      "  Unable to use the Bun plugin with identifier bun, as it requires a",
-      "  minimum proto version of 0.60.0-alpha.0, but found 0.56.4 instead.",
-      "",
-      "which surfaces as a stack trace inside whatever task happened to call Moon",
-      "first, rather than as a named prerequisite. `flake.nix` does not supply",
-      "proto, and no workflow installs it: it is a host prerequisite like Node.",
-      "",
-      "Moon finds it at `~/.proto/bin` without it being on PATH, so a check here",
-      "is about the binary, not the environment.",
-      "",
-      "`minimum` is a floor and `verified` is what this repository was checked",
-      "against. They are deliberately different values: pinning proto to an exact",
-      "patch would make an unrelated proto release break every lane here."
-    ],
-    "minimum": "0.60.0-alpha.0",
-    "verified": "0.62.3"
   }
 }

@@ -250,6 +250,18 @@ const runTests = async (env: Record<string, string>): Promise<number> => {
 };
 
 const command = process.argv[2] ?? 'test';
+const laneArgs = process.argv.slice(3).filter((argument) => argument !== '--');
+
+if (laneArgs.length > 0) {
+  if (
+    command !== 'test' ||
+    laneArgs.join(' ') !== '--backend supabase --processor cloud-run-local'
+  ) {
+    fail('Usage: bun run test:compute -- --backend supabase --processor cloud-run-local');
+  }
+  await import('./cloud_run_local.ts');
+  process.exit(0);
+}
 
 if (command === 'serve') {
   // `bun run dev` for a human: the built Worker in the local runtime against the

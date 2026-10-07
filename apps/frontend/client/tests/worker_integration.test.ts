@@ -29,7 +29,7 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:test';
 import assert from 'node:assert/strict';
 import { type ChildProcess, spawn } from 'node:child_process';
-import { closeSync, existsSync, openSync, readFileSync, rmSync } from 'node:fs';
+import { closeSync, existsSync, mkdirSync, openSync, readFileSync, rmSync } from 'node:fs';
 import { createServer } from 'node:net';
 import { join } from 'node:path';
 import type { LogEvent } from '@starter/schemas/logging';
@@ -42,7 +42,6 @@ import { REPO_ROOT } from './database_paths.ts';
 const APP_DIR = join(REPO_ROOT, 'apps/frontend/client');
 const APP_CONFIG = join(APP_DIR, 'wrangler.jsonc');
 const WORKER_ENTRY = join(APP_DIR, '.svelte-kit/cloudflare/_worker.js');
-const LOCAL_STATE = join(APP_DIR, '.wrangler/state');
 
 for (const path of ['/_worker.js', '/_worker.js.map']) {
   test(`private Worker artifact ${path} is not served as a public asset`, async () => {
@@ -62,14 +61,31 @@ for (const path of ['/_worker.js', '/_worker.js.map']) {
  */
 const WRANGLER = join(APP_DIR, 'node_modules', '.bin', 'wrangler');
 
-const WORKER_LOG = process.env.WORKER_LOG ?? '/tmp/starter-integration-worker.log';
-
 /** Identifies this run. Echoed by /api/health so readiness is provable. */
 const RUN_ID = `run-${createId('it', 8)}`;
+const RUN_ROOT = join(REPO_ROOT, '.wrangler', 'runs', `worker_${RUN_ID}`);
+const LOCAL_STATE = join(RUN_ROOT, 'state');
+const RUN_LOGS = join(RUN_ROOT, 'logs');
+const WORKER_LOG = process.env.WORKER_LOG ?? join(RUN_LOGS, 'worker.log');
+mkdirSync(RUN_LOGS, { recursive: true });
 
 /** Per-minute sign-in budget for this run. The limit itself stays enabled. */
 const AUTH_RATE_LIMIT_MAX = '500';
 const SUPABASE_PREVIEW = process.env.STARTER_BACKEND_PROFILE === 'supabase';
+const DEV_VARS_PATH = process.env.STARTER_DEV_VARS_PATH;
+const devVars =
+  DEV_VARS_PATH === undefined
+    ? {}
+    : Object.fromEntries(
+        readFileSync(DEV_VARS_PATH, 'utf8')
+          .split(/\r?\n/)
+          .filter(Boolean)
+          .map((line) => {
+            const split = line.indexOf('=');
+            return [line.slice(0, split), JSON.parse(line.slice(split + 1)) as string];
+          }),
+      );
+const localEnvFileArgs = DEV_VARS_PATH === undefined ? [] : ['--env-file', DEV_VARS_PATH];
 
 let server: ChildProcess | undefined;
 let port = 0;
@@ -84,7 +100,7 @@ const supabaseSignup = async () => {
   };
   const authUrl = process.env.SUPABASE_URL;
   const anonKey = process.env.SUPABASE_ANON_KEY;
-  const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  const serviceRoleKey = devVars.SUPABASE_SERVICE_ROLE_KEY;
   if (!authUrl || !anonKey || !serviceRoleKey) {
     throw new Error('Supabase preview test credentials were not forwarded by the backend harness.');
   }
@@ -208,7 +224,19 @@ beforeAll(async () => {
   rmSync(LOCAL_STATE, { recursive: true, force: true });
 
   const migrate = spawnSync(
-    [WRANGLER, 'd1', 'migrations', 'apply', 'DB', '--local', '--config', APP_CONFIG],
+    [
+      WRANGLER,
+      'd1',
+      'migrations',
+      'apply',
+      'DB',
+      '--local',
+      '--config',
+      APP_CONFIG,
+      '--persist-to',
+      LOCAL_STATE,
+      ...localEnvFileArgs,
+    ],
     { cwd: REPO_ROOT, stdout: 'pipe', stderr: 'pipe' },
   );
   if (migrate.exitCode !== 0) {
@@ -227,6 +255,9 @@ beforeAll(async () => {
       '--local',
       '--config',
       APP_CONFIG,
+      '--persist-to',
+      LOCAL_STATE,
+      ...localEnvFileArgs,
       '--var',
       `TEST_RUN_ID:${RUN_ID}`,
       // Explicit, and the default in wrangler.jsonc too. The app decides whether
@@ -299,7 +330,7 @@ if (SUPABASE_PREVIEW) {
         headers: { ...headers(first.cookies), 'content-type': 'application/json' },
         body: JSON.stringify({ title: 'first owner', body: 'private' }),
       });
-    expect(firstNote.status).toBe(200);
+      expect(firstNote.status).toBe(200);
       const ownList = await fetch(`${base()}/api/notes`, { headers: headers(first.cookies) });
       const otherList = await fetch(`${base()}/api/notes`, { headers: headers(second.cookies) });
       expect(await ownList.text()).toContain('first owner');
@@ -351,21 +382,35 @@ if (SUPABASE_PREVIEW) {
 
     test('job admission and status use owner scoped Postgres and keep dispatch disabled', async () => {
       const [owner, other] = await Promise.all([supabaseSignup(), supabaseSignup()]);
-      const create = () => fetch(`${base()}/api/jobs`, {
-        method: 'POST',
-        headers: { cookie: owner.cookies, origin: base(), 'content-type': 'application/json', 'idempotency-key': 'preview-job-01' },
-        body: JSON.stringify({ fixture: 'sample-v1', preset: 'demo-180p-v1' }),
-      });
+      const create = () =>
+        fetch(`${base()}/api/jobs`, {
+          method: 'POST',
+          headers: {
+            cookie: owner.cookies,
+            origin: base(),
+            'content-type': 'application/json',
+            'idempotency-key': 'preview-job-01',
+          },
+          body: JSON.stringify({ fixture: 'sample-v1', preset: 'demo-180p-v1' }),
+        });
       const created = await create();
       expect(created.status).toBe(202);
-      const job = await created.json() as { id: string; status: string; outputAvailable: boolean };
+      const job = (await created.json()) as {
+        id: string;
+        status: string;
+        outputAvailable: boolean;
+      };
       expect(job).toMatchObject({ status: 'pending', outputAvailable: false });
       const replay = await create();
       expect(replay.status).toBe(202);
       expect(await replay.json()).toMatchObject({ id: job.id });
-      const status = await fetch(`${base()}/api/jobs/${job.id}`, { headers: { cookie: owner.cookies } });
+      const status = await fetch(`${base()}/api/jobs/${job.id}`, {
+        headers: { cookie: owner.cookies },
+      });
       expect(await status.json()).toMatchObject({ id: job.id, status: 'pending' });
-      const otherStatus = await fetch(`${base()}/api/jobs/${job.id}`, { headers: { cookie: other.cookies } });
+      const otherStatus = await fetch(`${base()}/api/jobs/${job.id}`, {
+        headers: { cookie: other.cookies },
+      });
       expect(otherStatus.status).toBe(404);
     });
 
@@ -378,7 +423,9 @@ if (SUPABASE_PREVIEW) {
         body: JSON.stringify({ email: nextEmail }),
       });
       expect(changed.status).toBe(200);
-      const current = await fetch(`${base()}/api/auth/get-session`, { headers: { cookie: cookies } });
+      const current = await fetch(`${base()}/api/auth/get-session`, {
+        headers: { cookie: cookies },
+      });
       expect(await current.text()).toContain(account.email);
       for (const email of [account.email, nextEmail]) {
         const captured = await fetch(`${base()}/api/dev/mail?to=${encodeURIComponent(email)}`);
@@ -397,7 +444,9 @@ if (SUPABASE_PREVIEW) {
         body: '{}',
       });
       expect(deleted.status).toBe(200);
-      expect((await fetch(`${base()}/api/notes`, { headers: { cookie: cookies } })).status).toBe(401);
+      expect((await fetch(`${base()}/api/notes`, { headers: { cookie: cookies } })).status).toBe(
+        401,
+      );
     });
   });
 }
