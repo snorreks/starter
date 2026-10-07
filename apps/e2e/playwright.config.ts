@@ -110,6 +110,8 @@ export const AUTH_RATE_LIMIT_MAX = '500';
 
 export default defineConfig({
   testDir: './tests',
+  testMatch:
+    process.env.STARTER_BACKEND_PROFILE === 'supabase' ? ['notes.spec.ts'] : ['**/*.spec.ts'],
   testIgnore: ['tests/audit/**', 'tests/full/**', 'tests/visual/**'],
   outputDir: './test-results',
   // Screenshots of failures only: a full-page shot per test would fill a disk
@@ -161,6 +163,18 @@ export default defineConfig({
         // than merging with it, so anything the Worker needs must be listed here
         // explicitly — including these, which the preflight compares against.
         TEST_RUN_ID,
+        ...(process.env.STARTER_BACKEND_PROFILE === 'supabase'
+          ? {
+              STARTER_BACKEND_PROFILE: 'supabase',
+              SUPABASE_URL: process.env.SUPABASE_URL ?? '',
+              SUPABASE_ANON_KEY: process.env.SUPABASE_ANON_KEY ?? '',
+              SUPABASE_SERVICE_ROLE_KEY: process.env.SUPABASE_SERVICE_ROLE_KEY ?? '',
+              SUPABASE_MAIL_URL: process.env.SUPABASE_MAIL_URL ?? '',
+              // Wrangler rewrites Host to omit the listener port when bound to
+              // loopback. Auth callback links must return to this browser origin.
+              BETTER_AUTH_URL: appBaseUrl,
+            }
+          : {}),
         E2E_RUN_ID: TEST_RUN_ID,
         STARTER_LOG_DIR: RUN_SCOPE.logDir,
         E2E_EVIDENCE_DIR: `${RUN_SCOPE.artifactDir}/visual`,

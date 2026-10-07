@@ -84,10 +84,17 @@ export const actions: Actions = {
     }
 
     try {
-      await submitAuthAction(locals.container, request, cookies, 'reset-password', {
-        newPassword,
-        token,
-      });
+      await submitAuthAction(
+        locals.container,
+        request,
+        cookies,
+        'reset-password',
+        {
+          newPassword,
+          token,
+        },
+        locals.context?.responseHeaders ?? null,
+      );
     } catch (error) {
       if (toAppError(error).errorType === 'rate_limited') {
         return fail(429, {

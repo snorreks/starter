@@ -112,4 +112,68 @@ describe('request scoped Supabase clients', () => {
       'Bearer local-only-service-role',
     ]);
   });
+
+  test('job status and list use owner-scoped RPCs and reject malformed DTO data', async () => {
+    const status = {
+      id: 'job_preview_1',
+      kind: 'encode',
+      status: 'pending',
+      createdAt: 1,
+      updatedAt: 2,
+      outputAvailable: false,
+      errorCode: null,
+    } as const;
+    const headers = captureRequests([
+      status,
+      [status],
+      true,
+      { ...status, kind: 'invalid' },
+      [status, { ...status, kind: 'invalid' }],
+      status,
+    ]);
+    const repository = createSupabaseJobRepository(userClient(), adminClient());
+    expect(await repository.getForOwner(status.id)).toEqual(status);
+    expect(await repository.listForOwner()).toEqual([status]);
+    expect(await repository.disableDispatch(status.id)).toBe(true);
+    expect(headers.map((request) => request.get('Authorization'))).toEqual([
+      'Bearer user-token',
+      'Bearer user-token',
+      'Bearer local-only-service-role',
+    ]);
+    expect(await repository.getForOwner(status.id)).toBeNull();
+    await expect(repository.listForOwner()).rejects.toThrow();
+    await expect(repository.listForOwner()).rejects.toThrow();
+  });
+});
+
+test('conversation and stored-message lookups constrain the owner and ID in the query', async () => {
+  const urls: URL[] = [];
+  const row = {
+    id: '123',
+    owner_id: 'owner',
+    title: 'Older conversation',
+    created_at: '2026-01-01',
+    updated_at: '2026-01-01',
+    messages: [{ count: 2 }],
+  };
+  globalThis.fetch = Object.assign(
+    async (input: string | URL | Request) => {
+      const url = new URL(String(input));
+      urls.push(url);
+      return Response.json(url.searchParams.get('owner_id') === 'eq.owner' ? row : null);
+    },
+    { preconnect: originalFetch.preconnect },
+  );
+  const repository = createSupabaseChatRepository(userClient());
+  expect(await repository.findConversation('owner', 'conv_123')).toMatchObject({
+    id: 'conv_123',
+    messageCount: 2,
+  });
+  expect(await repository.findConversation('other', 'conv_123')).toBeNull();
+  expect(await repository.findMessageByClientId('other', 'conv_123', 'turn')).toBeNull();
+  expect(urls[0]?.searchParams.get('id')).toBe('eq.123');
+  expect(urls[1]?.searchParams.get('owner_id')).toBe('eq.other');
+  expect(urls[2]?.searchParams.get('conversations.owner_id')).toBe('eq.other');
+  expect(urls[2]?.searchParams.get('conversation_id')).toBe('eq.123');
+  expect(urls[2]?.searchParams.get('client_id')).toBe('eq.turn');
 });

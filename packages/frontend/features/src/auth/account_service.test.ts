@@ -111,3 +111,16 @@ describe('nothing here retries', () => {
     expect(calls).toHaveLength(1);
   });
 });
+
+describe('account changes', () => {
+  test('uses server-verified endpoints for email change and account deletion', async () => {
+    const calls: Recorded[] = [];
+    const account = service(calls);
+    await account.changeEmail({ email: 'next@example.test' });
+    await account.deleteAccount();
+    expect(calls.map((call) => call.path)).toEqual([
+      '/api/auth/account/email-change',
+      '/api/auth/account/delete',
+    ]);
+  });
+});

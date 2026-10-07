@@ -60,6 +60,7 @@ import {
   requireBindings,
   resolveAuthRateLimitIngress,
   resolveAuthSecret,
+  resolveBackendProfile,
   resolveDeploymentEnvironment,
   resolveJobsProfile,
   resolveRateLimitBudget,
@@ -94,6 +95,8 @@ export type AppSchema = {
 
 export interface Container {
   env: AppEnv;
+  backendProfile: 'legacy' | 'supabase';
+  supabase: { url: string; anonKey: string; serviceRoleKey: string; mailUrl?: string } | null;
   db: DrizzleD1Database<AppSchema>;
   auth: BetterAuthInstance;
   /** Resolved, validated deployment environment name. */
@@ -179,8 +182,14 @@ export const getContainer = (rawEnv: unknown, requestOrigin?: string): Container
   }
 
   const { environment, isLocal, baseUrl } = resolved;
+  const backendProfile = resolveBackendProfile(env);
 
-  const cacheKey = JSON.stringify([baseUrl, isLocal ? (env.TEST_RUN_ID?.trim() ?? 'local') : null]);
+  const cacheKey = JSON.stringify([
+    baseUrl,
+    backendProfile,
+    env.SUPABASE_URL,
+    isLocal ? (env.TEST_RUN_ID?.trim() ?? 'local') : null,
+  ]);
   const byOrigin = containers.get(env);
   const existing = byOrigin?.get(cacheKey);
   if (existing !== undefined) {
@@ -225,6 +234,16 @@ export const getContainer = (rawEnv: unknown, requestOrigin?: string): Container
 
   const container: Container = {
     env,
+    backendProfile,
+    supabase:
+      backendProfile === 'supabase'
+        ? {
+            url: env.SUPABASE_URL as string,
+            anonKey: env.SUPABASE_ANON_KEY as string,
+            serviceRoleKey: env.SUPABASE_SERVICE_ROLE_KEY as string,
+            ...(env.SUPABASE_MAIL_URL ? { mailUrl: env.SUPABASE_MAIL_URL } : {}),
+          }
+        : null,
     db,
     environment,
     isLocal,

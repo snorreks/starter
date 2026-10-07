@@ -250,6 +250,33 @@ describe('transactional admission and attempt fencing in Postgres', () => {
     expect(admitted.error).toBeNull();
     expect(admitted.data?.[0]?.outcome).toBe('created');
 
+    const ownerStatus = await userB.client.rpc('get_encode_job', { p_job_id: jobId });
+    const otherStatus = await userA.client.rpc('get_encode_job', { p_job_id: jobId });
+    const ownerList = await userB.client.rpc('list_encode_jobs');
+    const otherList = await userA.client.rpc('list_encode_jobs');
+    expect(ownerStatus.data).toMatchObject({
+      id: jobId,
+      status: 'pending',
+      outputAvailable: false,
+    });
+    expect(otherStatus.data).toBeNull();
+    expect(ownerList.data).toContainEqual(expect.objectContaining({ id: jobId }));
+    expect(otherList.data).not.toContainEqual(expect.objectContaining({ id: jobId }));
+    expect(
+      await userB.client.rpc('record_job_dispatch', {
+        p_job_id: jobId,
+        p_dispatch_state: 'dispatch_failed',
+        p_error_code: 'dispatch_disabled_pending_prompt_06',
+      }),
+    ).toMatchObject({ error: { code: '42501' } });
+    expect(
+      await admin.rpc('record_job_dispatch', {
+        p_job_id: jobId,
+        p_dispatch_state: 'dispatch_failed',
+        p_error_code: 'dispatch_disabled_pending_prompt_06',
+      }),
+    ).toMatchObject({ data: true, error: null });
+
     const claims = await Promise.all(
       Array.from({ length: 6 }, (_, i) =>
         admin.rpc('claim_encode_job', { p_job_id: jobId, p_attempt_id: `attempt-${i}` }),

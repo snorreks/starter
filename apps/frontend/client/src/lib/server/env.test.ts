@@ -29,6 +29,7 @@ import {
   parseAbsoluteHttpUrl,
   requireBindings,
   resolveAuthSecret,
+  resolveBackendProfile,
   resolveDeploymentEnvironment,
 } from './env.ts';
 
@@ -264,6 +265,32 @@ describe('resolveAuthSecret', () => {
     expect(() => resolveAuthSecret(bindings({ BETTER_AUTH_SECRET: '  ' }), false)).toThrow(
       /is not set/,
     );
+  });
+});
+
+describe('backend profile selection', () => {
+  test('keeps legacy as the default until cutover', () => {
+    expect(resolveBackendProfile({})).toBe('legacy');
+  });
+
+  test('refuses unknown profiles and incomplete Supabase preview config', () => {
+    expect(() => resolveBackendProfile({ STARTER_BACKEND_PROFILE: 'supabse' })).toThrow(
+      /legacy.*supabase/,
+    );
+    expect(() => resolveBackendProfile({ STARTER_BACKEND_PROFILE: 'supabase' })).toThrow(
+      /SUPABASE_URL.*SUPABASE_ANON_KEY.*SUPABASE_SERVICE_ROLE_KEY/,
+    );
+  });
+
+  test('selects Supabase only with complete public and administrative config', () => {
+    expect(
+      resolveBackendProfile({
+        STARTER_BACKEND_PROFILE: 'supabase',
+        SUPABASE_URL: 'http://127.0.0.1:54321',
+        SUPABASE_ANON_KEY: 'anon',
+        SUPABASE_SERVICE_ROLE_KEY: 'service',
+      }),
+    ).toBe('supabase');
   });
 });
 

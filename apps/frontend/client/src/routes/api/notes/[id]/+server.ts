@@ -11,7 +11,7 @@
 
 import { NoteUpdateSchema } from '@starter/schemas/notes';
 import { json, jsonError, noteNotFound, readJsonBody, unauthorized } from '#lib/server/http.ts';
-import { createNotesService } from '#lib/server/notes_service.ts';
+import { createRequestNotesService } from '#lib/server/notes_service.ts';
 import type { RequestHandler } from './$types';
 
 const MAX_BODY_BYTES = 64 * 1024;
@@ -29,7 +29,7 @@ export const PATCH: RequestHandler = async ({ locals, params, request }) => {
 
   // The hook's context, reused: see `#lib/server/request_context.ts`.
   const context = locals.context;
-  const note = await createNotesService(locals.container.db).update(
+  const note = await createRequestNotesService(locals).update(
     user.id,
     params.id,
     parsed.value as { title?: string; body?: string },
@@ -56,7 +56,7 @@ export const DELETE: RequestHandler = async ({ locals, params }) => {
 
   // The hook's context, reused: see `#lib/server/request_context.ts`.
   const context = locals.context;
-  const removed = await createNotesService(locals.container.db).remove(user.id, params.id);
+  const removed = await createRequestNotesService(locals).remove(user.id, params.id);
   if (!removed) {
     return noteNotFound();
   }

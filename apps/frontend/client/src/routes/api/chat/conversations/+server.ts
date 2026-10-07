@@ -18,7 +18,7 @@ import {
   ConversationCreateSchema,
   type ConversationList,
 } from '@starter/schemas/chat';
-import { createChatService } from '#lib/server/chat_service.ts';
+import { createRequestChatService } from '#lib/server/application_chat.ts';
 import { json, jsonError, readJsonBody, unauthorized } from '#lib/server/http.ts';
 import type { RequestHandler } from './$types';
 
@@ -37,7 +37,7 @@ export const GET: RequestHandler = async ({ locals }) => {
     return unauthorized();
   }
 
-  return json(200, conversationList(await createChatService(locals.container.db).list(user.id)));
+  return json(200, conversationList(await createRequestChatService(locals).list(user.id)));
 };
 
 export const POST: RequestHandler = async ({ locals, request }) => {
@@ -53,7 +53,7 @@ export const POST: RequestHandler = async ({ locals, request }) => {
     return body.response;
   }
 
-  const created = await createChatService(locals.container.db).create(user.id, body.value);
+  const created = await createRequestChatService(locals).create(user.id, body.value);
 
   return json(201, created);
 };

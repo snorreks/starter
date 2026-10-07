@@ -14,6 +14,9 @@ export interface JobRepository {
     fingerprint: string;
     workflowId: string;
   }): Promise<JobAdmission>;
+  listForOwner(): Promise<readonly SupabaseJobStatus[]>;
+  getForOwner(jobId: string): Promise<SupabaseJobStatus | null>;
+  disableDispatch(jobId: string): Promise<boolean>;
   claim(jobId: string, attemptId: string, leaseSeconds?: number): Promise<boolean>;
   complete(input: {
     jobId: string;
@@ -28,6 +31,33 @@ export interface JobRepository {
     durationMs: number;
   }): Promise<boolean>;
 }
+export interface SupabaseJobStatus {
+  id: string;
+  kind: 'encode';
+  status: 'pending' | 'running' | 'succeeded' | 'failed';
+  createdAt: number;
+  updatedAt: number;
+  outputAvailable: boolean;
+  errorCode: string | null;
+}
+const jobDto = (value: unknown): SupabaseJobStatus | null => {
+  if (typeof value !== 'object' || value === null) {
+    return null;
+  }
+  const row = value as Record<string, unknown>;
+  if (
+    typeof row.id !== 'string' ||
+    row.kind !== 'encode' ||
+    !['pending', 'running', 'succeeded', 'failed'].includes(String(row.status)) ||
+    typeof row.createdAt !== 'number' ||
+    typeof row.updatedAt !== 'number' ||
+    typeof row.outputAvailable !== 'boolean' ||
+    !(row.errorCode === null || typeof row.errorCode === 'string')
+  ) {
+    return null;
+  }
+  return row as unknown as SupabaseJobStatus;
+};
 export const createSupabaseJobRepository = (
   userClient: SupabaseClient<Database>,
   serviceClient: SupabaseClient<Database>,
@@ -55,6 +85,38 @@ export const createSupabaseJobRepository = (
         ? row.outcome
         : 'quota_or_active_limit';
     return { outcome, jobId: row.job_id };
+  },
+  async listForOwner() {
+    const { data, error } = await userClient.rpc('list_encode_jobs');
+    if (error !== null) {
+      throw new Error(`Supabase job list: ${error.message}`);
+    }
+    if (!Array.isArray(data)) {
+      throw new Error('Supabase job list returned an invalid result.');
+    }
+    const rows = data.map(jobDto);
+    if (rows.some((row) => row === null)) {
+      throw new Error('Supabase job list returned an invalid row.');
+    }
+    return rows as SupabaseJobStatus[];
+  },
+  async getForOwner(jobId) {
+    const { data, error } = await userClient.rpc('get_encode_job', { p_job_id: jobId });
+    if (error !== null) {
+      throw new Error(`Supabase job read: ${error.message}`);
+    }
+    return jobDto(data);
+  },
+  async disableDispatch(jobId) {
+    const { data, error } = await serviceClient.rpc('record_job_dispatch', {
+      p_job_id: jobId,
+      p_dispatch_state: 'dispatch_failed',
+      p_error_code: 'dispatch_disabled_pending_prompt_06',
+    });
+    if (error !== null) {
+      throw new Error(`Supabase job dispatch state: ${error.message}`);
+    }
+    return data === true;
   },
   async claim(jobId, attemptId, leaseSeconds = 300) {
     const { data, error } = await serviceClient.rpc('claim_encode_job', {

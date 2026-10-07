@@ -13,7 +13,7 @@
 // that it exists, turning this page into an existence oracle for other users' data.
 
 import { error, redirect } from '@sveltejs/kit';
-import { createChatService } from '#lib/server/chat_service.ts';
+import { createRequestChatService } from '#lib/server/application_chat.ts';
 import type { PageServerLoad } from './$types';
 
 export const load: PageServerLoad = async ({ locals, params, url }) => {
@@ -26,7 +26,7 @@ export const load: PageServerLoad = async ({ locals, params, url }) => {
     redirect(307, `/login?next=${encodeURIComponent(url.pathname)}`);
   }
 
-  const service = createChatService(locals.container.db);
+  const service = createRequestChatService(locals);
   const conversation = await service.find(user.id, params.id);
   if (conversation === null) {
     throw error(404, 'That conversation does not exist.');

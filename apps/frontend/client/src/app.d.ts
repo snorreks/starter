@@ -14,8 +14,10 @@
 //   `Request` in hand and the framework discards it when the response is sent.
 //   That is why nothing request-scoped may live in a module variable.
 
+import type { VerifiedIdentity } from '@starter/auth/supabase';
 import type { Container } from '#lib/server/container.ts';
 import type { RequestContext, RequestUser } from '#lib/server/request_context.ts';
+import type { ApplicationServices } from '#lib/server/supabase_context.ts';
 
 declare global {
   /**
@@ -39,6 +41,11 @@ declare global {
   namespace Cloudflare {
     interface Env {
       readonly DB: D1Database;
+      readonly STARTER_BACKEND_PROFILE?: string;
+      readonly SUPABASE_URL?: string;
+      readonly SUPABASE_ANON_KEY?: string;
+      readonly SUPABASE_SERVICE_ROLE_KEY?: string;
+      readonly SUPABASE_MAIL_URL?: string;
       readonly DEPLOYMENT_ENV?: string;
       readonly BETTER_AUTH_URL?: string;
       readonly BETTER_AUTH_SECRET?: string;
@@ -73,6 +80,11 @@ declare global {
   namespace App {
     interface Platform {
       readonly DB: D1Database;
+      readonly STARTER_BACKEND_PROFILE?: string;
+      readonly SUPABASE_URL?: string;
+      readonly SUPABASE_ANON_KEY?: string;
+      readonly SUPABASE_SERVICE_ROLE_KEY?: string;
+      readonly SUPABASE_MAIL_URL?: string;
       readonly DEPLOYMENT_ENV?: string;
       readonly BETTER_AUTH_URL?: string;
       readonly BETTER_AUTH_SECRET?: string;
@@ -122,6 +134,8 @@ declare global {
        * a second differently authenticated path to the same user.
        */
       context: RequestContext;
+      supabaseIdentity: VerifiedIdentity | null;
+      applicationServices: ApplicationServices | null;
     }
   }
 }

@@ -101,6 +101,12 @@ isOneToOne: false
 "finish_encode_job":
 { Args: { "p_attempt_id": string,"p_codec": string,"p_duration_ms": number,"p_format": string,"p_height": number,"p_job_id": string,"p_output_bytes": number,"p_output_key": string,"p_sha256": string,"p_width": number }; Returns: boolean
                            },
+"get_encode_job":
+{ Args: { "p_job_id": string }; Returns: Json
+                           },
+"list_encode_jobs":
+{ Args: Record<PropertyKey, never>; Returns: Json
+                           },
 "queue_expired_job_artifacts":
 { Args: { "p_cutoff": string,"p_limit"?: number }; Returns: {
               "job_id": string,"output_key": string

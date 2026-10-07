@@ -50,6 +50,10 @@ import {
   createServerRecordLogger,
   type RequestContext,
 } from '#lib/server/request_context.ts';
+import {
+  applySupabaseResponseHeaders,
+  createSupabaseRequestContext,
+} from '#lib/server/supabase_context.ts';
 
 /**
  * Refuses to start, loudly, before a Worker logs anything.
@@ -161,7 +165,27 @@ export const handle: Handle = async ({ event, resolve }) => {
   // named cause as any other configuration failure.
   let context: RequestContext;
   try {
-    context = await buildRequestContext(container, event.request);
+    if (container.backendProfile === 'supabase') {
+      if (container.supabase === null) {
+        throw new Error('Supabase preview configuration is missing.');
+      }
+      const requestContext = await createSupabaseRequestContext(event.request, event.cookies, {
+        ...container.supabase,
+        origin: container.baseUrl,
+        allowedCallbacks: ['/verify-email', '/reset-password'],
+      });
+      event.locals.supabaseIdentity = requestContext.identity;
+      event.locals.applicationServices = requestContext.services;
+      context = await buildRequestContext(container, event.request, {
+        identity: requestContext.identity,
+        services: requestContext.services,
+        responseHeaders: requestContext.responseHeaders,
+      });
+    } else {
+      event.locals.supabaseIdentity = null;
+      event.locals.applicationServices = null;
+      context = await buildRequestContext(container, event.request);
+    }
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     startupLogger.error('request.context_failed', { message });
@@ -210,6 +234,7 @@ export const handle: Handle = async ({ event, resolve }) => {
   //     headers rather than being declared cacheable here. A blanket `public`
   //     would be a correctness claim this code cannot verify, since whether a page
   //     is anonymous depends on the session rather than on the URL.
+  response = applySupabaseResponseHeaders(response, context.responseHeaders ?? new Headers());
   response = withCachePolicy(response, cachePolicyFor(event.url.pathname, event.locals.user));
   recordRequest(context, event, startedAt, response.status);
   return response;
