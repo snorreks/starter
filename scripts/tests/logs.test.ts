@@ -68,8 +68,9 @@ beforeEach(() =>
 );
 afterEach(() => {
   setDeploymentValues(null);
-  for (const directory of temporaryDirectories.splice(0))
+  for (const directory of temporaryDirectories.splice(0)) {
     rmSync(directory, { recursive: true, force: true });
+  }
 });
 
 // ── Fixtures ─────────────────────────────────────────────────────────────────
@@ -486,7 +487,9 @@ describe('parseArgs / toQuery', () => {
   test('selects one validated local run by id', () => {
     const query = toQuery(parseArgs(['web', '--run', 'run_one']));
     expect(query.ok).toBe(true);
-    if (query.ok) expect(query.query.runId).toBe('run_one');
+    if (query.ok) {
+      expect(query.query.runId).toBe('run_one');
+    }
     expect(toQuery(parseArgs(['web', '--run', '../../other'])).ok).toBe(false);
     expect(toQuery(parseArgs(['web', '--mode', 'production', '--run', 'run_one'])).ok).toBe(false);
   });

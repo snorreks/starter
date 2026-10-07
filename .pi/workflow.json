@@ -1,0 +1,19 @@
+{
+  "schemaVersion": 1,
+  "commands": {
+    "describe": {
+      "executable": "bun",
+      "args": ["run", "scripts/src/cli.ts", "agent", "describe", "--json"],
+      "timeoutMs": 10000,
+      "maxOutputBytes": 32768
+    },
+    "doctor-built": {
+      "executable": "bun",
+      "args": ["run", "scripts/src/cli.ts", "agent", "doctor", "--profile", "built", "--json"],
+      "timeoutMs": 10000,
+      "maxOutputBytes": 32768
+    }
+  },
+  "profiles": {},
+  "capabilities": ["repo_task", "dev_process", "read_logs", "agent:describe", "agent:doctor"]
+}

@@ -9,7 +9,9 @@ test('a cancelled log read is reported as an error', async () => {
       definition = tool;
     },
   } as unknown as ExtensionAPI);
-  if (definition === undefined) throw new Error('read_logs did not register');
+  if (definition === undefined) {
+    throw new Error('read_logs did not register');
+  }
 
   const controller = new AbortController();
   setTimeout(() => controller.abort(), 0);

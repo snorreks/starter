@@ -47,6 +47,15 @@ habit. `defaultProjectTrust` is `ask`, not `always`, for that reason.
 | `.pi/prompts/review.md` | `/prompt:review` |
 | `.pi/prompts/check.md` | `/prompt:check` |
 
+The trusted project profile `.pi/workflow.json` declares only the `describe` command.
+Run `bun run agent -- describe --json` to see actual project capability owners and
+unavailable operations with their dependencies. `bun run agent -- doctor --profile
+built --json` reports the built runtime as unavailable and exits 3 until the owned
+runtime lifecycle exists. Neither command starts a runtime or claims visual
+verification. Task, development runtime, and log operations continue through their
+local tools; visual review continues through the existing
+`bun run e2e:visual:review` CLI.
+
 ## `.pi/extensions` is executable input, not a source folder
 
 **Pi loads every module it finds in `.pi/extensions` as an extension.** A helper or

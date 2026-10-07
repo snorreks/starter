@@ -17,6 +17,7 @@
   "scripts": {
     "moon": "bunx moon",
     "dev": "bun run scripts/src/cli.ts dev app",
+    "agent": "bun run scripts/src/cli.ts agent",
     "dev:worker": "bun run scripts/src/cli.ts dev built",
     "build": "bun run scripts/src/cli.ts cached -- client:build",
     "check:bundle": "bun run scripts/src/cli.ts cached -- client:check-bundle",
