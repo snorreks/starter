@@ -28,3 +28,32 @@ export const MOCK_NOTES = [
     updatedAt: 1_767_225_600_000,
   },
 ] as const;
+
+/** Portable content scenarios shared by browser and visual journeys. */
+export const UI_SCENARIOS = {
+  notes: {
+    empty: [],
+    populated: MOCK_NOTES.map(({ title, body }) => ({ title, body })),
+    long: [
+      {
+        title: 'A deliberately long note title that wraps across a narrow viewport',
+        body: 'Unicode remains readable: åäö — Καλημέρα — こんにちは — 👋\nSecond line, preserved.',
+      },
+    ],
+    invalid: {
+      title: 'x'.repeat(121),
+      body: 'This title exceeds the committed note schema limit by one character.',
+    },
+  },
+  chat: {
+    conversationTitle: 'Weekend plans',
+    prompt: 'Suggest a quiet Saturday plan with coffee and a walk.',
+    response: 'Start with coffee, then take an easy walk somewhere green.',
+  },
+  media: {
+    fixture: 'sample-v1',
+    preset: 'demo-180p-v1',
+    source: 'apps/backend/media/fixtures/media/sample-v1.mp4',
+    output: { container: 'mp4', videoCodec: 'h264', width: 320, height: 180 },
+  },
+} as const;

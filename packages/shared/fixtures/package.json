@@ -9,6 +9,7 @@
     ".": "./src/index.ts"
   },
   "scripts": {
+    "test": "bun test tests",
     "lint": "biome lint src",
     "format": "biome format src",
     "fix": "biome check --write src --error-on-warnings",

@@ -171,7 +171,9 @@ export default defineConfig({
         // cross-origin client any more, so the list names only the app's own
         // origin — an allowlist with one entry is still an allowlist, and Better
         // Auth rejects a request whose `Origin` is not on it.
-        TRUSTED_ORIGINS: appBaseUrl,
+        TRUSTED_ORIGINS: [appBaseUrl, process.env.E2E_EXTRA_TRUSTED_ORIGINS]
+          .filter(Boolean)
+          .join(','),
       },
     },
   ],

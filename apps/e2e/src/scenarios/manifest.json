@@ -1,0 +1,870 @@
+{
+  "schemaVersion": 1,
+  "coverageGaps": [
+    "The root error boundary has no deterministic public trigger.",
+    "The valid password-reset token form is not photographed because its bearer token would otherwise enter the capture URL provenance; reset request confirmation and invalid-token handling are captured.",
+    "A valid device-authorization code cannot be created through a supported public fixture; the missing-code state is captured.",
+    "Notes create and delete interactions are not separate screenshot states; the real notes API and create flow are exercised by functional E2E.",
+    "Chat transport error UI is not deterministic under the shipped echo profile; the real streamed conversation state is captured.",
+    "The visual matrix captures the shipped disabled jobs profile. Enabled empty, pending and failure screenshots are not declared; the full Docker lane verifies real succeeded output and authorization.",
+    "Native screenshots cover the signed-out browser host only; a packaged Tauri app and authenticated native bearer flow are not run."
+  ],
+  "scenarios": [
+    {
+      "id": "web-landing",
+      "app": "web",
+      "route": "/",
+      "url": "/",
+      "kind": "page",
+      "state": "public",
+      "fixture": null,
+      "setup": "none",
+      "ready": {
+        "heading": "One application, one Worker"
+      },
+      "expected": {
+        "controls": [],
+        "content": []
+      },
+      "variants": {
+        "viewports": [
+          "desktop",
+          "mobile"
+        ],
+        "themes": [
+          "light",
+          "dark"
+        ]
+      },
+      "capture": true,
+      "regions": [
+        "viewport"
+      ],
+      "visualRequirements": [
+        "primary-action-visible",
+        "no-horizontal-overflow"
+      ],
+      "referenceId": null,
+      "audit": true,
+      "runtimeProfile": "web-disabled",
+      "baseline": true,
+      "captureReason": null
+    },
+    {
+      "id": "web-login",
+      "app": "web",
+      "route": "/login",
+      "url": "/login",
+      "kind": "page",
+      "state": "sign-in",
+      "fixture": null,
+      "setup": "none",
+      "ready": {
+        "heading": "Sign in"
+      },
+      "expected": {
+        "controls": [
+          "email",
+          "password",
+          "submit"
+        ],
+        "content": []
+      },
+      "variants": {
+        "viewports": [
+          "desktop",
+          "mobile"
+        ],
+        "themes": [
+          "light",
+          "dark"
+        ]
+      },
+      "capture": true,
+      "regions": [
+        "viewport"
+      ],
+      "visualRequirements": [
+        "form-labels-visible",
+        "submit-visible"
+      ],
+      "referenceId": null,
+      "audit": true,
+      "runtimeProfile": "web-disabled",
+      "baseline": true,
+      "captureReason": null
+    },
+    {
+      "id": "web-login-invalid",
+      "app": "web",
+      "route": "/login",
+      "url": "/login",
+      "kind": "page",
+      "state": "invalid-credentials",
+      "fixture": null,
+      "setup": "invalid-credentials",
+      "ready": {
+        "heading": "Sign in"
+      },
+      "expected": {
+        "controls": [
+          "email",
+          "password",
+          "submit"
+        ],
+        "content": [
+          "testid:auth-error"
+        ]
+      },
+      "variants": {
+        "viewports": [
+          "desktop",
+          "mobile"
+        ],
+        "themes": [
+          "light",
+          "dark"
+        ]
+      },
+      "capture": true,
+      "regions": [
+        "viewport"
+      ],
+      "visualRequirements": [
+        "invalid-credentials-explained",
+        "submit-visible"
+      ],
+      "referenceId": null,
+      "audit": true,
+      "runtimeProfile": "web-disabled",
+      "baseline": false,
+      "captureReason": null
+    },
+    {
+      "id": "web-forgot-password",
+      "app": "web",
+      "route": "/forgot-password",
+      "url": "/forgot-password",
+      "kind": "page",
+      "state": "request-reset",
+      "fixture": null,
+      "setup": "none",
+      "ready": {
+        "heading": "Reset your password"
+      },
+      "expected": {
+        "controls": [
+          "email",
+          "submit"
+        ],
+        "content": []
+      },
+      "variants": {
+        "viewports": [
+          "desktop",
+          "mobile"
+        ],
+        "themes": [
+          "light",
+          "dark"
+        ]
+      },
+      "capture": true,
+      "regions": [
+        "viewport"
+      ],
+      "visualRequirements": [
+        "form-labels-visible",
+        "submit-visible"
+      ],
+      "referenceId": null,
+      "audit": false,
+      "runtimeProfile": "web-disabled",
+      "baseline": false,
+      "captureReason": null
+    },
+    {
+      "id": "web-reset-requested",
+      "app": "web",
+      "route": "/reset-password",
+      "url": "/reset-password?sent=1",
+      "kind": "page",
+      "state": "reset-request-sent",
+      "fixture": "verified-account",
+      "setup": "password-reset-request",
+      "ready": {
+        "heading": "Choose a new password"
+      },
+      "expected": {
+        "controls": [],
+        "content": [
+          "If that address has an account, a link is on its way."
+        ]
+      },
+      "variants": {
+        "viewports": [
+          "desktop",
+          "mobile"
+        ],
+        "themes": [
+          "light",
+          "dark"
+        ]
+      },
+      "capture": true,
+      "regions": [
+        "viewport"
+      ],
+      "visualRequirements": [
+        "reset-confirmation-visible",
+        "account-enumeration-protection-copy-visible"
+      ],
+      "referenceId": null,
+      "audit": false,
+      "runtimeProfile": "web-disabled",
+      "baseline": false,
+      "captureReason": null
+    },
+    {
+      "id": "web-reset-invalid",
+      "app": "web",
+      "route": "/reset-password",
+      "url": "/reset-password?token=invalid",
+      "kind": "page",
+      "state": "invalid-token",
+      "fixture": null,
+      "setup": "invalid-reset-token",
+      "ready": {
+        "heading": "Choose a new password"
+      },
+      "expected": {
+        "controls": [
+          "new-password",
+          "reset-submit"
+        ],
+        "content": [
+          "That link is no longer valid"
+        ]
+      },
+      "variants": {
+        "viewports": [
+          "desktop",
+          "mobile"
+        ],
+        "themes": [
+          "light",
+          "dark"
+        ]
+      },
+      "capture": true,
+      "regions": [
+        "viewport"
+      ],
+      "visualRequirements": [
+        "invalid-token-explained"
+      ],
+      "referenceId": null,
+      "audit": false,
+      "runtimeProfile": "web-disabled",
+      "baseline": false,
+      "captureReason": null
+    },
+    {
+      "id": "web-verify-invalid",
+      "app": "web",
+      "route": "/verify-email",
+      "url": "/verify-email?error=invalid_token",
+      "kind": "page",
+      "state": "invalid-token",
+      "fixture": null,
+      "setup": "none",
+      "ready": {
+        "heading": "Confirm your address"
+      },
+      "expected": {
+        "controls": [],
+        "content": [
+          "not valid any more"
+        ]
+      },
+      "variants": {
+        "viewports": [
+          "desktop",
+          "mobile"
+        ],
+        "themes": [
+          "light",
+          "dark"
+        ]
+      },
+      "capture": true,
+      "regions": [
+        "viewport"
+      ],
+      "visualRequirements": [
+        "verification-state-clear"
+      ],
+      "referenceId": null,
+      "audit": false,
+      "runtimeProfile": "web-disabled",
+      "baseline": false,
+      "captureReason": null
+    },
+    {
+      "id": "web-device-invalid",
+      "app": "web",
+      "route": "/device",
+      "url": "/device",
+      "kind": "page",
+      "state": "missing-code",
+      "fixture": null,
+      "setup": "verified-account",
+      "ready": {
+        "heading": "Approve a device"
+      },
+      "expected": {
+        "controls": [],
+        "content": [
+          "No device code was supplied"
+        ]
+      },
+      "variants": {
+        "viewports": [
+          "desktop",
+          "mobile"
+        ],
+        "themes": [
+          "light",
+          "dark"
+        ]
+      },
+      "capture": true,
+      "regions": [
+        "viewport"
+      ],
+      "visualRequirements": [
+        "device-code-guidance"
+      ],
+      "referenceId": null,
+      "audit": false,
+      "runtimeProfile": "web-disabled",
+      "baseline": false,
+      "captureReason": null
+    },
+    {
+      "id": "web-notes-anonymous",
+      "app": "web",
+      "route": "/notes",
+      "url": "/login",
+      "kind": "page",
+      "state": "anonymous",
+      "fixture": null,
+      "setup": "none",
+      "ready": {
+        "heading": "Sign in"
+      },
+      "expected": {
+        "controls": [
+          "email",
+          "password"
+        ],
+        "content": []
+      },
+      "variants": {
+        "viewports": [
+          "desktop",
+          "mobile"
+        ],
+        "themes": [
+          "light",
+          "dark"
+        ]
+      },
+      "capture": true,
+      "regions": [
+        "viewport"
+      ],
+      "visualRequirements": [
+        "private-content-not-visible"
+      ],
+      "referenceId": null,
+      "audit": false,
+      "runtimeProfile": "web-disabled",
+      "baseline": false,
+      "captureReason": null
+    },
+    {
+      "id": "web-notes-empty",
+      "app": "web",
+      "route": "/notes",
+      "url": "/notes",
+      "kind": "page",
+      "state": "empty",
+      "fixture": "notes.empty",
+      "setup": "verified-empty-account",
+      "ready": {
+        "heading": "Your notes"
+      },
+      "expected": {
+        "controls": [
+          "note-title",
+          "note-body",
+          "note-submit"
+        ],
+        "content": [
+          "No notes yet"
+        ]
+      },
+      "variants": {
+        "viewports": [
+          "desktop",
+          "mobile"
+        ],
+        "themes": [
+          "light",
+          "dark"
+        ]
+      },
+      "capture": true,
+      "regions": [
+        "viewport"
+      ],
+      "visualRequirements": [
+        "empty-state-explained",
+        "create-action-visible"
+      ],
+      "referenceId": null,
+      "audit": true,
+      "runtimeProfile": "web-disabled",
+      "baseline": false,
+      "captureReason": null
+    },
+    {
+      "id": "web-notes-populated",
+      "app": "web",
+      "route": "/notes",
+      "url": "/notes",
+      "kind": "page",
+      "state": "populated",
+      "fixture": "notes.populated",
+      "setup": "verified-populated-account",
+      "ready": {
+        "heading": "Your notes"
+      },
+      "expected": {
+        "controls": [
+          "note-title",
+          "note-body",
+          "note-submit",
+          "note-delete"
+        ],
+        "content": [
+          "Welcome",
+          "Delete me"
+        ]
+      },
+      "variants": {
+        "viewports": [
+          "desktop",
+          "mobile"
+        ],
+        "themes": [
+          "light",
+          "dark"
+        ]
+      },
+      "capture": true,
+      "regions": [
+        "viewport"
+      ],
+      "visualRequirements": [
+        "note-content-readable",
+        "create-action-visible"
+      ],
+      "referenceId": null,
+      "audit": true,
+      "runtimeProfile": "web-disabled",
+      "baseline": true,
+      "captureReason": null
+    },
+    {
+      "id": "web-notes-long",
+      "app": "web",
+      "route": "/notes",
+      "url": "/notes",
+      "kind": "page",
+      "state": "long-unicode",
+      "fixture": "notes.long",
+      "setup": "verified-long-account",
+      "ready": {
+        "heading": "Your notes"
+      },
+      "expected": {
+        "controls": [
+          "note-title",
+          "note-body",
+          "note-submit"
+        ],
+        "content": [
+          "こんにちは"
+        ]
+      },
+      "variants": {
+        "viewports": [
+          "desktop",
+          "mobile"
+        ],
+        "themes": [
+          "light",
+          "dark"
+        ]
+      },
+      "capture": true,
+      "regions": [
+        "viewport",
+        "notes-content"
+      ],
+      "visualRequirements": [
+        "long-content-wraps",
+        "no-horizontal-overflow"
+      ],
+      "referenceId": null,
+      "audit": false,
+      "runtimeProfile": "web-disabled",
+      "baseline": false,
+      "captureReason": null
+    },
+    {
+      "id": "web-chat-list",
+      "app": "web",
+      "route": "/chat",
+      "url": "/chat",
+      "kind": "page",
+      "state": "empty-list",
+      "fixture": null,
+      "setup": "verified-account",
+      "ready": {
+        "heading": "Conversations"
+      },
+      "expected": {
+        "controls": [
+          "new-conversation"
+        ],
+        "content": []
+      },
+      "variants": {
+        "viewports": [
+          "desktop",
+          "mobile"
+        ],
+        "themes": [
+          "light",
+          "dark"
+        ]
+      },
+      "capture": true,
+      "regions": [
+        "viewport"
+      ],
+      "visualRequirements": [
+        "empty-state-clear",
+        "new-conversation-visible"
+      ],
+      "referenceId": null,
+      "audit": true,
+      "runtimeProfile": "web-disabled",
+      "baseline": false,
+      "captureReason": null
+    },
+    {
+      "id": "web-chat-conversation",
+      "app": "web",
+      "route": "/chat/[id]",
+      "url": "/chat/:conversationId",
+      "kind": "page",
+      "state": "conversation",
+      "fixture": "chat.conversation",
+      "setup": "verified-conversation",
+      "ready": {
+        "heading": "Weekend plans"
+      },
+      "expected": {
+        "controls": [
+          "message-composer",
+          "send"
+        ],
+        "content": [
+          "Suggest a quiet Saturday plan"
+        ]
+      },
+      "variants": {
+        "viewports": [
+          "desktop",
+          "mobile"
+        ],
+        "themes": [
+          "light",
+          "dark"
+        ]
+      },
+      "capture": true,
+      "regions": [
+        "viewport",
+        "conversation"
+      ],
+      "visualRequirements": [
+        "message-order-clear",
+        "composer-visible"
+      ],
+      "referenceId": null,
+      "audit": false,
+      "runtimeProfile": "web-disabled",
+      "baseline": false,
+      "captureReason": null
+    },
+    {
+      "id": "web-jobs-disabled",
+      "app": "web",
+      "route": "/jobs",
+      "url": "/jobs",
+      "kind": "page",
+      "state": "disabled",
+      "fixture": null,
+      "setup": "verified-account",
+      "ready": {
+        "heading": "Sample encode"
+      },
+      "expected": {
+        "controls": [],
+        "content": [
+          "jobs profile disabled"
+        ]
+      },
+      "variants": {
+        "viewports": [
+          "desktop",
+          "mobile"
+        ],
+        "themes": [
+          "light",
+          "dark"
+        ]
+      },
+      "capture": true,
+      "regions": [
+        "viewport"
+      ],
+      "visualRequirements": [
+        "disabled-capability-explained"
+      ],
+      "referenceId": null,
+      "audit": true,
+      "runtimeProfile": "web-disabled",
+      "baseline": true,
+      "captureReason": null
+    },
+    {
+      "id": "web-not-found",
+      "app": "web",
+      "route": "/e2e-not-found",
+      "url": "/e2e-not-found",
+      "kind": "not-found",
+      "state": "missing-route",
+      "fixture": null,
+      "setup": "none",
+      "ready": {
+        "heading": "This page could not be loaded"
+      },
+      "expected": {
+        "controls": [
+          "home-link"
+        ],
+        "content": []
+      },
+      "variants": {
+        "viewports": [
+          "desktop",
+          "mobile"
+        ],
+        "themes": [
+          "light",
+          "dark"
+        ]
+      },
+      "capture": true,
+      "regions": [
+        "viewport"
+      ],
+      "visualRequirements": [
+        "recovery-action-visible"
+      ],
+      "referenceId": null,
+      "audit": false,
+      "runtimeProfile": "web-disabled",
+      "baseline": false,
+      "captureReason": null
+    },
+    {
+      "id": "web-error",
+      "app": "web",
+      "route": "/e2e-error",
+      "url": "/e2e-error",
+      "kind": "error",
+      "state": "handled-error",
+      "fixture": null,
+      "setup": "none",
+      "ready": {
+        "heading": "This page could not be loaded"
+      },
+      "expected": {
+        "controls": [
+          "home-link"
+        ],
+        "content": []
+      },
+      "variants": {
+        "viewports": [
+          "desktop",
+          "mobile"
+        ],
+        "themes": [
+          "light",
+          "dark"
+        ]
+      },
+      "capture": false,
+      "regions": [
+        "viewport"
+      ],
+      "visualRequirements": [
+        "error-state-explained"
+      ],
+      "referenceId": null,
+      "audit": false,
+      "runtimeProfile": "web-disabled",
+      "baseline": false,
+      "captureReason": "The shipped app has no deterministic public route that triggers the root error boundary."
+    },
+    {
+      "id": "native-home",
+      "app": "native",
+      "route": "/",
+      "url": "/",
+      "kind": "page",
+      "state": "signed-out",
+      "fixture": null,
+      "setup": "native-root",
+      "ready": {
+        "heading": "Sign in"
+      },
+      "expected": {
+        "controls": [],
+        "content": []
+      },
+      "variants": {
+        "viewports": [
+          "desktop",
+          "mobile"
+        ],
+        "themes": [
+          "light",
+          "dark"
+        ]
+      },
+      "capture": true,
+      "regions": [
+        "viewport"
+      ],
+      "visualRequirements": [
+        "native-host-label-visible"
+      ],
+      "referenceId": null,
+      "audit": false,
+      "runtimeProfile": "native-ui-browser",
+      "baseline": true,
+      "captureReason": null
+    },
+    {
+      "id": "native-notes",
+      "app": "native",
+      "route": "/notes",
+      "url": "/notes",
+      "kind": "page",
+      "state": "signed-out",
+      "fixture": null,
+      "setup": "native-notes",
+      "ready": {
+        "heading": "Your notes"
+      },
+      "expected": {
+        "controls": [],
+        "content": [
+          "notes-error"
+        ]
+      },
+      "variants": {
+        "viewports": [
+          "desktop",
+          "mobile"
+        ],
+        "themes": [
+          "light",
+          "dark"
+        ]
+      },
+      "capture": true,
+      "regions": [
+        "viewport"
+      ],
+      "visualRequirements": [
+        "native-host-label-visible"
+      ],
+      "referenceId": null,
+      "audit": false,
+      "runtimeProfile": "native-ui-browser",
+      "baseline": false,
+      "captureReason": null
+    },
+    {
+      "id": "native-jobs",
+      "app": "native",
+      "route": "/jobs",
+      "url": "/jobs",
+      "kind": "page",
+      "state": "signed-out",
+      "fixture": null,
+      "setup": "native-jobs",
+      "ready": {
+        "heading": "Sample encode"
+      },
+      "expected": {
+        "controls": [],
+        "content": [
+          "testid:jobs-error"
+        ]
+      },
+      "variants": {
+        "viewports": [
+          "desktop",
+          "mobile"
+        ],
+        "themes": [
+          "light",
+          "dark"
+        ]
+      },
+      "capture": true,
+      "regions": [
+        "viewport"
+      ],
+      "visualRequirements": [
+        "native-host-label-visible"
+      ],
+      "referenceId": null,
+      "audit": false,
+      "runtimeProfile": "native-ui-browser",
+      "baseline": false,
+      "captureReason": null
+    }
+  ]
+}
