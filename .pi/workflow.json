@@ -12,8 +12,26 @@
       "args": ["run", "scripts/src/cli.ts", "agent", "doctor", "--profile", "built", "--json"],
       "timeoutMs": 10000,
       "maxOutputBytes": 32768
+    },
+    "visual-capture": {
+      "executable": "bun",
+      "args": ["run", "scripts/src/cli.ts", "agent", "visual", "capture", "--json"],
+      "timeoutMs": 1800000,
+      "maxOutputBytes": 524288
+    },
+    "review": {
+      "executable": "bun",
+      "args": ["run", "scripts/src/cli.ts", "agent", "visual", "review", "--json"],
+      "timeoutMs": 1200000,
+      "maxOutputBytes": 524288
+    },
+    "compute-full": {
+      "executable": "bun",
+      "args": ["run", "scripts/src/cli.ts", "agent", "compute", "full", "--json"],
+      "timeoutMs": 2100000,
+      "maxOutputBytes": 524288
     }
   },
   "profiles": {},
-  "capabilities": ["repo_task", "dev_process", "read_logs", "agent:describe", "agent:doctor"]
+  "capabilities": ["repo_task", "dev_process", "read_logs", "agent:describe", "agent:doctor", "agent:visual-capture", "agent:review", "agent:compute-full"]
 }

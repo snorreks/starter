@@ -53,16 +53,18 @@ describe('agent JSON facade', () => {
       output += String(chunk);
       return true;
     }) as typeof process.stdout.write;
-    expect(await main(['agent', 'review', '--run', 'agent_fixture_missing', '--json'])).toBe(1);
+    expect(
+      await main(['agent', 'visual', 'review', '--run', 'agent_fixture_missing', '--json']),
+    ).toBe(1);
     const lines = output.trim().split('\n');
     expect(lines).toHaveLength(1);
     expect(JSON.parse(lines[0] ?? '')).toMatchObject({
       schemaVersion: 1,
       operation: 'review',
-      status: 'failed',
+      status: 'error',
       runId: 'agent_fixture_missing',
       artifacts: [],
-      rerun: ['bun run agent -- review --run agent_fixture_missing --json'],
+      rerun: ['bun run agent -- visual review --run agent_fixture_missing --json'],
     });
   });
 
@@ -149,7 +151,9 @@ describe('agent JSON facade', () => {
           ],
         }),
       );
-      expect(await main(['agent', 'review', '--run', runId, '--json', '--no-cache'])).toBe(0);
+      expect(
+        await main(['agent', 'visual', 'review', '--run', runId, '--json', '--no-cache']),
+      ).toBe(0);
       const result = JSON.parse(output.trim());
       expect(result).toMatchObject({
         schemaVersion: 1,
@@ -158,7 +162,12 @@ describe('agent JSON facade', () => {
         runId,
         review: { reviewed: 1, cached: 0 },
       });
-      expect(result.artifacts).toContain(join(scope.artifactDir, 'visual', 'review.json'));
+      expect(result.artifacts).toContainEqual(
+        expect.objectContaining({
+          kind: 'visual-review-json',
+          path: `.wrangler/runs/${runId}/artifacts/visual/review.json`,
+        }),
+      );
     } finally {
       server.stop(true);
       for (const name of names) {
@@ -171,5 +180,38 @@ describe('agent JSON facade', () => {
       }
       await rm(scope.dir, { recursive: true, force: true });
     }
+  });
+});
+
+describe('agent CLI JSON boundary', () => {
+  test('visual capture requires explicit JSON mode before it can start a browser', async () => {
+    expect(await main(['agent', 'visual', 'capture'])).toBe(2);
+    expect(output).toBe('');
+  });
+
+  test('visual review rejects unknown positional arguments before reading a run', async () => {
+    expect(
+      await main(['agent', 'visual', 'review', '--run', 'missing_run', 'ignored', '--json']),
+    ).toBe(2);
+    expect(output).toBe('');
+  });
+
+  test('a missing visual manifest is a JSON error, not a failed visual grade', async () => {
+    const { spawnSync } = await import('node:child_process');
+    const result = spawnSync(
+      'bun',
+      ['run', 'scripts/src/cli.ts', 'agent', 'visual', 'review', '--run', 'no_such_run', '--json'],
+      {
+        cwd: REPO_ROOT,
+        encoding: 'utf8',
+      },
+    );
+    expect(result.status).toBe(1);
+    expect(JSON.parse(result.stdout)).toMatchObject({ operation: 'review', status: 'error' });
+  });
+
+  test('full compute requires JSON mode before starting Docker work', async () => {
+    expect(await main(['agent', 'compute', 'full'])).toBe(2);
+    expect(output).toBe('');
   });
 });

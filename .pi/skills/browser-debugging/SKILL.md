@@ -1,122 +1,82 @@
 ---
 name: browser-debugging
-description: Use when something is wrong in the browser that the terminal does not show — a blank screen, a layout that breaks, a request that fails, a console error, a state that renders wrongly. Captures screenshots, traces, console and network evidence from a verified local environment, and reports them without sending anything anywhere.
+description: Diagnose browser behavior with deterministic checks, an owned visual run, scoped logs, and optional explicit visual review.
 ---
 
 # Browser debugging
 
-Evidence from a **verified local** environment. Every step below runs against a
-real fixture stack this repository already owns, not an ad-hoc server.
+Use the project's browser and visual authorities so captures, logs, and review
+results have one run identity. A screenshot or a running server does not prove a
+check passed.
 
-## The rule about "verified"
+## Discover and reproduce
 
-A fixed port answers a readiness probe whether or not it belongs to your run. A
-leftover `wrangler dev` from an earlier command keeps port 8787 with a stale D1
-and a stale schema, the suite then reports a product bug that is actually a
-leftover socket, and you spend the afternoon on the wrong bug.
-
-This repository already refuses that. `apps/e2e/preflight.ts` compares a run id
-the Worker echoes back, so a stale listener cannot be mistaken for yours. **Use
-those commands rather than starting servers by hand** — a hand-started server has
-no run id, and the preflight will correctly refuse it.
-
-## 1. The deterministic lane first
-
-Always run this before looking at anything by eye:
+Start with the deterministic lane that matches the change:
 
 ```bash
 bun run test:browser
+bun run e2e
 ```
 
-Real Svelte in Chromium. A UI assertion that fails is stronger evidence than
-anything a screenshot can tell you, and it is reproducible.
+Use `bun run agent -- describe --json` to see which project capabilities are
+implemented. A capability marked `not-run` or `not-applicable` is not a pass.
+Do not hand-connect to a familiar port and assume it belongs to this worktree.
 
-If you are changing what a spec touches, `bun run e2e` covers the full stack
-(built client, real Worker, real local D1) and retains a trace on failure.
+## Capture the current UI state
 
-## 2. Deterministic screenshots
+Run an owned matrix capture through the project facade:
 
 ```bash
-bun run e2e:visual
+bun run agent -- visual capture --json
 ```
 
-Writes PNGs of the real screens — login, a login error, an empty list, a
-populated list — and prints the directory. It starts its own servers through
-Playwright, so it captures the same build the e2e suite validated rather than
-whatever happens to be on :4183 from someone's terminal.
+The result includes a unique run ID, the manifest and screenshot hashes, and an
+exact review command. Captures live under
+`.wrangler/runs/<run-id>/artifacts/visual/`. Capture does not contact a vision
+provider. To inspect an image, use its artifact path; do not modify the original.
 
-The directory is `/tmp/starter-evidence` unless `E2E_EVIDENCE_DIR` says
-otherwise. Read the files with the `read` tool. They stay on this machine.
+## Review explicitly
 
-## 3. Traces, console and network
-
-Playwright records console output, network requests and a step-by-step trace.
-Turn tracing on for a run you are about to inspect:
+When configured review is wanted, run the exact command returned by capture:
 
 ```bash
-bun run --cwd apps/e2e playwright test --trace on
+bun run agent -- visual review --run <run-id> --json
 ```
 
-Or keep the default `retain-on-failure` and inspect only what broke. The trace
-is a zip in `apps/e2e/test-results/`; the HTML report in
-`apps/e2e/playwright-report/` has the console and network timeline per test.
-
-Run a single spec while iterating:
+This operation may send screenshots to the configured provider. It reports
+`passed`, `failed`, `needs-human-review`, `not-run`, or `error` with the run and
+report provenance. A valid low grade is evidence and must not be retried until it
+changes. Provider or schema errors are not grades. A gate is explicit:
 
 ```bash
-bun run --cwd apps/e2e playwright test tests/auth.spec.ts --trace on
+bun run agent -- visual review --run <run-id> --json --gate
 ```
 
-`playwright` is declared by `@starter/e2e`, so it is reached through that
-package. Never `bunx playwright` from the root: that does not find the local
-install and downloads whatever the registry currently serves.
+The `E2E_VISION_MODEL` and provider key come from the local E2E environment. Do
+not add credentials to `.pi/workflow.json`, screenshots, or reports.
 
-## 4. What the evidence means
+## Correlate browser and Worker evidence
 
-| Evidence | Reads as |
-|---|---|
-| A failing spec assertion | a real, reproducible defect — start here |
-| A 4xx/5xx in the network timeline | look at the Worker's log, not the page |
-| A console error with no failed request | a client-side throw — get the stack |
-| A screenshot that looks wrong with no error | a genuine visual or layout question |
-| A screenshot that looks fine with a failed request | a real bug the eye cannot see |
+Read local logs with the same run ID so another run's events cannot be mistaken
+for this one:
 
-Cross-check the server side with the `debugging-with-logs` skill. The browser
-shows you the request that failed; the log shows you what the Worker did about
-it.
+```bash
+bun run logs web --mode local --run <run-id> --source browser
+bun run logs web --mode local --run <run-id> --source worker
+```
 
-## 5. Optional vision review — configured, never assumed
+In Pi, `repo_task` exposes `visual_capture` and `visual_review`; `read_logs` accepts
+`runId` and source filters. The portable `browser` namespace is deferred and its
+standalone URLs are classified as exploratory unless a project runtime identity
+is explicitly provided. Never upgrade an exploratory screenshot to verified
+project evidence.
 
-Image inspection needs a model that can see images. **Nothing here depends on
-one, and no provider is added by this repository.**
+## Preserve evidence
 
-- `apps/e2e/visual.ts` reads `VISION_API_KEY` or `OPENAI_API_KEY` from the
-  environment, and reads nothing else — no provider SDK, no network probe.
-- With neither set, capture still runs and reports **`SKIPPED`**, with the reason.
-  It does not print green. That is deliberate: a run that prints green because
-  the inspection step was unavailable is worse than one that says it did not run.
-- `VISION_DISABLE=1` turns it off explicitly, even with a key present.
-
-So there are three states, and they are distinguishable on purpose:
-
-| State | How it reads |
-|---|---|
-| Ran | findings listed per capture |
-| **Skipped, no provider** | `SKIPPED: … no VISION_API_KEY or OPENAI_API_KEY` |
-| **Blocked, a real failure** | a non-zero exit and a failing spec |
-
-Do not treat a skip as a pass, and do not report a skip as a failure either. It
-is an absent optional capability.
-
-## What this skill never does
-
-- **Never upload a screenshot.** They can contain unreleased UI and whatever the
-  fixture happened to show. They are written locally and left there.
-- **Never add a provider or a key** to make vision work. Configuring one is a
-  decision for the person who owns the machine.
-- **Never substitute a vision opinion for a test.** A model describing a layout is
-  an opinion about a picture; a spec is a contract. If the question is whether the
-  button works, run the spec.
-- **Never `pkill -f wrangler`.** The pattern broad enough to match the dev server
-  also matches the shell that launched it, which kills the caller. `preflight.ts`
-  prints the pid to use.
+- Keep original screenshots and manifests intact; derived review images are
+  separate artifacts.
+- Report failed deterministic checks even when screenshots look correct.
+- Report unavailable provider/runtime prerequisites as `not-run` with the exact
+  rerun command. Do not convert them to a green skip.
+- Stop only processes whose ownership handle belongs to this run. Never kill by
+  a broad process-name pattern.

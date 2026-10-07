@@ -52,17 +52,23 @@ explicit alternative, not alongside it.
 | `.pi/prompts/review.md` | `/prompt:review` |
 | `.pi/prompts/check.md` | `/prompt:check` |
 
-The trusted project profile `.pi/workflow.json` declares only the `describe` command.
-Run `bun run agent -- describe --json` to see actual project capability owners and
-unavailable operations with their dependencies. `bun run agent -- doctor --profile
-built --json` reports the built runtime as unavailable and exits 3 until the owned
-runtime lifecycle exists. `bun run agent -- review --run <id> --json` reviews an
-existing complete capture manifest through the same reviewer as
-`bun run e2e:visual:review -- --run <id>`; it does not start capture services. The
-visual review config takes `E2E_VISION_API_KEY` as an optional per-project override,
-then reads `OPENROUTER_API_KEY` from the process environment. Keep that shared
-credential in your global environment rather than a project mode file. Task,
-development runtime, and log operations continue through their local tools.
+The trusted project profile `.pi/workflow.json` declares only commands that are
+implemented by this checkout. Run `bun run agent -- describe --json` to see actual
+capability owners and unavailable operations with their dependencies.
+`bun run agent -- doctor --profile built --json` reports the built runtime as
+unavailable and exits 3 until the owned runtime lifecycle exists.
+`bun run agent -- visual capture --json` runs the declared visual matrix and returns
+the verified run ID, manifest and screenshot hashes. Review remains a separate,
+explicit call: `bun run agent -- visual review --run <id> --json`. It uses the same
+manifest reviewer as `bun run e2e:visual:review -- --run <id>` and never runs
+automatically after capture. The Pi `repo_task` namespace exposes these as
+`visual_capture` and `visual_review` actions. Review output preserves the grade,
+provider/model, cache provenance, report hashes and exact rerun command.
+
+The visual review config takes `E2E_VISION_API_KEY` as an optional per-project
+override, then reads `OPENROUTER_API_KEY` from the process environment. Keep that
+shared credential in your global environment rather than a project mode file.
+Task, development runtime, and log operations continue through their local tools.
 
 ## `.pi/extensions` is executable input, not a source folder
 
@@ -154,6 +160,9 @@ matters more than it sounds.
 ```ts
 repo_task { action: "list", params: { query: "test" } }
 repo_task { action: "run",  params: { task: "pi:test" } }
+repo_task { action: "visual_capture", params: {} }
+repo_task { action: "visual_review", params: { runId: "agent_visual_…" } }
+repo_task { action: "compute_full", params: {} }
 ```
 
 It reads the real task graph through `moon query tasks` rather than guessing a
@@ -166,6 +175,16 @@ not say what you probably meant.
 `moon query tasks` writes its `$ …` banner to **stderr** and JSON to **stdout**.
 Merging the two streams, which is the obvious thing to do, makes `JSON.parse`
 throw on a valid response.
+
+Visual capture runs the existing Playwright matrix through `agent visual capture`
+and verifies every referenced image against its manifest hash. It does not review
+screenshots. `visual_review` is a separate operation that may contact the
+configured provider; a failed grade remains failed and a review requiring human
+attention remains `needs-human-review`.
+The `compute_full` action runs the real Docker-backed browser-to-FFmpeg scenario,
+stores the encoded output and probe report under its owned run, and verifies the
+output bytes against the recorded SHA-256 before it reports success. It requires a
+working Docker-compatible engine; it never substitutes the disabled jobs profile.
 
 ### `dev_process` — owned long-running processes
 
