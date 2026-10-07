@@ -69,6 +69,81 @@ invented: `DEVICE_VERIFICATION_PATH` in `container.ts` is handed to the plugin, 
 `worker_integration.test.ts` asserts the page renders and that `verification_uri`
 points at it.
 
+## Supabase native profile (preview, opt in)
+
+The legacy device flow above remains the default until Prompt 08. Set
+`VITE_NATIVE_AUTH_PROFILE=supabase` to select the native Supabase profile; missing
+Supabase values fail the native build instead of falling back. It requires
+`VITE_NATIVE_ENVIRONMENT`, `VITE_NATIVE_SUPABASE_URL`,
+`VITE_NATIVE_SUPABASE_PROJECT_REF`, `VITE_NATIVE_SUPABASE_ANON_KEY`, and the
+resolved `VITE_NATIVE_API_ORIGIN`. The anon key is public and compiled into the
+app. Never use a service role key here.
+
+The sign-in button opens the configured Supabase Auth origin in the system browser.
+The app creates a PKCE verifier and state in memory, sends only the S256 challenge
+to Auth, and accepts one callback only at `com.example.starter://auth/callback`.
+The allowlisted web return is the resolved API origin plus `/auth/callback`; neither
+callback nor callback query parameters can change project, environment, or API
+origin. The Tauri deep-link plugin registers the custom scheme on desktop, Android
+and iOS. Its capability grants callback reading; no shell, file or generic network
+plugin was added.
+
+The native CLI generates a narrow CSP from the resolved API origin and, for the
+Supabase profile, the exact configured Auth origin. It refuses a missing or
+malformed Supabase URL rather than widening `connect-src`. The bundle checker reads
+the artifact and permits that one Auth origin; any additional foreign destination
+still fails.
+
+Build and inspect the explicit profile with the same resolved target values used by
+deployment. The project reference and callbacks are native target fields; Prompt 07
+must consume those fields from `resolveTarget` rather than introducing another
+destination source.
+
+```bash
+VITE_NATIVE_AUTH_PROFILE=supabase \
+VITE_NATIVE_ENVIRONMENT=staging \
+VITE_NATIVE_API_ORIGIN=https://staging.example.test \
+VITE_NATIVE_SUPABASE_URL=https://example-project.supabase.co \
+VITE_NATIVE_SUPABASE_PROJECT_REF=example-project \
+VITE_NATIVE_SUPABASE_ANON_KEY='<public-anon-key>' \
+bun run native:build
+bun run --cwd apps/frontend/native check:bundle
+bun run --cwd apps/frontend/native check:artifacts -- <artifact-dir> \
+  --origin https://staging.example.test \
+  --supabase-url https://example-project.supabase.co \
+  --revision "$GITHUB_SHA" --platform android
+```
+
+The native feature graph remains `NotesService` and `JobsService` over the
+platform `ApiTransport`. It calls the HTTP API with the current bearer token and
+does not import web remote function modules. JSON, byte and streaming requests use
+the same refresh and cookie-omission policy, so Prompt 04 can evolve its web
+adapters while native stays on the stable HTTP DTOs.
+
+The secure profile stores exactly `{version: 1, accessToken, refreshToken,
+expiresAt, accountId, supabaseProjectRef, apiOrigin}`. The Stronghold key includes
+environment, project, API origin and account; environment is key scope and is not
+an extra persisted field. Memory remains the default. Stronghold is written only
+after the user enables remember sign-in and unlocks it. An older token-only record
+is removed and returns a reauthentication-required outcome; its bearer string is
+never treated as a refresh token.
+
+Refresh is single-flight. Logout clears memory and invalidates in-flight callbacks
+and refreshes before awaiting cleanup, attempts both secure-store removal and
+Supabase's global logout/revocation endpoint, and reports cleanup failure without
+restoring the in-memory session. Switching environment, project or API origin
+invalidates the previous generation. JWT verification by itself is not treated as
+instant revocation: global logout revokes the refresh session, while already-issued
+access tokens remain subject to their expiry.
+
+The PKCE and callback tests use an injected callback and fake Auth HTTP server; this
+separates lifecycle correctness from OS callback registration. The real local
+Supabase/Auth/Data API lane passed, but no external OAuth provider is configured in
+that local project, so native PKCE exchange against a real provider/browser callback
+harness is **NOT RUN**. A browser callback harness would not establish OS deep-link
+or physical-device evidence. Physical-device PKCE and Stronghold checks remain
+**NOT RUN** until a provisioned Android/iOS device is used.
+
 ### The database
 
 `device_codes` was created by migration `0001_early_captain_cross.sql`, when a native
@@ -129,21 +204,21 @@ OS for":
 | `core:default` | The framework's own baseline. No filesystem, shell or network. |
 | `opener:allow-open-url` | Hand **one** approval URL to the system browser. Not `opener:default`, which also launches applications and reveals files. |
 | `stronghold:default` | The vault: create, read, delete records. No network, no peer-to-peer, no procedure execution. |
+| `deep-link:default` | Read the configured native callback URL. |
 
 Absent, and each absence closes a door: no `shell:` (the snapshot's launcher could run
 commands), no `http:`, no updater, no sidecar. `withGlobalTauri` is `false`, so the
 page cannot reach `window.__TAURI__` at all.
 
 `native:dev` and `native:build` normalize `VITE_NATIVE_API_ORIGIN` from the
-launch environment and generate the CSP's `connect-src` for that origin. Development
+launch environment and generate the CSP's `connect-src` for that origin, plus the
+one Supabase Auth origin when the Supabase native profile is selected. Development
 defaults to `http://127.0.0.1:5173`; builds require an explicit HTTPS origin.
 The launcher passes the same origin to Vite and the CSP to Tauri through `--config`,
 for both `csp` and `devCsp`. Vite refuses a mismatch. Set the variable in the launch
-environment when using these commands; their resolved value takes precedence over
+environment when using these commands; their resolved values take precedence over
 Vite `.env` files. The checked-in CSP permits only local IPC until the launcher
-adds the API origin. The snapshot's was
-`connect-src … https:`, which allows any injected script to exfiltrate a session
-token to anywhere — the opposite of the point.
+adds the target origins. It never adds a general `https:` source.
 
 `tauri-plugin-path` is **not** a dependency. The snapshot path is chosen by one
 application command, `vault_snapshot_path`, which resolves the app's own data

@@ -23,6 +23,8 @@ export type { ExternalBrowser, Navigation } from './capabilities.ts';
 export { parseDto } from './dto.ts';
 export {
   MemorySessionStore,
+  ReauthenticationRequiredError,
+  type SessionCredential,
   type SessionScope,
   type SessionStore,
   sessionScopeKey,

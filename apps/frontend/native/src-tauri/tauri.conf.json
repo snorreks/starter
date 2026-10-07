@@ -23,6 +23,12 @@
       "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: asset: http://asset.localhost; font-src 'self' data:; connect-src 'self' ipc: http://ipc.localhost; frame-ancestors 'none'; base-uri 'self'; form-action 'none'"
     }
   },
+  "plugins": {
+    "deep-link": {
+      "desktop": { "schemes": ["com.example.starter"] },
+      "mobile": [{ "scheme": ["com.example.starter"], "appLink": false }]
+    }
+  },
   "bundle": {
     "active": true,
     "targets": "all",

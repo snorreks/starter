@@ -9,10 +9,10 @@
 // come apart. The writer uses *stored* entries so the fixture does not depend on
 // a zlib build producing identical compressed output everywhere.
 
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { afterAll, describe, expect, test } from 'bun:test';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterAll, describe, expect, test } from 'bun:test';
 import {
   artifactName,
   isForeignOrigin,
@@ -24,6 +24,7 @@ import {
 } from './check_artifacts.ts';
 
 const ORIGIN = 'https://api.example.test';
+const SUPABASE_ORIGIN = 'https://project.supabase.co';
 const REVISION = '05adbfa1c3f4e6d70a9b8c2d1e0f3a4b5c6d7e8f';
 
 /** A minimal APK-shaped archive: the frontend assets plus the parts that are not. */
@@ -279,6 +280,37 @@ describe('origin verification reads the bytes', () => {
 
     expect(problems.map((problem) => problem.code)).toEqual(['foreign_origin']);
     expect(problems[0]?.message).toContain('staging.example.test');
+  });
+
+  test('a configured Supabase Auth origin is allowed, while another origin is rejected', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'starter-artifact-'));
+    const asset = `${ORIGIN} ${SUPABASE_ORIGIN}`;
+    writeFileSync(
+      join(dir, 'starter-android-aarch64-05adbfa1c3f4-unsigned.apk'),
+      writeStoredZip([{ name: 'assets/index.js', data: asset }]),
+    );
+    expect(
+      verifyArtifacts({
+        dir,
+        expectedOrigin: ORIGIN,
+        supabaseUrl: SUPABASE_ORIGIN,
+        revision: REVISION,
+        platform: 'android',
+      }),
+    ).toEqual([]);
+    writeFileSync(
+      join(dir, 'starter-android-aarch64-05adbfa1c3f4-unsigned.apk'),
+      writeStoredZip([{ name: 'assets/index.js', data: `${asset} https://foreign.test` }]),
+    );
+    expect(
+      verifyArtifacts({
+        dir,
+        expectedOrigin: ORIGIN,
+        supabaseUrl: SUPABASE_ORIGIN,
+        revision: REVISION,
+        platform: 'android',
+      }).map((problem) => problem.code),
+    ).toContain('foreign_origin');
   });
 
   test('an artifact from another revision fails: a restored cache is not this build', () => {
