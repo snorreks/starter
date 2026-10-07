@@ -459,16 +459,16 @@ export const resolveTarget = (
   } = {},
 ): TargetResult => {
   const values = options.values ?? effectiveDeploymentValues();
-  const profile =
-    options.profile ?? (process.env.STARTER_BACKEND_PROFILE === 'supabase' ? 'supabase' : 'legacy');
-  if (
-    process.env.STARTER_BACKEND_PROFILE !== undefined &&
-    !['legacy', 'supabase'].includes(process.env.STARTER_BACKEND_PROFILE)
-  ) {
-    return fail(
-      'STARTER_BACKEND_PROFILE must be legacy or supabase.',
-      'Select an explicit supported deployment profile.',
-    );
+  let profile = options.profile;
+  if (profile === undefined) {
+    const environmentProfile = process.env.STARTER_BACKEND_PROFILE;
+    if (environmentProfile !== undefined && !['legacy', 'supabase'].includes(environmentProfile)) {
+      return fail(
+        'STARTER_BACKEND_PROFILE must be legacy or supabase.',
+        'Select an explicit supported deployment profile.',
+      );
+    }
+    profile = environmentProfile === 'supabase' ? 'supabase' : 'legacy';
   }
 
   // Refused before any other work, so an unknown word can never be resolved

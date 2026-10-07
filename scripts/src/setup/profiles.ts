@@ -105,7 +105,7 @@ export const profileChecks = (profile: Profile, runProbe = probe): Check[] => {
     const supabase = runProbe('bun', [
       'run',
       '--cwd',
-      'packages/backend/database',
+      join(REPO_ROOT, 'packages/backend/database'),
       'supabase',
       '--version',
     ]);

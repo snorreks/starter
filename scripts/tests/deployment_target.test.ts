@@ -8,7 +8,7 @@
 // what to do instead. A refusal that returns `null` or throws a bare `TypeError` is
 // not a refusal an operator can act on.
 
-import { describe, expect, test } from 'bun:test';
+import { afterEach, describe, expect, test } from 'bun:test';
 import {
   describeCredential,
   hasApiToken,
@@ -27,6 +27,14 @@ import type { DeploymentValues } from '../src/registry/deployment_values.ts';
 
 const ACCOUNT = 'abcdef0123456789abcdef0123456789';
 const OTHER_ACCOUNT = '99999999999999999999999999999999';
+const originalBackendProfile = process.env.STARTER_BACKEND_PROFILE;
+afterEach(() => {
+  if (originalBackendProfile === undefined) {
+    delete process.env.STARTER_BACKEND_PROFILE;
+  } else {
+    process.env.STARTER_BACKEND_PROFILE = originalBackendProfile;
+  }
+});
 
 /** A project with both environments fully provisioned and properly separated. */
 const configured = (overrides: Partial<DeploymentValues> = {}): DeploymentValues => ({
@@ -64,6 +72,21 @@ const resolved = (environment: string, values = configured()): ResolvedTarget =>
 };
 
 describe('resolveTarget answers with one complete destination', () => {
+  test('an explicit profile bypasses an invalid environment fallback', () => {
+    process.env.STARTER_BACKEND_PROFILE = 'invalid';
+    const explicit = resolveTarget('staging', {
+      values: supabaseConfigured(),
+      profile: 'supabase',
+    });
+    expect(explicit.ok).toBe(true);
+
+    const fallback = resolveTarget('staging', { values: configured() });
+    expect(fallback.ok).toBe(false);
+    if (!fallback.ok) {
+      expect(fallback.reason).toContain('STARTER_BACKEND_PROFILE must be legacy or supabase');
+    }
+  });
+
   test('every value a deploy touches comes from the same resolution', () => {
     // The point of the module. A plan built from one source and executed against
     // another is the failure this whole layer exists to make impossible, so the
@@ -303,7 +326,11 @@ describe('the Supabase deployment profile resolves the complete preview target o
   });
 
   test.each([
-    ['production Supabase ref', { supabaseProjectRef: 'productionproject01' }, 'Supabase project'],
+    [
+      'production Supabase ref',
+      { supabaseProjectRef: 'prodprojectref000001' },
+      'production and staging both resolve to the Supabase project "prodprojectref000001"',
+    ],
     [
       'production Google project',
       { googleProjectId: 'starter-production' },

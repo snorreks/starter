@@ -37,8 +37,8 @@ native API origin, jobs profile, jobs Worker, R2 bucket, Workflow identities and
 compute destination. With `STARTER_BACKEND_PROFILE=supabase`, that same target also
 owns the Supabase project/auth URL and redirect allowlist, Google project/region,
 private Cloud Run Job, immutable Artifact Registry image, runner/dispatcher identities,
-protocol, bounds and required secret names. Legacy D1/container targets remain the
-default until Prompt 08.
+protocol, bounds and required secret names. When `STARTER_BACKEND_PROFILE` is unset,
+legacy D1/container targets remain the default.
 
 Precedence, highest first:
 

@@ -65,6 +65,7 @@ import {
 } from './apply.ts';
 import { hasApiToken, secretInArgvProblem } from './credentials.ts';
 import { preflight, preflightSupabaseProviders, renderPreflight } from './preflight.ts';
+import { getGoogleRunnerSubject, provisionGoogleTarget } from './providers/google.ts';
 import { describeTokenScopes, provision, renderProvision } from './provision.ts';
 import {
   type ReleaseRecord,
@@ -73,7 +74,6 @@ import {
   sourceRevision,
 } from './release.ts';
 import { writeRemoteConfig } from './remote_config.ts';
-import { getGoogleRunnerSubject, provisionGoogleTarget } from './providers/google.ts';
 import {
   DEPLOYABLE_ENVIRONMENTS,
   environmentIsolationProblem,
@@ -845,10 +845,17 @@ export const main = async (argv: readonly string[]): Promise<number> => {
         }
         runnerSubject = provider.runnerSubject ?? undefined;
       } else {
-        runnerSubject = await getGoogleRunnerSubject({
-          target: resolved.target,
-          accessToken: token,
-        });
+        try {
+          runnerSubject = await getGoogleRunnerSubject({
+            target: resolved.target,
+            accessToken: token,
+          });
+        } catch (error) {
+          return fail(
+            `Google runner identity discovery failed: ${error instanceof Error ? error.message : 'unknown provider error'}`,
+            EXIT.failed,
+          );
+        }
       }
     }
     writeRemoteConfig({ target: resolved.target, runnerSubject });

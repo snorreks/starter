@@ -33,6 +33,9 @@ import { randomUUID } from 'node:crypto';
 import { join } from 'node:path';
 import { IDEMPOTENCY_KEY_HEADER } from '@starter/schemas/jobs';
 import { captureWrangler, runWrangler } from '../cloudflare/wrangler.ts';
+import { CLIENT_DIR, REPO_ROOT } from '../shared/paths.ts';
+import { imageProtocolProblem } from './compatibility.ts';
+import { parseDeploymentIdentity } from './deployment_identity.ts';
 import {
   applyDispatcherGrant,
   applyGoogleJob,
@@ -44,9 +47,6 @@ import {
   runSupabaseMigration,
   supabaseMigrationArgs,
 } from './providers/supabase.ts';
-import { CLIENT_DIR, REPO_ROOT } from '../shared/paths.ts';
-import { imageProtocolProblem } from './compatibility.ts';
-import { parseDeploymentIdentity } from './deployment_identity.ts';
 import { bucketExists } from './provision.ts';
 import {
   type ArtifactCheck,
@@ -173,7 +173,7 @@ export interface ApplyOptions {
   /** Run a wrangler subcommand, returning its exit code. */
   run?: (command: string, args: readonly string[], options: { cwd: string }) => number;
   /** Injected provider boundary for exact Supabase migration identity and argv fixtures. */
-  migrateSupabase?: (target: ResolvedTarget) => number;
+  migrateSupabase?: (target: ResolvedTarget) => { code: number; stderr: string };
   configureSupabaseAuth?: (target: ResolvedTarget) => Promise<unknown>;
   configureGoogleJob?: (target: ResolvedTarget) => Promise<unknown>;
   configureGoogleGrant?: (target: ResolvedTarget) => Promise<void>;
@@ -715,18 +715,28 @@ export const apply = async (options: ApplyOptions): Promise<ApplyResult> => {
       outcomes.push(bad('schema', migrated.detail));
       return stop('schema', migrated.detail);
     }
-    const code =
+    const migration =
       target.deploymentProfile === 'supabase'
         ? (
             options.migrateSupabase ??
-            ((resolvedTarget) => runSupabaseMigration(resolvedTarget, 'push').code)
+            ((resolvedTarget) => {
+              const result = runSupabaseMigration(resolvedTarget, 'push');
+              return { code: result.code, stderr: result.stderr };
+            })
           )(target)
-        : run('wrangler', argv[argv.length - 1] as string[], { cwd: CLIENT_DIR });
-    if (code !== 0) {
+        : {
+            code: run('wrangler', argv[argv.length - 1] as string[], { cwd: CLIENT_DIR }),
+            stderr: '',
+          };
+    if (migration.code !== 0) {
+      const recovery =
+        target.deploymentProfile === 'supabase'
+          ? 'Check `supabase_migrations.schema_migrations` before retrying; re-running `apply` is safe because Supabase records applied migrations there.'
+          : 're-running `apply` is safe, because D1 records each migration in its journal and re-applies only what is missing.';
+      const stderr = migration.stderr.trim();
       const detail =
-        `Migration failed with exit code ${code}. The schema may be partly applied; ` +
-        're-running `apply` is safe, because D1 records each migration in its journal ' +
-        'and re-applies only what is missing.';
+        `Migration failed with exit code ${migration.code}. The schema may be partly applied. ${recovery}` +
+        (stderr.length > 0 ? `\n${stderr.slice(0, 8_000)}` : '');
       outcomes.push(bad('schema', detail));
       return stop('schema', detail);
     }

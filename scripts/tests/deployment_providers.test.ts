@@ -2,16 +2,16 @@ import { describe, expect, test } from 'bun:test';
 import {
   applyDispatcherGrant,
   applyGoogleJob,
-  getGoogleRunnerSubject,
-  provisionGoogleTarget,
   enableGoogleApis,
+  getGoogleRunnerSubject,
   googleResourcePlan,
   inspectGoogleResources,
+  provisionGoogleTarget,
   verifyGoogleArtifactImage,
 } from '../src/deploy/providers/google.ts';
 import {
-  inspectSupabaseAuthConfig,
   applySupabaseAuthConfig,
+  inspectSupabaseAuthConfig,
   runSupabaseMigration,
   supabaseMigrationArgs,
 } from '../src/deploy/providers/supabase.ts';
@@ -250,6 +250,30 @@ describe('provider boundaries use the resolved target and fail closed', () => {
     ).rejects.toThrow('404');
   });
 
+  test('Artifact Registry verification escapes nested image paths as one resource component', async () => {
+    let requestedUrl = '';
+    const supabase = target.supabase;
+    if (supabase === null) {
+      throw new Error('Provider fixture requires a Supabase target.');
+    }
+    const nestedTarget = {
+      ...target,
+      supabase: {
+        ...supabase,
+        image: supabase.image.replace('/runner@', '/runner/nested@'),
+      },
+    };
+    await verifyGoogleArtifactImage({
+      target: nestedTarget,
+      accessToken: 'token',
+      fetcher: async (url) => {
+        requestedUrl = String(url);
+        return response({ name: `dockerImages/runner@sha256:${'a'.repeat(64)}` });
+      },
+    });
+    expect(requestedUrl).toContain(`dockerImages/runner%2Fnested@sha256:${'a'.repeat(64)}`);
+  });
+
   test('job apply sends a private finite job on the runner identity', async () => {
     const calls: { url: string; method: string; body?: string }[] = [];
     const fetcher = async (url: string | URL | Request, init?: RequestInit) => {
@@ -271,6 +295,9 @@ describe('provider boundaries use the resolved target and fail closed', () => {
     expect(patch).toBeDefined();
     expect(patch?.body).toContain(target.supabase?.runnerServiceAccount);
     expect(patch?.body).toContain('600s');
+    const body = JSON.parse(patch?.body ?? '{}');
+    expect(body.template.taskCount).toBe(1);
+    expect(body.template.template.taskCount).toBeUndefined();
   });
 
   test('dispatcher IAM mutation grants only the target dispatcher invoker access', async () => {

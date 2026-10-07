@@ -291,7 +291,7 @@ jobs:
           workload_identity_provider: ${{ vars.GOOGLE_WORKLOAD_IDENTITY_PROVIDER }}
           service_account: ${{ vars.GOOGLE_DEPLOYER_SERVICE_ACCOUNT }}
           token_format: access_token
-          access_token_lifetime: 600s
+          access_token_lifetime: 1800s
           create_credentials_file: false
 
       # In the environment, never in a step's `run:` line. A token echoed in a
@@ -357,8 +357,8 @@ jobs:
           # noticed which source won.
           BETTER_AUTH_SECRET: ${{ inputs.install_secrets && inputs.secrets_source == 'github' && secrets.BETTER_AUTH_SECRET || '' }}
           RESEND_API_KEY: ${{ inputs.install_secrets && inputs.secrets_source == 'github' && secrets.RESEND_API_KEY || '' }}
-          SUPABASE_SERVICE_ROLE_KEY: ${{ inputs.install_secrets && inputs.backend_profile == 'supabase' && secrets.SUPABASE_SERVICE_ROLE_KEY || '' }}
-          GOOGLE_DISPATCHER_CREDENTIAL: ${{ inputs.install_secrets && inputs.backend_profile == 'supabase' && secrets.GOOGLE_DISPATCHER_CREDENTIAL || '' }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ inputs.install_secrets && inputs.backend_profile == 'supabase' && inputs.secrets_source == 'github' && secrets.SUPABASE_SERVICE_ROLE_KEY || '' }}
+          GOOGLE_DISPATCHER_CREDENTIAL: ${{ inputs.install_secrets && inputs.backend_profile == 'supabase' && inputs.secrets_source == 'github' && secrets.GOOGLE_DISPATCHER_CREDENTIAL || '' }}
           SUPABASE_ACCESS_TOKEN: ${{ inputs.backend_profile == 'supabase' && secrets.SUPABASE_ACCESS_TOKEN || '' }}
           GOOGLE_ACCESS_TOKEN: ${{ steps.google-auth.outputs.access_token }}
           SECRETS_SOURCE: ${{ inputs.secrets_source }}

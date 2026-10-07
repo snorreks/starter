@@ -216,9 +216,9 @@ export const applyGoogleJob = async (options: {
   const name = `${parent}/jobs/${plan.job}`;
   const body = {
     template: {
+      taskCount: 1,
       template: {
         serviceAccount: plan.runner,
-        taskCount: 1,
         timeout: `${plan.timeoutSeconds}s`,
         maxRetries: 0,
         containers: [
@@ -295,7 +295,7 @@ export const verifyGoogleArtifactImage = async (options: {
     throw new Error('Artifact image is not pinned in the resolved Google project and region.');
   }
   const [, , project, repository, imagePath, digest] = match;
-  const resource = `projects/${project}/locations/${plan.region}/repositories/${repository}/dockerImages/${imagePath}@${digest}`;
+  const resource = `projects/${project}/locations/${plan.region}/repositories/${repository}/dockerImages/${encodeURIComponent(imagePath)}@${digest}`;
   const record = await request({ ...options, url: `${ARTIFACT_ROOT}/${resource}` });
   if (
     typeof record !== 'object' ||
