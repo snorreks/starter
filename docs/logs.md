@@ -18,6 +18,7 @@ bun run logs web --mode local --follow   # tail it
 bun run logs web --mode local --level error        # just failures
 bun run logs web --mode local --trace trace_abc123 # one request, end to end
 bun run logs web --mode local --source browser     # just the browser's half
+bun run logs web --mode local --run e2e_run_42     # one owned run only
 ```
 
 No credentials are needed for `--mode local`. That is deliberate: local log
@@ -76,6 +77,7 @@ browser` says so rather than returning nothing.
 | `--trace <id>` | Correlate to one request. |
 | `--uid <id>` | Filter by a **server-verified** user id. |
 | `--since <duration>` | How far back: `s`, `m`, `h`, `d`, `w`. |
+| `--run <run-id>` | Read one local run under `.wrangler/runs/<run-id>/logs`; local mode only. |
 | `--limit <n>` | Maximum events. Default 50, cap 500. |
 | `--follow` | Stream live. `--duration` bounds it (default 60s, max 300s). |
 | `--json` | Machine-readable. |
@@ -230,8 +232,12 @@ ls -la .wrangler/logs/
 `bun run dev` writes the same stream from both modes. Under Node there is no
 platform console capture, so the server writes NDJSON itself; under workerd the
 platform captures console output and wrangler prints it as JSON. Either way the
-reader skips anything that is not a complete JSON object — so a file of banners
-means the capture failed, not that there are no events.
+reader skips anything that is not a complete JSON object. It strips Wrangler's
+`stdout: ` label before parsing structured workerd records. For an owned `dev` or
+`built` run, pass `--run <run-id>` to read only that run's log file; browser network
+entries and matching Worker request records can then be compared by route and time.
+A file of banners with no records means capture failed, not that there were no
+events.
 
 ## In CI
 

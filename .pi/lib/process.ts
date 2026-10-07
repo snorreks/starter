@@ -30,12 +30,16 @@ export interface BoundedRunOptions {
   maxBytes: number;
   /** Extra grace between SIGTERM and SIGKILL. */
   killGraceMs?: number;
+  /** Optional bounded JSON or text sent to stdin instead of being placed in argv. */
+  input?: string;
+  /** Optional child environment; undefined inherits the current process environment. */
+  env?: NodeJS.ProcessEnv;
+  /** Maximum UTF-8 stdin payload size. Defaults to 1 MiB. */
+  maxInputBytes?: number;
   /** Called with an AbortSignal the caller can trigger. */
   signal?: AbortSignal;
   /** Where to spill overflow. Defaults under `.pi/artifacts/`. */
   artifactRoot?: string;
-  /** Explicitly reduced child environment when a command needs no caller secrets. */
-  env?: NodeJS.ProcessEnv;
 }
 
 export interface BoundedRunResult {
@@ -46,6 +50,7 @@ export interface BoundedRunResult {
   artifactPath?: string;
   timedOut: boolean;
   cancelled: boolean;
+  stdinError?: string;
 }
 
 const ARTIFACT_ROOT = join(process.cwd(), '.pi', 'artifacts');
@@ -186,12 +191,18 @@ export const runBounded = (
 ): Promise<BoundedRunResult> => {
   const root = options.artifactRoot ?? ARTIFACT_ROOT;
   const killGraceMs = options.killGraceMs ?? 2_000;
+  const inputBytes = options.input === undefined ? 0 : Buffer.byteLength(options.input);
+  if (inputBytes > (options.maxInputBytes ?? 1024 * 1024)) {
+    throw new Error(
+      `Subprocess stdin exceeded its ${options.maxInputBytes ?? 1024 * 1024} byte limit.`,
+    );
+  }
 
   return new Promise<BoundedRunResult>((resolve, reject) => {
     const child = spawn(command, [...args], {
       cwd: options.cwd,
       env: options.env,
-      stdio: ['ignore', 'pipe', 'pipe'],
+      stdio: [options.input === undefined ? 'ignore' : 'pipe', 'pipe', 'pipe'],
       // Its own process group, so a kill reaches the whole tree.
       //
       // Signalling only the direct child is not enough, and the failure is
@@ -210,6 +221,13 @@ export const runBounded = (
       // rather than a request.
       detached: true,
     });
+    let stdinError: string | undefined;
+    if (options.input !== undefined) {
+      child.stdin?.on('error', (error) => {
+        stdinError = `Subprocess stdin failed: ${error.message}`;
+      });
+      child.stdin?.end(options.input);
+    }
 
     const stdoutBuffer = new BoundedBuffer(
       `${command.replace(/\W+/g, '_')}-stdout`,
@@ -283,8 +301,8 @@ export const runBounded = (
       options.signal?.removeEventListener('abort', onAbort);
     };
 
-    child.stdout.on('data', (chunk: Buffer) => stdoutBuffer.write(chunk.toString('utf8')));
-    child.stderr.on('data', (chunk: Buffer) => stderrBuffer.write(chunk.toString('utf8')));
+    child.stdout?.on('data', (chunk: Buffer) => stdoutBuffer.write(chunk.toString('utf8')));
+    child.stderr?.on('data', (chunk: Buffer) => stderrBuffer.write(chunk.toString('utf8')));
 
     child.on('error', (error) => {
       if (settled) {
@@ -308,15 +326,18 @@ export const runBounded = (
       resolve({
         // A process killed by a signal has no code; report a distinct one rather
         // than 0, so "timed out" never reads as "succeeded".
-        code: code ?? (signal === null ? 0 : 124),
+        // A child that closes stdin early did not receive the requested input;
+        // do not report its otherwise-successful exit as a successful operation.
+        code: stdinError ? 125 : (code ?? (signal === null ? 0 : 124)),
         stdout: stdout.text,
-        stderr: stderr.text,
+        stderr: stdinError ? `${stderr.text}${stdinError}`.slice(0, options.maxBytes) : stderr.text,
         truncated: stdout.truncated || stderr.truncated,
         ...(stdout.artifactPath === undefined && stderr.artifactPath === undefined
           ? {}
           : { artifactPath: stdout.artifactPath ?? stderr.artifactPath }),
         timedOut,
         cancelled,
+        ...(stdinError === undefined ? {} : { stdinError }),
       });
     });
   });

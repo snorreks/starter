@@ -27,10 +27,10 @@ let { data, form }: { data: PageData; form: ActionData } = $props();
       expires in an hour.
     </p>
     <p><a href="/login">Back to sign in</a></p>
-  {:else if !data.hasToken}
+  {:else if !data.hasToken || form?.tokenInvalid}
     <p role="alert">
-      That link is no longer valid. It may have expired, or it may already have
-      been used.
+      {form?.errors?.newPassword ??
+        'That link is no longer valid. It may have expired, or it may already have been used.'}
     </p>
     <p><a href="/forgot-password">Ask for a new link</a></p>
   {:else}

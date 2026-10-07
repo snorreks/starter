@@ -9,10 +9,13 @@
 // idea of them.
 
 import { afterEach, describe, expect, test } from 'bun:test';
+import { spawn } from 'node:child_process';
 import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
+import { fileURLToPath } from 'node:url';
+import { startJob } from '../lib/jobs.ts';
 import { runBounded } from '../lib/process.ts';
 
 const artifactRoot = (): string => mkdtempSync(join(tmpdir(), 'pi-process-'));
@@ -44,6 +47,65 @@ afterEach(() => {
 });
 
 describe('runBounded', () => {
+  test('reports early child stdin closure without crashing its Node host', async () => {
+    const root = artifactRoot();
+    cleanups.push(root);
+    const source = fileURLToPath(new URL('../lib/process.ts', import.meta.url));
+    const build = await Bun.build({
+      entrypoints: [source],
+      outdir: root,
+      target: 'node',
+      format: 'esm',
+    });
+    expect(build.success).toBe(true);
+    const helper = join(root, 'process.js');
+    const script = `import { runBounded } from ${JSON.stringify(helper)}; const r = await runBounded('sh', ['-c', 'exec 0<&-; sleep 0.1'], { cwd: process.cwd(), timeoutMs: 5000, maxBytes: 1024, input: 'x'.repeat(1024 * 1024) }); process.stdout.write(JSON.stringify({ code: r.code, stdinError: r.stdinError }));`;
+    const child = spawn(process.execPath, ['--input-type=module', '--eval', script], {
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    let stdout = '';
+    let stderr = '';
+    child.stdout.setEncoding('utf8').on('data', (chunk) => (stdout += chunk));
+    child.stderr.setEncoding('utf8').on('data', (chunk) => (stderr += chunk));
+    const code = await new Promise<number | null>((resolve, reject) => {
+      child.once('error', reject);
+      child.once('close', resolve);
+    });
+    expect(code).toBe(0);
+    expect(stderr).not.toContain('Unhandled');
+    expect(JSON.parse(stdout)).toMatchObject({
+      code: 125,
+      stdinError: expect.stringContaining('EPIPE'),
+    });
+  });
+
+  test('writes a bounded JSON payload to child stdin without placing it in argv', async () => {
+    const result = await runBounded('sh', ['-c', 'cat'], {
+      cwd: process.cwd(),
+      timeoutMs: 5_000,
+      maxBytes: 1024,
+      input: '{"url":"http://127.0.0.1/private?token=redacted"}',
+    });
+    expect(result.code).toBe(0);
+    expect(result.stdout).toBe('{"url":"http://127.0.0.1/private?token=redacted"}');
+  });
+
+  test('refuses an oversized stdin payload before starting the child', async () => {
+    let message = '';
+    try {
+      await runBounded('definitely-not-a-real-binary', [], {
+        cwd: process.cwd(),
+        timeoutMs: 500,
+        maxBytes: 1024,
+        input: 'x'.repeat(129),
+        maxInputBytes: 128,
+      });
+    } catch (error) {
+      message = (error as Error).message;
+    }
+    expect(message).toContain('stdin exceeded its 128 byte limit');
+  });
+
   test('captures stdout and the exit status', async () => {
     const root = artifactRoot();
     cleanups.push(root);
@@ -252,5 +314,35 @@ describe('runBounded', () => {
         artifactRoot: root,
       }),
     ).rejects.toThrow();
+  });
+
+  test('the owned runtime environment keeps host prerequisites but strips unrelated secrets', async () => {
+    const root = artifactRoot();
+    cleanups.push(root);
+    const previous = process.env.PI_TEST_RUNTIME_SECRET;
+    process.env.PI_TEST_RUNTIME_SECRET = 'sentinel-not-for-runtime';
+    try {
+      const { handle } = startJob(
+        'sh',
+        ['-c', 'printf "%s|%s" "$PATH" "$PI_TEST_RUNTIME_SECRET"'],
+        {
+          cwd: root,
+          timeoutMs: 5_000,
+          maxBytes: 1024,
+          environment: 'starter-runtime',
+        },
+      );
+      const finished = await handle.wait();
+      expect(finished.state).toBe('exited');
+      const [path, secret] = handle.tail().split('|');
+      expect(path).toBeTruthy();
+      expect(secret).toBe('');
+    } finally {
+      if (previous === undefined) {
+        delete process.env.PI_TEST_RUNTIME_SECRET;
+      } else {
+        process.env.PI_TEST_RUNTIME_SECRET = previous;
+      }
+    }
   });
 });

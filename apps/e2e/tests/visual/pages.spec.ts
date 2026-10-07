@@ -48,6 +48,12 @@ for (const scenario of scenarios) {
     expect(actualUrl.pathname).toBe(expectedUrl.pathname);
     expect(actualUrl.search).toBe(expectedUrl.search);
     await assertScenario(page, scenario);
+    if (scenario.setup === 'invalid-reset-token') {
+      await expect(page.locator('#new-password')).toHaveCount(0);
+    }
+    if (scenario.id === 'web-chat-conversation') {
+      await expect(page.getByTestId('chat-error')).toHaveCount(0);
+    }
     let accessibility: { violations: number; critical: number; serious: number } | null = null;
     if (scenario.audit) {
       const audit = await new AxeBuilder({ page })

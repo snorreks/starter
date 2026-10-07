@@ -30,6 +30,8 @@ export type { AppId, DeploymentEnvironment, LogAdapterCapabilities, LogAdapterKi
 export interface LogQuery {
   app: AppId;
   mode: DeploymentEnvironment;
+  /** Select one local run's isolated log directory. */
+  runId?: string;
   /** Minimum severity. `DEBUG` includes everything. */
   level?: QueryLevel;
   /** Restrict to events originating from this source. */
