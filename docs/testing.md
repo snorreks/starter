@@ -1,6 +1,6 @@
 # Testing
 
-Four lanes plus a visual capture. Each answers a different question, and none of
+Four engine-free lanes, plus database and compute integrations and a visual capture. Each answers a different question, and none of
 them can answer the question the others exist for.
 
 Every lane runs **without credentials and without a network account**. That is a
@@ -14,6 +14,9 @@ bun run test:browser       # real Svelte in Chromium
 bun run test:worker       # build, then real workerd + real D1
 bun run e2e                # built client + real Worker + real D1 + real browser
 bun run test:all           # all four, in that order, no duplicates
+bun run test:database      # real local Supabase/Postgres, Auth, Data API/RLS and concurrent RPCs; needs Docker
+bun run db:types           # regenerate generated types from reset local migrations
+bun run db:types:check     # regenerate to a temporary file and compare without overwriting
 bun run workflows          # CI workflow policy: pins, permissions, bounds, secrets
 bun run smoke              # fresh checkout of this template, no credentials
 bun run e2e:visual         # 76 screenshots: routes/states x desktop/mobile x light/dark
@@ -220,6 +223,7 @@ prerequisite: see `docs/capability-matrix.md`.
 | Browser | `bun run test:browser` | Does this reactivity actually reach the DOM? |
 | Worker | `bun run test:worker` | Does the built Worker route, authenticate and authorize correctly in workerd? |
 | E2E | `bun run e2e` | Does the whole path work, through a build and a browser? |
+| Database | `bun run test:database` | Do local Supabase Auth, direct Data API/RLS and concurrent Postgres RPCs enforce ownership and fencing? |
 | Compute | `bun run test:compute` | Does the durable half actually run — Workflows, a Durable Object, real D1/R2 and real FFmpeg? |
 | Native desktop | `.github/workflows/native.yml` `rust` + `desktop` jobs | Does the shell format, lint, unit-test and compile on Linux, macOS and Windows? |
 | Native mobile | `.github/workflows/native.yml` `android` + `ios` jobs | Do the Android and iOS builds run the pinned CLIs, and does the app install and launch on an emulator and a simulator? |
@@ -235,6 +239,13 @@ bun run test:all          # each lane prints its own count
 `test:all` deliberately does **not** include the compute lane: that one needs a
 Docker engine, and folding it in would make the credential-free, engine-free lanes
 fail on a machine that has neither. It is invoked by name.
+
+The database lane is also separate from `test:all`. It starts a run-owned local
+Supabase stack using Docker or Podman, creates two synthetic users through the Auth
+API, tests Data API denial results, and drives concurrent SQL functions against
+real Postgres. A missing engine is a named nonzero failure. Unit tests remain
+independent of the database stack. Supabase mail is captured locally at the
+allocation's `SUPABASE_MAIL_URL`; SMTP is `SUPABASE_SMTP_URL`.
 
 The two native lanes are the same idea with more prerequisites: an Android SDK, an
 NDK, a JDK and KVM for the first, macOS with full Xcode for the second. They are

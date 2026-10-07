@@ -75,6 +75,7 @@ const DOCTOR_USAGE = [
   '  android   Rust + an Android SDK and a JDK.',
   '  ios       Rust + macOS with the full Xcode. Cannot pass on any other host.',
   '  compute   web + a running Docker-compatible engine.',
+  '  database  Bun + a running Docker-compatible engine for real local Postgres tests.',
   '',
   'Exit 3 means this host cannot run the named lane; the message names the remedy.',
 ].join('\n');

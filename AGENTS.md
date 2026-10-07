@@ -49,12 +49,16 @@ bun run dev:worker          # the BUILT Worker in real workerd. Requires a build
 bun run build               # vite build -> apps/frontend/client/.svelte-kit/cloudflare/
 bun run check:bundle        # verify the artifact and that it matches its build mode
 
-# Test — four credential-free lanes, plus compute, which is not
+# Test — four engine-free application lanes, plus database and compute integrations
 bun run test                # unit, every project
 bun run test:browser        # real Svelte in Chromium
 bun run test:worker         # build, then the built Worker in workerd + real local D1
 bun run e2e                 # built client + built Worker + real browser, one origin
 bun run test:all            # all four, no duplicates
+bun run test:database       # local Supabase: real Postgres, Auth, Data API/RLS and concurrent RPCs.
+                            # Needs Docker or Podman; not included in test:all.
+bun run db:types            # regenerate Supabase database.types.ts from reset local migrations.
+bun run db:types:check      # regenerate to a temporary file and compare without overwriting.
 bun run test:compute        # the jobs Worker: real Workflows, real D1/R2, real FFmpeg.
                             # Needs a Docker engine, is never cached, and is NOT in
                             # test:all. Without Docker it fails with the missing
@@ -120,6 +124,7 @@ own:
 | `node` on PATH | `dev:worker`, `test:worker`, `e2e` | `env: 'node': No such file or directory`, then a 4-minute timeout |
 | Chromium's shared libraries | `test:browser`, `e2e` | `error while loading shared libraries` |
 | `CHROMIUM_PATH`, or a populated Playwright cache | `test:browser`, `e2e` | `Failed to launch chromium because executable doesn't exist` |
+| Docker-compatible engine | `test:database`, `test:compute` | named nonzero prerequisite; no mocked fallback |
 | a free port in this checkout's range | `test:worker`, `e2e` | `PortUnavailable`, naming the port and its listener |
 | Rust toolchain 1.98.1 with clippy + rustfmt | `native:dev`, `native:build` | `bun run native:doctor` names it; a missing one is exit 3, not a linker error |
 | WebKitGTK 4.1 development files (Linux) | `native:dev`, `native:build` on Linux | named by `native:doctor`, which asks `pkg-config` |

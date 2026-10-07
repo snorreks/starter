@@ -23,7 +23,7 @@ import { join } from 'node:path';
 import { NATIVE_DIR, REPO_ROOT } from '../shared/paths.ts';
 import type { Check } from './doctor.ts';
 
-export const PROFILES = ['web', 'native', 'android', 'ios', 'compute'] as const;
+export const PROFILES = ['web', 'native', 'android', 'ios', 'compute', 'database'] as const;
 export type Profile = (typeof PROFILES)[number];
 
 /**
@@ -51,6 +51,7 @@ const CORE_PROFILE_CHECKS: Record<Profile, readonly string[]> = {
     'docker-engine',
     'cargo-media',
   ],
+  database: ['bun', 'pins', 'proto', 'docker', 'docker-engine'],
 };
 
 export const isProfile = (value: unknown): value is Profile =>
@@ -231,7 +232,7 @@ export const profileChecks = (profile: Profile, runProbe = probe): Check[] => {
     });
   }
 
-  if (profile === 'compute') {
+  if (profile === 'compute' || profile === 'database') {
     const docker = runProbe('docker', ['--version']);
     out.push({
       name: 'docker',
@@ -241,9 +242,9 @@ export const profileChecks = (profile: Profile, runProbe = probe): Check[] => {
       ...(docker === null
         ? {
             remedy:
-              '`bun run test:compute` runs the media container in a real Docker-compatible\n' +
-              '    engine. Install Docker or Podman and make sure the daemon is running, or use\n' +
-              '    `nix develop`. Without it this lane refuses; it never falls back to a mock.',
+              `${profile === 'database' ? '`bun run test:database` runs real Postgres and the Supabase Data API in a checkout-owned stack.\n' : '`bun run test:compute` runs the media container in a real Docker-compatible\n'}` +
+              '    engine. Install Docker or Podman and make sure the daemon is running.\n' +
+              '    Without it this lane exits nonzero; it never falls back to a mock.',
           }
         : {}),
     });
@@ -267,7 +268,9 @@ export const profileChecks = (profile: Profile, runProbe = probe): Check[] => {
           }
         : {}),
     });
+  }
 
+  if (profile === 'compute') {
     // From `REPO_ROOT`, not the working directory.
     //
     // `join('apps', 'backend', 'media', 'Cargo.toml')` is relative to wherever the
