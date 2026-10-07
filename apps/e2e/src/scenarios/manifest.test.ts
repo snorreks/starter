@@ -32,7 +32,9 @@ describe('E2E scenario coverage', () => {
   test('duplicate scenario ids are rejected even when route coverage is complete', () => {
     const manifest = readScenarioManifest();
     const first = manifest.scenarios[0];
-    if (first === undefined) throw new Error('manifest has no scenarios');
+    if (first === undefined) {
+      throw new Error('manifest has no scenarios');
+    }
 
     expect(() =>
       checkRouteCoverage(
@@ -45,7 +47,9 @@ describe('E2E scenario coverage', () => {
   test('an uncaptured state needs a reason and cannot be a baseline', () => {
     const manifest = readScenarioManifest();
     const errorState = manifest.scenarios.find((scenario) => scenario.id === 'web-error');
-    if (errorState === undefined) throw new Error('manifest has no declared error state');
+    if (errorState === undefined) {
+      throw new Error('manifest has no declared error state');
+    }
 
     expect(() =>
       validateScenarioManifest({

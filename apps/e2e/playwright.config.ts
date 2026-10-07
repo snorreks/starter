@@ -110,6 +110,7 @@ export const AUTH_RATE_LIMIT_MAX = '500';
 
 export default defineConfig({
   testDir: './tests',
+  testIgnore: ['tests/audit/**', 'tests/full/**', 'tests/visual/**'],
   outputDir: './test-results',
   // Screenshots of failures only: a full-page shot per test would fill a disk
   // with images of a working application.

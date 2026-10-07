@@ -11,12 +11,16 @@ const record = (value: unknown, label: string): JsonRecord => {
 };
 
 const string = (value: unknown, label: string): string => {
-  if (typeof value !== 'string' || value.length === 0) throw new Error(`${label} is missing from Wrangler configuration.`);
+  if (typeof value !== 'string' || value.length === 0) {
+    throw new Error(`${label} is missing from Wrangler configuration.`);
+  }
   return value;
 };
 
 const rows = (value: unknown, label: string): JsonRecord[] => {
-  if (!Array.isArray(value)) throw new Error(`${label} must be an array in Wrangler configuration.`);
+  if (!Array.isArray(value)) {
+    throw new Error(`${label} must be an array in Wrangler configuration.`);
+  }
   return value.map((item, index) => record(item, `${label}[${index}]`));
 };
 
@@ -26,15 +30,26 @@ export const parseWranglerJsonc = (source: string): JsonRecord => {
   try {
     return record(JSON.parse(withoutLineComments), 'Wrangler configuration');
   } catch (error) {
-    throw new Error(`Cannot parse Wrangler JSONC: ${error instanceof Error ? error.message : String(error)}`);
+    throw new Error(
+      `Cannot parse Wrangler JSONC: ${error instanceof Error ? error.message : String(error)}`,
+    );
   }
 };
 
-const bindingNames = (rowsValue: unknown, bindingKey: string, resourceKey: string): Record<string, string> =>
-  Object.fromEntries(rows(rowsValue, resourceKey).map((row, index) => [
-    string(row[bindingKey], `${resourceKey}[${index}].${bindingKey}`),
-    string(row[resourceKey === 'd1_databases' ? 'database_name' : 'bucket_name'], `${resourceKey}[${index}].${resourceKey}`),
-  ]));
+const bindingNames = (
+  rowsValue: unknown,
+  bindingKey: string,
+  resourceKey: string,
+): Record<string, string> =>
+  Object.fromEntries(
+    rows(rowsValue, resourceKey).map((row, index) => [
+      string(row[bindingKey], `${resourceKey}[${index}].${bindingKey}`),
+      string(
+        row[resourceKey === 'd1_databases' ? 'database_name' : 'bucket_name'],
+        `${resourceKey}[${index}].${resourceKey}`,
+      ),
+    ]),
+  );
 
 export interface WorkerGraphOptions {
   client: JsonRecord;
@@ -60,10 +75,14 @@ export interface WorkerGraph {
 export const buildWorkerGraph = (options: WorkerGraphOptions): WorkerGraph => {
   const webName = string(options.client.name, 'client.name');
   const jobsName = string(options.jobs.name, 'jobs.name');
-  if (webName === jobsName) throw new Error('Web and jobs Workers need distinct names.');
+  if (webName === jobsName) {
+    throw new Error('Web and jobs Workers need distinct names.');
+  }
   const webDate = string(options.client.compatibility_date, 'client.compatibility_date');
   const jobsDate = string(options.jobs.compatibility_date, 'jobs.compatibility_date');
-  if (webDate !== jobsDate) throw new Error('Web and jobs Workers must share the configured compatibility date.');
+  if (webDate !== jobsDate) {
+    throw new Error('Web and jobs Workers must share the configured compatibility date.');
+  }
   const webFlags = options.client.compatibility_flags;
   const jobsFlags = options.jobs.compatibility_flags;
   if (JSON.stringify(webFlags ?? []) !== JSON.stringify(jobsFlags ?? [])) {
@@ -77,46 +96,63 @@ export const buildWorkerGraph = (options: WorkerGraphOptions): WorkerGraph => {
   }
   const jobsMedia = bindingNames(options.jobs.r2_buckets, 'binding', 'r2_buckets');
   const mediaBucketName = jobsMedia.MEDIA;
-  if (mediaBucketName === undefined) throw new Error('The jobs Worker must declare its MEDIA R2 bucket.');
+  if (mediaBucketName === undefined) {
+    throw new Error('The jobs Worker must declare its MEDIA R2 bucket.');
+  }
   const doConfig = record(options.jobs.durable_objects, 'jobs.durable_objects');
   const durableBindings = rows(doConfig.bindings, 'jobs.durable_objects.bindings');
   const container = durableBindings.find((entry) => entry.name === 'CONTAINER');
-  if (container === undefined) throw new Error('The jobs Worker must declare its CONTAINER Durable Object.');
+  if (container === undefined) {
+    throw new Error('The jobs Worker must declare its CONTAINER Durable Object.');
+  }
 
   const workflowEntries = rows(options.jobs.workflows, 'jobs.workflows');
   const workflow = workflowEntries.find((entry) => entry.binding === 'ENCODE_WORKFLOW');
-  if (workflow === undefined) throw new Error('The jobs Worker must declare ENCODE_WORKFLOW.');
+  if (workflow === undefined) {
+    throw new Error('The jobs Worker must declare ENCODE_WORKFLOW.');
+  }
   const workflowName = string(workflow.name, 'jobs ENCODE_WORKFLOW name');
   const workflowClass = string(workflow.class_name, 'jobs ENCODE_WORKFLOW class_name');
-  const workflowExports = Object.fromEntries(workflowEntries.map((entry, index) => [
-    string(entry.class_name, `jobs.workflows[${index}].class_name`),
-    { name: string(entry.name, `jobs.workflows[${index}].name`) },
-  ]));
-  const workflowBindings = Object.fromEntries(workflowEntries.map((entry, index) => [
-    string(entry.binding, `jobs.workflows[${index}].binding`),
-    {
-      name: string(entry.name, `jobs.workflows[${index}].name`),
-      className: string(entry.class_name, `jobs.workflows[${index}].class_name`),
-    },
-  ]));
+  const workflowExports = Object.fromEntries(
+    workflowEntries.map((entry, index) => [
+      string(entry.class_name, `jobs.workflows[${index}].class_name`),
+      { name: string(entry.name, `jobs.workflows[${index}].name`) },
+    ]),
+  );
+  const workflowBindings = Object.fromEntries(
+    workflowEntries.map((entry, index) => [
+      string(entry.binding, `jobs.workflows[${index}].binding`),
+      {
+        name: string(entry.name, `jobs.workflows[${index}].name`),
+        className: string(entry.class_name, `jobs.workflows[${index}].class_name`),
+      },
+    ]),
+  );
   const webWorkflow = workflowBindings.ENCODE_WORKFLOW;
-  if (webWorkflow === undefined) throw new Error('No ENCODE_WORKFLOW binding could be derived.');
+  if (webWorkflow === undefined) {
+    throw new Error('No ENCODE_WORKFLOW binding could be derived.');
+  }
 
   const clientAssets = record(options.client.assets, 'client.assets');
   const clientMain = string(options.client.main, 'client.main');
   const jobsMain = string(options.jobs.main, 'jobs.main');
   const migration = rows(options.jobs.d1_databases, 'jobs.d1_databases')[0];
-  if (migration === undefined) throw new Error('The jobs D1 migration declaration is missing.');
+  if (migration === undefined) {
+    throw new Error('The jobs D1 migration declaration is missing.');
+  }
   const migrationDirectory = resolve(
     options.jobsRoot,
     string(migration.migrations_dir, 'jobs.d1_databases[0].migrations_dir'),
   );
-  const webVars = options.client.vars === undefined ? {} : record(options.client.vars, 'client.vars');
+  const webVars =
+    options.client.vars === undefined ? {} : record(options.client.vars, 'client.vars');
   const jobsVars = options.jobs.vars === undefined ? {} : record(options.jobs.vars, 'jobs.vars');
 
   const common = {
     compatibilityDate: webDate,
-    compatibilityFlags: Array.isArray(webFlags) ? webFlags.filter((flag): flag is string => typeof flag === 'string') : [],
+    compatibilityFlags: Array.isArray(webFlags)
+      ? webFlags.filter((flag): flag is string => typeof flag === 'string')
+      : [],
   };
   const workers: V4WorkerOptions[] = [
     {
@@ -139,12 +175,18 @@ export const buildWorkerGraph = (options: WorkerGraphOptions): WorkerGraph => {
         ENCODE_WORKFLOW: { ...webWorkflow, scriptName: jobsName },
       },
       assets: {
-        directory: resolve(options.clientRoot, string(clientAssets.directory, 'client.assets.directory')),
+        directory: resolve(
+          options.clientRoot,
+          string(clientAssets.directory, 'client.assets.directory'),
+        ),
         binding: string(clientAssets.binding, 'client.assets.binding'),
         run_worker_first: true,
         routerConfig: { has_user_worker: true },
         assetConfig: {
-          not_found_handling: typeof clientAssets.not_found_handling === 'string' ? clientAssets.not_found_handling : 'none',
+          not_found_handling:
+            typeof clientAssets.not_found_handling === 'string'
+              ? clientAssets.not_found_handling
+              : 'none',
         },
       },
     },
@@ -163,7 +205,10 @@ export const buildWorkerGraph = (options: WorkerGraphOptions): WorkerGraph => {
       d1Databases: jobsD1,
       r2Buckets: jobsMedia,
       durableObjects: {
-        CONTAINER: { className: string(container.class_name, 'jobs CONTAINER class_name'), useSQLite: true },
+        CONTAINER: {
+          className: string(container.class_name, 'jobs CONTAINER class_name'),
+          useSQLite: true,
+        },
       },
       workflowExports,
       workflows: workflowBindings,

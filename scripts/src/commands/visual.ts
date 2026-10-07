@@ -1,8 +1,8 @@
 import { join } from 'node:path';
-import { runBounded } from '../shared/run_bounded.ts';
-import { REPO_ROOT } from '../shared/paths.ts';
-import { runScope } from '../shared/run_scope.ts';
 import { type Command, EXIT, fail, wantsHelp } from '../shared/command.ts';
+import { REPO_ROOT } from '../shared/paths.ts';
+import { runBounded } from '../shared/run_bounded.ts';
+import { runScope } from '../shared/run_scope.ts';
 import { reviewCaptureManifest } from '../visual/review.ts';
 
 const USAGE = `visual review (--run <id-or-manifest> | --capture) [--gate] [--no-cache]
@@ -20,19 +20,30 @@ export const visualCommand: Command = {
       process.stdout.write(`${USAGE}\n`);
       return EXIT.ok;
     }
-    if (argv[0] !== 'review') return fail(`Unknown visual operation ${JSON.stringify(argv[0])}.\n\n${USAGE}`, EXIT.usage);
+    if (argv[0] !== 'review') {
+      return fail(`Unknown visual operation ${JSON.stringify(argv[0])}.\n\n${USAGE}`, EXIT.usage);
+    }
     const rest = argv.slice(1);
     const known = new Set(['--run', '--capture', '--gate', '--no-cache']);
     for (const argument of rest) {
-      if ((argument.startsWith('--') && !known.has(argument)) || (!argument.startsWith('--') && !rest[rest.indexOf(argument) - 1]?.startsWith('--run'))) {
-        return fail(`Unexpected visual review argument ${JSON.stringify(argument)}.\n\n${USAGE}`, EXIT.usage);
+      if (
+        (argument.startsWith('--') && !known.has(argument)) ||
+        (!argument.startsWith('--') && !rest[rest.indexOf(argument) - 1]?.startsWith('--run'))
+      ) {
+        return fail(
+          `Unexpected visual review argument ${JSON.stringify(argument)}.\n\n${USAGE}`,
+          EXIT.usage,
+        );
       }
     }
     const runIndex = rest.indexOf('--run');
     const runValue = runIndex < 0 ? undefined : rest[runIndex + 1];
     const capture = rest.includes('--capture');
     if ((runValue === undefined) === !capture) {
-      return fail(`Pass exactly one of --run <id-or-manifest> or --capture.\n\n${USAGE}`, EXIT.usage);
+      return fail(
+        `Pass exactly one of --run <id-or-manifest> or --capture.\n\n${USAGE}`,
+        EXIT.usage,
+      );
     }
     let manifestPath: string;
     if (capture) {
@@ -48,13 +59,21 @@ export const visualCommand: Command = {
         maxBytes: 16 * 1024 * 1024,
         stdio: 'inherit',
       });
-      if (processResult.code !== 0) return fail(`Visual browser capture failed with exit code ${processResult.code}. Review its run directory under .wrangler/runs/${runId}.`, EXIT.failed);
+      if (processResult.code !== 0) {
+        return fail(
+          `Visual browser capture failed with exit code ${processResult.code}. Review its run directory under .wrangler/runs/${runId}.`,
+          EXIT.failed,
+        );
+      }
       manifestPath = join(runScope(runId, REPO_ROOT).artifactDir, 'visual', 'run.json');
     } else {
-      if (runValue === undefined) return fail('Missing --run value.', EXIT.usage);
-      manifestPath = runValue.endsWith('.json') || runValue.includes('/')
-        ? runValue
-        : join('.wrangler', 'runs', runValue, 'artifacts', 'visual', 'run.json');
+      if (runValue === undefined) {
+        return fail('Missing --run value.', EXIT.usage);
+      }
+      manifestPath =
+        runValue.endsWith('.json') || runValue.includes('/')
+          ? runValue
+          : join('.wrangler', 'runs', runValue, 'artifacts', 'visual', 'run.json');
     }
     try {
       const result = await reviewCaptureManifest({
@@ -70,7 +89,10 @@ export const visualCommand: Command = {
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       const missingConfiguration = /Set E2E_VISION_(?:MODEL|API_KEY)/.test(message);
-      return fail(`Visual review error: ${message}`, missingConfiguration ? EXIT.unavailable : EXIT.failed);
+      return fail(
+        `Visual review error: ${message}`,
+        missingConfiguration ? EXIT.unavailable : EXIT.failed,
+      );
     }
   },
 };

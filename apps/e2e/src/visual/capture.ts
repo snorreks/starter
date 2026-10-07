@@ -29,7 +29,9 @@ export const assertScenario = async (page: Page, scenario: Scenario): Promise<vo
   await page.getByRole('heading', { name: scenario.ready.heading, exact: true }).waitFor();
   for (const control of scenario.expected.controls) {
     const selector = controlSelectors[control];
-    if (selector === undefined) throw new Error(`No browser selector is registered for ${control}.`);
+    if (selector === undefined) {
+      throw new Error(`No browser selector is registered for ${control}.`);
+    }
     await page.locator(selector).first().waitFor({ state: 'visible' });
   }
   for (const expected of scenario.expected.content) {
@@ -41,16 +43,22 @@ export const assertScenario = async (page: Page, scenario: Scenario): Promise<vo
       await page.getByText(expected, { exact: false }).first().waitFor({ state: 'visible' });
     }
   }
-  const overflow = await page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth);
-  if (overflow) throw new Error(`Horizontal page overflow at ${page.url()}.`);
+  const overflow = await page.evaluate(
+    () => document.documentElement.scrollWidth > window.innerWidth,
+  );
+  if (overflow) {
+    throw new Error(`Horizontal page overflow at ${page.url()}.`);
+  }
   await page.evaluate(async () => {
     await document.fonts.ready;
     await Promise.all(
       [...document.images].map((image) =>
-        image.complete ? Promise.resolve() : new Promise<void>((resolve) => {
-          image.addEventListener('load', () => resolve(), { once: true });
-          image.addEventListener('error', () => resolve(), { once: true });
-        }),
+        image.complete
+          ? Promise.resolve()
+          : new Promise<void>((resolve) => {
+              image.addEventListener('load', () => resolve(), { once: true });
+              image.addEventListener('error', () => resolve(), { once: true });
+            }),
       ),
     );
   });
@@ -68,12 +76,18 @@ export const captureScenario = async (
   const metadata = testInfo.config.metadata as Record<string, unknown>;
   const runId = typeof metadata.e2eRunId === 'string' ? metadata.e2eRunId : 'missing-run-id';
   const output = typeof metadata.e2eEvidenceDir === 'string' ? metadata.e2eEvidenceDir : undefined;
-  if (output === undefined) throw new Error('Visual capture has no configured artifact directory.');
+  if (output === undefined) {
+    throw new Error('Visual capture has no configured artifact directory.');
+  }
   const workerPath = join(REPO_ROOT, 'apps/frontend/client/.svelte-kit/cloudflare/_worker.js');
-  const workerSha256 = createHash('sha256').update(await readFile(workerPath)).digest('hex');
+  const workerSha256 = createHash('sha256')
+    .update(await readFile(workerPath))
+    .digest('hex');
   const parsedUrl = new URL(url);
   for (const key of [...parsedUrl.searchParams.keys()]) {
-    if (/token|code|email|secret|session|credential/i.test(key)) parsedUrl.searchParams.set(key, '[redacted]');
+    if (/token|code|email|secret|session|credential/i.test(key)) {
+      parsedUrl.searchParams.set(key, '[redacted]');
+    }
   }
   const browser = page.context().browser();
   const viewport = page.viewportSize();

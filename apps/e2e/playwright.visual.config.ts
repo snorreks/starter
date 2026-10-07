@@ -7,7 +7,9 @@ import { runScope } from '../../scripts/src/shared/run_scope.ts';
 
 const runId = process.env.E2E_RUN_ID ?? `visual_${crypto.randomUUID()}`;
 if (process.env.CI && process.argv.includes('--update-snapshots')) {
-  throw new Error('Visual snapshot updates are refused in CI. Run e2e:visual -- --update-snapshots locally and review the diff.');
+  throw new Error(
+    'Visual snapshot updates are refused in CI. Run e2e:visual -- --update-snapshots locally and review the diff.',
+  );
 }
 process.env.E2E_RUN_ID = runId;
 const nativePort = await resolveE2EPort(`${runId}_native`, process.env.E2E_NATIVE_PORT, REPO_ROOT);
@@ -19,12 +21,23 @@ process.env.E2E_EVIDENCE_DIR = `${scope.artifactDir}/visual`;
 const { default: baseConfig, appBaseUrl } = await import('./playwright.config.ts');
 const base = baseConfig as PlaywrightTestConfig;
 const launchOptions = playwrightLaunchOptions();
+const baseServers: NonNullable<PlaywrightTestConfig['webServer']> = [];
+if (Array.isArray(base.webServer)) {
+  baseServers.push(...base.webServer);
+} else if (base.webServer !== undefined) {
+  baseServers.push(base.webServer);
+}
 
 export default defineConfig({
   ...base,
   testDir: './tests/visual',
+  testIgnore: [],
   outputDir: `${scope.artifactDir}/playwright-visual`,
-  metadata: { e2eRunId: runId, e2eNativeUrl: nativeUrl, e2eEvidenceDir: `${scope.artifactDir}/visual` },
+  metadata: {
+    e2eRunId: runId,
+    e2eNativeUrl: nativeUrl,
+    e2eEvidenceDir: `${scope.artifactDir}/visual`,
+  },
   fullyParallel: false,
   workers: 1,
   reporter: [['list'], ['./src/visual/reporter.ts']],
@@ -50,7 +63,7 @@ export default defineConfig({
     },
   ),
   webServer: [
-    ...(Array.isArray(base.webServer) ? base.webServer : base.webServer ? [base.webServer] : []),
+    ...baseServers,
     {
       command: `bun run dev -- --host 127.0.0.1 --port ${nativePort} --strictPort`,
       cwd: fileURLToPath(new URL('../frontend/native', import.meta.url)),

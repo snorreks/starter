@@ -1,7 +1,7 @@
-import { readFileSync, readdirSync } from 'node:fs';
+import { readdirSync, readFileSync } from 'node:fs';
 import { join, relative, sep } from 'node:path';
-import { Value } from 'typebox/value';
 import { type Static, Type } from 'typebox';
+import { Value } from 'typebox/value';
 import { REPO_ROOT } from '../../../../scripts/src/shared/paths.ts';
 import sourceManifest from './manifest.json' with { type: 'json' };
 
@@ -102,7 +102,10 @@ export const validateScenarioManifest = (manifest: ScenarioManifest): void => {
     if (scenario.capture && scenario.captureReason !== null) {
       throw new Error(`Captured scenario ${scenario.id} cannot declare a not-run reason.`);
     }
-    if (!scenario.capture && (scenario.captureReason === null || scenario.captureReason.trim() === '')) {
+    if (
+      !scenario.capture &&
+      (scenario.captureReason === null || scenario.captureReason.trim() === '')
+    ) {
       throw new Error(`Uncaptured scenario needs a reason: ${scenario.id}.`);
     }
     if (scenario.baseline && !scenario.capture) {
@@ -149,27 +152,51 @@ export const checkRouteCoverage = (
   validateScenarioManifest(manifest);
 
   const declared: Record<AppName, string[]> = {
-    web: [...new Set(manifest.scenarios.filter((item) => item.kind === 'page' && item.app === 'web').map((item) => item.route))].sort(),
-    native: [...new Set(manifest.scenarios.filter((item) => item.kind === 'page' && item.app === 'native').map((item) => item.route))].sort(),
+    web: [
+      ...new Set(
+        manifest.scenarios
+          .filter((item) => item.kind === 'page' && item.app === 'web')
+          .map((item) => item.route),
+      ),
+    ].sort(),
+    native: [
+      ...new Set(
+        manifest.scenarios
+          .filter((item) => item.kind === 'page' && item.app === 'native')
+          .map((item) => item.route),
+      ),
+    ].sort(),
   };
   const missing: string[] = [];
   const unmatched: string[] = [];
   for (const app of ['web', 'native'] as const) {
     const actual = [...new Set(discovered[app])].sort();
     for (const route of actual) {
-      if (!declared[app].includes(route)) missing.push(`${app}:${route}`);
+      if (!declared[app].includes(route)) {
+        missing.push(`${app}:${route}`);
+      }
     }
     for (const route of declared[app]) {
-      if (!actual.includes(route)) unmatched.push(`${app}:${route}`);
+      if (!actual.includes(route)) {
+        unmatched.push(`${app}:${route}`);
+      }
     }
   }
-  return { discovered: { web: [...discovered.web].sort(), native: [...discovered.native].sort() }, declared, missing, unmatched };
+  return {
+    discovered: { web: [...discovered.web].sort(), native: [...discovered.native].sort() },
+    declared,
+    missing,
+    unmatched,
+  };
 };
 
 /** Stable manifest-to-project capture identities used by both the runner and report. */
 export const expectedCaptureKeys = (manifest: ScenarioManifest): string[] =>
-  manifest.scenarios.filter((scenario) => scenario.capture).flatMap((scenario) =>
-    scenario.variants.viewports.flatMap((viewport) =>
-      scenario.variants.themes.map((theme) => `${scenario.id}::${viewport}-${theme}`),
-    ),
-  ).sort();
+  manifest.scenarios
+    .filter((scenario) => scenario.capture)
+    .flatMap((scenario) =>
+      scenario.variants.viewports.flatMap((viewport) =>
+        scenario.variants.themes.map((theme) => `${scenario.id}::${viewport}-${theme}`),
+      ),
+    )
+    .sort();

@@ -27,23 +27,12 @@
         "content": []
       },
       "variants": {
-        "viewports": [
-          "desktop",
-          "mobile"
-        ],
-        "themes": [
-          "light",
-          "dark"
-        ]
+        "viewports": ["desktop", "mobile"],
+        "themes": ["light", "dark"]
       },
       "capture": true,
-      "regions": [
-        "viewport"
-      ],
-      "visualRequirements": [
-        "primary-action-visible",
-        "no-horizontal-overflow"
-      ],
+      "regions": ["viewport"],
+      "visualRequirements": ["primary-action-visible", "no-horizontal-overflow"],
       "referenceId": null,
       "audit": true,
       "runtimeProfile": "web-disabled",
@@ -63,31 +52,16 @@
         "heading": "Sign in"
       },
       "expected": {
-        "controls": [
-          "email",
-          "password",
-          "submit"
-        ],
+        "controls": ["email", "password", "submit"],
         "content": []
       },
       "variants": {
-        "viewports": [
-          "desktop",
-          "mobile"
-        ],
-        "themes": [
-          "light",
-          "dark"
-        ]
+        "viewports": ["desktop", "mobile"],
+        "themes": ["light", "dark"]
       },
       "capture": true,
-      "regions": [
-        "viewport"
-      ],
-      "visualRequirements": [
-        "form-labels-visible",
-        "submit-visible"
-      ],
+      "regions": ["viewport"],
+      "visualRequirements": ["form-labels-visible", "submit-visible"],
       "referenceId": null,
       "audit": true,
       "runtimeProfile": "web-disabled",
@@ -107,33 +81,16 @@
         "heading": "Sign in"
       },
       "expected": {
-        "controls": [
-          "email",
-          "password",
-          "submit"
-        ],
-        "content": [
-          "testid:auth-error"
-        ]
+        "controls": ["email", "password", "submit"],
+        "content": ["testid:auth-error"]
       },
       "variants": {
-        "viewports": [
-          "desktop",
-          "mobile"
-        ],
-        "themes": [
-          "light",
-          "dark"
-        ]
+        "viewports": ["desktop", "mobile"],
+        "themes": ["light", "dark"]
       },
       "capture": true,
-      "regions": [
-        "viewport"
-      ],
-      "visualRequirements": [
-        "invalid-credentials-explained",
-        "submit-visible"
-      ],
+      "regions": ["viewport"],
+      "visualRequirements": ["invalid-credentials-explained", "submit-visible"],
       "referenceId": null,
       "audit": true,
       "runtimeProfile": "web-disabled",
@@ -153,30 +110,16 @@
         "heading": "Reset your password"
       },
       "expected": {
-        "controls": [
-          "email",
-          "submit"
-        ],
+        "controls": ["email", "submit"],
         "content": []
       },
       "variants": {
-        "viewports": [
-          "desktop",
-          "mobile"
-        ],
-        "themes": [
-          "light",
-          "dark"
-        ]
+        "viewports": ["desktop", "mobile"],
+        "themes": ["light", "dark"]
       },
       "capture": true,
-      "regions": [
-        "viewport"
-      ],
-      "visualRequirements": [
-        "form-labels-visible",
-        "submit-visible"
-      ],
+      "regions": ["viewport"],
+      "visualRequirements": ["form-labels-visible", "submit-visible"],
       "referenceId": null,
       "audit": false,
       "runtimeProfile": "web-disabled",
@@ -197,24 +140,14 @@
       },
       "expected": {
         "controls": [],
-        "content": [
-          "If that address has an account, a link is on its way."
-        ]
+        "content": ["If that address has an account, a link is on its way."]
       },
       "variants": {
-        "viewports": [
-          "desktop",
-          "mobile"
-        ],
-        "themes": [
-          "light",
-          "dark"
-        ]
+        "viewports": ["desktop", "mobile"],
+        "themes": ["light", "dark"]
       },
       "capture": true,
-      "regions": [
-        "viewport"
-      ],
+      "regions": ["viewport"],
       "visualRequirements": [
         "reset-confirmation-visible",
         "account-enumeration-protection-copy-visible"
@@ -238,31 +171,16 @@
         "heading": "Choose a new password"
       },
       "expected": {
-        "controls": [
-          "new-password",
-          "reset-submit"
-        ],
-        "content": [
-          "That link is no longer valid"
-        ]
+        "controls": ["new-password", "reset-submit"],
+        "content": ["That link is no longer valid"]
       },
       "variants": {
-        "viewports": [
-          "desktop",
-          "mobile"
-        ],
-        "themes": [
-          "light",
-          "dark"
-        ]
+        "viewports": ["desktop", "mobile"],
+        "themes": ["light", "dark"]
       },
       "capture": true,
-      "regions": [
-        "viewport"
-      ],
-      "visualRequirements": [
-        "invalid-token-explained"
-      ],
+      "regions": ["viewport"],
+      "visualRequirements": ["invalid-token-explained"],
       "referenceId": null,
       "audit": false,
       "runtimeProfile": "web-disabled",
@@ -283,27 +201,15 @@
       },
       "expected": {
         "controls": [],
-        "content": [
-          "not valid any more"
-        ]
+        "content": ["not valid any more"]
       },
       "variants": {
-        "viewports": [
-          "desktop",
-          "mobile"
-        ],
-        "themes": [
-          "light",
-          "dark"
-        ]
+        "viewports": ["desktop", "mobile"],
+        "themes": ["light", "dark"]
       },
       "capture": true,
-      "regions": [
-        "viewport"
-      ],
-      "visualRequirements": [
-        "verification-state-clear"
-      ],
+      "regions": ["viewport"],
+      "visualRequirements": ["verification-state-clear"],
       "referenceId": null,
       "audit": false,
       "runtimeProfile": "web-disabled",
@@ -324,27 +230,15 @@
       },
       "expected": {
         "controls": [],
-        "content": [
-          "No device code was supplied"
-        ]
+        "content": ["No device code was supplied"]
       },
       "variants": {
-        "viewports": [
-          "desktop",
-          "mobile"
-        ],
-        "themes": [
-          "light",
-          "dark"
-        ]
+        "viewports": ["desktop", "mobile"],
+        "themes": ["light", "dark"]
       },
       "capture": true,
-      "regions": [
-        "viewport"
-      ],
-      "visualRequirements": [
-        "device-code-guidance"
-      ],
+      "regions": ["viewport"],
+      "visualRequirements": ["device-code-guidance"],
       "referenceId": null,
       "audit": false,
       "runtimeProfile": "web-disabled",
@@ -364,29 +258,16 @@
         "heading": "Sign in"
       },
       "expected": {
-        "controls": [
-          "email",
-          "password"
-        ],
+        "controls": ["email", "password"],
         "content": []
       },
       "variants": {
-        "viewports": [
-          "desktop",
-          "mobile"
-        ],
-        "themes": [
-          "light",
-          "dark"
-        ]
+        "viewports": ["desktop", "mobile"],
+        "themes": ["light", "dark"]
       },
       "capture": true,
-      "regions": [
-        "viewport"
-      ],
-      "visualRequirements": [
-        "private-content-not-visible"
-      ],
+      "regions": ["viewport"],
+      "visualRequirements": ["private-content-not-visible"],
       "referenceId": null,
       "audit": false,
       "runtimeProfile": "web-disabled",
@@ -406,33 +287,16 @@
         "heading": "Your notes"
       },
       "expected": {
-        "controls": [
-          "note-title",
-          "note-body",
-          "note-submit"
-        ],
-        "content": [
-          "No notes yet"
-        ]
+        "controls": ["note-title", "note-body", "note-submit"],
+        "content": ["No notes yet"]
       },
       "variants": {
-        "viewports": [
-          "desktop",
-          "mobile"
-        ],
-        "themes": [
-          "light",
-          "dark"
-        ]
+        "viewports": ["desktop", "mobile"],
+        "themes": ["light", "dark"]
       },
       "capture": true,
-      "regions": [
-        "viewport"
-      ],
-      "visualRequirements": [
-        "empty-state-explained",
-        "create-action-visible"
-      ],
+      "regions": ["viewport"],
+      "visualRequirements": ["empty-state-explained", "create-action-visible"],
       "referenceId": null,
       "audit": true,
       "runtimeProfile": "web-disabled",
@@ -452,35 +316,16 @@
         "heading": "Your notes"
       },
       "expected": {
-        "controls": [
-          "note-title",
-          "note-body",
-          "note-submit",
-          "note-delete"
-        ],
-        "content": [
-          "Welcome",
-          "Delete me"
-        ]
+        "controls": ["note-title", "note-body", "note-submit", "note-delete"],
+        "content": ["Welcome", "Delete me"]
       },
       "variants": {
-        "viewports": [
-          "desktop",
-          "mobile"
-        ],
-        "themes": [
-          "light",
-          "dark"
-        ]
+        "viewports": ["desktop", "mobile"],
+        "themes": ["light", "dark"]
       },
       "capture": true,
-      "regions": [
-        "viewport"
-      ],
-      "visualRequirements": [
-        "note-content-readable",
-        "create-action-visible"
-      ],
+      "regions": ["viewport"],
+      "visualRequirements": ["note-content-readable", "create-action-visible"],
       "referenceId": null,
       "audit": true,
       "runtimeProfile": "web-disabled",
@@ -500,34 +345,16 @@
         "heading": "Your notes"
       },
       "expected": {
-        "controls": [
-          "note-title",
-          "note-body",
-          "note-submit"
-        ],
-        "content": [
-          "こんにちは"
-        ]
+        "controls": ["note-title", "note-body", "note-submit"],
+        "content": ["こんにちは"]
       },
       "variants": {
-        "viewports": [
-          "desktop",
-          "mobile"
-        ],
-        "themes": [
-          "light",
-          "dark"
-        ]
+        "viewports": ["desktop", "mobile"],
+        "themes": ["light", "dark"]
       },
       "capture": true,
-      "regions": [
-        "viewport",
-        "notes-content"
-      ],
-      "visualRequirements": [
-        "long-content-wraps",
-        "no-horizontal-overflow"
-      ],
+      "regions": ["viewport", "notes-content"],
+      "visualRequirements": ["long-content-wraps", "no-horizontal-overflow"],
       "referenceId": null,
       "audit": false,
       "runtimeProfile": "web-disabled",
@@ -547,29 +374,16 @@
         "heading": "Conversations"
       },
       "expected": {
-        "controls": [
-          "new-conversation"
-        ],
+        "controls": ["new-conversation"],
         "content": []
       },
       "variants": {
-        "viewports": [
-          "desktop",
-          "mobile"
-        ],
-        "themes": [
-          "light",
-          "dark"
-        ]
+        "viewports": ["desktop", "mobile"],
+        "themes": ["light", "dark"]
       },
       "capture": true,
-      "regions": [
-        "viewport"
-      ],
-      "visualRequirements": [
-        "empty-state-clear",
-        "new-conversation-visible"
-      ],
+      "regions": ["viewport"],
+      "visualRequirements": ["empty-state-clear", "new-conversation-visible"],
       "referenceId": null,
       "audit": true,
       "runtimeProfile": "web-disabled",
@@ -589,33 +403,16 @@
         "heading": "Weekend plans"
       },
       "expected": {
-        "controls": [
-          "message-composer",
-          "send"
-        ],
-        "content": [
-          "Suggest a quiet Saturday plan"
-        ]
+        "controls": ["message-composer", "send"],
+        "content": ["Suggest a quiet Saturday plan"]
       },
       "variants": {
-        "viewports": [
-          "desktop",
-          "mobile"
-        ],
-        "themes": [
-          "light",
-          "dark"
-        ]
+        "viewports": ["desktop", "mobile"],
+        "themes": ["light", "dark"]
       },
       "capture": true,
-      "regions": [
-        "viewport",
-        "conversation"
-      ],
-      "visualRequirements": [
-        "message-order-clear",
-        "composer-visible"
-      ],
+      "regions": ["viewport", "conversation"],
+      "visualRequirements": ["message-order-clear", "composer-visible"],
       "referenceId": null,
       "audit": false,
       "runtimeProfile": "web-disabled",
@@ -636,27 +433,15 @@
       },
       "expected": {
         "controls": [],
-        "content": [
-          "jobs profile disabled"
-        ]
+        "content": ["jobs profile disabled"]
       },
       "variants": {
-        "viewports": [
-          "desktop",
-          "mobile"
-        ],
-        "themes": [
-          "light",
-          "dark"
-        ]
+        "viewports": ["desktop", "mobile"],
+        "themes": ["light", "dark"]
       },
       "capture": true,
-      "regions": [
-        "viewport"
-      ],
-      "visualRequirements": [
-        "disabled-capability-explained"
-      ],
+      "regions": ["viewport"],
+      "visualRequirements": ["disabled-capability-explained"],
       "referenceId": null,
       "audit": true,
       "runtimeProfile": "web-disabled",
@@ -676,28 +461,16 @@
         "heading": "This page could not be loaded"
       },
       "expected": {
-        "controls": [
-          "home-link"
-        ],
+        "controls": ["home-link"],
         "content": []
       },
       "variants": {
-        "viewports": [
-          "desktop",
-          "mobile"
-        ],
-        "themes": [
-          "light",
-          "dark"
-        ]
+        "viewports": ["desktop", "mobile"],
+        "themes": ["light", "dark"]
       },
       "capture": true,
-      "regions": [
-        "viewport"
-      ],
-      "visualRequirements": [
-        "recovery-action-visible"
-      ],
+      "regions": ["viewport"],
+      "visualRequirements": ["recovery-action-visible"],
       "referenceId": null,
       "audit": false,
       "runtimeProfile": "web-disabled",
@@ -717,28 +490,16 @@
         "heading": "This page could not be loaded"
       },
       "expected": {
-        "controls": [
-          "home-link"
-        ],
+        "controls": ["home-link"],
         "content": []
       },
       "variants": {
-        "viewports": [
-          "desktop",
-          "mobile"
-        ],
-        "themes": [
-          "light",
-          "dark"
-        ]
+        "viewports": ["desktop", "mobile"],
+        "themes": ["light", "dark"]
       },
       "capture": false,
-      "regions": [
-        "viewport"
-      ],
-      "visualRequirements": [
-        "error-state-explained"
-      ],
+      "regions": ["viewport"],
+      "visualRequirements": ["error-state-explained"],
       "referenceId": null,
       "audit": false,
       "runtimeProfile": "web-disabled",
@@ -762,22 +523,12 @@
         "content": []
       },
       "variants": {
-        "viewports": [
-          "desktop",
-          "mobile"
-        ],
-        "themes": [
-          "light",
-          "dark"
-        ]
+        "viewports": ["desktop", "mobile"],
+        "themes": ["light", "dark"]
       },
       "capture": true,
-      "regions": [
-        "viewport"
-      ],
-      "visualRequirements": [
-        "native-host-label-visible"
-      ],
+      "regions": ["viewport"],
+      "visualRequirements": ["native-host-label-visible"],
       "referenceId": null,
       "audit": false,
       "runtimeProfile": "native-ui-browser",
@@ -798,27 +549,15 @@
       },
       "expected": {
         "controls": [],
-        "content": [
-          "notes-error"
-        ]
+        "content": ["notes-error"]
       },
       "variants": {
-        "viewports": [
-          "desktop",
-          "mobile"
-        ],
-        "themes": [
-          "light",
-          "dark"
-        ]
+        "viewports": ["desktop", "mobile"],
+        "themes": ["light", "dark"]
       },
       "capture": true,
-      "regions": [
-        "viewport"
-      ],
-      "visualRequirements": [
-        "native-host-label-visible"
-      ],
+      "regions": ["viewport"],
+      "visualRequirements": ["native-host-label-visible"],
       "referenceId": null,
       "audit": false,
       "runtimeProfile": "native-ui-browser",
@@ -839,27 +578,15 @@
       },
       "expected": {
         "controls": [],
-        "content": [
-          "testid:jobs-error"
-        ]
+        "content": ["testid:jobs-error"]
       },
       "variants": {
-        "viewports": [
-          "desktop",
-          "mobile"
-        ],
-        "themes": [
-          "light",
-          "dark"
-        ]
+        "viewports": ["desktop", "mobile"],
+        "themes": ["light", "dark"]
       },
       "capture": true,
-      "regions": [
-        "viewport"
-      ],
-      "visualRequirements": [
-        "native-host-label-visible"
-      ],
+      "regions": ["viewport"],
+      "visualRequirements": ["native-host-label-visible"],
       "referenceId": null,
       "audit": false,
       "runtimeProfile": "native-ui-browser",

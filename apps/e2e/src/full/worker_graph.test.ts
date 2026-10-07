@@ -47,15 +47,22 @@ test('the full graph shares declared stores and dispatches the declared Workflow
 
 test('a divergent D1 database fails before a server can start', () => {
   const jobs = parseWranglerJsonc(jobsConfig);
-  (jobs.d1_databases as Array<Record<string, unknown>>)[0]!.database_name = 'private-jobs-db';
-  expect(() => buildWorkerGraph({
-    client: parseWranglerJsonc(clientConfig),
-    jobs,
-    clientRoot: '/repo/apps/frontend/client',
-    jobsRoot: '/repo/apps/backend/jobs',
-    testRunId: 'visual_full_01',
-    processorOrigin: 'http://127.0.0.1:8099',
-    authSecret: 'a sufficiently long local only test secret',
-    trustedOrigins: 'http://127.0.0.1:4183',
-  })).toThrow('must share the same D1');
+  const databases = jobs.d1_databases as Array<Record<string, unknown>>;
+  const database = databases[0];
+  if (database === undefined) {
+    throw new Error('Fixture config omitted its D1 database.');
+  }
+  database.database_name = 'private-jobs-db';
+  expect(() =>
+    buildWorkerGraph({
+      client: parseWranglerJsonc(clientConfig),
+      jobs,
+      clientRoot: '/repo/apps/frontend/client',
+      jobsRoot: '/repo/apps/backend/jobs',
+      testRunId: 'visual_full_01',
+      processorOrigin: 'http://127.0.0.1:8099',
+      authSecret: 'a sufficiently long local only test secret',
+      trustedOrigins: 'http://127.0.0.1:4183',
+    }),
+  ).toThrow('must share the same D1');
 });

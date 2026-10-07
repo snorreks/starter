@@ -1,5 +1,5 @@
-import { Value } from 'typebox/value';
 import { type Static, Type } from 'typebox';
+import { Value } from 'typebox/value';
 
 const DimensionSchema = Type.Union([
   Type.Object(
@@ -75,7 +75,11 @@ export const ReviewResultSchema = Type.Object(
       Type.Object(
         {
           id: Type.String({ minLength: 1, maxLength: 80 }),
-          status: Type.Union([Type.Literal('met'), Type.Literal('violated'), Type.Literal('unclear')]),
+          status: Type.Union([
+            Type.Literal('met'),
+            Type.Literal('violated'),
+            Type.Literal('unclear'),
+          ]),
           evidence: Type.String({ minLength: 1, maxLength: 600 }),
         },
         { additionalProperties: false },
@@ -88,7 +92,9 @@ export const ReviewResultSchema = Type.Object(
         {
           score: Type.Integer({ minimum: 0, maximum: 4 }),
           evidence: Type.String({ minLength: 1, maxLength: 600 }),
-          allowedDifferences: Type.Array(Type.String({ minLength: 1, maxLength: 200 }), { maxItems: 20 }),
+          allowedDifferences: Type.Array(Type.String({ minLength: 1, maxLength: 200 }), {
+            maxItems: 20,
+          }),
         },
         { additionalProperties: false },
       ),
@@ -113,16 +119,26 @@ export const validateReviewResult = (
   }
   const result = input as ReviewResult;
   const supplied = result.requirements.map((requirement) => requirement.id);
-  if (new Set(supplied).size !== supplied.length) throw new Error('Vision result repeats a requirement id.');
-  if (supplied.length !== requirementIds.length || requirementIds.some((id) => !supplied.includes(id))) {
-    throw new Error('Vision result requirement ids do not exactly match the supplied requirements.');
+  if (new Set(supplied).size !== supplied.length) {
+    throw new Error('Vision result repeats a requirement id.');
+  }
+  if (
+    supplied.length !== requirementIds.length ||
+    requirementIds.some((id) => !supplied.includes(id))
+  ) {
+    throw new Error(
+      'Vision result requirement ids do not exactly match the supplied requirements.',
+    );
   }
   const allowed = new Set(requirementIds);
   for (const issue of result.issues) {
     if (issue.requirementId !== null && !allowed.has(issue.requirementId)) {
       throw new Error(`Vision issue refers to unknown requirement ${issue.requirementId}.`);
     }
-    if (issue.box !== null && (issue.box.x + issue.box.width > 1 || issue.box.y + issue.box.height > 1)) {
+    if (
+      issue.box !== null &&
+      (issue.box.x + issue.box.width > 1 || issue.box.y + issue.box.height > 1)
+    ) {
       throw new Error('Vision issue bounding box extends beyond the normalized image.');
     }
   }

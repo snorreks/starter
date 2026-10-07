@@ -3,18 +3,21 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { expect, test } from '@playwright/test';
+import { runBounded } from '../../../../scripts/src/shared/run_bounded.ts';
 import { appBaseUrl } from '../../preflight.ts';
 import { createVerifiedAccount } from '../../src/fixtures/accounts.ts';
-import { runBounded } from '../../../../scripts/src/shared/run_bounded.ts';
 
-const PASSWORD = 'correct horse battery staple';
+const _PASSWORD = 'correct horse battery staple';
 
-test('a verified owner encodes real fixture bytes and can replay, range-read and download the output', async ({ page, browser }) => {
+test('a verified owner encodes real fixture bytes and can replay, range-read and download the output', async ({
+  page,
+  browser,
+}) => {
   await createVerifiedAccount(page);
   await page.goto('/jobs');
   await expect(page.getByRole('heading', { name: 'Sample encode' })).toBeVisible();
-  const admissionRequest = page.waitForRequest((request) =>
-    request.method() === 'POST' && new URL(request.url()).pathname === '/api/jobs',
+  const admissionRequest = page.waitForRequest(
+    (request) => request.method() === 'POST' && new URL(request.url()).pathname === '/api/jobs',
   );
   await page.getByTestId('jobs-start').click();
   const request = await admissionRequest;
@@ -28,7 +31,9 @@ test('a verified owner encodes real fixture bytes and can replay, range-read and
   const row = page.locator(`[data-testid="job-row"][data-job-id="${created.id}"]`);
   await expect(row).toHaveAttribute('data-status', 'succeeded', { timeout: 120_000 });
   await page.reload();
-  await expect(page.locator(`[data-testid="job-row"][data-job-id="${created.id}"]`)).toHaveAttribute('data-status', 'succeeded');
+  await expect(
+    page.locator(`[data-testid="job-row"][data-job-id="${created.id}"]`),
+  ).toHaveAttribute('data-status', 'succeeded');
 
   const replayResponse = await page.request.post(`${appBaseUrl}/api/jobs`, {
     data: { fixture: 'sample-v1', preset: 'demo-180p-v1' },
@@ -60,23 +65,52 @@ test('a verified owner encodes real fixture bytes and can replay, range-read and
   expect(Number(outputResponse.headers()['x-output-duration-ms'])).toBeGreaterThanOrEqual(1_000);
   expect(Number(outputResponse.headers()['x-output-duration-ms'])).toBeLessThanOrEqual(60_000);
 
-  const container = `starter-e2e-${process.env.E2E_RUN_ID}`.toLowerCase().replace(/[^a-z0-9_.-]/g, '-');
+  const container = `starter-e2e-${process.env.E2E_RUN_ID}`
+    .toLowerCase()
+    .replace(/[^a-z0-9_.-]/g, '-');
   const scratch = await mkdtemp(join(tmpdir(), 'starter-e2e-output-'));
   try {
     const localOutput = join(scratch, 'output.mp4');
     await writeFile(localOutput, output, { flag: 'wx', mode: 0o600 });
-    const copy = await runBounded({ command: process.env.DOCKER ?? 'docker', args: ['cp', localOutput, `${container}:/tmp/e2e-output.mp4`], cwd: process.cwd(), timeoutMs: 30_000, maxBytes: 128_000 });
+    const copy = await runBounded({
+      command: process.env.DOCKER ?? 'docker',
+      args: ['cp', localOutput, `${container}:/tmp/e2e-output.mp4`],
+      cwd: process.cwd(),
+      timeoutMs: 30_000,
+      maxBytes: 128_000,
+    });
     expect(copy.code, copy.stderr).toBe(0);
     const probe = await runBounded({
       command: process.env.DOCKER ?? 'docker',
-      args: ['exec', container, 'ffprobe', '-v', 'error', '-show_entries', 'format=duration:stream=codec_name,width,height', '-of', 'json', '/tmp/e2e-output.mp4'],
-      cwd: process.cwd(), timeoutMs: 30_000, maxBytes: 128_000,
+      args: [
+        'exec',
+        container,
+        'ffprobe',
+        '-v',
+        'error',
+        '-show_entries',
+        'format=duration:stream=codec_name,width,height',
+        '-of',
+        'json',
+        '/tmp/e2e-output.mp4',
+      ],
+      cwd: process.cwd(),
+      timeoutMs: 30_000,
+      maxBytes: 128_000,
     });
     expect(probe.code, probe.stderr).toBe(0);
-    const document = JSON.parse(probe.stdout) as { format?: { duration?: string }; streams?: Array<{ codec_name?: string; width?: number; height?: number }> };
+    const document = JSON.parse(probe.stdout) as {
+      format?: { duration?: string };
+      streams?: Array<{ codec_name?: string; width?: number; height?: number }>;
+    };
     const video = document.streams?.find((stream) => stream.width !== undefined);
     expect(video).toMatchObject({ codec_name: 'h264', width: 320, height: 180 });
-    expect(Math.abs(Number(document.format?.duration) * 1_000 - Number(outputResponse.headers()['x-output-duration-ms']))).toBeLessThanOrEqual(1_000);
+    expect(
+      Math.abs(
+        Number(document.format?.duration) * 1_000 -
+          Number(outputResponse.headers()['x-output-duration-ms']),
+      ),
+    ).toBeLessThanOrEqual(1_000);
   } finally {
     await rm(scratch, { recursive: true, force: true });
   }

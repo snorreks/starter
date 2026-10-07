@@ -6,19 +6,31 @@ import { prepareReviewImage } from '../src/visual/images.ts';
 import { requestStructuredVision } from '../src/visual/providers/structured_vision.ts';
 
 const runningServers: Array<{ stop: (force?: boolean) => void }> = [];
-const imageBytes = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jp9sAAAAASUVORK5CYII=', 'base64');
+const imageBytes = Buffer.from(
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jp9sAAAAASUVORK5CYII=',
+  'base64',
+);
 const dim = { score: 3, evidence: 'The title is visible.', uncertainty: 'low' as const };
 const result = {
   schemaVersion: 1,
   summary: 'The title is clear.',
-  dimensions: { layout: dim, typography: dim, hierarchy: dim, consistency: dim, responsiveFit: dim, stateClarity: dim },
+  dimensions: {
+    layout: dim,
+    typography: dim,
+    hierarchy: dim,
+    consistency: dim,
+    responsiveFit: dim,
+    stateClarity: dim,
+  },
   requirements: [{ id: 'title-visible', status: 'met', evidence: 'The title appears at the top.' }],
   issues: [],
   reference: null,
 };
 
 afterEach(() => {
-  for (const server of runningServers.splice(0)) server.stop(true);
+  for (const server of runningServers.splice(0)) {
+    server.stop(true);
+  }
 });
 
 const config = (baseUrl: string) => ({
@@ -68,7 +80,9 @@ describe('vision provider boundary', () => {
       port: 0,
       async fetch(request) {
         calls += 1;
-        const payload = (await request.json()) as { messages: Array<{ content: Array<{ type: string }> }> };
+        const payload = (await request.json()) as {
+          messages: Array<{ content: Array<{ type: string }> }>;
+        };
         expect(payload.messages[0]?.content.some((part) => part.type === 'image_url')).toBe(true);
         return Response.json({ choices: [{ message: { content: '{"schemaVersion":1}' } }] });
       },
@@ -96,13 +110,15 @@ describe('vision provider boundary', () => {
       },
     });
     runningServers.push(unavailable);
-    await expect(requestStructuredVision({
-      config: config(`http://127.0.0.1:${unavailable.port}/v1`),
-      image: { bytes: imageBytes, mimeType: 'image/png' },
-      prompt: 'Check the title.',
-      requirementIds: ['title-visible'],
-      callBudget: 2,
-    })).rejects.toThrow('call budget');
+    await expect(
+      requestStructuredVision({
+        config: config(`http://127.0.0.1:${unavailable.port}/v1`),
+        image: { bytes: imageBytes, mimeType: 'image/png' },
+        prompt: 'Check the title.',
+        requirementIds: ['title-visible'],
+        callBudget: 2,
+      }),
+    ).rejects.toThrow('call budget');
     expect(calls).toBe(2);
 
     calls = 0;
@@ -112,7 +128,9 @@ describe('vision provider boundary', () => {
       port: 0,
       fetch() {
         calls += 1;
-        return Response.json({ choices: [{ message: { content: JSON.stringify(low) }, finish_reason: 'stop' }] });
+        return Response.json({
+          choices: [{ message: { content: JSON.stringify(low) }, finish_reason: 'stop' }],
+        });
       },
     });
     runningServers.push(valid);

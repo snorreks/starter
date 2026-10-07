@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import { gradeReview } from '../src/visual/grade.ts';
-import { validateReviewResult, type ReviewResult } from '../src/visual/schemas.ts';
+import { type ReviewResult, validateReviewResult } from '../src/visual/schemas.ts';
 
 const dimension = { score: 3, evidence: 'Text remains readable.', uncertainty: 'low' } as const;
 const review: ReviewResult = {
@@ -43,7 +43,9 @@ describe('structured visual review', () => {
         uncertainty: 'low',
       },
     ];
-    expect(() => validateReviewResult(outside, ['primary-action-visible'])).toThrow('extends beyond');
+    expect(() => validateReviewResult(outside, ['primary-action-visible'])).toThrow(
+      'extends beyond',
+    );
   });
 
   test('blockers fail independently and unassessable dimensions need review', () => {
@@ -62,9 +64,15 @@ describe('structured visual review', () => {
         uncertainty: 'low',
       },
     ];
-    expect(gradeReview(blocked, { requirementIds: ['primary-action-visible'] }).status).toBe('failed');
+    expect(gradeReview(blocked, { requirementIds: ['primary-action-visible'] }).status).toBe(
+      'failed',
+    );
     const uncertain = structuredClone(review);
-    uncertain.dimensions.layout = { unassessable: true, evidence: 'The crop hides the page.', uncertainty: 'high' };
+    uncertain.dimensions.layout = {
+      unassessable: true,
+      evidence: 'The crop hides the page.',
+      uncertainty: 'high',
+    };
     expect(gradeReview(uncertain, { requirementIds: ['primary-action-visible'] }).status).toBe(
       'needs-human-review',
     );

@@ -20,8 +20,19 @@ describe('visual review manifest integrity', () => {
     const directory = await mkdtemp(join(tmpdir(), 'visual-review-'));
     try {
       const manifest = join(directory, 'run.json');
-      await writeFile(manifest, JSON.stringify({ schemaVersion: 1, runId: 'run_a', status: 'failed', expectedCaptures: 1, records: [] }));
-      await expect(reviewCaptureManifest({ manifestPath: manifest, config })).rejects.toThrow('incomplete or failed');
+      await writeFile(
+        manifest,
+        JSON.stringify({
+          schemaVersion: 1,
+          runId: 'run_a',
+          status: 'failed',
+          expectedCaptures: 1,
+          records: [],
+        }),
+      );
+      await expect(reviewCaptureManifest({ manifestPath: manifest, config })).rejects.toThrow(
+        'incomplete or failed',
+      );
     } finally {
       await rm(directory, { recursive: true, force: true });
     }
@@ -33,20 +44,35 @@ describe('visual review manifest integrity', () => {
       const image = join(directory, 'capture.png');
       await writeFile(image, Buffer.from('not the declared original'));
       const manifest = join(directory, 'run.json');
-      await writeFile(manifest, JSON.stringify({
-        schemaVersion: 1,
-        runId: 'run_a',
-        status: 'passed',
-        expectedCaptures: 1,
-        coverageGaps: ['fixture gap'],
-        expectedCaptureKeys: ['web-home::desktop-light'],
-        records: [{
-          scenarioId: 'web-home', app: 'web', state: 'public', project: 'desktop-light',
-          url: 'http://127.0.0.1/', file: image, sha256: '0'.repeat(64),
-          requirements: ['title-visible'], expected: { controls: [], content: [] }, heading: 'Home', status: 'passed',
-        }],
-      }));
-      await expect(reviewCaptureManifest({ manifestPath: manifest, config })).rejects.toThrow('Capture hash mismatch');
+      await writeFile(
+        manifest,
+        JSON.stringify({
+          schemaVersion: 1,
+          runId: 'run_a',
+          status: 'passed',
+          expectedCaptures: 1,
+          coverageGaps: ['fixture gap'],
+          expectedCaptureKeys: ['web-home::desktop-light'],
+          records: [
+            {
+              scenarioId: 'web-home',
+              app: 'web',
+              state: 'public',
+              project: 'desktop-light',
+              url: 'http://127.0.0.1/',
+              file: image,
+              sha256: '0'.repeat(64),
+              requirements: ['title-visible'],
+              expected: { controls: [], content: [] },
+              heading: 'Home',
+              status: 'passed',
+            },
+          ],
+        }),
+      );
+      await expect(reviewCaptureManifest({ manifestPath: manifest, config })).rejects.toThrow(
+        'Capture hash mismatch',
+      );
     } finally {
       await rm(directory, { recursive: true, force: true });
     }
