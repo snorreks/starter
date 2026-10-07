@@ -51,6 +51,10 @@ explicit alternative, not alongside it.
 | `.pi/skills/handoff/` | Writing and resuming a handoff note |
 | `.pi/prompts/review.md` | `/prompt:review` |
 | `.pi/prompts/check.md` | `/prompt:check` |
+| `.pi/prompts/verify-ui.md` | `/prompt:verify-ui` |
+| `.pi/prompts/debug-ui.md` | `/prompt:debug-ui` |
+| `.pi/prompts/delegate.md` | `/prompt:delegate` |
+| `.pi/prompts/resume.md` | `/prompt:resume` |
 
 The trusted project profile `.pi/workflow.json` declares only commands that are
 implemented by this checkout. Run `bun run agent -- describe --json` to see actual
@@ -385,6 +389,10 @@ needs a schema, a route, a ViewModel, a service and tests" gives it a boundary.
 ```
 /prompt:review [focus]   # review the diff, prioritised by what breaks
 /prompt:check            # run every check and report the first real failure
+/prompt:verify-ui        # exercise a UI through its owned browser/runtime
+/prompt:debug-ui         # correlate a UI failure with bounded logs
+/prompt:delegate         # run a capability-limited QA investigation
+/prompt:resume           # revalidate an owned job or run before resuming
 ```
 
 `review` is ordered by consequence: authorization first, then input refusal, then
