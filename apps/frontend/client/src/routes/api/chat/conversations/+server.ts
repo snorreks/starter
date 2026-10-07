@@ -9,18 +9,16 @@
 // The list response is annotated with the schema's own `Static` type, so a change
 // to the published wire shape that is not a change to what the service returns is a
 // compile error here rather than a client rendering a list of nothing. It does not
-// re-validate with `Value.Check`: the rows came from `toWireConversation`, the single
+// re-validate: the rows came from `toWireConversation`, the single
 // projection that decides their shape, and validating again per request would be a
 // second definition of the same contract to keep in step.
 
 import {
   type Conversation,
-  type ConversationCreate,
   ConversationCreateSchema,
-  type ConversationListSchema,
+  type ConversationList,
 } from '@starter/schemas/chat';
-import type { Static } from 'typebox';
-import { createChatService } from '#lib/server/chat_service.ts';
+import { createRequestChatService } from '#lib/server/application_chat.ts';
 import { json, jsonError, readJsonBody, unauthorized } from '#lib/server/http.ts';
 import type { RequestHandler } from './$types';
 
@@ -28,9 +26,7 @@ import type { RequestHandler } from './$types';
 const MAX_CREATE_BODY_BYTES = 4096;
 
 /** A 200 body, typed as what `ConversationListSchema` describes. */
-const conversationList = (
-  conversations: Conversation[],
-): Static<typeof ConversationListSchema> => ({
+const conversationList = (conversations: Conversation[]): ConversationList => ({
   conversations,
   serverTime: Date.now(),
 });
@@ -41,7 +37,7 @@ export const GET: RequestHandler = async ({ locals }) => {
     return unauthorized();
   }
 
-  return json(200, conversationList(await createChatService(locals.container.db).list(user.id)));
+  return json(200, conversationList(await createRequestChatService(locals).list(user.id)));
 };
 
 export const POST: RequestHandler = async ({ locals, request }) => {
@@ -57,10 +53,7 @@ export const POST: RequestHandler = async ({ locals, request }) => {
     return body.response;
   }
 
-  const created = await createChatService(locals.container.db).create(
-    user.id,
-    body.value as ConversationCreate,
-  );
+  const created = await createRequestChatService(locals).create(user.id, body.value);
 
   return json(201, created);
 };

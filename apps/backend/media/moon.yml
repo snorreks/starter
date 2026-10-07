@@ -24,6 +24,7 @@ fileGroups:
   sources:
     - 'src/**/*'
     - 'examples/**/*'
+    - 'runner/**/*'
   configs:
     - 'Cargo.toml'
     - 'Cargo.lock'
@@ -31,6 +32,7 @@ fileGroups:
     - 'rustfmt.toml'
     - 'moon.yml'
     - 'Dockerfile'
+    - 'Dockerfile.job'
   tests:
     - 'tests/**/*'
     - 'fixtures/protocol/**/*'
@@ -69,12 +71,13 @@ tasks:
 
   cargo-lint:
     command: 'cargo'
-    args: ['clippy', '--all-targets', '--', '-D', 'warnings']
+    args: ['clippy', '--locked', '--all-targets', '--', '-D', 'warnings']
     options:
       cache: false
     inputs:
       - '@group(sources)'
       - '@group(tests)'
+      - '@group(configs)'
 
   cargo-format:
     command: 'cargo'

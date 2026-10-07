@@ -4,7 +4,7 @@
 //
 // Two things live here and they are deliberately one file: the entities, and the
 // frame protocol the Worker's `text/event-stream` response speaks. Keeping them
-// together is what makes the stream checkable — the same TypeBox schema validates
+// together is what makes the stream checkable — the same Valibot schema validates
 // what the Worker emits and what the browser parses, so a frame the Worker sends
 // that the client cannot understand is a refusal with a name rather than a message
 // that silently stops arriving.
@@ -19,8 +19,7 @@
 // real `wrangler dev`, and E2E can read it through a browser. The client reads it
 // through `fetch`, which is a port in `packages/frontend/features/src/chat`.
 
-import { type Static, Type } from 'typebox';
-import { Value } from 'typebox/value';
+import * as v from 'valibot';
 import {
   ConversationIdSchema,
   MessageIdSchema,
@@ -28,6 +27,7 @@ import {
   UserIdSchema,
 } from '../common/ids.ts';
 import { literalUnion } from '../common/literals.ts';
+import { checkSchema } from '../validation.ts';
 
 export const CONVERSATION_TITLE_MAX_LENGTH = 120;
 export const MESSAGE_CONTENT_MAX_LENGTH = 8000;
@@ -61,20 +61,19 @@ export type MessageStatus = (typeof MESSAGE_STATUSES)[number];
 export const MessageStatusSchema = literalUnion(MESSAGE_STATUSES);
 
 /** A message exactly as the API returns it. */
-export const MessageSchema = Type.Object(
-  {
-    id: MessageIdSchema,
-    conversationId: ConversationIdSchema,
-    authorId: UserIdSchema,
-    role: MessageRoleSchema,
-    content: Type.String({ maxLength: MESSAGE_CONTENT_MAX_LENGTH }),
-    status: MessageStatusSchema,
-    createdAt: Type.Number(),
-  },
-  { additionalProperties: false },
-);
+export const MessageSchema = v.strictObject({
+  id: MessageIdSchema,
+  /** Stable caller key, used to exclude an already-admitted turn from prompt history. */
+  clientId: v.optional(v.pipe(v.string(), v.minLength(1), v.maxLength(118))),
+  conversationId: ConversationIdSchema,
+  authorId: UserIdSchema,
+  role: MessageRoleSchema,
+  content: v.pipe(v.string(), v.maxLength(MESSAGE_CONTENT_MAX_LENGTH)),
+  status: MessageStatusSchema,
+  createdAt: v.pipe(v.number(), v.finite()),
+});
 
-export type Message = Static<typeof MessageSchema>;
+export type Message = v.InferOutput<typeof MessageSchema>;
 
 /**
  * A conversation's wire shape.
@@ -84,64 +83,74 @@ export type Message = Static<typeof MessageSchema>;
  * is a count of the page rather than of the conversation. It is rendered, so a wrong
  * one is a lie the user reads.
  */
-export const ConversationSchema = Type.Object(
-  {
-    id: ConversationIdSchema,
-    ownerId: UserIdSchema,
-    /**
-     * The organization this conversation belongs to, or `null` for a personal one.
-     *
-     * Nullable rather than absent, and always present in the wire shape, because
-     * "this conversation belongs to nobody's organization" is a fact the client
-     * needs in order to render the right sharing affordance — and an optional field
-     * is a field that can be missing for a reason that has nothing to do with
-     * tenancy.
-     */
-    organizationId: Type.Union([OrganizationIdSchema, Type.Null()]),
-    title: Type.String({ minLength: 1, maxLength: CONVERSATION_TITLE_MAX_LENGTH }),
-    messageCount: Type.Integer({ minimum: 0 }),
-    createdAt: Type.Number(),
-    updatedAt: Type.Number(),
-  },
-  { additionalProperties: false },
-);
+export const ConversationSchema = v.strictObject({
+  id: ConversationIdSchema,
+  ownerId: UserIdSchema,
+  /**
+   * The organization this conversation belongs to, or `null` for a personal one.
+   *
+   * Nullable rather than absent, and always present in the wire shape, because
+   * "this conversation belongs to nobody's organization" is a fact the client
+   * needs in order to render the right sharing affordance — and an optional field
+   * is a field that can be missing for a reason that has nothing to do with
+   * tenancy.
+   */
+  organizationId: v.union([OrganizationIdSchema, v.null()]),
+  title: v.pipe(v.string(), v.minLength(1), v.maxLength(CONVERSATION_TITLE_MAX_LENGTH)),
+  messageCount: v.pipe(v.number(), v.integer(), v.finite(), v.minValue(0)),
+  createdAt: v.pipe(v.number(), v.finite()),
+  updatedAt: v.pipe(v.number(), v.finite()),
+});
 
-export type Conversation = Static<typeof ConversationSchema>;
+export type Conversation = v.InferOutput<typeof ConversationSchema>;
 
 /**
  * Create payload. The server derives `ownerId` and `organizationId` from the
  * session, so neither appears here — `additionalProperties: false` makes a body
  * carrying one a refusal rather than a silently dropped value.
  */
-export const ConversationCreateSchema = Type.Object(
-  {
-    title: Type.String({ minLength: 1, maxLength: CONVERSATION_TITLE_MAX_LENGTH }),
-  },
-  { additionalProperties: false },
-);
+export const ConversationCreateSchema = v.strictObject({
+  title: v.pipe(v.string(), v.minLength(1), v.maxLength(CONVERSATION_TITLE_MAX_LENGTH)),
+});
 
-export type ConversationCreate = Static<typeof ConversationCreateSchema>;
+export type ConversationCreate = v.InferOutput<typeof ConversationCreateSchema>;
 
-export const ConversationListSchema = Type.Object(
-  {
-    conversations: Type.Array(ConversationSchema),
-    /** Echoed so a client can tell a fresh list from a cached one. */
-    serverTime: Type.Number(),
-  },
-  { additionalProperties: false },
-);
+export const ConversationListSchema = v.strictObject({
+  conversations: v.array(ConversationSchema),
+  /** Echoed so a client can tell a fresh list from a cached one. */
+  serverTime: v.pipe(v.number(), v.finite()),
+});
 
-export type ConversationList = Static<typeof ConversationListSchema>;
+export type ConversationList = v.InferOutput<typeof ConversationListSchema>;
+export const ConversationPageSchema = v.strictObject({
+  items: v.array(ConversationSchema),
+  nextCursor: v.union([v.pipe(v.string(), v.minLength(1)), v.null()]),
+  hasMore: v.boolean(),
+  serverTime: v.pipe(v.number(), v.finite()),
+});
+export type ConversationPage = v.InferOutput<typeof ConversationPageSchema>;
 
-export const MessageListSchema = Type.Object(
-  {
-    messages: Type.Array(MessageSchema),
-    serverTime: Type.Number(),
-  },
-  { additionalProperties: false },
-);
+export const MessageListSchema = v.strictObject({
+  messages: v.array(MessageSchema),
+  serverTime: v.pipe(v.number(), v.finite()),
+});
 
-export type MessageList = Static<typeof MessageListSchema>;
+export type MessageList = v.InferOutput<typeof MessageListSchema>;
+export const MessagePageSchema = v.strictObject({
+  items: v.array(MessageSchema),
+  nextCursor: v.union([v.pipe(v.string(), v.minLength(1)), v.null()]),
+  hasMore: v.boolean(),
+  serverTime: v.pipe(v.number(), v.finite()),
+});
+export type MessagePage = v.InferOutput<typeof MessagePageSchema>;
+
+/** Raised only when a message page cursor fails its owner/shape checks. */
+export class MessageCursorError extends Error {
+  constructor() {
+    super('Message cursor is malformed.');
+    this.name = 'MessageCursorError';
+  }
+}
 
 /**
  * A message submitted to start a turn.
@@ -157,15 +166,12 @@ export type MessageList = Static<typeof MessageListSchema>;
  * It is also the idempotency key. A client whose connection dropped retries the
  * same submission, and the Worker returns the row it already stored.
  */
-export const MessageCreateSchema = Type.Object(
-  {
-    content: Type.String({ minLength: 1, maxLength: MESSAGE_CONTENT_MAX_LENGTH }),
-    clientId: Type.String({ minLength: 1, maxLength: 64 }),
-  },
-  { additionalProperties: false },
-);
+export const MessageCreateSchema = v.strictObject({
+  content: v.pipe(v.string(), v.minLength(1), v.maxLength(MESSAGE_CONTENT_MAX_LENGTH)),
+  clientId: v.pipe(v.string(), v.minLength(1), v.maxLength(64)),
+});
 
-export type MessageCreate = Static<typeof MessageCreateSchema>;
+export type MessageCreate = v.InferOutput<typeof MessageCreateSchema>;
 
 // -----------------------------------------------------------------------------
 // The streaming protocol
@@ -181,40 +187,28 @@ export type MessageCreate = Static<typeof MessageCreateSchema>;
  * frame type through as "nothing to do", which is the failure that looks like a
  * stream that simply stopped.
  */
-export const ChatStreamEventSchema = Type.Union([
+export const ChatStreamEventSchema = v.union([
   /** The submitted message, persisted. The client reconciles its placeholder. */
-  Type.Object(
-    {
-      type: Type.Literal('user-message'),
-      clientId: Type.String({ minLength: 1, maxLength: 64 }),
-      message: MessageSchema,
-    },
-    { additionalProperties: false },
-  ),
+  v.strictObject({
+    type: v.literal('user-message'),
+    clientId: v.pipe(v.string(), v.minLength(1), v.maxLength(64)),
+    message: MessageSchema,
+  }),
   /** One chunk of assistant text. Appended in arrival order. */
-  Type.Object(
-    {
-      type: Type.Literal('delta'),
-      text: Type.String({ maxLength: MESSAGE_CONTENT_MAX_LENGTH }),
-    },
-    { additionalProperties: false },
-  ),
+  v.strictObject({
+    type: v.literal('delta'),
+    text: v.pipe(v.string(), v.maxLength(MESSAGE_CONTENT_MAX_LENGTH)),
+  }),
   /** The stream opened and the model is producing. Lets the UI show a spinner early. */
-  Type.Object(
-    {
-      type: Type.Literal('start'),
-      messageId: MessageIdSchema,
-    },
-    { additionalProperties: false },
-  ),
+  v.strictObject({
+    type: v.literal('start'),
+    messageId: MessageIdSchema,
+  }),
   /** Terminal success. Carries the persisted assistant message. */
-  Type.Object(
-    {
-      type: Type.Literal('complete'),
-      message: MessageSchema,
-    },
-    { additionalProperties: false },
-  ),
+  v.strictObject({
+    type: v.literal('complete'),
+    message: MessageSchema,
+  }),
   /**
    * Terminal failure.
    *
@@ -223,28 +217,25 @@ export const ChatStreamEventSchema = Type.Union([
    * able to learn *from the stream* that the turn failed, or it renders a
    * half-written assistant turn as though it were complete.
    */
-  Type.Object(
-    {
-      type: Type.Literal('error'),
-      code: Type.String({ minLength: 1, maxLength: 64 }),
-      message: Type.String({ maxLength: 512 }),
-    },
-    { additionalProperties: false },
-  ),
+  v.strictObject({
+    type: v.literal('error'),
+    code: v.pipe(v.string(), v.minLength(1), v.maxLength(64)),
+    message: v.pipe(v.string(), v.maxLength(512)),
+  }),
 ]);
 
-export type ChatStreamEvent = Static<typeof ChatStreamEventSchema>;
+export type ChatStreamEvent = v.InferOutput<typeof ChatStreamEventSchema>;
 
 /**
  * Validate one decoded stream frame.
  *
- * `Value.Check` against the union above, so an unrecognised `type` is refused
+ * validation against the union above, so an unrecognised `type` is refused
  * rather than ignored. A helper that only checked that `type` existed would let a
  * frame the Worker never sends pass, and the symptom would be a stream that silently
  * stops — which reads as a network problem and is not one.
  */
 export const isChatStreamEvent = (value: unknown): value is ChatStreamEvent =>
-  Value.Check(ChatStreamEventSchema, value);
+  checkSchema(ChatStreamEventSchema, value);
 
 /**
  * Whether a frame ends the turn.

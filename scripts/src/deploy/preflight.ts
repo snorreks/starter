@@ -27,6 +27,12 @@
 // exit code, so a caller can distinguish "refused" from "the check could not run".
 
 import { captureWrangler } from '../cloudflare/wrangler.ts';
+import { googleResourcePlan, inspectGoogleResources } from './providers/google.ts';
+import {
+  inspectSupabaseAuthConfig,
+  runSupabaseMigration,
+  supabaseMigrationArgs,
+} from './providers/supabase.ts';
 import { describeCredential } from './credentials.ts';
 import { bucketExists } from './provision.ts';
 import type { ResolvedTarget } from './target.ts';
@@ -37,12 +43,21 @@ type PreflightFindingBody =
   | { check: 'database'; ok: false; detail: string; remedy: string }
   | { check: 'worker'; ok: false; detail: string; remedy: string }
   | { check: 'worker'; ok: true; detail: string }
-  | { check: 'bucket'; ok: false; detail: string; remedy: string }
-  | { check: 'bucket'; ok: true; detail: string }
-  | { check: 'secrets'; ok: false; detail: string; remedy: string }
-  | { check: 'secrets'; ok: true; detail: string }
+  | {
+      check: 'bucket' | 'secrets' | 'jobs secrets';
+      ok: boolean;
+      detail: string;
+      remedy?: string;
+      warn?: boolean;
+    }
   | { check: 'container'; ok: false; detail: string; remedy: string }
   | { check: 'container'; ok: true; detail: string }
+  | {
+      check: 'jobs secrets' | 'cloud-run' | 'supabase' | 'google' | 'callbacks' | 'target';
+      ok: boolean;
+      detail: string;
+      remedy?: string;
+    }
   | { check: 'mail'; ok: false; detail: string; remedy: string }
   | { check: 'mail'; ok: true; detail: string };
 
@@ -81,7 +96,9 @@ export interface PreflightReport {
 export const preflightCommands = (target: ResolvedTarget): { check: string; args: string[] }[] => {
   const commands: { check: string; args: string[] }[] = [
     { check: 'account', args: ['whoami'] },
-    { check: 'database', args: ['d1', 'info', target.d1DatabaseId, '--json'] },
+    ...(target.deploymentProfile === 'legacy'
+      ? [{ check: 'database', args: ['d1', 'info', target.d1DatabaseId, '--json'] }]
+      : [{ check: 'supabase migrations', args: supabaseMigrationArgs(target, 'list') }]),
     { check: 'worker', args: ['deployments', 'list', '--name', target.workerName, '--json'] },
     // Names only, never values: `wrangler secret list` reports what is installed
     // and nothing else. That is the property that makes this check safe to run
@@ -93,12 +110,21 @@ export const preflightCommands = (target: ResolvedTarget): { check: string; args
     { check: 'secrets', args: secretListArgv(target.workerName, target.environment) },
   ];
 
+  if (target.deploymentProfile === 'supabase' && target.compute.jobsWorkerName !== null) {
+    commands.push({
+      check: 'jobs secrets',
+      args: secretListArgv(target.compute.jobsWorkerName, target.environment),
+    });
+  }
+
   if (target.compute.enabled && target.compute.mediaBucketName !== null) {
     commands.push({ check: 'bucket', args: ['r2', 'bucket', 'list', '--json'] });
-    commands.push({
-      check: 'container',
-      args: ['deployments', 'list', '--name', target.compute.jobsWorkerName ?? '', '--json'],
-    });
+    if (target.deploymentProfile === 'legacy') {
+      commands.push({
+        check: 'container',
+        args: ['deployments', 'list', '--name', target.compute.jobsWorkerName ?? '', '--json'],
+      });
+    }
   }
 
   return commands;
@@ -125,6 +151,7 @@ const arrayFromWrangler = (parsed: unknown): unknown[] => {
   if (Array.isArray(parsed)) {
     return parsed;
   }
+
   if (typeof parsed === 'object' && parsed !== null) {
     const result = (parsed as { result?: unknown }).result;
     if (Array.isArray(result)) {
@@ -283,38 +310,40 @@ export const preflight = (
   }
 
   // ── database ───────────────────────────────────────────────────────────────
-  const database = run(['d1', 'info', target.d1DatabaseId, '--json']);
+  if (target.deploymentProfile === 'legacy') {
+    const database = run(['d1', 'info', target.d1DatabaseId, '--json']);
 
-  if (!database.ok) {
-    findings.push({
-      check: 'database',
-      ok: false,
-      detail: `The D1 database ${target.d1DatabaseId} is not readable in this account.`,
-      remedy:
-        'It does not exist, it belongs to another account, or this token cannot read it.\n' +
-        `  Provision the ${target.environment} database with:\n` +
-        `    bun run deploy:configure -- --env ${target.environment} --provision\n` +
-        '  Nothing has been changed.',
-    });
-    return { ok: false, findings, commands };
-  }
+    if (!database.ok) {
+      findings.push({
+        check: 'database',
+        ok: false,
+        detail: `The D1 database ${target.d1DatabaseId} is not readable in this account.`,
+        remedy:
+          'It does not exist, it belongs to another account, or this token cannot read it.\n' +
+          `  Provision the ${target.environment} database with:\n` +
+          `    bun run deploy:configure -- --env ${target.environment} --provision\n` +
+          '  Nothing has been changed.',
+      });
+      return { ok: false, findings, commands };
+    }
 
-  // A D1 database that exists but belongs to a different account still answers
-  // `d1 info`, so the exit code alone is not the check. When wrangler reports a
-  // different account for the database, that is the mismatch this layer is for.
-  const databaseAccounts = accountsIn(database.stdout).filter((id) => id !== target.accountId);
-  if (databaseAccounts.length > 0) {
-    findings.push({
-      check: 'database',
-      ok: false,
-      detail:
-        `The D1 database ${target.d1DatabaseId} reports account ` +
-        `${databaseAccounts.join(', ')}, not ${target.accountId}.`,
-      remedy:
-        'Staging and production must be separate databases. Refusing before anything is ' +
-        'changed, because migrating the wrong one is the outcome this prevents.',
-    });
-    return { ok: false, findings, commands };
+    // A D1 database that exists but belongs to a different account still answers
+    // `d1 info`, so the exit code alone is not the check. When wrangler reports a
+    // different account for the database, that is the mismatch this layer is for.
+    const databaseAccounts = accountsIn(database.stdout).filter((id) => id !== target.accountId);
+    if (databaseAccounts.length > 0) {
+      findings.push({
+        check: 'database',
+        ok: false,
+        detail:
+          `The D1 database ${target.d1DatabaseId} reports account ` +
+          `${databaseAccounts.join(', ')}, not ${target.accountId}.`,
+        remedy:
+          'Staging and production must be separate databases. Refusing before anything is ' +
+          'changed, because migrating the wrong one is the outcome this prevents.',
+      });
+      return { ok: false, findings, commands };
+    }
   }
 
   // ── worker ─────────────────────────────────────────────────────────────────
@@ -371,8 +400,12 @@ export const preflight = (
   if (!secrets.ok) {
     findings.push({
       check: 'secrets',
-      ok: false,
-      detail: `Could not read the secrets of "${target.workerName}".`,
+      ok: options.allowMissingWorker === true,
+      detail:
+        options.allowMissingWorker === true
+          ? `The Worker ${target.workerName} has no readable version yet; first-deploy provisioning will install its runtime secrets.`
+          : `Could not read the secrets of "${target.workerName}".`,
+      ...(options.allowMissingWorker === true ? { warn: true } : {}),
       remedy:
         'This token cannot list them, or the Worker has no version yet.\n' +
         '  On a first deploy that is expected — install them with:\n' +
@@ -380,14 +413,19 @@ export const preflight = (
     });
   } else {
     const installed = new Set(installedSecretNames(secrets.stdout));
-    const missing = target.requiredSecretNames.filter((name) => !installed.has(name));
+    const webSecretNames =
+      target.deploymentProfile === 'supabase'
+        ? target.requiredSecretNames.filter((name) => name !== 'GOOGLE_DISPATCHER_CREDENTIAL')
+        : target.requiredSecretNames;
+    const missing = webSecretNames.filter((name) => !installed.has(name));
     if (missing.length > 0) {
       findings.push({
         check: 'secrets',
-        ok: false,
+        ok: options.allowMissingWorker === true,
         detail:
           `${target.workerName} does not have ${missing.join(', ')} installed. ` +
           'A release without these is live and unable to confirm an account or send mail.',
+        ...(options.allowMissingWorker === true ? { warn: true } : {}),
         remedy:
           '  Install them by value; they are not the deployment credential and never\n' +
           '  appear in argv:\n' +
@@ -403,6 +441,38 @@ export const preflight = (
     }
   }
 
+  if (target.deploymentProfile === 'supabase' && target.compute.jobsWorkerName !== null) {
+    const jobsName = target.compute.jobsWorkerName;
+    const jobsSecrets = run(secretListArgv(jobsName, target.environment));
+    const requiredJobsSecrets = target.requiredSecretNames.filter(
+      (name) => name !== 'RESEND_API_KEY',
+    );
+    const installedJobs = jobsSecrets.ok
+      ? new Set(installedSecretNames(jobsSecrets.stdout))
+      : new Set<string>();
+    const missingJobsSecrets = requiredJobsSecrets.filter((name) => !installedJobs.has(name));
+    const complete = jobsSecrets.ok && missingJobsSecrets.length === 0;
+    let detail: string;
+    if (complete) {
+      detail = `${jobsName} has its required secret names installed.`;
+    } else if (jobsSecrets.ok) {
+      detail = `${jobsName} is missing ${missingJobsSecrets.join(', ')}.`;
+    } else {
+      detail = `Could not list secret names for ${jobsName}.`;
+    }
+    findings.push({
+      check: 'jobs secrets',
+      ok: complete || options.allowMissingWorker === true,
+      detail,
+      ...(!complete && options.allowMissingWorker === true ? { warn: true } : {}),
+      ...(complete
+        ? {}
+        : {
+            remedy: `Install the missing target secrets with \`bun run deploy:secrets --env ${target.environment} --yes --install\`.`,
+          }),
+    });
+  }
+
   // ── compute ──────────────────────────────────────────────────────────────────
   if (target.compute.enabled && target.compute.mediaBucketName !== null) {
     const buckets = run(['r2', 'bucket', 'list', '--json']);
@@ -411,8 +481,9 @@ export const preflight = (
     if (!present) {
       findings.push({
         check: 'bucket',
-        ok: false,
+        ok: options.allowMissingWorker === true,
         detail: `The R2 bucket ${target.compute.mediaBucketName} is not readable in this account.`,
+        ...(options.allowMissingWorker === true ? { warn: true } : {}),
         remedy:
           'It does not exist, it belongs to another account, or this token cannot read it.\n' +
           `    bun run deploy:provision --env ${target.environment} --yes\n` +
@@ -427,46 +498,54 @@ export const preflight = (
     }
 
     const jobsName = target.compute.jobsWorkerName;
-    if (jobsName === null) {
+    if (target.deploymentProfile === 'supabase') {
       findings.push({
-        check: 'container',
-        ok: false,
-        detail: `The ${target.environment} jobs profile is "encode" but names no jobs Worker.`,
-        remedy: `    bun run deploy:configure -- --env ${target.environment} --jobs-worker <name>`,
+        check: 'cloud-run',
+        ok: true,
+        detail: `Cloud Run Job ${target.supabase?.jobName} is checked through the authenticated Google provider preflight.`,
       });
     } else {
-      const deployments = run(['deployments', 'list', '--name', jobsName, '--json']);
-      if (!deployments.ok) {
+      if (jobsName === null) {
         findings.push({
           check: 'container',
           ok: false,
-          detail: `The jobs Worker "${jobsName}" has no deployments in this account.`,
-          remedy:
-            'Containers require the Workers Paid plan and an accepted container image.\n' +
-            `  Deploy it once, then re-run this preflight:\n` +
-            `    bun run deploy:apply --env ${target.environment} --yes --only jobs\n` +
-            '  Nothing has been changed.',
-        });
-      } else if (!containerEntitlementProven(deployments.stdout)) {
-        // Reported as unproven rather than as a refusal, and the distinction is
-        // deliberate: an empty deployment list on a first deploy says nothing
-        // about the account, and refusing here would block the deploy that would
-        // establish it.
-        findings.push({
-          check: 'container',
-          ok: true,
-          detail:
-            `No deployed ${jobsName} version carries a container binding yet, so the container ` +
-            'entitlement is NOT PROVEN by this preflight. It is established by the first ' +
-            'successful jobs deploy, not by a check this tooling can run read-only.',
-          warn: true,
+          detail: `The ${target.environment} jobs profile is "encode" but names no jobs Worker.`,
+          remedy: `    bun run deploy:configure -- --env ${target.environment} --jobs-worker <name>`,
         });
       } else {
-        findings.push({
-          check: 'container',
-          ok: true,
-          detail: `${jobsName} has a deployed version carrying a container binding.`,
-        });
+        const deployments = run(['deployments', 'list', '--name', jobsName, '--json']);
+        if (!deployments.ok) {
+          findings.push({
+            check: 'container',
+            ok: false,
+            detail: `The jobs Worker "${jobsName}" has no deployments in this account.`,
+            remedy:
+              'Containers require the Workers Paid plan and an accepted container image.\n' +
+              `  Deploy it once, then re-run this preflight:\n` +
+              `    bun run deploy:apply --env ${target.environment} --yes --only jobs\n` +
+              '  Nothing has been changed.',
+          });
+        } else if (!containerEntitlementProven(deployments.stdout)) {
+          // Reported as unproven rather than as a refusal, and the distinction is
+          // deliberate: an empty deployment list on a first deploy says nothing
+          // about the account, and refusing here would block the deploy that would
+          // establish it.
+          findings.push({
+            check: 'container',
+            ok: true,
+            detail:
+              `No deployed ${jobsName} version carries a container binding yet, so the container ` +
+              'entitlement is NOT PROVEN by this preflight. It is established by the first ' +
+              'successful jobs deploy, not by a check this tooling can run read-only.',
+            warn: true,
+          });
+        } else {
+          findings.push({
+            check: 'container',
+            ok: true,
+            detail: `${jobsName} has a deployed version carrying a container binding.`,
+          });
+        }
       }
     }
   }
@@ -502,6 +581,131 @@ export const preflight = (
   return { ok: findings.every((finding) => finding.ok), findings, commands };
 };
 
+/** Read-only checks for the second and third providers in the Supabase profile. */
+export const preflightSupabaseProviders = async (
+  target: ResolvedTarget,
+  options: { env?: NodeJS.ProcessEnv } = {},
+): Promise<PreflightReport> => {
+  if (target.deploymentProfile !== 'supabase' || target.supabase === null) {
+    return {
+      ok: false,
+      findings: [
+        {
+          check: 'target',
+          ok: false,
+          detail: 'Supabase provider preflight requires the resolved Supabase target.',
+        },
+      ],
+      commands: [],
+    };
+  }
+  const env = options.env ?? process.env;
+  const commands = [
+    supabaseMigrationArgs(target, 'list'),
+    ['GET', 'Google Cloud Run Job and IAM inventory'],
+  ];
+  const findings: PreflightFinding[] = [];
+  if (!env.SUPABASE_ACCESS_TOKEN) {
+    findings.push({
+      check: 'supabase',
+      ok: false,
+      detail: 'SUPABASE_ACCESS_TOKEN is required for read-only hosted project discovery.',
+      remedy: 'Provide the environment-scoped token to authenticated preflight.',
+    });
+  } else {
+    const migrations = runSupabaseMigration(target, 'list', { env });
+    findings.push({
+      check: 'supabase',
+      ok: migrations.code === 0,
+      detail:
+        migrations.code === 0
+          ? `Supabase project ${target.supabase.projectRef} is readable; migration status was listed.`
+          : `Supabase migration discovery failed with exit ${migrations.code}.`,
+      ...(migrations.code === 0
+        ? {}
+        : { remedy: 'Check project identity and read permissions. No mutation was attempted.' }),
+    });
+    try {
+      const auth = await inspectSupabaseAuthConfig({
+        target,
+        accessToken: env.SUPABASE_ACCESS_TOKEN,
+      });
+      const allowlist =
+        typeof auth.uri_allow_list === 'string'
+          ? auth.uri_allow_list.split(',').map((entry) => entry.trim())
+          : [];
+      const expected = target.supabase.nativeRedirectAllowlist;
+      const complete = expected.every((uri) => allowlist.includes(uri));
+      findings.push({
+        check: 'callbacks',
+        ok: true,
+        detail: complete
+          ? 'Supabase Auth contains the resolved native and web callback allowlist.'
+          : 'Supabase Auth callback configuration does not contain the complete resolved allowlist.',
+        ...(complete
+          ? {}
+          : {
+              warn: true,
+              remedy: `Run bun run deploy:apply --env ${target.environment} --yes to apply the reviewed callback configuration.`,
+            }),
+      });
+    } catch (error) {
+      findings.push({
+        check: 'callbacks',
+        ok: false,
+        detail:
+          error instanceof Error ? error.message : 'Supabase Auth configuration could not be read.',
+        remedy:
+          'Check Management API read access and the resolved project ref. Preflight is read-only.',
+      });
+    }
+  }
+  if (!env.GOOGLE_ACCESS_TOKEN) {
+    findings.push({
+      check: 'google',
+      ok: false,
+      detail: 'GOOGLE_ACCESS_TOKEN is required for read-only Cloud Run and IAM discovery.',
+      remedy:
+        'Obtain a short-lived token through the configured workload identity and rerun preflight.',
+    });
+  } else {
+    try {
+      const inventory = await inspectGoogleResources({
+        target,
+        accessToken: env.GOOGLE_ACCESS_TOKEN,
+      });
+      const plan = googleResourcePlan(target);
+      const missingApis = plan.requiredApis.filter((api) => !inventory.enabledApis.includes(api));
+      const missingIdentities = [
+        ...(inventory.runnerExists ? [] : [`runner ${inventory.runner}`]),
+        ...(inventory.dispatcherExists ? [] : [`dispatcher ${inventory.dispatcher}`]),
+      ];
+      const missing = [
+        ...(inventory.job === null ? [`Cloud Run Job ${plan.job}`] : []),
+        ...missingIdentities,
+        ...missingApis.map((api) => `API ${api}`),
+      ];
+      findings.push({
+        check: 'google',
+        ok: true,
+        detail:
+          missing.length === 0
+            ? `Cloud Run Job and separate runner/dispatcher identities are readable in ${target.supabase.googleProjectId}.`
+            : `Read-only discovery succeeded. Provision will create/enable: ${missing.join(', ')}.`,
+        ...(missing.length === 0 ? {} : { warn: true }),
+      });
+    } catch (error) {
+      findings.push({
+        check: 'google',
+        ok: false,
+        detail: error instanceof Error ? error.message : 'Google resource discovery failed.',
+        remedy: 'Correct the project, region or read permissions. Preflight performs no mutations.',
+      });
+    }
+  }
+  return { ok: findings.every((finding) => finding.ok), findings, commands };
+};
+
 const firstLine = (text: string): string => text.trim().split('\n')[0] ?? '';
 
 /** Render a report for a person. Never prints a credential. */
@@ -519,7 +723,9 @@ export const renderPreflight = (target: ResolvedTarget, report: PreflightReport)
     }
     lines.push(`  ${mark} ${finding.check}: ${finding.detail}`);
     if (!finding.ok) {
-      lines.push(`       ${finding.remedy.replace(/\n/g, '\n       ')}`);
+      lines.push(
+        `       ${(finding.remedy ?? 'Resolve the provider finding, then rerun preflight.').replace(/\n/g, '\n       ')}`,
+      );
     }
   }
 

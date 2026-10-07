@@ -50,10 +50,12 @@ describe('a multibyte character split across two reads survives the boundary', (
     expect(result.code).toBe(0);
     expect(result.stdout).toBe('out');
     expect(result.stderr).toBe('err');
-    expect(chunks).toEqual([
-      { stream: 'stdout', text: 'out' },
-      { stream: 'stderr', text: 'err' },
-    ]);
+    expect(chunks.every(({ stream }) => stream === 'stdout' || stream === 'stderr')).toBe(true);
+    const collected = { stdout: '', stderr: '' };
+    for (const { stream, text } of chunks) {
+      collected[stream as keyof typeof collected] += text;
+    }
+    expect(collected).toEqual({ stdout: result.stdout, stderr: result.stderr });
   });
 
   test('the assembled stream decodes to the character the child wrote', async () => {

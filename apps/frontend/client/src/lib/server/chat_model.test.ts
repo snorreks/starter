@@ -16,6 +16,7 @@
 import { describe, expect, test } from 'bun:test';
 import {
   CHAT_MODEL_PROFILES,
+  CHAT_OUTPUT_MAX_TOKENS,
   createChatModel,
   createEchoChatModel,
   createWorkersAiChatModel,
@@ -153,38 +154,45 @@ describe('the Workers AI adapter', () => {
     );
   });
 
-  test('emits the binding response as a single chunk', async () => {
+  test('requests bounded streamed output and decodes provider deltas', async () => {
     let askedModel = '';
+    let inputOptions: unknown;
+    const output = new TextEncoder().encode(
+      'data: {"response":"a "}\n\ndata: {"response":"reply"}\n\ndata: [DONE]\n\n',
+    );
     const model = createWorkersAiChatModel({
       binding: {
         async run(m, input) {
           askedModel = m;
-          void input;
-          return { response: 'a reply' };
+          inputOptions = input;
+          return new ReadableStream({
+            start(controller) {
+              controller.enqueue(output);
+              controller.close();
+            },
+          });
         },
       },
     });
 
     const chunks = await collect(model.generate('hi', new AbortController().signal));
 
-    // Documented as a single chunk because the binding returns a whole completion
-    // rather than a stream. Asserted so a future adapter that *did* stream would
-    // have to change this deliberately.
-    expect(chunks).toEqual(['a reply']);
+    expect(chunks).toEqual(['a ', 'reply']);
     expect(askedModel).toBe(WORKERS_AI_MODEL);
+    expect(inputOptions).toMatchObject({ stream: true, max_tokens: CHAT_OUTPUT_MAX_TOKENS });
   });
 
-  test('refuses a response shape it cannot read, naming the model', async () => {
+  test('refuses a provider that returns a non-streaming result', async () => {
     const model = createWorkersAiChatModel({
       binding: {
         async run() {
-          return { nope: true };
+          return { response: 'not streamed' };
         },
       },
     });
 
     await expect(collect(model.generate('hi', new AbortController().signal))).rejects.toThrow(
-      /cannot read/,
+      /did not return the requested stream/,
     );
   });
 
@@ -196,7 +204,7 @@ describe('the Workers AI adapter', () => {
       binding: {
         async run() {
           ran = true;
-          return { response: 'x' };
+          return new ReadableStream();
         },
       },
     });
@@ -223,7 +231,14 @@ describe('choosing the model', () => {
       profile: 'workers-ai',
       binding: {
         async run() {
-          return { response: 'bound' };
+          return new ReadableStream({
+            start(controller) {
+              controller.enqueue(
+                new TextEncoder().encode('data: {"response":"bound"}\n\ndata: [DONE]\n\n'),
+              );
+              controller.close();
+            },
+          });
         },
       },
     });

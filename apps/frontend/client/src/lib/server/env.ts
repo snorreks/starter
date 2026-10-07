@@ -24,6 +24,12 @@ import { JOBS_PROFILE_DISABLED, JOBS_PROFILE_ENCODE } from './jobs_service.ts';
 
 /** The Worker bindings this application requires. */
 export interface AppEnv {
+  /** Temporary complete runtime selector; absent means the functioning legacy backend. */
+  STARTER_BACKEND_PROFILE?: string;
+  SUPABASE_URL?: string;
+  SUPABASE_ANON_KEY?: string;
+  SUPABASE_SERVICE_ROLE_KEY?: string;
+  SUPABASE_MAIL_URL?: string;
   /** D1 binding. Required: there is no in-memory store. */
   DB: D1Database;
   /**
@@ -137,6 +143,37 @@ export interface AppEnv {
 }
 
 export const AUTH_SECRET_PLACEHOLDER = 'development-only-not-a-secret';
+
+export type BackendProfile = 'legacy' | 'supabase';
+
+/** Select one complete identity/data backend and reject incomplete preview wiring. */
+export const resolveBackendProfile = (
+  env: Pick<
+    AppEnv,
+    'STARTER_BACKEND_PROFILE' | 'SUPABASE_URL' | 'SUPABASE_ANON_KEY' | 'SUPABASE_SERVICE_ROLE_KEY'
+  >,
+): BackendProfile => {
+  const profile = env.STARTER_BACKEND_PROFILE?.trim() || 'legacy';
+  if (profile === 'legacy') {
+    return profile;
+  }
+  if (profile !== 'supabase') {
+    throw new Error(
+      `STARTER_BACKEND_PROFILE must be legacy or supabase, received ${JSON.stringify(profile)}.`,
+    );
+  }
+  const missing = [
+    ['SUPABASE_URL', env.SUPABASE_URL],
+    ['SUPABASE_ANON_KEY', env.SUPABASE_ANON_KEY],
+    ['SUPABASE_SERVICE_ROLE_KEY', env.SUPABASE_SERVICE_ROLE_KEY],
+  ]
+    .filter(([, value]) => typeof value !== 'string' || value.trim() === '')
+    .map(([name]) => name);
+  if (missing.length > 0) {
+    throw new Error(`Supabase preview configuration is incomplete: ${missing.join(', ')}.`);
+  }
+  return 'supabase';
+};
 
 /** Values of `DEPLOYMENT_ENV` that permit development defaults. */
 export const LOCAL_ENVIRONMENTS = new Set(['local', 'development']);

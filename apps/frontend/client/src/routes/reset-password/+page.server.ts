@@ -74,39 +74,55 @@ export const actions: Actions = {
 
     if (newPassword.length < PASSWORD_MIN_LENGTH) {
       return fail(422, {
+        tokenInvalid: false,
         errors: { newPassword: `Use at least ${PASSWORD_MIN_LENGTH} characters.` },
       });
     }
     if (newPassword.length > PASSWORD_MAX_LENGTH) {
       return fail(422, {
+        tokenInvalid: false,
         errors: { newPassword: `Use at most ${PASSWORD_MAX_LENGTH} characters.` },
       });
     }
 
     try {
-      await submitAuthAction(locals.container, request, cookies, 'reset-password', {
-        newPassword,
-        token,
-      });
+      await submitAuthAction(
+        locals.container,
+        request,
+        cookies,
+        'reset-password',
+        {
+          newPassword,
+          token,
+        },
+        locals.context?.responseHeaders ?? null,
+      );
     } catch (error) {
-      if (toAppError(error).errorType === 'rate_limited') {
+      const appError = toAppError(error);
+      if (appError.errorType === 'rate_limited') {
         return fail(429, {
+          tokenInvalid: false,
           errors: { newPassword: 'Too many requests. Wait a minute and try again.' },
         });
       }
       const code = authErrorCode(error);
+      const tokenInvalid =
+        code === AccountErrorCode.invalidToken || code === AccountErrorCode.expiredToken;
+      let passwordErrorMessage = appError.message;
+      if (code === AccountErrorCode.expiredToken) {
+        passwordErrorMessage = 'That link has expired. Ask for a new one.';
+      } else if (code === AccountErrorCode.invalidToken) {
+        passwordErrorMessage = 'That link is no longer valid. It may already have been used.';
+      }
 
-      // Three codes collapse into two messages on purpose. A user cannot act on
+      // Token errors collapse into two messages on purpose. A user cannot act on
       // the difference between "forged" and "already used" — for both, the fix is
       // a new link — and distinguishing them would confirm that a token they hold
       // was once valid.
       return fail(400, {
-        tokenInvalid: true,
+        tokenInvalid,
         errors: {
-          newPassword:
-            code === AccountErrorCode.expiredToken
-              ? 'That link has expired. Ask for a new one.'
-              : 'That link is no longer valid. It may already have been used.',
+          newPassword: passwordErrorMessage,
         },
       });
     }

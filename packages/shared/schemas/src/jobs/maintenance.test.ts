@@ -8,7 +8,7 @@
 // properties" would silently publish to every browser.
 
 import { describe, expect, test } from 'bun:test';
-import { Value } from 'typebox/value';
+import { checkSchema } from '../validation.ts';
 import { LatestMaintenanceSchema, MaintenanceEvidenceSchema } from './maintenance.ts';
 
 // The literal rather than `@starter/jobs`'s `MAINTENANCE_CRON`: this package is
@@ -36,7 +36,7 @@ const scheduledRun = () => ({
 
 describe('MaintenanceEvidenceSchema', () => {
   test('accepts a completed scheduled run', () => {
-    expect(Value.Check(MaintenanceEvidenceSchema, scheduledRun())).toBe(true);
+    expect(checkSchema(MaintenanceEvidenceSchema, scheduledRun())).toBe(true);
   });
 
   test('accepts a run that is still running, with nothing completed and no code', () => {
@@ -45,14 +45,14 @@ describe('MaintenanceEvidenceSchema', () => {
       status: 'running' as const,
       completedAt: null,
     };
-    expect(Value.Check(MaintenanceEvidenceSchema, running)).toBe(true);
+    expect(checkSchema(MaintenanceEvidenceSchema, running)).toBe(true);
   });
 
   test('refuses a trigger outside the two that exist', () => {
     // A third trigger would be either a scheduler nobody configured or a
     // mislabelled manual run, and both are claims about evidence rather than
     // facts a client should render as one.
-    expect(Value.Check(MaintenanceEvidenceSchema, { ...scheduledRun(), trigger: 'cron' })).toBe(
+    expect(checkSchema(MaintenanceEvidenceSchema, { ...scheduledRun(), trigger: 'cron' })).toBe(
       false,
     );
   });
@@ -61,7 +61,7 @@ describe('MaintenanceEvidenceSchema', () => {
     // The stored error is a closed union. An exception's message here would be
     // provider output reaching a browser.
     expect(
-      Value.Check(MaintenanceEvidenceSchema, {
+      checkSchema(MaintenanceEvidenceSchema, {
         ...scheduledRun(),
         status: 'failed',
         errorCode: 'D1_ERROR: no such table: sessions',
@@ -74,7 +74,7 @@ describe('MaintenanceEvidenceSchema', () => {
     // number any of this repository's statements can report, so a DTO that
     // accepted it would let a subtraction bug look like a result.
     expect(
-      Value.Check(MaintenanceEvidenceSchema, {
+      checkSchema(MaintenanceEvidenceSchema, {
         ...scheduledRun(),
         counts: { ...scheduledRun().counts, artifactsRetired: -1 },
       }),
@@ -83,7 +83,7 @@ describe('MaintenanceEvidenceSchema', () => {
 
   test('refuses the run key, which embeds a request id for manual runs', () => {
     expect(
-      Value.Check(MaintenanceEvidenceSchema, { ...scheduledRun(), runKey: 'manual:req_7' }),
+      checkSchema(MaintenanceEvidenceSchema, { ...scheduledRun(), runKey: 'manual:req_7' }),
     ).toBe(false);
   });
 });
@@ -97,14 +97,14 @@ describe('LatestMaintenanceSchema', () => {
   });
 
   test('accepts a deployment with a scheduled run on record', () => {
-    expect(Value.Check(LatestMaintenanceSchema, latest())).toBe(true);
+    expect(checkSchema(LatestMaintenanceSchema, latest())).toBe(true);
   });
 
   test('accepts a deployment that has never run maintenance', () => {
     // The case the design asks for by name: "nothing has run yet" and "the last
     // run failed" are different statements, and only one of them is a defect.
     expect(
-      Value.Check(LatestMaintenanceSchema, {
+      checkSchema(LatestMaintenanceSchema, {
         schedule: null,
         latest: null,
         latestScheduled: null,
@@ -116,6 +116,6 @@ describe('LatestMaintenanceSchema', () => {
   test('refuses a claim of progress without a numeric bound', () => {
     // There is no `progress` field and there must never be one: a run reports
     // what it deleted after the fact, never a percentage of a sweep in flight.
-    expect(Value.Check(LatestMaintenanceSchema, { ...latest(), progress: 42 })).toBe(false);
+    expect(checkSchema(LatestMaintenanceSchema, { ...latest(), progress: 42 })).toBe(false);
   });
 });

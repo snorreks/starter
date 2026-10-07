@@ -142,6 +142,51 @@ describe('architecture: a conformant project', () => {
 // ── negative controls: the required failures ─────────────────────────────────
 
 describe('architecture: browser code cannot reach the Worker half', () => {
+  test('a generated remote endpoint may reach its service, but an ordinary browser module may not import it', () => {
+    const allowed = makeProject(
+      withClientFiles({
+        'src/lib/server/notes_service.ts':
+          'export const listNotes = () => ["owner scoped"] as const;\n',
+        'src/lib/remote/notes.remote.ts':
+          "import { listNotes } from '#lib/server/notes_service.ts'; export const queryNotes = () => listNotes();\n",
+        'src/routes/notes/+page.svelte':
+          "<script>import { queryNotes } from '#lib/remote/notes.remote.ts';</script><p>{queryNotes}</p>\n",
+      }),
+    );
+    const allowedViolations = run(allowed);
+    expect(
+      forFile(
+        allowedViolations,
+        'plane-reachability',
+        'apps/frontend/client/src/routes/notes/+page.svelte',
+      ),
+    ).toBeUndefined();
+    expect(
+      forFile(
+        allowedViolations,
+        'plane-reachability',
+        'apps/frontend/client/src/lib/remote/notes.remote.ts',
+      ),
+    ).toBeUndefined();
+
+    const refused = makeProject(
+      withClientFiles({
+        'src/lib/server/notes_service.ts':
+          'export const listNotes = () => ["owner scoped"] as const;\n',
+        'src/lib/remote/notes.remote.ts':
+          "import { listNotes } from '#lib/server/notes_service.ts'; export const queryNotes = () => listNotes();\n",
+        'src/lib/probe.ts':
+          "import { queryNotes } from '#lib/remote/notes.remote.ts'; export const probe = queryNotes;\n",
+      }),
+    );
+    const violation = forFile(
+      run(refused),
+      'plane-reachability',
+      'apps/frontend/client/src/lib/probe.ts',
+    );
+    expect(violation?.message).toContain('browser module reaches a worker module');
+  });
+
   test('rejects a relative path that climbs out of the browser half', () => {
     // The old guard looked only at `@starter/`-prefixed specifiers, so this import was
     // invisible to it however far up the tree it pointed. Three `..` from

@@ -56,7 +56,10 @@ import {
   JOB_ATTEMPT_LEASE_MS,
   JOB_OUTPUT_RETENTION_MS,
   type JobStatus,
+  MAX_JOB_ATTEMPTS,
 } from '@starter/schemas/jobs';
+import { createId } from '@starter/utils';
+import { runCloudRunAttempt } from '../cloud_run/compute.ts';
 import {
   type JobsEnv,
   requireJobsBindings,
@@ -148,7 +151,7 @@ export class EncodeWorkflow extends WorkflowEntrypoint<JobsEnv, EncodeWorkflowPa
    * container instead of starting one each.
    */
   private containerStub(jobId: string): DurableObjectStub {
-    return this.env.CONTAINER.get(this.env.CONTAINER.idFromName(jobId));
+    return this.env.CONTAINER?.get(this.env.CONTAINER?.idFromName(jobId));
   }
 
   override async run(event: WorkflowEvent<EncodeWorkflowParams>, step: WorkflowStep) {
@@ -160,6 +163,33 @@ export class EncodeWorkflow extends WorkflowEntrypoint<JobsEnv, EncodeWorkflowPa
     }
     if (profile.profile !== 'encode') {
       return { jobId: event.payload.jobId, outcome: 'compute_profile_disabled' };
+    }
+    if ((this.env.STARTER_BACKEND_PROFILE ?? 'legacy') === 'supabase') {
+      for (let number = 0; number < MAX_JOB_ATTEMPTS; number += 1) {
+        const result = await step.do(
+          `supabase-cloud-run-${number + 1}`,
+          {
+            retries: { limit: 0, delay: 1000, backoff: 'constant' },
+            timeout: 20 * 60 * 1000,
+          },
+          async () => {
+            const attemptId = number === 0 ? event.payload.attemptId : createId('attempt');
+            const outcome = await runCloudRunAttempt(this.env, {
+              jobId: event.payload.jobId,
+              attemptId,
+            });
+            return { attemptId, outcome: outcome.outcome };
+          },
+        );
+        if (
+          result.outcome === 'committed' ||
+          result.outcome === 'fenced' ||
+          result.outcome === 'terminal_failure'
+        ) {
+          return result;
+        }
+      }
+      return { jobId: event.payload.jobId, outcome: 'attempts_exhausted' as const };
     }
     const params = event.payload;
     const repository = createJobRepository(this.env.DB as unknown as JobsDatabase, systemClock);

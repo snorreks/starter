@@ -6,7 +6,8 @@
   "license": "MIT",
   "main": "./src/index.ts",
   "exports": {
-    ".": "./src/index.ts"
+    ".": "./src/index.ts",
+    "./supabase": "./src/supabase/index.ts"
   },
   "scripts": {
     "lint": "biome lint src",

@@ -3,7 +3,7 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { prepareReviewImage } from '../src/visual/images.ts';
-import { reviewPrompt } from '../src/visual/prompt.ts';
+import { REVIEW_PROMPT_VERSION, reviewPrompt } from '../src/visual/prompt.ts';
 import { requestStructuredVision } from '../src/visual/providers/structured_vision.ts';
 
 const runningServers: Array<{ stop: (force?: boolean) => void }> = [];
@@ -85,14 +85,34 @@ describe('vision provider boundary', () => {
     expect(text).toContain('schemaVersion');
     expect(text).toContain('responsiveFit');
     expect(text).toContain(
-      'Requirement IDs (copy these exact strings into the requirements array): title-visible.',
+      'Requirement IDs (JSON array; copy these exact strings into the requirements array): ["title-visible"].',
     );
+    expect(text).not.toContain('matching the supplied schema');
+    expect(text).toContain('No response schema is sent to the provider');
+    expect(text).toContain(`Prompt: ${REVIEW_PROMPT_VERSION}`);
     expect(text).toContain('box must be null or an object');
     expect(text).toContain(
       'dimension must be one of layout, typography, hierarchy, consistency, responsiveFit, stateClarity',
     );
     expect(text).toContain(
       'category, observation, region, impact, correction, and uncertainty must be strings',
+    );
+  });
+
+  test('serializes requirement IDs unambiguously and versions the changed review prompt', () => {
+    const prompt = reviewPrompt({
+      scenarioId: 'home',
+      app: 'web',
+      state: 'public',
+      viewportTheme: 'desktop-light',
+      heading: 'Home',
+      controls: [],
+      requirements: ['heading,primary', 'button'],
+      content: [],
+    });
+    expect(REVIEW_PROMPT_VERSION).toBe('starter-ui-review-v2');
+    expect(prompt).toContain(
+      'Requirement IDs (JSON array; copy these exact strings into the requirements array): ["heading,primary","button"].',
     );
   });
 

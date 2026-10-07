@@ -6,21 +6,30 @@
   "license": "MIT",
   "main": "./src/index.ts",
   "exports": {
-    ".": "./src/index.ts"
+    ".": "./src/index.ts",
+    "./supabase": "./src/supabase/index.ts"
   },
   "scripts": {
     "db:generate": "drizzle-kit generate",
-    "lint": "biome lint src",
-    "format": "biome format src",
-    "fix": "biome check --write src --error-on-warnings",
+    "supabase": "supabase",
+    "db:local:migrate": "bun run tools/local_migrate.ts",
+    "db:types": "bun run tools/types_generate.ts",
+    "db:types:check": "bun run tools/types_check.ts",
+    "test:integration": "bun test tests/supabase.integration.test.ts",
+    "lint": "biome lint src tools tests",
+    "format": "biome format src tools tests",
+    "fix": "biome check --write src tools tests --error-on-warnings",
     "typecheck": "tsgo --noemit",
-    "test": "bun test"
+    "test": "bun test src"
   },
   "dependencies": {
     "@starter/schemas": "workspace:*",
-    "drizzle-orm": "0.45.3"
+    "@supabase/supabase-js": "2.117.2",
+    "drizzle-orm": "0.45.3",
+    "postgres": "3.4.7"
   },
   "devDependencies": {
-    "drizzle-kit": "0.31.11"
+    "drizzle-kit": "0.31.11",
+    "supabase": "2.120.0"
   }
 }

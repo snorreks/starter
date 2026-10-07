@@ -22,7 +22,7 @@ import { describe, expect, test } from 'bun:test';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { Value } from 'typebox/value';
+import { checkSchema } from '../validation.ts';
 import {
   isRetryableProcessorError,
   PROCESSOR_FIXTURE_ID,
@@ -60,7 +60,7 @@ const golden = (name: string): unknown => {
 describe('the Rust processor golden fixtures', () => {
   test('health.v1.json matches ProcessorHealthSchema', () => {
     const document = golden('health.v1.json');
-    expect(Value.Check(ProcessorHealthSchema, document)).toBe(true);
+    expect(checkSchema(ProcessorHealthSchema, document)).toBe(true);
   });
 
   test('health.v1.json names the frozen protocol, preset and fixture', () => {
@@ -78,7 +78,7 @@ describe('the Rust processor golden fixtures', () => {
   });
 
   test('encode-success.v1.json matches ProcessorEncodeSuccessSchema', () => {
-    expect(Value.Check(ProcessorEncodeSuccessSchema, golden('encode-success.v1.json'))).toBe(true);
+    expect(checkSchema(ProcessorEncodeSuccessSchema, golden('encode-success.v1.json'))).toBe(true);
   });
 
   for (const name of [
@@ -88,12 +88,12 @@ describe('the Rust processor golden fixtures', () => {
     'error-unsupported-preset.v1.json',
   ]) {
     test(`${name} matches ProcessorErrorSchema`, () => {
-      expect(Value.Check(ProcessorErrorSchema, golden(name))).toBe(true);
+      expect(checkSchema(ProcessorErrorSchema, golden(name))).toBe(true);
     });
   }
 
   test('every error golden carries a code this package can branch on', () => {
-    // A `Type.String()` code field would accept anything and defeat the retry
+    // A bare string schema would accept anything and defeat the retry
     // decision, which is the only reason these codes are enumerated.
     for (const name of [
       'error-invalid-media.v1.json',
@@ -128,14 +128,14 @@ describe('ProcessorEncodeSuccessSchema', () => {
   });
 
   test('accepts a document this package builds', () => {
-    expect(Value.Check(ProcessorEncodeSuccessSchema, success())).toBe(true);
+    expect(checkSchema(ProcessorEncodeSuccessSchema, success())).toBe(true);
   });
 
   test('refuses a field the Rust struct does not carry', () => {
     // The direction that catches a TypeScript-side addition: an extra field is
     // never silently accepted, because the Rust reader would drop it.
     expect(
-      Value.Check(ProcessorEncodeSuccessSchema, { ...success(), container: '/tmp/out.mp4' }),
+      checkSchema(ProcessorEncodeSuccessSchema, { ...success(), container: '/tmp/out.mp4' }),
     ).toBe(false);
   });
 
@@ -143,7 +143,7 @@ describe('ProcessorEncodeSuccessSchema', () => {
     // The Rust side emits lowercase hex; a client that compares case-sensitively
     // against an uppercase value would report a mismatch that is not one.
     expect(
-      Value.Check(ProcessorEncodeSuccessSchema, {
+      checkSchema(ProcessorEncodeSuccessSchema, {
         ...success(),
         output_sha256: success().output_sha256.toUpperCase(),
       }),
@@ -151,7 +151,7 @@ describe('ProcessorEncodeSuccessSchema', () => {
   });
 
   test('refuses a zero-length output', () => {
-    expect(Value.Check(ProcessorEncodeSuccessSchema, { ...success(), output_bytes: 0 })).toBe(
+    expect(checkSchema(ProcessorEncodeSuccessSchema, { ...success(), output_bytes: 0 })).toBe(
       false,
     );
   });
@@ -160,7 +160,7 @@ describe('ProcessorEncodeSuccessSchema', () => {
 describe('ProcessorErrorSchema', () => {
   test('accepts a terminal error', () => {
     expect(
-      Value.Check(ProcessorErrorSchema, {
+      checkSchema(ProcessorErrorSchema, {
         error: {
           code: 'invalid_media',
           message: 'input media could not be decoded',
@@ -172,7 +172,7 @@ describe('ProcessorErrorSchema', () => {
 
   test('refuses a code this package does not know', () => {
     expect(
-      Value.Check(ProcessorErrorSchema, {
+      checkSchema(ProcessorErrorSchema, {
         error: { code: 'ffmpeg_exploded', message: '…', retryable: false },
       }),
     ).toBe(false);

@@ -61,7 +61,7 @@ import { runWrangler } from './cloudflare/wrangler.ts';
 import { SEED_STATEMENTS } from './db/seed.ts';
 import { EXIT, fail } from './shared/command.ts';
 import { CLIENT_DIR, REPO_ROOT } from './shared/paths.ts';
-import { runScope } from './shared/run_scope.ts';
+import { runScope, worktreePort } from './shared/run_scope.ts';
 import { viteBin, wranglerBin } from './shared/tools.ts';
 
 /**
@@ -89,7 +89,7 @@ const PIDFILE = join(STATE_DIR, 'dev.pid');
  * server and the documented URL come to disagree — which is the bug that module
  * exists to prevent — so there is one place that decides.
  */
-const PORT = process.env.PORT ?? '5173';
+const PORT = process.env.PORT ?? String(worktreePort(5200, REPO_ROOT));
 const HOST = process.env.DEV_HOST ?? '127.0.0.1';
 
 /**
@@ -194,6 +194,11 @@ const varFlags = (): string[] => {
 const persistenceFlags = (): string[] =>
   E2E_SCOPE === undefined ? [] : ['--persist-to', E2E_SCOPE.stateDir];
 
+const localEnvFileFlags = (): string[] =>
+  process.env.STARTER_DEV_VARS_PATH === undefined
+    ? []
+    : ['--env-file', process.env.STARTER_DEV_VARS_PATH];
+
 /**
  * The launcher surface these tests read.
  *
@@ -241,6 +246,7 @@ export const buildTarget = (mode: DevMode): Target => {
         '--config',
         WRANGLER_CONFIG,
         ...persistenceFlags(),
+        ...localEnvFileFlags(),
         ...varFlags(),
       ],
       cwd: CLIENT_DIR,
@@ -270,7 +276,7 @@ export const buildTarget = (mode: DevMode): Target => {
  */
 export const main = (mode: DevMode = 'app'): Promise<number> => {
   if (mode === 'app' || E2E_SCOPE !== undefined) {
-    const configArgs = ['--config', WRANGLER_CONFIG, ...persistenceFlags()];
+    const configArgs = ['--config', WRANGLER_CONFIG, ...persistenceFlags(), ...localEnvFileFlags()];
     const migrated = runWrangler(['d1', 'migrations', 'apply', 'DB', '--local', ...configArgs]);
     if (migrated !== 0) {
       return Promise.resolve(fail('Could not prepare the local D1 database (migrations failed).'));

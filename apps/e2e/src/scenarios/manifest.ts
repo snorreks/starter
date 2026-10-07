@@ -1,71 +1,53 @@
 import { readdirSync, readFileSync } from 'node:fs';
 import { join, relative, sep } from 'node:path';
-import { type Static, Type } from 'typebox';
-import { Value } from 'typebox/value';
+import * as v from 'valibot';
 import { REPO_ROOT } from '../../../../scripts/src/shared/paths.ts';
 import sourceManifest from './manifest.json' with { type: 'json' };
 
-const AppSchema = Type.Union([Type.Literal('web'), Type.Literal('native')]);
-const KindSchema = Type.Union([
-  Type.Literal('page'),
-  Type.Literal('not-found'),
-  Type.Literal('error'),
-]);
-const RuntimeProfileSchema = Type.Union([
-  Type.Literal('web-disabled'),
-  Type.Literal('web-full'),
-  Type.Literal('native-ui-browser'),
+const AppSchema = v.union([v.literal('web'), v.literal('native')]);
+const KindSchema = v.union([v.literal('page'), v.literal('not-found'), v.literal('error')]);
+const RuntimeProfileSchema = v.union([
+  v.literal('web-disabled'),
+  v.literal('web-full'),
+  v.literal('native-ui-browser'),
 ]);
 
-const ScenarioSchema = Type.Object(
-  {
-    id: Type.String({ minLength: 1 }),
-    app: AppSchema,
-    route: Type.String({ minLength: 1 }),
-    url: Type.String({ minLength: 1 }),
-    finalUrl: Type.Optional(Type.String({ minLength: 1 })),
-    kind: KindSchema,
-    state: Type.String({ minLength: 1 }),
-    fixture: Type.Union([Type.String(), Type.Null()]),
-    setup: Type.String({ minLength: 1 }),
-    ready: Type.Object({ heading: Type.String({ minLength: 1 }) }, { additionalProperties: false }),
-    expected: Type.Object(
-      { controls: Type.Array(Type.String()), content: Type.Array(Type.String()) },
-      { additionalProperties: false },
+const ScenarioSchema = v.strictObject({
+  id: v.pipe(v.string(), v.minLength(1)),
+  app: AppSchema,
+  route: v.pipe(v.string(), v.minLength(1)),
+  url: v.pipe(v.string(), v.minLength(1)),
+  finalUrl: v.optional(v.pipe(v.string(), v.minLength(1))),
+  kind: KindSchema,
+  state: v.pipe(v.string(), v.minLength(1)),
+  fixture: v.union([v.string(), v.null()]),
+  setup: v.pipe(v.string(), v.minLength(1)),
+  ready: v.strictObject({ heading: v.pipe(v.string(), v.minLength(1)) }),
+  expected: v.strictObject({ controls: v.array(v.string()), content: v.array(v.string()) }),
+  variants: v.strictObject({
+    viewports: v.pipe(
+      v.array(v.union([v.literal('desktop'), v.literal('mobile')])),
+      v.minLength(1),
     ),
-    variants: Type.Object(
-      {
-        viewports: Type.Array(Type.Union([Type.Literal('desktop'), Type.Literal('mobile')]), {
-          minItems: 1,
-        }),
-        themes: Type.Array(Type.Union([Type.Literal('light'), Type.Literal('dark')]), {
-          minItems: 1,
-        }),
-      },
-      { additionalProperties: false },
-    ),
-    capture: Type.Boolean(),
-    regions: Type.Array(Type.String({ minLength: 1 }), { minItems: 1 }),
-    visualRequirements: Type.Array(Type.String({ minLength: 1 }), { minItems: 1 }),
-    referenceId: Type.Union([Type.String(), Type.Null()]),
-    audit: Type.Boolean(),
-    baseline: Type.Boolean(),
-    captureReason: Type.Union([Type.String(), Type.Null()]),
-    runtimeProfile: RuntimeProfileSchema,
-  },
-  { additionalProperties: false },
-);
+    themes: v.pipe(v.array(v.union([v.literal('light'), v.literal('dark')])), v.minLength(1)),
+  }),
+  capture: v.boolean(),
+  regions: v.pipe(v.array(v.pipe(v.string(), v.minLength(1))), v.minLength(1)),
+  visualRequirements: v.pipe(v.array(v.pipe(v.string(), v.minLength(1))), v.minLength(1)),
+  referenceId: v.union([v.string(), v.null()]),
+  audit: v.boolean(),
+  baseline: v.boolean(),
+  captureReason: v.union([v.string(), v.null()]),
+  runtimeProfile: RuntimeProfileSchema,
+});
 
-export const ScenarioManifestSchema = Type.Object(
-  {
-    schemaVersion: Type.Literal(1),
-    coverageGaps: Type.Array(Type.String({ minLength: 1 }), { minItems: 1 }),
-    scenarios: Type.Array(ScenarioSchema, { minItems: 1 }),
-  },
-  { additionalProperties: false },
-);
+export const ScenarioManifestSchema = v.strictObject({
+  schemaVersion: v.literal(1),
+  coverageGaps: v.pipe(v.array(v.pipe(v.string(), v.minLength(1))), v.minLength(1)),
+  scenarios: v.pipe(v.array(ScenarioSchema), v.minLength(1)),
+});
 
-export type ScenarioManifest = Static<typeof ScenarioManifestSchema>;
+export type ScenarioManifest = v.InferOutput<typeof ScenarioManifestSchema>;
 export type Scenario = ScenarioManifest['scenarios'][number];
 export type AppName = Scenario['app'];
 
@@ -80,15 +62,16 @@ export const readScenarioManifest = (path = MANIFEST_PATH): ScenarioManifest => 
       `Could not read E2E scenario manifest: ${error instanceof Error ? error.message : String(error)}`,
     );
   }
-  if (!Value.Check(ScenarioManifestSchema, parsed)) {
-    const details = [...Value.Errors(ScenarioManifestSchema, parsed)]
+  const result = v.safeParse(ScenarioManifestSchema, parsed);
+  if (!result.success) {
+    const details = result.issues
       .slice(0, 8)
-      .map((issue) => `${'path' in issue ? issue.path || '/' : '/'}: ${issue.message}`)
+      .map((issue) => `${issue.path?.map(({ key }) => key).join('.') || '/'}: ${issue.message}`)
       .join('\n');
     throw new Error(`Invalid E2E scenario manifest:\n${details}`);
   }
-  validateScenarioManifest(parsed);
-  return parsed;
+  validateScenarioManifest(result.output);
+  return result.output;
 };
 
 export const validateScenarioManifest = (manifest: ScenarioManifest): void => {

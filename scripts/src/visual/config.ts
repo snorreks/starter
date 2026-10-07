@@ -1,6 +1,7 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { REPO_ROOT } from '../shared/paths.ts';
+import { parseDotenv } from '../shared/dotenv.ts';
 
 export interface VisionConfig {
   provider: 'openrouter';
@@ -13,28 +14,19 @@ export interface VisionConfig {
   concurrency: number;
 }
 
-const readEnvFile = (): Record<string, string> => {
-  const path = join(REPO_ROOT, '.env.e2e');
+const readEnvFile = (filePath?: string): Record<string, string> => {
+  const path = filePath ?? join(REPO_ROOT, '.env.e2e');
   if (!existsSync(path)) {
     return {};
   }
-  const values: Record<string, string> = {};
-  for (const [index, line] of readFileSync(path, 'utf8').split(/\r?\n/).entries()) {
-    const trimmed = line.trim();
-    if (trimmed === '' || trimmed.startsWith('#')) {
-      continue;
-    }
-    const match = /^([A-Z][A-Z0-9_]*)=(.*)$/.exec(trimmed);
-    if (match === null) {
-      throw new Error(`Invalid .env.e2e entry on line ${index + 1}.`);
-    }
-    values[match[1] as string] = (match[2] as string).replace(/^(['"])(.*)\1$/, '$2');
-  }
-  return values;
+  return parseDotenv(readFileSync(path, 'utf8'), path);
 };
 
-export const loadVisionConfig = (environment: NodeJS.ProcessEnv = process.env): VisionConfig => {
-  const file = readEnvFile();
+export const loadVisionConfig = (
+  environment: NodeJS.ProcessEnv = process.env,
+  options: { filePath?: string } = {},
+): VisionConfig => {
+  const file = readEnvFile(options.filePath);
   const read = (name: string): string | undefined => environment[name] ?? file[name];
   const provider = read('E2E_VISION_PROVIDER') ?? 'openrouter';
   if (provider !== 'openrouter') {

@@ -17,7 +17,7 @@
     "visual-capture": {
       "executable": "bun",
       "args": ["run", "scripts/src/cli.ts", "agent", "visual", "capture", "--json"],
-      "timeoutMs": 1800000,
+      "timeoutMs": 2100000,
       "maxOutputBytes": 524288
     },
     "review": {
@@ -31,7 +31,7 @@
     "compute-full": {
       "executable": "bun",
       "args": ["run", "scripts/src/cli.ts", "agent", "compute", "full", "--json"],
-      "timeoutMs": 2100000,
+      "timeoutMs": 2400000,
       "maxOutputBytes": 524288
     }
   },

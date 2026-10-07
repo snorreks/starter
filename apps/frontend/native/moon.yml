@@ -30,6 +30,12 @@ fileGroups:
     - 'moon.yml'
     - 'vite.config.ts'
     - 'dev_ports.ts'
+  workspaceSources:
+    - '/packages/frontend/features/src/**/*'
+    - '/packages/frontend/platform/src/**/*'
+    - '/packages/shared/schemas/src/**/*'
+    - '/packages/shared/utils/src/**/*'
+    - '/packages/shared/logger/src/**/*'
   tests:
     - 'src/**/*.test.ts'
     - 'src/**/*.spec.ts'
@@ -53,6 +59,7 @@ tasks:
       - '@group(sources)'
       - '@group(configs)'
       - '@group(tests)'
+      - '@group(workspaceSources)'
   lint:
     command: 'bun'
     args: ['run', 'lint']
@@ -60,6 +67,7 @@ tasks:
       - '@group(sources)'
       - '@group(configs)'
       - '@group(tests)'
+      - '@group(workspaceSources)'
   format:
     command: 'bun'
     args: ['run', 'format']
@@ -67,6 +75,7 @@ tasks:
       - '@group(sources)'
       - '@group(configs)'
       - '@group(tests)'
+      - '@group(workspaceSources)'
   fix:
     command: 'bun'
     args: ['run', 'fix']
@@ -74,6 +83,7 @@ tasks:
       - '@group(sources)'
       - '@group(configs)'
       - '@group(tests)'
+      - '@group(workspaceSources)'
 
   test:
     command: 'bun'
@@ -82,6 +92,7 @@ tasks:
       - '@group(sources)'
       - '@group(configs)'
       - '@group(tests)'
+      - '@group(workspaceSources)'
 
   build:
     command: 'bun'
@@ -90,6 +101,9 @@ tasks:
       - '@group(sources)'
       - '@group(configs)'
       - '@group(tests)'
+      - '@group(workspaceSources)'
+      - '$VITE_NATIVE_API_ORIGIN'
+      - '$VITE_NATIVE_CLIENT_ID'
     # `.svelte-kit/output` is a complete artifact, and `check-bundle` consumes
     # it. `cache_scope.ts` additionally watches `bun.lock` and the shared
     # `@starter/*` sources, which live outside this project and cannot be named

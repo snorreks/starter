@@ -14,6 +14,8 @@
 
 import { describe, expect, test } from 'bun:test';
 import { buildTarget, type Target } from '../src/dev-app.ts';
+import { REPO_ROOT } from '../src/shared/paths.ts';
+import { worktreePort } from '../src/shared/run_scope.ts';
 
 /**
  * Re-read the module with `BETTER_AUTH_URL` set to `value`.
@@ -102,17 +104,21 @@ describe('the local launcher states the origin the Worker cannot derive', () => 
 
 describe('both modes still serve the port the launcher advertises', () => {
   test('the vite dev mode passes the port and refuses to move', () => {
-    // `--strictPort` is why `bun run dev` fails loudly rather than silently shifting to
-    // 5174 when 5173 is taken: a shifted port would break every printed URL and, more
+    // `--strictPort` is why `bun run dev` fails loudly rather than silently shifting
+    // when its stable per-checkout port is taken: a shifted port would break every printed URL and, more
     // importantly, invalidate the origin the launcher just told the Worker about.
     const args = buildTarget('app').args;
     expect(args).toContain('--strictPort');
-    expect(args[args.indexOf('--port') + 1]).toBe(process.env.PORT ?? '5173');
+    expect(args[args.indexOf('--port') + 1]).toBe(
+      process.env.PORT ?? String(worktreePort(5200, REPO_ROOT)),
+    );
   });
 
   test('the built Worker mode passes the port to wrangler', () => {
     const args = buildTarget('built').args;
-    expect(args[args.indexOf('--port') + 1]).toBe(process.env.PORT ?? '5173');
+    expect(args[args.indexOf('--port') + 1]).toBe(
+      process.env.PORT ?? String(worktreePort(5200, REPO_ROOT)),
+    );
   });
 });
 

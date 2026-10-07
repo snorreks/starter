@@ -52,9 +52,16 @@ export const actions: Actions = {
     }
 
     try {
-      await submitAuthAction(locals.container, request, cookies, 'send-verification-email', {
-        email,
-      });
+      await submitAuthAction(
+        locals.container,
+        request,
+        cookies,
+        'send-verification-email',
+        {
+          email,
+        },
+        locals.context?.responseHeaders ?? null,
+      );
     } catch (error) {
       const appError = toAppError(error, 'Could not send that email.');
       if (appError.errorType === 'rate_limited') {

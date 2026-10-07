@@ -32,6 +32,8 @@ export interface BoundedRunOptions {
   killGraceMs?: number;
   /** Optional bounded JSON or text sent to stdin instead of being placed in argv. */
   input?: string;
+  /** Optional child environment; undefined inherits the current process environment. */
+  env?: NodeJS.ProcessEnv;
   /** Maximum UTF-8 stdin payload size. Defaults to 1 MiB. */
   maxInputBytes?: number;
   /** Called with an AbortSignal the caller can trigger. */
@@ -199,6 +201,7 @@ export const runBounded = (
   return new Promise<BoundedRunResult>((resolve, reject) => {
     const child = spawn(command, [...args], {
       cwd: options.cwd,
+      env: options.env,
       stdio: [options.input === undefined ? 'ignore' : 'pipe', 'pipe', 'pipe'],
       // Its own process group, so a kill reaches the whole tree.
       //

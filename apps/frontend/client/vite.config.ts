@@ -38,6 +38,7 @@ export default defineConfig({
     tailwindcss(),
     sveltekit({
       preprocess: [vitePreprocess()],
+      experimental: { remoteFunctions: true },
       adapter: adapter({
         // Read `wrangler.jsonc` from this project root, which is the adapter's
         // default. Stated because the file it reads is the deployment contract,

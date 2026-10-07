@@ -117,7 +117,7 @@ built SSR Worker. Both are named in [docs/testing.md](../../../docs/testing.md).
 ## Boundaries
 
 May import `@starter/platform`, `@starter/schemas`, `@starter/ui`, `@starter/utils`
-and TypeBox. May **not** import:
+and Valibot. May **not** import:
 
 - `$app/*`, `@sveltejs/kit` — the router is injected as `Navigation`
 - `@tauri-apps/*` — that is a native composition root's `native-bridge` role

@@ -1,3 +1,4 @@
+{"kind":"run_metadata","runId":"agent_runtime_6d9cf97dfebb4b95944b2b355b1f1a80","starterRevision":"575f1eaf469bf6d5eed8936cdc884380c6e49d6a","portablePackageRevision":"3b6edfcb4fab4ebd80b1c23e66bef385bd9e991b","command":"Actual Pi 1.0.2 Google Gemini account/notes journey using the built Starter profile; original process argv was not retained."}
 {"kind":"tool_call","tool":"tool_search","action":null,"argumentNames":[]}
 {"kind":"tool_result","tool":"tool_search","status":"passed"}
 {"kind":"tool_call","tool":"dev_process","action":"start_profile","argumentNames":["profile"]}

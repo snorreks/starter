@@ -58,7 +58,7 @@ Three rules make that hold rather than merely sound true, each enforced twice:
   Cloudflare binding, `apps/**` — refused by Biome's frontend override and by
   `bun run guard`.
 - **A service validates its answers.** `parseDto(schema, body, …)` against the
-  same TypeBox schema the server validated with. `request<Note[]>` compiles
+  same Standard Schema contract the server validated with. `request<Note[]>` compiles
   identically whether the answer is notes or an HTML error page, and the mistake
   used to surface as "you have no notes yet".
 - **Identity is per request, never module scope.** `SessionState` is constructed
@@ -361,9 +361,9 @@ function with one list of fields, and there is no path from `env`, `db`, `auth` 
 `Container` into a response body: `Container` is not serializable and nothing tries.
 Session tokens, `BETTER_AUTH_SECRET` and binding objects never leave the Worker.
 
-**`additionalProperties: false` on every schema.** That is what makes `Value.Check`
-a refusal rather than a coercion mechanism. Without it an unknown field is silently
-dropped and the client is told the write succeeded.
+**`strictObject` on every application schema.** Valibot's Standard Schema
+validation refuses unknown fields rather than silently dropping them, so the client
+is not told a write succeeded when the contract rejected it.
 
 **Ownership is enforced in the query**, not after it:
 

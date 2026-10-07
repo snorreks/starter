@@ -16,7 +16,10 @@
     "reloaded": true,
     "persistenceObserved": true,
     "browsersClosed": true,
-    "runtimeStopped": true
+    "runtimeStopped": true,
+    "initialRuntimeIdentityVerified": true,
+    "laterBrowserOpensIdentityVerified": false,
+    "laterBrowserOpensIdentityNote": "Only the first open supplied and verified runtimeRunId; exploratory opens do not assert a runtime identity check."
   },
   "routeStatuses": [
     {
@@ -25,24 +28,9 @@
       "status": 200
     },
     {
-      "method": "POST",
-      "path": "/api/auth/sign-up/email",
-      "status": 200
-    },
-    {
       "method": "GET",
       "path": "/api/dev/mail",
       "status": 200
-    },
-    {
-      "method": "GET",
-      "path": "/api/dev/mail",
-      "status": 200
-    },
-    {
-      "method": "GET",
-      "path": "/api/auth/verify-email",
-      "status": 302
     },
     {
       "method": "GET",
@@ -55,16 +43,6 @@
       "status": 200
     },
     {
-      "method": "GET",
-      "path": "/verify-email",
-      "status": 200
-    },
-    {
-      "method": "POST",
-      "path": "/api/auth/sign-in/email",
-      "status": 200
-    },
-    {
       "method": "POST",
       "path": "/api/auth/sign-in/email",
       "status": 200
@@ -75,22 +53,7 @@
       "status": 200
     },
     {
-      "method": "GET",
-      "path": "/notes",
-      "status": 200
-    },
-    {
       "method": "POST",
-      "path": "/api/notes",
-      "status": 200
-    },
-    {
-      "method": "POST",
-      "path": "/api/notes",
-      "status": 200
-    },
-    {
-      "method": "GET",
       "path": "/api/notes",
       "status": 200
     },
@@ -102,31 +65,6 @@
     {
       "method": "PATCH",
       "path": "/api/notes/:id",
-      "status": 200
-    },
-    {
-      "method": "PATCH",
-      "path": "/api/notes/:id",
-      "status": 200
-    },
-    {
-      "method": "GET",
-      "path": "/api/notes",
-      "status": 200
-    },
-    {
-      "method": "GET",
-      "path": "/api/notes",
-      "status": 200
-    },
-    {
-      "method": "GET",
-      "path": "/notes",
-      "status": 200
-    },
-    {
-      "method": "GET",
-      "path": "/notes",
       "status": 200
     }
   ],
@@ -181,7 +119,7 @@
       "ok": true,
       "action": "open",
       "urlPath": "/register",
-      "identity": "exploratory; no project runtime identity was supplied"
+      "identity": "exploratory; runtime identity not independently verified"
     },
     {
       "tool": "browser",
@@ -288,7 +226,7 @@
       "ok": true,
       "action": "open",
       "urlPath": "/login",
-      "identity": "exploratory; no project runtime identity was supplied"
+      "identity": "exploratory; runtime identity not independently verified"
     },
     {
       "tool": "browser",
@@ -358,7 +296,7 @@
       "ok": true,
       "action": "open",
       "urlPath": "/api/dev/mail",
-      "identity": "exploratory; no project runtime identity was supplied"
+      "identity": "exploratory; runtime identity not independently verified"
     },
     {
       "tool": "browser",
@@ -387,7 +325,7 @@
       "ok": true,
       "action": "open",
       "urlPath": "/verify-email",
-      "identity": "exploratory; no project runtime identity was supplied"
+      "identity": "exploratory; runtime identity not independently verified"
     },
     {
       "tool": "browser",

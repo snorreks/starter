@@ -32,9 +32,13 @@ setup.
 
 ## Resolve the whole environment
 
-`scripts/src/deploy/target.ts` owns the web Worker, D1, public origin, mail sender,
-native API origin, jobs profile, jobs Worker, R2 bucket, Workflow identities,
-container image/protocol/profile. Everything remote uses this resolved target.
+`scripts/src/deploy/target.ts` owns the web Worker, public origin, mail sender,
+native API origin, jobs profile, jobs Worker, R2 bucket, Workflow identities and
+compute destination. With `STARTER_BACKEND_PROFILE=supabase`, that same target also
+owns the Supabase project/auth URL and redirect allowlist, Google project/region,
+private Cloud Run Job, immutable Artifact Registry image, runner/dispatcher identities,
+protocol, bounds and required secret names. When `STARTER_BACKEND_PROFILE` is unset,
+legacy D1/container targets remain the default.
 
 Precedence, highest first:
 
@@ -48,7 +52,48 @@ The resolver rejects missing required fields, unknown/credential-shaped map keys
 invalid https origins, unsupported profiles/protocols, incomplete compute, and
 staging/production sharing a Worker, D1, bucket or Workflow. Shared Dockerfile
 inputs are fine; shared pinned image digests are refused. Overrides are also checked
-against the other environment's configured destinations.
+against the other environment's configured destinations. Supabase's public publishable
+key is runtime configuration; service-role, mail, dispatcher and provider access tokens
+remain separate credentials.
+
+## Supabase and Cloud Run preview
+
+Set `STARTER_BACKEND_PROFILE=supabase` for these commands. The complete target must
+exist for both environments before planning. Plan and preflight never create a
+Supabase project; project creation is a separately authorized, potentially billable
+operator action. SQL changes follow expand/contract ordering: add schema first,
+deploy compatible Workers, and remove old schema in a later release.
+
+```bash
+STARTER_BACKEND_PROFILE=supabase bun run deploy:check --env staging
+STARTER_BACKEND_PROFILE=supabase bun run deploy:provision --env staging --yes --install
+STARTER_BACKEND_PROFILE=supabase bun run deploy:preflight --env staging
+STARTER_BACKEND_PROFILE=supabase bun run deploy:apply --env staging --yes
+STARTER_BACKEND_PROFILE=supabase bun run deploy verify --env staging
+```
+
+Hosted preflight is authenticated and read-only. Provision and apply stop at the
+first failed provider operation; the release record contains completed operations
+only. Inspect provider state before retrying because API enablement, identity creation,
+job changes, migrations or Worker deployment may already have completed. There is no
+cross-provider transaction or automatic rollback. A Worker rollback does not reverse
+a database migration or Cloud Run Job update. Cloud Run remains private: only the
+dispatcher identity receives `roles/run.invoker`; the runner identity is configured
+on the Job and receives no persistent storage/admin credential.
+
+Environment-scoped credentials are `CLOUDFLARE_API_TOKEN`, `SUPABASE_ACCESS_TOKEN`,
+and a short-lived `GOOGLE_ACCESS_TOKEN` for hosted preflight/apply. Runtime installation
+also requires `SUPABASE_SERVICE_ROLE_KEY`, `RESEND_API_KEY`, and
+`GOOGLE_DISPATCHER_CREDENTIAL`. Values enter provider request bodies or secret stdin,
+never argv or release records. GitHub Actions obtains Google tokens through workload
+identity federation; configure repository variables `GOOGLE_WORKLOAD_IDENTITY_PROVIDER`
+and `GOOGLE_DEPLOYER_SERVICE_ACCOUNT`, restricted to this repository/workflow. The
+credential-free plan job reads no environment secrets.
+
+Hosted checks, provider mutation, and hosted migrations were **NOT RUN** during this
+implementation. Before running the commands above, create isolated staging/production
+Supabase projects, configure the scoped provider credentials and Google federation,
+and grant the setup identity only the required project and Job permissions.
 
 ```bash
 bun run deploy:configure -- --account <32-hex>

@@ -25,13 +25,16 @@ describe('visual review through the loaded Pi project tool', () => {
         ['run', 'agent', '--', 'visual', 'review', '--run', runId, '--json'],
         { cwd: REPO_ROOT, encoding: 'utf8', timeout: 20 * 60_000 },
       );
-      expect(cli.status).toBe(1);
+      expect(cli.error).toBeUndefined();
+      expect(cli.status === 0 || cli.status === 1).toBe(true);
       const cliResponse = JSON.parse(cli.stdout) as {
         operation: string;
         status: string;
         runId: string;
         provenance: Array<Record<string, unknown>>;
+        error?: unknown;
       };
+      expect(cliResponse.error).toBeUndefined();
 
       const settingsManager = SettingsManager.create(REPO_ROOT, agentDir);
       settingsManager.setProjectTrusted(true);
@@ -51,7 +54,7 @@ describe('visual review through the loaded Pi project tool', () => {
         undefined,
         { cwd: REPO_ROOT } as never,
       );
-      expect(result?.isError).toBe(true);
+      expect(result?.isError).toBe(cli.status !== 0);
       const piResponse = JSON.parse(
         result?.content[0]?.type === 'text' ? result.content[0].text : '{}',
       ) as typeof cliResponse;

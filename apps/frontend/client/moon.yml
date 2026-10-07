@@ -25,6 +25,24 @@ fileGroups:
     - 'vite.config.ts'
     - 'vitest.config.ts'
     - 'wrangler.jsonc'
+  workspaceSources:
+    - '/bun.lock'
+    - '/package.json'
+    - '/biome.json'
+    - '/config/toolchain.json'
+    - '/config/tsconfig/tsconfig.base.json'
+    - '/scripts/src/shared/browser_path.ts'
+    - '/scripts/src/artifacts/bundle_worker.ts'
+    - '/packages/frontend/features/src/**/*'
+    - '/packages/frontend/platform/src/**/*'
+    - '/packages/backend/jobs/src/**/*'
+    - '/packages/backend/auth/src/**/*'
+    - '/packages/backend/database/src/**/*'
+    - '/packages/backend/database/drizzle-d1/**/*'
+    - '/packages/shared/schemas/src/**/*'
+    - '/packages/shared/logger/src/**/*'
+    - '/packages/shared/utils/src/**/*'
+    - '/apps/backend/jobs/src/**/*'
   tests:
     - 'src/**/*.test.ts'
     - 'src/**/*.spec.ts'
@@ -46,6 +64,8 @@ dependsOn:
   # two halves became one application, and leaving them out would let a build
   # succeed against a stale copy of the schema it persists to.
   - auth
+  - features
+  - platform
   - database
   - logger
   - schemas
@@ -78,6 +98,7 @@ tasks:
       - '@group(sources)'
       - '@group(configs)'
       - '@group(tests)'
+      - '@group(workspaceSources)'
   lint:
     command: 'bun'
     args: ['run', 'lint']
@@ -85,6 +106,7 @@ tasks:
       - '@group(sources)'
       - '@group(configs)'
       - '@group(tests)'
+      - '@group(workspaceSources)'
   format:
     command: 'bun'
     args: ['run', 'format']
@@ -92,6 +114,7 @@ tasks:
       - '@group(sources)'
       - '@group(configs)'
       - '@group(tests)'
+      - '@group(workspaceSources)'
   fix:
     command: 'bun'
     args: ['run', 'fix']
@@ -99,6 +122,7 @@ tasks:
       - '@group(sources)'
       - '@group(configs)'
       - '@group(tests)'
+      - '@group(workspaceSources)'
 
   # Unit only. The browser lane is `test-browser` and the Worker lane is
   # `test-worker`; neither is folded in, for the same reason.
@@ -109,6 +133,7 @@ tasks:
       - '@group(sources)'
       - '@group(configs)'
       - '@group(tests)'
+      - '@group(workspaceSources)'
 
   test-browser:
     command: 'bun'
@@ -127,6 +152,7 @@ tasks:
       - '@group(sources)'
       - '@group(configs)'
       - '@group(tests)'
+      - '@group(workspaceSources)'
 
   # The built Worker, in real workerd, against real local D1. Never cached: it
   # asserts against a database and a running runtime, so a restored "pass" would
@@ -140,6 +166,7 @@ tasks:
       - '@group(sources)'
       - '@group(configs)'
       - '@group(tests)'
+      - '@group(workspaceSources)'
     options:
       cache: false
 
@@ -150,6 +177,12 @@ tasks:
       - '@group(sources)'
       - '@group(configs)'
       - '@group(tests)'
+      - '@group(workspaceSources)'
+      - '$PUBLIC_MODE'
+      - '$PUBLIC_LOG_LEVEL'
+      - '$PUBLIC_APP_VERSION'
+      - '$PUBLIC_API_BASE_URL'
+      - '$PUBLIC_TELEMETRY_ENDPOINT'
     # The one task in the workspace with a restorable output.
     #
     # Build closes the adapter's SSR graph with pinned Wrangler before caching.

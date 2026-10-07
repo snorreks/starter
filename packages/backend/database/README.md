@@ -1,6 +1,8 @@
 # @starter/database
 
-Drizzle schema and migrations for Cloudflare D1 (SQLite).
+Cloudflare D1 compatibility and the additive Supabase Postgres foundation. The
+application default remains on the complete D1/Better Auth backend until the final
+cutover prompt.
 
 ## Purpose and runtime
 
@@ -11,7 +13,10 @@ contract.
 
 - `src/lib/schema.ts` is the single source of truth. Row types are derived from it
   with `$inferSelect` / `$inferInsert`; never hand-write a parallel type.
-- `drizzle-d1/` holds forward-only generated migrations.
+- `drizzle-d1/` holds forward-only generated D1 migrations. `src/supabase/` contains
+  request-scoped Supabase clients and repository adapters; `supabase/migrations/`
+  at the repository root owns Postgres schema, RLS and transactional RPCs. Storage
+  rows stay private and adapters project them to shared DTOs.
 
 ## Setup and configuration
 
@@ -29,6 +34,9 @@ From the repository root:
 bun run db:generate   # drizzle-kit generate
 bun run db:migrate    # apply to local D1
 bun run db:status     # which migrations have been applied
+bun run test:database # real local Supabase/Auth/Postgres integration lane (Docker required)
+bun run db:types      # regenerate generated Postgres types after a local reset
+bun run db:types:check # regenerate to temporary output and compare
 ```
 
 From `packages/backend/database`, the generate step is
@@ -36,12 +44,18 @@ From `packages/backend/database`, the generate step is
 declares `drizzle-kit`, never `bunx`, which would download whatever the registry
 serves.
 
+Supabase CLI and `@supabase/supabase-js` are pinned by this package. The scripts
+workspace owns checkout allocation and lifecycle but does not import backend code.
+Each local run derives its project id and API/Postgres/Studio/mail/SMTP ports from
+one allocation and records a private owner token before it can stop or reset that
+stack. Local Auth mail is captured at the allocation's Mailpit URL.
+
 Adding a table:
 
 1. Add it to `src/lib/schema.ts`.
 2. `bun run db:generate` (commits the SQL and the snapshot).
 3. `bun run db:migrate` to apply locally.
-4. Add the matching TypeBox schema to `@starter/schemas` if it crosses the wire.
+4. Add the matching Valibot contract to `@starter/schemas` if it crosses the wire.
 
 ## Tests and artifacts
 

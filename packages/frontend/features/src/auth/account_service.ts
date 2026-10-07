@@ -34,6 +34,10 @@ export interface AccountService {
   resetPassword(input: PasswordResetInput): Promise<void>;
   /** Ask for another confirmation link. */
   sendVerificationEmail(input: VerificationRequest): Promise<void>;
+  /** Start Supabase's secure two-address email-change confirmation flow. */
+  changeEmail(input: { email: string }): Promise<void>;
+  /** Delete the currently authenticated account. */
+  deleteAccount(): Promise<void>;
 }
 
 /**
@@ -100,6 +104,17 @@ export const createAccountService = (transport: ApiTransport): AccountService =>
       method: 'POST',
       body: { email: input.email, callbackURL: VERIFICATION_RETURN_PATH },
     });
+  },
+
+  async changeEmail(input) {
+    await transport.request<unknown>('/api/auth/account/email-change', {
+      method: 'POST',
+      body: input,
+    });
+  },
+
+  async deleteAccount() {
+    await transport.request<unknown>('/api/auth/account/delete', { method: 'POST', body: {} });
   },
 });
 

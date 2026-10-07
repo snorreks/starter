@@ -1,4 +1,4 @@
-export const REVIEW_PROMPT_VERSION = 'starter-ui-review-v1';
+export const REVIEW_PROMPT_VERSION = 'starter-ui-review-v2';
 
 export const reviewPrompt = (input: {
   scenarioId: string;
@@ -16,7 +16,7 @@ Viewport and theme: ${input.viewportTheme}.
 Expected heading: ${input.heading}.
 Required visible controls: ${input.controls.join(', ') || 'none'}.
 Expected content: ${input.content.join('; ') || 'none'}.
-Requirement IDs (copy these exact strings into the requirements array): ${input.requirements.join(', ') || 'none'}.
+Requirement IDs (JSON array; copy these exact strings into the requirements array): ${JSON.stringify(input.requirements)}.
 Visual requirements: ${input.requirements.join('; ')}.
 
 Use ratings 0 unusable/missing, 1 major impairment, 2 usable with clear problems,
@@ -26,4 +26,4 @@ contrast measurements, backend health, hidden content, or properties beyond the
 screenshot. Distinguish intentional empty, disabled, error, and signed-out states
 from broken states. Give concise visual evidence and practical corrections. Use
 normalized image coordinates for boxes and mark uncertainty when evidence is weak.
-Return exactly one object matching the supplied schema.`;
+Return exactly one JSON object using the documented fields. No response schema is sent to the provider; the response is validated locally.`;

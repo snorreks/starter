@@ -34,6 +34,9 @@ export class ExternalBrowserRefused extends Error {
 export interface ExternalBrowserOptions {
   /** The API origin whose URLs this client is allowed to hand to the OS. */
   readonly origin: string;
+  /** Additional exact provider origins configured by the native host. */
+  readonly allowedOrigins?: readonly string[];
+  readonly allowLoopbackHttp?: boolean;
   /** Injected so a test can observe without a shell. */
   readonly open?: (url: string) => Promise<unknown>;
 }
@@ -44,7 +47,12 @@ export interface ExternalBrowserOptions {
  * Exported for the unit lane: this is the boundary a future screen could
  * accidentally widen, and widening it must fail a test rather than pass review.
  */
-export const assertOpenable = (raw: string, origin: string): URL => {
+export const assertOpenable = (
+  raw: string,
+  origin: string,
+  allowedOrigins: readonly string[] = [],
+  allowLoopbackHttp = false,
+): URL => {
   let parsed: URL;
   try {
     parsed = new URL(raw);
@@ -54,16 +62,24 @@ export const assertOpenable = (raw: string, origin: string): URL => {
     );
   }
 
-  if (parsed.protocol !== 'https:') {
+  const loopbackHttp =
+    allowLoopbackHttp &&
+    parsed.protocol === 'http:' &&
+    ['localhost', '127.0.0.1', '[::1]'].includes(parsed.hostname);
+  if (parsed.protocol !== 'https:' && !loopbackHttp) {
     throw new ExternalBrowserRefused(
       `Refusing to open ${parsed.protocol}//${parsed.host}. Only https is allowed.`,
     );
   }
 
-  if (parsed.origin !== new URL(origin).origin) {
+  const allowed = new Set([
+    new URL(origin).origin,
+    ...allowedOrigins.map((value) => new URL(value).origin),
+  ]);
+  if (!allowed.has(parsed.origin)) {
     throw new ExternalBrowserRefused(
-      `Refusing to open ${parsed.origin}: this client only hands URLs belonging to ` +
-        `${new URL(origin).origin} to the system browser.`,
+      `Refusing to open ${parsed.origin}: this client only hands configured provider and API origins ` +
+        'to the system browser.',
     );
   }
 
@@ -79,7 +95,7 @@ export const assertOpenable = (raw: string, origin: string): URL => {
  */
 export const createExternalBrowser = (options: ExternalBrowserOptions): ExternalBrowser => ({
   open: async (url: string): Promise<void> => {
-    assertOpenable(url, options.origin);
+    assertOpenable(url, options.origin, options.allowedOrigins, options.allowLoopbackHttp);
     const open = options.open ?? ((target: string) => openUrl(target));
     try {
       await open(url);

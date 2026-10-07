@@ -6,12 +6,12 @@
 // -------------------------
 // This extended `BaseFormViewModel`, whose whole job was `form`, `isSubmitting`
 // and an error map. Three of those four fields are two `$state` declarations and
-// a setter, and the fourth — the base's TypeBox validation, `isValid`, `handleChange`
+// a setter, and the fourth — the base's schema validation, `isValid`, `handleChange`
 // and the `onSubmit` callback — had no reachable call path in this repository,
 // because this class overrode `handleSubmit` without ever calling up.
 //
 // So the base is gone and the four fields are here, where they are visible. The
-// form is validated with the same `@starter/schemas` TypeBox schemas the server
+// form is validated with the same `@starter/schemas` Valibot schemas the server
 // validates with, so the browser cannot accept something the Worker will refuse.
 //
 // Three sign-in outcomes, not one boolean
@@ -43,7 +43,7 @@ import {
 import { reportError } from '@starter/ui';
 import { disposeScreen, type ScreenGuards, type ScreenOwner } from '@starter/ui/screen';
 import { MutationGuard, StaleGuard, toAppError } from '@starter/utils';
-import { Value } from 'typebox/value';
+import * as v from 'valibot';
 import type { AccountService } from './account_service.ts';
 import type { AuthSession } from './auth_session_service.svelte.ts';
 
@@ -368,7 +368,7 @@ const readIntent = (form: HTMLFormElement): AuthMode => {
 };
 
 /**
- * Validate against the same TypeBox schema the server uses.
+ * Validate against the shared Standard Schema contract the server uses.
  *
  * Returns `undefined` when valid, or the first error per field. Returning early on
  * the first error per field rather than all of them keeps the message stable, so
@@ -376,19 +376,14 @@ const readIntent = (form: HTMLFormElement): AuthMode => {
  */
 const validate = (values: SignInInput | SignUpInput): Record<string, string> | undefined => {
   const schema = 'displayName' in values ? SignUpInputSchema : SignInInputSchema;
-  if (Value.Check(schema, values)) {
+  const result = v.safeParse(schema, values);
+  if (result.success) {
     return undefined;
   }
 
   const errors: Record<string, string> = {};
-  for (const issue of Value.Errors(schema, values)) {
-    if (issue.keyword === 'required') {
-      for (const field of issue.params.requiredProperties) {
-        errors[field] ??= issue.message;
-      }
-      continue;
-    }
-    const field = issue.instancePath.replace(/^\//, '') || '_form';
+  for (const issue of result.issues) {
+    const field = issue.path?.map(({ key }) => String(key)).join('.') || '_form';
     errors[field] ??= issue.message;
   }
   return errors;

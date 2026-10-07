@@ -18,10 +18,10 @@ interface a host fulfils or a piece of mechanism more than one host needs:
 |---|---|
 | `ApiTransport` | `request<T>(path, options)` — the seam between a service and the network |
 | `HttpTransport` | The reusable implementation: base URL, headers, uniform `AppError` mapping |
-| `parseDto` | Runtime assertion of a response body against a TypeBox schema |
+| `parseDto` | Runtime validation of a response body against a Standard Schema contract |
 | `Navigation` | `go(path)` — move the host to an application path |
 | `ExternalBrowser` | `open(url)` — hand a URL to the user's own browser |
-| `SessionStore`, `MemorySessionStore`, `SessionScope` | Where a credential lives between launches |
+| `SessionStore`, `MemorySessionStore`, `SessionScope`, `SessionCredential` | Where a credential lives between launches |
 
 ## Setup and configuration
 
@@ -49,6 +49,12 @@ The tests here are the proof that this package needs no application runtime: the
 construct a transport with an injected `fetch` and assert on recorded calls, and
 nothing in the file imports Svelte, SvelteKit or a host bridge.
 
+`SessionCredential` is the version 1 record: `accessToken`, `refreshToken`,
+`expiresAt`, `accountId`, `supabaseProjectRef`, and `apiOrigin`. The store key
+also includes the environment, so environment scope does not add another field to
+the persisted record. `MemorySessionStore` remains the default and writes nothing
+to browser storage.
+
 ## Validation and artifacts
 
 `bun run test` is the lane. It covers the three claims a transport makes — uniform
@@ -58,7 +64,7 @@ artifact is produced; this package compiles into its consumers.
 
 ## Boundaries
 
-May import `@starter/schemas`, `@starter/utils` and TypeBox. May **not** import:
+May import `@starter/schemas`, `@starter/utils` and `@standard-schema/spec`. May **not** import:
 
 - `@sveltejs/kit`, `$app/*` — the host's router is injected as `Navigation`
 - `@tauri-apps/*` — that belongs to a native composition root's bridge role

@@ -24,6 +24,8 @@
 
 import { expect, type Page, test } from '@playwright/test';
 
+const SUPABASE_PREVIEW = process.env.STARTER_BACKEND_PROFILE === 'supabase';
+
 /**
  * A fresh account.
  *
@@ -53,7 +55,9 @@ const verificationLink = async (page: Page, email: string): Promise<string> => {
   const body = (await response.json()) as {
     messages: Array<{ subject: string; text: string }>;
   };
-  const message = body.messages.find((entry) => entry.subject.includes('Verify'));
+  const message = body.messages.find((entry) =>
+    /verify|confirm|sign.?up/i.test(`${entry.subject} ${entry.text}`),
+  );
   if (message === undefined) {
     throw new Error(`No verification mail captured for ${email}`);
   }
@@ -61,16 +65,31 @@ const verificationLink = async (page: Page, email: string): Promise<string> => {
   if (line === undefined) {
     throw new Error('No link in the verification mail');
   }
-  return line.trim();
+  if (!SUPABASE_PREVIEW) {
+    return line.trim();
+  }
+
+  // GoTrue's browser callback cannot resolve its loopback Auth host in Chromium.
+  // Redeem only the verification request in Node's request context, then let the
+  // browser navigate the real application callback and receive its session cookie.
+  const responseFromAuth = await page.request.get(line.trim(), { maxRedirects: 0 });
+  if (responseFromAuth.status() < 300 || responseFromAuth.status() >= 400) {
+    throw new Error(`Auth verification endpoint returned HTTP ${responseFromAuth.status()}`);
+  }
+  const location = responseFromAuth.headers().location;
+  if (location === undefined) {
+    throw new Error('Auth verification did not return the application callback.');
+  }
+  const callback = new URL(location, line.trim());
+  const browserOrigin = new URL(page.url()).origin;
+  return new URL(`${callback.pathname}${callback.search}${callback.hash}`, browserOrigin).href;
 };
 
 /**
  * Sign up, confirm the address, then sign in — and land on the notes screen.
  *
- * Three steps, because that is the product's actual flow now. Sign-up alone does not
- * sign anyone in (`autoSignIn` is off precisely because the address is unconfirmed),
- * so a helper that stopped at sign-up would leave every test below on the login page
- * and the failure would read as a routing bug.
+ * Supabase exchanges its confirmation code at the application callback; legacy
+ * Better Auth confirms the address, then requires a separate sign-in.
  */
 const signUp = async (page: Page, account = newAccount()): Promise<void> => {
   await page.goto('/login');
@@ -91,13 +110,15 @@ const signUp = async (page: Page, account = newAccount()): Promise<void> => {
 
   await page.goto(await verificationLink(page, account.email));
   await expect(page).toHaveURL(/\/verify-email/);
-
-  // Verification does not sign anyone in — the link proves control of an address, it
-  // is not a credential. So the sign-in below is the real one.
-  await page.goto('/login');
-  await page.getByTestId('auth-email-input').fill(account.email);
-  await page.getByTestId('auth-password-input').fill(account.password);
-  await page.getByTestId('auth-submit').click();
+  if (SUPABASE_PREVIEW) {
+    await expect(page.getByTestId('current-user')).toHaveText(account.email);
+  } else {
+    await page.goto('/login');
+    await page.getByTestId('auth-email-input').fill(account.email);
+    await page.getByTestId('auth-password-input').fill(account.password);
+    await page.getByTestId('auth-submit').click();
+  }
+  await page.goto('/notes');
 };
 
 test.describe('notes, end to end', () => {
@@ -120,6 +141,8 @@ test.describe('notes, end to end', () => {
     // The row appears without a manual refresh, which proves the ViewModel
     // applied the server's response rather than optimistically guessing.
     const card = page.getByTestId('note-card').filter({ hasText: 'Shopping list' });
+    await expect(card).toBeVisible();
+    await page.getByTestId('notes-refresh').click();
     await expect(card).toBeVisible();
 
     // And it was actually persisted: a reload reads from the server again.

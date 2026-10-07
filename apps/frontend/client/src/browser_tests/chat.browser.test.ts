@@ -46,11 +46,38 @@ const message: Message = {
   status: 'complete',
   createdAt: 0,
 };
-const transport = {
+const transport: StreamingTransport = {
   async request<T>() {
     return {} as T;
   },
+  openStream: (path, options) => new HttpTransport().openStream(path, options),
 };
+
+test('composer describes its error only while an error exists and retains whitespace validation', () => {
+  const vm = new ChatViewModel({
+    chat: new ChatService({ transport }),
+    conversation,
+    initialMessages: [],
+    newClientId: () => 'cid',
+  });
+  const mounted = mountInDocument(ChatView, { viewModel: vm });
+  try {
+    const input = mounted.target.querySelector<HTMLTextAreaElement>('[data-testid="chat-input"]');
+    expect(input).not.toBeNull();
+    expect(input?.getAttribute('aria-describedby')).toBeNull();
+
+    vm.setDraft('   ');
+    flushSync();
+    expect(input?.getAttribute('aria-describedby')).toBe('chat-composer-error');
+    expect(mounted.target.querySelector('[data-testid="chat-error"]')).not.toBeNull();
+
+    vm.setDraft('hello');
+    flushSync();
+    expect(input?.getAttribute('aria-describedby')).toBeNull();
+  } finally {
+    mounted.destroy();
+  }
+});
 
 test('streaming controls and partial text update before completion', async () => {
   let controller!: ReadableStreamDefaultController<Uint8Array>;
@@ -155,7 +182,12 @@ test('creating label reacts while the request is outstanding', async () => {
 });
 
 test('same-conversation reload keeps the queue; navigation sends to the new conversation', async () => {
-  let current = { conversation, messages: [] as Message[] };
+  let current = {
+    conversation,
+    messages: [] as Message[],
+    olderCursor: null as string | null,
+    hasOlder: false,
+  };
   let update!: () => void;
   const subscribe = createSubscriber((notify) => {
     update = notify;
@@ -191,11 +223,21 @@ test('same-conversation reload keeps the queue; navigation sends to the new conv
     await expect
       .poll(() => mounted.target.querySelectorAll('[data-testid="chat-queue-item"]').length)
       .toBe(1);
-    current = { conversation: { ...conversation }, messages: [] };
+    current = {
+      conversation: { ...conversation },
+      messages: [],
+      olderCursor: null,
+      hasOlder: false,
+    };
     update();
     flushSync();
     expect(mounted.target.querySelectorAll('[data-testid="chat-queue-item"]')).toHaveLength(1);
-    current = { conversation: { ...conversation, id: 'two', title: 'Second' }, messages: [] };
+    current = {
+      conversation: { ...conversation, id: 'two', title: 'Second' },
+      messages: [],
+      olderCursor: null,
+      hasOlder: false,
+    };
     update();
     flushSync();
     expect(mounted.target.querySelector('h1')?.textContent).toBe('Second');

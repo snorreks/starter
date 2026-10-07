@@ -3,7 +3,7 @@
 // `/api/jobs` — the collection. Two verbs, both thin.
 //
 // Thin is a specific claim: this file resolves who the caller is, validates the
-// request against the shared TypeBox schema, maps a service outcome to a status
+// request against the shared schema, maps a service outcome to a status
 // code, and logs the write. It contains no SQL, no budget arithmetic and no
 // ownership rule, because those live in `#lib/server/jobs_service.ts` and
 // `@starter/jobs` where they are reachable from a server load and a scheduled
@@ -23,13 +23,16 @@
 // serve notes and auth perfectly well while answering *this* endpoint with a name
 // for what is missing — not a 500, and not a 404 that reads like a wrong URL.
 
+import { workflowIdFor } from '@starter/jobs';
+import { checkSchema } from '@starter/schemas/common';
 import {
   CreateEncodeJobSchema,
   IDEMPOTENCY_KEY_HEADER,
   IdempotencyKeySchema,
 } from '@starter/schemas/jobs';
-import { Value } from 'typebox/value';
+import { createId } from '@starter/utils';
 import { json, jsonError, readJsonBody, unauthorized } from '#lib/server/http.ts';
+import { dispatchAdmittedJob, publicSupabaseJob } from '#lib/server/supabase_context.ts';
 import type { RequestHandler } from './$types';
 
 /**
@@ -79,6 +82,18 @@ export const GET: RequestHandler = async ({ locals, url }) => {
   if (user === null) {
     return unauthorized();
   }
+  if (locals.context?.backendProfile === 'supabase') {
+    const repository = locals.applicationServices?.jobs;
+    if (!repository || locals.applicationServices?.identity.user.id !== user.id) {
+      return unauthorized();
+    }
+    const jobs = await repository.listForOwner();
+    return json(200, {
+      jobs: jobs.map(publicSupabaseJob),
+      nextCursor: null,
+      serverTime: Date.now(),
+    });
+  }
 
   // The list answers with the capability too. An empty list from a deployment that
   // cannot show jobs reads as "you have none", which is a different and wrong
@@ -113,6 +128,68 @@ export const POST: RequestHandler = async ({ locals, request }) => {
   if (user === null) {
     return unauthorized();
   }
+  if (context?.backendProfile === 'supabase') {
+    if (!user.emailVerified) {
+      return emailNotVerified();
+    }
+    const idempotencyKey = request.headers.get(IDEMPOTENCY_KEY_HEADER);
+    if (idempotencyKey === null || !checkSchema(IdempotencyKeySchema, idempotencyKey)) {
+      return invalidKey();
+    }
+    const parsed = await readJsonBody(request, CreateEncodeJobSchema, {
+      maxBytes: MAX_BODY_BYTES,
+      invalidStatus: 400,
+    });
+    if (!parsed.ok) {
+      return parsed.response;
+    }
+    const repository = locals.applicationServices?.jobs;
+    if (!repository || locals.applicationServices?.identity.user.id !== user.id) {
+      return unauthorized();
+    }
+    if (repository.computeRequested && repository.dispatch !== 'cloud_run') {
+      return capabilityUnavailable(
+        'Supabase compute is enabled without its Cloud Run Workflow binding. Configure the compute profile before admitting jobs.',
+      );
+    }
+    const id = createId('job');
+    const attemptId = createId('attempt');
+    const bytes = new TextEncoder().encode(JSON.stringify(parsed.value));
+    const digest = await crypto.subtle.digest('SHA-256', bytes);
+    const outcome = await repository.admit({
+      id,
+      fixture: parsed.value.fixture,
+      preset: parsed.value.preset,
+      idempotencyKey,
+      fingerprint: [...new Uint8Array(digest)]
+        .map((byte) => byte.toString(16).padStart(2, '0'))
+        .join(''),
+      workflowId: workflowIdFor(id),
+    });
+    if (outcome.outcome === 'idempotency_conflict') {
+      return conflict('That idempotency key was used for a different request.');
+    }
+    if (outcome.outcome === 'quota_or_active_limit') {
+      return budgetExceeded('The job admission limit has been reached.');
+    }
+    const started = await dispatchAdmittedJob(repository, outcome, {
+      attemptId,
+      fixture: parsed.value.fixture,
+      preset: parsed.value.preset,
+    });
+    if (!started) {
+      return jsonError(
+        503,
+        'job_dispatch_failed',
+        'The job was admitted, but its Workflow could not be started. Retry with the same idempotency key.',
+      );
+    }
+    const job = outcome.jobId === null ? null : await repository.getForOwner(outcome.jobId);
+    if (job === null) {
+      return jsonError(503, 'job_unavailable', 'The admitted job status could not be read.');
+    }
+    return json(202, publicSupabaseJob(job));
+  }
 
   // The capability check comes before the body check. A deployment that cannot run
   // a job at all has nothing to validate a job against, and a client that fixes
@@ -131,7 +208,7 @@ export const POST: RequestHandler = async ({ locals, request }) => {
   // client that omits or malforms it needs to be told *that*, not "validation
   // failed".
   const idempotencyKey = request.headers.get(IDEMPOTENCY_KEY_HEADER);
-  if (idempotencyKey === null || !Value.Check(IdempotencyKeySchema, idempotencyKey)) {
+  if (idempotencyKey === null || !checkSchema(IdempotencyKeySchema, idempotencyKey)) {
     return invalidKey();
   }
 

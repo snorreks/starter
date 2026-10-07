@@ -537,18 +537,19 @@ const startRuntime = async (argv: string[]): Promise<number> => {
     logRoot: scope.logDir,
   };
 
-  // The runtime launcher reads this identity while its module initializes its
-  // per-run state. Importing it first would bake the process defaults into paths.
-  process.env.E2E_RUN_ID = runId;
-  process.env.E2E_APP_PORT = String(port);
-  process.env.TEST_RUN_ID = runId;
-  process.env.PORT = String(port);
-  process.env.DEV_HOST = '127.0.0.1';
-  process.env.BETTER_AUTH_URL = origin;
-  process.env.TRUSTED_ORIGINS = origin;
   if (profile === 'dev') {
-    await mkdir(scope.dir, { recursive: true, mode: 0o700 });
-    await writeFile(runtimeEnvPath, `TEST_RUN_ID=${runId}\n`, { mode: 0o600, flag: 'wx' });
+    try {
+      await mkdir(scope.dir, { recursive: true, mode: 0o700 });
+      await writeFile(runtimeEnvPath, `TEST_RUN_ID=${runId}\n`, { mode: 0o600, flag: 'wx' });
+    } catch (error) {
+      return runtimeError({
+        operation: 'runtime-start',
+        runId,
+        status: 'error',
+        summary: `Could not create the scoped runtime.env file: ${(error as Error).message}`,
+        rerun: [`bun run agent -- runtime start --profile dev --run ${runId} --json`],
+      });
+    }
     // The adapter's getPlatformProxy reads Wrangler env files rather than
     // inheriting process.env. Keep this file scoped to the run and identity only.
     process.env.STARTER_RUNTIME_ENV_FILE = relative(
@@ -560,6 +561,15 @@ const startRuntime = async (argv: string[]): Promise<number> => {
     // and append that versioned layout themselves.
     process.env.STARTER_RUNTIME_STATE_DIR = join(scope.stateDir, 'v3');
   }
+  // The runtime launcher reads this identity while its module initializes its
+  // per-run state. Importing it first would bake the process defaults into paths.
+  process.env.E2E_RUN_ID = runId;
+  process.env.E2E_APP_PORT = String(port);
+  process.env.TEST_RUN_ID = runId;
+  process.env.PORT = String(port);
+  process.env.DEV_HOST = '127.0.0.1';
+  process.env.BETTER_AUTH_URL = origin;
+  process.env.TRUSTED_ORIGINS = origin;
   const { main: devAppMain } = await import('../dev-app.ts');
   let exited: number | undefined;
   const server = devAppMain(profile === 'dev' ? 'app' : 'built').then((code) => {

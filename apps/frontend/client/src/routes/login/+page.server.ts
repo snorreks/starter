@@ -101,12 +101,18 @@ export const actions: Actions = {
       return fail(422, { errors, values: { email, displayName } });
     }
 
-    const result = await attemptCredentials(locals.container, request, cookies, {
-      intent,
-      email,
-      password,
-      displayName,
-    });
+    const result = await attemptCredentials(
+      locals.container,
+      request,
+      cookies,
+      {
+        intent,
+        email,
+        password,
+        displayName,
+      },
+      locals.context?.responseHeaders ?? null,
+    );
 
     if (result.kind === 'refused') {
       return fail(result.status, { errors: result.errors });
@@ -170,6 +176,7 @@ const attemptCredentials = async (
   request: Request,
   cookies: Parameters<typeof submitAuthAction>[2],
   credentials: { intent: string; email: string; password: string; displayName: string },
+  responseHeaders: Headers | null,
 ): Promise<AuthAttempt> => {
   try {
     const signingUp = credentials.intent === 'sign-up';
@@ -183,6 +190,7 @@ const attemptCredentials = async (
         password: credentials.password,
         ...(signingUp ? { name: credentials.displayName } : {}),
       },
+      responseHeaders,
     );
     return signingUp ? { kind: 'signed-up' } : { kind: 'signed-in', cookies: applied };
   } catch (error) {

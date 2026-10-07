@@ -23,6 +23,7 @@
     "check:bundle": "bun run scripts/src/cli.ts cached -- client:check-bundle",
     "test": "bun run scripts/src/cli.ts cached -- :test",
     "coverage": "bun run scripts/src/cli.ts coverage",
+    "pr:budget": "bun run scripts/src/cli.ts pr-budget",
     "test:watch": "bun run scripts/src/cli.ts cached -- :test -- --watch",
     "lint": "bun run scripts/src/cli.ts cached -- :lint",
     "format": "bun run scripts/src/cli.ts cached -- :format",
@@ -41,6 +42,7 @@
     "nix:update": "bun run scripts/src/cli.ts update --nix",
     "bun:update": "bun run scripts/src/cli.ts update --bun",
     "setup:doctor": "bun run scripts/src/cli.ts doctor",
+    "worktree:bootstrap": "bun scripts/bootstrap-worktree.ts",
     "setup:secrets": "bun run scripts/src/cli.ts secrets doctor",
     "logs": "bun run scripts/src/cli.ts logs",
     "native:doctor": "bun run scripts/src/cli.ts native doctor",
@@ -54,6 +56,9 @@
     "db:migrate:remote": "bun run scripts/src/cli.ts db migrate --remote",
     "db:status": "bun run scripts/src/cli.ts db status",
     "db:seed": "bun run scripts/src/cli.ts db seed",
+    "test:database": "bun run scripts/src/cli.ts db test:database",
+    "db:types": "bun run scripts/src/cli.ts db types",
+    "db:types:check": "bun run scripts/src/cli.ts db types:check",
     "contract": "bun run scripts/src/cli.ts contract",
     "contract:status": "bun run scripts/src/cli.ts contract status",
     "deploy:configure": "bun run scripts/src/cli.ts configure",
@@ -80,7 +85,7 @@
     "secrets:exec": "bun run scripts/src/cli.ts secrets exec",
     "secrets:update-recipients": "bun run scripts/src/cli.ts secrets update-recipients",
     "test:worker": "bun run scripts/src/cli.ts cached -- client:test-worker",
-    "test:compute": "moon run jobs-worker:test-compute",
+    "test:compute": "bun run scripts/src/cli.ts cached -- jobs-worker:test-compute",
     "test:browser": "bun run scripts/src/cli.ts cached -- client:test-browser",
     "test:browser-launch": "bun run scripts/src/cli.ts cached -- scripts:test-browser-launch",
     "test:e2e": "bun run scripts/src/cli.ts cached -- e2e:e2e",
@@ -92,9 +97,6 @@
     "@types/bun": "1.4.2",
     "@typescript/native-preview": "7.0.0-dev.20260707.2",
     "typescript": "6.0.3"
-  },
-  "dependencies": {
-    "typebox": "1.3.36"
   },
   "trustedDependencies": [
     "@biomejs/biome"

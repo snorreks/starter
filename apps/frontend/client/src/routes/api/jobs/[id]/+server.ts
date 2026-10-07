@@ -13,12 +13,25 @@
 // users' jobs.
 
 import { json, jsonError, unauthorized } from '#lib/server/http.ts';
+import { publicSupabaseJob } from '#lib/server/supabase_context.ts';
 import type { RequestHandler } from './$types';
 
 export const GET: RequestHandler = async ({ locals, params }) => {
   const user = locals.user;
   if (user === null) {
     return unauthorized();
+  }
+
+  if (locals.context?.backendProfile === 'supabase') {
+    const repository = locals.applicationServices?.jobs;
+    if (!repository || locals.applicationServices?.identity.user.id !== user.id) {
+      return unauthorized();
+    }
+    const job = await repository.getForOwner(params.id);
+    if (job === null) {
+      return jsonError(404, 'not_found', 'That job does not exist.');
+    }
+    return json(200, publicSupabaseJob(job));
   }
 
   if (locals.container.jobsProfile !== 'encode') {

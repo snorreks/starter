@@ -4,7 +4,7 @@
 // Email + password is the only credential this application has, and the account
 // lifecycle is complete: sign-up, verification, sign-in, recovery, reset.
 
-import { type Static, Type } from 'typebox';
+import * as v from 'valibot';
 import { type Brand, UserIdSchema } from '../common/ids.ts';
 
 export const SESSION_USER_SCHEMA_VERSION = 1 as const;
@@ -16,30 +16,27 @@ export const SESSION_USER_SCHEMA_VERSION = 1 as const;
  * from an arbitrary string at a call site. The length bound is a route-parameter
  * sanity check, not a guess at Better Auth's format.
  */
-export const ResetTokenSchema = Type.String({ minLength: 1, maxLength: 256 });
-export type ResetToken = Static<typeof ResetTokenSchema> & Brand<string, 'ResetToken'>;
+export const ResetTokenSchema = v.pipe(v.string(), v.minLength(1), v.maxLength(256));
+export type ResetToken = v.InferOutput<typeof ResetTokenSchema> & Brand<string, 'ResetToken'>;
 
-export const SessionUserSchema = Type.Object(
-  {
-    id: UserIdSchema,
-    email: Type.String({ minLength: 3 }),
-    displayName: Type.String({ minLength: 1 }),
-    /** Only `"email"` exists. The union keeps the door open. */
-    provider: Type.Union([Type.Literal('email')]),
-    /**
-     * Whether the address has been confirmed.
-     *
-     * Carried rather than assumed, because the two states produce different UIs
-     * and one of them must not be inferred from the presence of a session: a
-     * session means "this browser proved it holds a credential", not "this address
-     * is real".
-     */
-    emailVerified: Type.Boolean(),
-  },
-  { additionalProperties: false },
-);
+export const SessionUserSchema = v.strictObject({
+  id: UserIdSchema,
+  email: v.pipe(v.string(), v.minLength(3)),
+  displayName: v.pipe(v.string(), v.minLength(1)),
+  /** Only `"email"` exists. The union keeps the door open. */
+  provider: v.union([v.literal('email')]),
+  /**
+   * Whether the address has been confirmed.
+   *
+   * Carried rather than assumed, because the two states produce different UIs
+   * and one of them must not be inferred from the presence of a session: a
+   * session means "this browser proved it holds a credential", not "this address
+   * is real".
+   */
+  emailVerified: v.boolean(),
+});
 
-export type SessionUser = Static<typeof SessionUserSchema>;
+export type SessionUser = v.InferOutput<typeof SessionUserSchema>;
 
 /**
  * The provider's user, exactly as Better Auth's endpoints return it.
@@ -56,21 +53,18 @@ export type SessionUser = Static<typeof SessionUserSchema>;
  * where a screen renders `displayName`. The pinned provider version is
  * `better-auth` in the application's manifest.
  */
-export const SessionUserWireSchema = Type.Object(
-  {
-    id: UserIdSchema,
-    /** The provider's field name for what this application calls `displayName`. */
-    name: Type.String({ minLength: 1 }),
-    email: Type.String({ minLength: 3 }),
-    emailVerified: Type.Boolean(),
-    image: Type.Union([Type.String(), Type.Null()]),
-    createdAt: Type.Union([Type.String(), Type.Number()]),
-    updatedAt: Type.Union([Type.String(), Type.Number()]),
-  },
-  { additionalProperties: false },
-);
+export const SessionUserWireSchema = v.strictObject({
+  id: UserIdSchema,
+  /** The provider's field name for what this application calls `displayName`. */
+  name: v.pipe(v.string(), v.minLength(1)),
+  email: v.pipe(v.string(), v.minLength(3)),
+  emailVerified: v.boolean(),
+  image: v.union([v.string(), v.null()]),
+  createdAt: v.union([v.string(), v.pipe(v.number(), v.finite())]),
+  updatedAt: v.union([v.string(), v.pipe(v.number(), v.finite())]),
+});
 
-export type SessionUserWire = Static<typeof SessionUserWireSchema>;
+export type SessionUserWire = v.InferOutput<typeof SessionUserWireSchema>;
 
 /**
  * Project the provider's user onto this application's DTO.
@@ -100,68 +94,57 @@ export const toSessionUser = (wire: SessionUserWire): SessionUser => ({
 export const PASSWORD_MIN_LENGTH = 8;
 export const PASSWORD_MAX_LENGTH = 128;
 
-export const SignUpInputSchema = Type.Object(
-  {
-    email: Type.String({ minLength: 3, maxLength: 254 }),
-    password: Type.String({ minLength: PASSWORD_MIN_LENGTH, maxLength: PASSWORD_MAX_LENGTH }),
-    displayName: Type.String({ minLength: 1, maxLength: 80 }),
-  },
-  { additionalProperties: false },
-);
+export const SignUpInputSchema = v.strictObject({
+  email: v.pipe(v.string(), v.minLength(3), v.maxLength(254)),
+  password: v.pipe(v.string(), v.minLength(PASSWORD_MIN_LENGTH), v.maxLength(PASSWORD_MAX_LENGTH)),
+  displayName: v.pipe(v.string(), v.minLength(1), v.maxLength(80)),
+});
 
-export type SignUpInput = Static<typeof SignUpInputSchema>;
+export type SignUpInput = v.InferOutput<typeof SignUpInputSchema>;
 
-export const SignInInputSchema = Type.Object(
-  {
-    email: Type.String({ minLength: 3, maxLength: 254 }),
-    // Deliberately no minimum: an account created before the current policy, or
-    // with a stricter one, must still be able to sign in. Refusing short input at
-    // the form would lock those users out of the very page that would fix it.
-    password: Type.String({ minLength: 1, maxLength: PASSWORD_MAX_LENGTH }),
-  },
-  { additionalProperties: false },
-);
+export const SignInInputSchema = v.strictObject({
+  email: v.pipe(v.string(), v.minLength(3), v.maxLength(254)),
+  // Deliberately no minimum: an account created before the current policy, or
+  // with a stricter one, must still be able to sign in. Refusing short input at
+  // the form would lock those users out of the very page that would fix it.
+  password: v.pipe(v.string(), v.minLength(1), v.maxLength(PASSWORD_MAX_LENGTH)),
+});
 
-export type SignInInput = Static<typeof SignInInputSchema>;
+export type SignInInput = v.InferOutput<typeof SignInInputSchema>;
 
 /** Body for asking for a recovery mail. Never echoes whether the address exists. */
-export const PasswordResetRequestSchema = Type.Object(
-  {
-    email: Type.String({ minLength: 3, maxLength: 254 }),
-    /**
-     * Where to send the user afterwards.
-     *
-     * A relative path only. An absolute URL here would let a caller nominate an
-     * arbitrary destination for a link that carries a credential; the server
-     * resolves it against its own origin and refuses anything that leaves it.
-     */
-    redirectTo: Type.String({ minLength: 1, maxLength: 200 }),
-  },
-  { additionalProperties: false },
-);
+export const PasswordResetRequestSchema = v.strictObject({
+  email: v.pipe(v.string(), v.minLength(3), v.maxLength(254)),
+  /**
+   * Where to send the user afterwards.
+   *
+   * A relative path only. An absolute URL here would let a caller nominate an
+   * arbitrary destination for a link that carries a credential; the server
+   * resolves it against its own origin and refuses anything that leaves it.
+   */
+  redirectTo: v.pipe(v.string(), v.minLength(1), v.maxLength(200)),
+});
 
-export type PasswordResetRequest = Static<typeof PasswordResetRequestSchema>;
+export type PasswordResetRequest = v.InferOutput<typeof PasswordResetRequestSchema>;
 
-export const PasswordResetSchema = Type.Object(
-  {
-    token: ResetTokenSchema,
-    newPassword: Type.String({ minLength: PASSWORD_MIN_LENGTH, maxLength: PASSWORD_MAX_LENGTH }),
-  },
-  { additionalProperties: false },
-);
+export const PasswordResetSchema = v.strictObject({
+  token: ResetTokenSchema,
+  newPassword: v.pipe(
+    v.string(),
+    v.minLength(PASSWORD_MIN_LENGTH),
+    v.maxLength(PASSWORD_MAX_LENGTH),
+  ),
+});
 
-export type PasswordReset = Static<typeof PasswordResetSchema>;
+export type PasswordReset = v.InferOutput<typeof PasswordResetSchema>;
 
 /** Uniform error envelope for every authenticated route. */
-export const ApiErrorSchema = Type.Object(
-  {
-    error: Type.String({ minLength: 1 }),
-    message: Type.String(),
-  },
-  { additionalProperties: false },
-);
+export const ApiErrorSchema = v.strictObject({
+  error: v.pipe(v.string(), v.minLength(1)),
+  message: v.string(),
+});
 
-export type ApiError = Static<typeof ApiErrorSchema>;
+export type ApiError = v.InferOutput<typeof ApiErrorSchema>;
 
 /**
  * Read Better Auth's machine-readable code out of a caught error.

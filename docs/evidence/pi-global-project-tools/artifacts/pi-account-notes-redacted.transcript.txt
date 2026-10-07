@@ -1,2 +1,9 @@
+ATTEMPT STATUS: FAILED; not acceptance evidence
+run_id=not captured in this artifact
+starter_revision=not captured in this artifact
+portable_package_revision=not captured in this artifact
+command=not retained; this sanitized output contains no process argv
+provenance_note=The original run metadata and raw Pi output were not preserved; this attempt is retained as a failure only.
+
 Warning: No models match pattern "stealth/space-bunny-alpha"
 ACCEPTANCE FAILED: edit was not visible before reload

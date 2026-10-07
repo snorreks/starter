@@ -201,10 +201,14 @@ export const resolveClientId = (raw: string | undefined): string => {
 /** IPC endpoints are local to the shell; only one remote API origin is allowed. */
 const LOCAL_CONNECTIONS = ["'self'", 'ipc:', 'http://ipc.localhost'];
 
-export const assertNativeCsp = (csp: string, apiOrigin: string): void => {
+export const assertNativeCsp = (
+  csp: string,
+  apiOrigin: string,
+  additionalOrigins: readonly string[] = [],
+): void => {
   const directives = csp.split(';').map((value) => value.trim().split(/\s+/));
   const connections = directives.filter(([name]) => name === 'connect-src');
-  const expected = new Set([...LOCAL_CONNECTIONS, apiOrigin]);
+  const expected = new Set([...LOCAL_CONNECTIONS, apiOrigin, ...additionalOrigins]);
   const actual = connections[0]?.slice(1) ?? [];
   if (
     connections.length !== 1 ||
@@ -216,12 +220,16 @@ export const assertNativeCsp = (csp: string, apiOrigin: string): void => {
   }
 };
 
-export const nativeCsp = (base: string, apiOrigin: string): string => {
+export const nativeCsp = (
+  base: string,
+  apiOrigin: string,
+  additionalOrigins: readonly string[] = [],
+): string => {
   const directives = base.split(';').map((value) => value.trim());
   const csp = [
     ...directives.filter((value) => value && !/^connect-src(?:\s|$)/.test(value)),
-    `connect-src ${[...LOCAL_CONNECTIONS, apiOrigin].join(' ')}`,
+    `connect-src ${[...LOCAL_CONNECTIONS, apiOrigin, ...additionalOrigins].join(' ')}`,
   ].join('; ');
-  assertNativeCsp(csp, apiOrigin);
+  assertNativeCsp(csp, apiOrigin, additionalOrigins);
   return csp;
 };

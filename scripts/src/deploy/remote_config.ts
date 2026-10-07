@@ -39,6 +39,7 @@ export const renderRemoteConfig = (options: {
   target: ResolvedTarget;
   root?: string;
   kind?: 'web' | 'jobs';
+  runnerSubject?: string;
 }): Record<string, unknown> => {
   const { target } = options;
   const root = options.root ?? REPO_ROOT;
@@ -53,6 +54,11 @@ export const renderRemoteConfig = (options: {
   const scoped =
     environments[target.environment] === undefined ? {} : object(environments[target.environment]);
   const config = { ...source, ...scoped };
+  if (target.deploymentProfile === 'supabase' && !/^\d{8,32}$/.test(options.runnerSubject ?? '')) {
+    throw new Error(
+      'Supabase Worker configuration needs the runner service-account uniqueId from authenticated provider discovery.',
+    );
+  }
   config.env = undefined;
   config.$schema = undefined;
   const directory = dirname(sourcePath);
@@ -65,15 +71,37 @@ export const renderRemoteConfig = (options: {
     DEPLOYMENT_ENV: target.environment,
     JOBS_PROFILE: target.compute.profile,
     ...(kind === 'web' ? { BETTER_AUTH_URL: target.origin, MAIL_FROM: target.mailFrom } : {}),
+    ...(target.deploymentProfile === 'supabase' && target.supabase !== null
+      ? {
+          STARTER_BACKEND_PROFILE: 'supabase',
+          SUPABASE_URL: target.supabase.url,
+          SUPABASE_ANON_KEY: target.supabase.publishableKey,
+          SUPABASE_MAIL_URL: target.supabase.url,
+          GOOGLE_RUNNER_SERVICE_ACCOUNT: target.supabase.runnerServiceAccount,
+          GOOGLE_RUNNER_SUBJECT: options.runnerSubject,
+          GOOGLE_RUNNER_AUDIENCE: target.origin,
+          ...(kind === 'jobs'
+            ? {
+                GOOGLE_CLOUD_PROJECT: target.supabase.googleProjectId,
+                GOOGLE_CLOUD_REGION: target.supabase.googleRegion,
+                GOOGLE_CLOUD_RUN_JOB: target.supabase.jobName,
+                COMPUTE_PROTOCOL: target.supabase.protocol,
+              }
+            : {}),
+        }
+      : {}),
   };
-  config.d1_databases = [
-    {
-      binding: 'DB',
-      database_name: `${target.project}-${target.environment}-db`,
-      database_id: target.d1DatabaseId,
-      migrations_dir: join(root, 'packages/backend/database/drizzle-d1'),
-    },
-  ];
+  config.d1_databases =
+    target.deploymentProfile === 'supabase'
+      ? undefined
+      : [
+          {
+            binding: 'DB',
+            database_name: `${target.project}-${target.environment}-db`,
+            database_id: target.d1DatabaseId,
+            migrations_dir: join(root, 'packages/backend/database/drizzle-d1'),
+          },
+        ];
   if (kind === 'web') {
     // Build closes the adapter's SSR graph. Upload those hashed bytes unchanged.
     config.no_bundle = true;
@@ -115,29 +143,35 @@ export const renderRemoteConfig = (options: {
       }
       throw new Error('Unrecognised jobs Workflow binding.');
     });
-    if (!Array.isArray(config.containers) || config.containers.length !== 1) {
+    if (target.deploymentProfile === 'supabase') {
+      config.containers = undefined;
+      config.durable_objects = undefined;
+      config.migrations = undefined;
+    } else if (!Array.isArray(config.containers) || config.containers.length !== 1) {
       throw new Error('Jobs configuration must describe exactly one processor container.');
     }
-    const container = object(config.containers[0]);
-    const image = target.compute.containerImage;
-    if (image === null) {
-      throw new Error('No processor image was resolved.');
+    if (target.deploymentProfile === 'legacy') {
+      const container = object((config.containers as unknown[])[0]);
+      const image = target.compute.containerImage;
+      if (image === null) {
+        throw new Error('No processor image was resolved.');
+      }
+      // A local build input is a path; a registry reference is not. Deciding by
+      // spelling — "absolute, or a filename that happens to contain `Dockerfile`" —
+      // left every other relative build input unresolved, so the generated config
+      // named a path relative to whatever directory wrangler happened to run in.
+      // Existence is the discriminator, and a reference like `ghcr.io/org/img:tag`
+      // cannot exist as a relative file next to the source config.
+      const local = resolve(directory, image);
+      config.containers = [
+        {
+          ...container,
+          image: isAbsolute(image) || existsSync(local) ? local : image,
+          image_build_context: pathFrom({ directory, value: container.image_build_context }),
+          instance_type: target.compute.containerProfile,
+        },
+      ];
     }
-    // A local build input is a path; a registry reference is not. Deciding by
-    // spelling — "absolute, or a filename that happens to contain `Dockerfile`" —
-    // left every other relative build input unresolved, so the generated config
-    // named a path relative to whatever directory wrangler happened to run in.
-    // Existence is the discriminator, and a reference like `ghcr.io/org/img:tag`
-    // cannot exist as a relative file next to the source config.
-    const local = resolve(directory, image);
-    config.containers = [
-      {
-        ...container,
-        image: isAbsolute(image) || existsSync(local) ? local : image,
-        image_build_context: pathFrom({ directory, value: container.image_build_context }),
-        instance_type: target.compute.containerProfile,
-      },
-    ];
   }
   config.r2_buckets = [{ binding: 'MEDIA', bucket_name: target.compute.mediaBucketName }];
   return config;
@@ -148,6 +182,7 @@ export const writeRemoteConfig = (options: {
   target: ResolvedTarget;
   root?: string;
   kind?: 'web' | 'jobs';
+  runnerSubject?: string;
 }): string => {
   const config = renderRemoteConfig(options);
   const path = remoteConfigPath(options);

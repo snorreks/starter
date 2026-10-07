@@ -30,9 +30,19 @@ fileGroups:
     - 'tsconfig*.json'
     - 'moon.yml'
     - 'wrangler.jsonc'
+  workspaceSources:
+    - '/packages/backend/jobs/src/**/*'
+    - '/packages/backend/database/src/**/*'
+    - '/packages/backend/database/src/supabase/**/*'
+    - '/packages/backend/database/drizzle-d1/**/*'
+    - '/packages/shared/schemas/src/**/*'
+    - '/packages/shared/utils/src/**/*'
+    - '/packages/shared/logger/src/**/*'
   tests:
     - 'tests/**/*'
     - 'scripts/**/*'
+    - '/apps/backend/media/runner/**/*'
+    - '/apps/backend/media/Dockerfile.job'
 
 toolchains:
   bun:
@@ -51,6 +61,7 @@ tasks:
     inputs:
       - '@group(sources)'
       - '@group(configs)'
+      - '@group(workspaceSources)'
     outputs:
       - 'dist'
 
@@ -59,6 +70,7 @@ tasks:
     args: ['run', 'check:config']
     inputs:
       - '@group(configs)'
+      - '@group(workspaceSources)'
       - '@group(sources)'
       - '@group(tests)'
 
@@ -69,6 +81,7 @@ tasks:
       - '@group(sources)'
       - '@group(tests)'
       - '@group(configs)'
+      - '@group(workspaceSources)'
 
   lint:
     command: 'bun'
@@ -77,6 +90,7 @@ tasks:
       - '@group(sources)'
       - '@group(tests)'
       - '@group(configs)'
+      - '@group(workspaceSources)'
 
   format:
     command: 'bun'
@@ -85,6 +99,7 @@ tasks:
       - '@group(sources)'
       - '@group(tests)'
       - '@group(configs)'
+      - '@group(workspaceSources)'
 
   fix:
     command: 'bun'
@@ -93,6 +108,7 @@ tasks:
       - '@group(sources)'
       - '@group(tests)'
       - '@group(configs)'
+      - '@group(workspaceSources)'
 
   # Unit lane. No Docker, no local runtime, no credentials: these tests assert
   # the parts that are this repository's own — key derivation, refusal
@@ -103,6 +119,7 @@ tasks:
     inputs:
       - '@group(sources)'
       - '@group(configs)'
+      - '@group(workspaceSources)'
 
   # The compute lane. Requires a Docker-compatible engine and runs the built
   # Worker in the real local Workers runtime (wrangler's own miniflare) with real
@@ -122,6 +139,7 @@ tasks:
       - '@group(sources)'
       - '@group(tests)'
       - '@group(configs)'
+      - '@group(workspaceSources)'
 
   validate:
     deps:

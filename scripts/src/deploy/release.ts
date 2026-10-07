@@ -284,7 +284,34 @@ export interface ReleaseRecord {
   } | null;
   /** The native API origin this release's clients target. Null when none ships. */
   nativeApiOrigin?: string | null;
+  schemaRevision?: string | null;
+  verificationStatus?: 'verified' | 'failed' | 'not-run';
+  providerTargets?: {
+    supabaseProjectRef: string | null;
+    googleProjectId: string | null;
+    googleRegion: string | null;
+    cloudRunJobName: string | null;
+    image: string | null;
+    protocol: string | null;
+    r2Bucket: string | null;
+    nativeApiOrigin: string | null;
+  };
 }
+
+/** Latest committed migration filename, recorded without querying a provider. */
+export const supabaseSchemaRevision = (root: string = REPO_ROOT): string | null => {
+  const directory = join(root, 'supabase/migrations');
+  if (!existsSync(directory)) {
+    return null;
+  }
+  return (
+    readdirSync(directory)
+      .filter((name) => /^\d+_.+\.sql$/.test(name))
+      .sort()
+      .at(-1)
+      ?.replace(/\.sql$/, '') ?? null
+  );
+};
 
 export const releaseRecordPath = (environment: string, root: string = REPO_ROOT): string =>
   join(root, RELEASES_DIR, `${environment}.json`);

@@ -47,7 +47,7 @@ const onSubmit = (event: SubmitEvent): void => {
     value={viewModel.draft}
     disabled={viewModel.isStreaming}
     aria-invalid={errors.content === undefined ? undefined : 'true'}
-    aria-describedby={`${fieldId}-error`}
+    aria-describedby={errors.content === undefined ? undefined : `${fieldId}-error`}
     oninput={onInput}
   ></textarea>
 

@@ -16,6 +16,13 @@ import { isDeploymentEnvironment } from '@starter/schemas';
 import { runWrangler, wranglerAvailable } from '../cloudflare/wrangler.ts';
 import { writeRemoteConfig } from '../deploy/remote_config.ts';
 import { resolveTarget } from '../deploy/target.ts';
+import {
+  runSupabaseLocalMigration,
+  runSupabaseMigration,
+  supabaseBin,
+  supabaseLocalMigrationArgs,
+  supabaseMigrationArgs,
+} from '../deploy/providers/supabase.ts';
 import { targetsFor } from '../registry/deployment_values.ts';
 import { CLIENT_DIR, REPO_ROOT } from '../shared/paths.ts';
 
@@ -138,6 +145,57 @@ export const main = (args: readonly string[]): number => {
       'Specify exactly one target: --local, or --remote <staging|production>.\n',
     );
     return 2;
+  }
+
+  if (process.env.STARTER_BACKEND_PROFILE === 'supabase') {
+    if (target === 'local') {
+      if (args.includes('--dry-run')) {
+        process.stdout.write(`would run: supabase ${supabaseLocalMigrationArgs().join(' ')}\n`);
+        return 0;
+      }
+      if (supabaseBin() === null) {
+        process.stderr.write('Pinned Supabase CLI is unavailable; run `bun install`.\n');
+        return 1;
+      }
+      const result = runSupabaseLocalMigration();
+      if (result.stderr) {
+        process.stderr.write(result.stderr);
+      }
+      if (result.stdout) {
+        process.stdout.write(result.stdout);
+      }
+      return result.code;
+    }
+    const resolvedSupabase = resolveTarget(target, { profile: 'supabase' });
+    if (!resolvedSupabase.ok) {
+      process.stderr.write(`${resolvedSupabase.reason}\n${resolvedSupabase.remedy}\n`);
+      return 1;
+    }
+    const argv = supabaseMigrationArgs(resolvedSupabase.target, 'push');
+    if (args.includes('--dry-run')) {
+      process.stdout.write(`would run: supabase ${argv.join(' ')}\n`);
+      return 0;
+    }
+    if (!args.includes('--yes')) {
+      process.stderr.write(
+        `Refusing to migrate Supabase project ${resolvedSupabase.target.supabase?.projectRef} without --yes.\n`,
+      );
+      return 2;
+    }
+    if (!process.env.SUPABASE_ACCESS_TOKEN) {
+      process.stderr.write(
+        'SUPABASE_ACCESS_TOKEN is required for remote migration; it is read from the environment and never passed on argv.\n',
+      );
+      return 1;
+    }
+    const result = runSupabaseMigration(resolvedSupabase.target, 'push');
+    if (result.stderr) {
+      process.stderr.write(result.stderr);
+    }
+    if (result.stdout) {
+      process.stdout.write(result.stdout);
+    }
+    return result.code;
   }
 
   const resolved = target === 'local' ? undefined : resolveTarget(target);

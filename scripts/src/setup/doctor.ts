@@ -19,10 +19,9 @@
 
 import { spawnSync } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
-import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { resolveBrowser } from '../shared/browser_path.ts';
-import { CLIENT_DIR, REPO_ROOT } from '../shared/paths.ts';
+import { CLIENT_DIR } from '../shared/paths.ts';
 import { playwrightBin, wranglerBin } from '../shared/tools.ts';
 import { checkMirrors, declaredPlaywrightVersion, readPins } from './pins.ts';
 
@@ -88,43 +87,6 @@ const bunCheck = (): Check => {
             'A different Bun writes a differently-shaped bun.lock, and CI then rejects it with ' +
             '`--frozen-lockfile`. Use `nix develop`, or install the pinned version.',
         }),
-  };
-};
-
-/** Proto is a host prerequisite with a minimum version, not an exact pin. */
-export const protoCheck = (
-  options: { root?: string; protoHome?: string; probe?: typeof probe } = {},
-): Check => {
-  const name = 'proto';
-  const severity = 'required';
-  const path = join(options.root ?? REPO_ROOT, 'config/toolchain.json');
-  const versionPattern = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/;
-  let minimum: string;
-  try {
-    const config = JSON.parse(readFileSync(path, 'utf8'));
-    if (typeof config?.proto?.minimum !== 'string' || !versionPattern.test(config.proto.minimum)) {
-      throw new Error('proto.minimum must be a semantic version');
-    }
-    minimum = config.proto.minimum;
-  } catch (error) {
-    return { name, severity, ok: false, detail: `Cannot read proto.minimum: ${String(error)}` };
-  }
-
-  const runProbe = options.probe ?? probe;
-  const protoHome = options.protoHome ?? process.env.PROTO_HOME ?? join(homedir(), '.proto');
-  const binary = join(protoHome, 'bin', process.platform === 'win32' ? 'proto.exe' : 'proto');
-  const reported = runProbe(binary) ?? runProbe('proto');
-  const version = reported?.replace(/^proto\s+/, '').trim();
-  const ok =
-    version !== undefined &&
-    versionPattern.test(version) &&
-    Bun.semver.order(version, minimum) >= 0;
-  return {
-    name,
-    severity,
-    ok,
-    detail: `${reported ?? 'not found in PROTO_HOME/bin or on PATH'} (minimum: ${minimum})`,
-    ...(ok ? {} : { remedy: `Install proto >= ${minimum} in PROTO_HOME/bin or on PATH.` }),
   };
 };
 
@@ -374,7 +336,6 @@ const pinCheck = (): Check => {
 const CHECKS = [
   bunCheck,
   pinCheck,
-  protoCheck,
   nodeCheck,
   wranglerCheck,
   configCheck,

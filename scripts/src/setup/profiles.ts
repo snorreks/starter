@@ -23,7 +23,15 @@ import { join } from 'node:path';
 import { NATIVE_DIR, REPO_ROOT } from '../shared/paths.ts';
 import type { Check } from './doctor.ts';
 
-export const PROFILES = ['web', 'native', 'android', 'ios', 'compute'] as const;
+export const PROFILES = [
+  'web',
+  'native',
+  'android',
+  'ios',
+  'compute',
+  'database',
+  'deployment',
+] as const;
 export type Profile = (typeof PROFILES)[number];
 
 /**
@@ -34,22 +42,24 @@ export type Profile = (typeof PROFILES)[number];
  */
 const CORE_PROFILE_CHECKS: Record<Profile, readonly string[]> = {
   // The credential-free core. No Docker, no Xcode, no Android SDK, no cloud key.
-  web: ['bun', 'pins', 'proto', 'node', 'wrangler', 'config', 'playwright', 'chromium', 'sops'],
+  web: ['bun', 'pins', 'node', 'wrangler', 'config', 'playwright', 'chromium', 'sops'],
   // Desktop shell: Rust toolchain and, on Linux, the webview development files.
-  native: ['bun', 'pins', 'proto', 'node', 'wrangler', 'config', 'rust', 'webview', 'cargo-native'],
-  android: ['bun', 'pins', 'proto', 'node', 'rust', 'android-sdk', 'android-jdk', 'cargo-native'],
-  ios: ['bun', 'pins', 'proto', 'node', 'rust', 'xcode', 'apple-toolchain'],
+  native: ['bun', 'pins', 'node', 'wrangler', 'config', 'rust', 'webview', 'cargo-native'],
+  android: ['bun', 'pins', 'node', 'rust', 'android-sdk', 'android-jdk', 'cargo-native'],
+  ios: ['bun', 'pins', 'node', 'rust', 'xcode', 'apple-toolchain'],
   // Real containers, locally: a Docker-compatible engine is the only prerequisite.
-  compute: [
+  compute: ['bun', 'pins', 'node', 'wrangler', 'config', 'docker', 'docker-engine', 'cargo-media'],
+  database: ['bun', 'pins', 'docker', 'docker-engine'],
+  // Hosted provider checks are separate from web/compute local build prerequisites.
+  deployment: [
     'bun',
     'pins',
-    'proto',
     'node',
     'wrangler',
     'config',
-    'docker',
-    'docker-engine',
-    'cargo-media',
+    'supabase-cli',
+    'supabase-access-token',
+    'google-access-token',
   ],
 };
 
@@ -90,6 +100,46 @@ const ANDROID_ENV_HINTS = [
  */
 export const profileChecks = (profile: Profile, runProbe = probe): Check[] => {
   const out: Check[] = [];
+
+  if (profile === 'deployment') {
+    const supabase = runProbe('bun', [
+      'run',
+      '--cwd',
+      join(REPO_ROOT, 'packages/backend/database'),
+      'supabase',
+      '--version',
+    ]);
+    out.push({
+      name: 'supabase-cli',
+      severity: 'required',
+      ok: supabase !== null,
+      detail: supabase ?? 'pinned package CLI unavailable',
+      ...(supabase === null
+        ? { remedy: 'Run `bun install`; the Supabase CLI is pinned by packages/backend/database.' }
+        : {}),
+    });
+    for (const [name, variable] of [
+      ['supabase-access-token', 'SUPABASE_ACCESS_TOKEN'],
+      ['google-access-token', 'GOOGLE_ACCESS_TOKEN'],
+    ] as const) {
+      const present =
+        typeof process.env[variable] === 'string' && process.env[variable]?.trim() !== '';
+      out.push({
+        name,
+        severity: 'required',
+        ok: present,
+        detail: present
+          ? `${variable} is present; its value is not read or printed.`
+          : `${variable} is not set.`,
+        ...(!present
+          ? {
+              remedy:
+                'Set a short-lived environment-scoped credential only when running authenticated preflight/provision/apply.',
+            }
+          : {}),
+      });
+    }
+  }
 
   if (profile === 'native' || profile === 'android' || profile === 'ios') {
     const rustc = runProbe('rustc', ['--version']);
@@ -231,7 +281,7 @@ export const profileChecks = (profile: Profile, runProbe = probe): Check[] => {
     });
   }
 
-  if (profile === 'compute') {
+  if (profile === 'compute' || profile === 'database') {
     const docker = runProbe('docker', ['--version']);
     out.push({
       name: 'docker',
@@ -241,9 +291,9 @@ export const profileChecks = (profile: Profile, runProbe = probe): Check[] => {
       ...(docker === null
         ? {
             remedy:
-              '`bun run test:compute` runs the media container in a real Docker-compatible\n' +
-              '    engine. Install Docker or Podman and make sure the daemon is running, or use\n' +
-              '    `nix develop`. Without it this lane refuses; it never falls back to a mock.',
+              `${profile === 'database' ? '`bun run test:database` runs real Postgres and the Supabase Data API in a checkout-owned stack.\n' : '`bun run test:compute` runs the media container in a real Docker-compatible\n'}` +
+              '    engine. Install Docker or Podman and make sure the daemon is running.\n' +
+              '    Without it this lane exits nonzero; it never falls back to a mock.',
           }
         : {}),
     });
@@ -267,7 +317,9 @@ export const profileChecks = (profile: Profile, runProbe = probe): Check[] => {
           }
         : {}),
     });
+  }
 
+  if (profile === 'compute') {
     // From `REPO_ROOT`, not the working directory.
     //
     // `join('apps', 'backend', 'media', 'Cargo.toml')` is relative to wherever the

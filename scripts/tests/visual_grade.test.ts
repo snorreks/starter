@@ -1,6 +1,11 @@
 import { describe, expect, test } from 'bun:test';
+import { readFileSync } from 'node:fs';
 import { gradeReview } from '../src/visual/grade.ts';
-import { type ReviewResult, validateReviewResult } from '../src/visual/schemas.ts';
+import {
+  type ReviewResult,
+  reviewJsonSchema,
+  validateReviewResult,
+} from '../src/visual/schemas.ts';
 
 const dimension = { score: 3, evidence: 'Text remains readable.', uncertainty: 'low' } as const;
 const review: ReviewResult = {
@@ -20,6 +25,13 @@ const review: ReviewResult = {
 };
 
 describe('structured visual review', () => {
+  test('keeps the provider JSON Schema in sync with its golden contract', () => {
+    const golden = JSON.parse(
+      readFileSync(new URL('./fixtures/review-result.schema.json', import.meta.url), 'utf8'),
+    );
+    expect(reviewJsonSchema()).toEqual(golden);
+  });
+
   test('validates exact supplied requirement identifiers', () => {
     expect(validateReviewResult(review, ['primary-action-visible'])).toEqual(review);
     expect(() => validateReviewResult(review, ['primary-action-visible', 'no-overflow'])).toThrow(

@@ -1,0 +1,3 @@
+-- Auth identities are intentionally created through /auth/v1/signup in the
+-- integration harness. Direct inserts here would bypass Supabase Auth lifecycle.
+-- The fixture file records only deterministic synthetic credentials.

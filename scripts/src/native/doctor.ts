@@ -171,7 +171,51 @@ const crateCheck = (): Check => {
   };
 };
 
+export const inspectNativeAuthProfile = (profile: string | undefined): Check => {
+  if (profile === undefined || profile === '' || profile === 'legacy') {
+    return {
+      name: 'native auth profile',
+      severity: 'required',
+      ok: true,
+      detail: 'legacy default',
+    };
+  }
+  if (profile !== 'supabase') {
+    return {
+      name: 'native auth profile',
+      severity: 'required',
+      ok: false,
+      detail: 'Unsupported native auth profile',
+      remedy: 'Set VITE_NATIVE_AUTH_PROFILE to legacy or supabase, or leave it unset for legacy.',
+    };
+  }
+  const required = [
+    'VITE_NATIVE_API_ORIGIN',
+    'VITE_NATIVE_ENVIRONMENT',
+    'VITE_NATIVE_SUPABASE_URL',
+    'VITE_NATIVE_SUPABASE_PROJECT_REF',
+    'VITE_NATIVE_SUPABASE_ANON_KEY',
+  ];
+  const missing = required.filter((key) => !process.env[key]);
+  return missing.length === 0
+    ? {
+        name: 'native auth profile',
+        severity: 'required',
+        ok: true,
+        detail: 'Supabase target configured',
+      }
+    : {
+        name: 'native auth profile',
+        severity: 'required',
+        ok: false,
+        detail: `Supabase profile missing ${missing.join(', ')}`,
+        remedy:
+          'Set these public target values before building the Supabase native profile; callbacks are fixed by the native target configuration.',
+      };
+};
+
 const CHECKS = [
+  () => inspectNativeAuthProfile(process.env.VITE_NATIVE_AUTH_PROFILE),
   crateCheck,
   tauriCheck,
   cargoCheck,

@@ -8,6 +8,13 @@ import { runScope } from '../src/shared/run_scope.ts';
 
 const originalWrite = process.stdout.write;
 let output = '';
+const captureStdout = (): void => {
+  output = '';
+  process.stdout.write = ((chunk: string | Uint8Array) => {
+    output += String(chunk);
+    return true;
+  }) as typeof process.stdout.write;
+};
 afterEach(() => {
   process.stdout.write = originalWrite;
   output = '';
@@ -212,6 +219,58 @@ describe('agent JSON facade', () => {
 });
 
 describe('agent CLI JSON boundary', () => {
+  test('a dev runtime env collision is a structured startup error with no environment mutation', async () => {
+    const names = [
+      'E2E_RUN_ID',
+      'E2E_APP_PORT',
+      'TEST_RUN_ID',
+      'PORT',
+      'DEV_HOST',
+      'BETTER_AUTH_URL',
+      'TRUSTED_ORIGINS',
+      'STARTER_RUNTIME_ENV_FILE',
+      'STARTER_RUNTIME_STATE_DIR',
+    ];
+    const previous = new Map(names.map((name) => [name, process.env[name]]));
+    const oldChromium = process.env.CHROMIUM_PATH;
+    const runId = `agent_cli_env_conflict_${crypto.randomUUID().replaceAll('-', '')}`;
+    const scope = runScope(runId, REPO_ROOT);
+    const runtimeEnvPath = join(scope.dir, 'runtime.env');
+    await mkdir(scope.dir, { recursive: true });
+    await writeFile(runtimeEnvPath, 'EXISTING=1\n', { flag: 'wx' });
+    process.env.CHROMIUM_PATH = process.execPath;
+    captureStdout();
+    try {
+      expect(
+        await main(['agent', 'runtime', 'start', '--profile', 'dev', '--run', runId, '--json']),
+      ).toBe(1);
+      expect(JSON.parse(output.trim())).toMatchObject({
+        operation: 'runtime-start',
+        status: 'error',
+        runId,
+      });
+      expect(JSON.parse(output.trim()).summary).toContain('runtime.env');
+      for (const name of names) {
+        expect(process.env[name]).toBe(previous.get(name));
+      }
+    } finally {
+      if (oldChromium === undefined) {
+        delete process.env.CHROMIUM_PATH;
+      } else {
+        process.env.CHROMIUM_PATH = oldChromium;
+      }
+      for (const name of names) {
+        const value = previous.get(name);
+        if (value === undefined) {
+          delete process.env[name];
+        } else {
+          process.env[name] = value;
+        }
+      }
+      await rm(scope.dir, { recursive: true, force: true });
+    }
+  });
+
   test('runtime start rejects the unsupported full profile before building or launching', async () => {
     process.stdout.write = ((chunk: string | Uint8Array) => {
       output += String(chunk);
@@ -255,11 +314,13 @@ describe('agent CLI JSON boundary', () => {
   });
 
   test('visual capture requires explicit JSON mode before it can start a browser', async () => {
+    captureStdout();
     expect(await main(['agent', 'visual', 'capture'])).toBe(2);
     expect(output).toBe('');
   });
 
   test('visual review rejects unknown positional arguments before reading a run', async () => {
+    captureStdout();
     expect(
       await main(['agent', 'visual', 'review', '--run', 'missing_run', 'ignored', '--json']),
     ).toBe(2);
@@ -281,6 +342,7 @@ describe('agent CLI JSON boundary', () => {
   });
 
   test('full compute requires JSON mode before starting Docker work', async () => {
+    captureStdout();
     expect(await main(['agent', 'compute', 'full'])).toBe(2);
     expect(output).toBe('');
   });

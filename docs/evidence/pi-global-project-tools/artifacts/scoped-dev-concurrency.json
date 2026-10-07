@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "command": "bun run scripts/src/cli.ts agent runtime start --profile dev --run <run-id> --json",
+  "command": "Run A: bun run scripts/src/cli.ts agent runtime start --profile dev --run reconcile_cap_a --json (port 4507); Run B: bun run scripts/src/cli.ts agent runtime start --profile dev --run reconcile_cap_b --json (port 4297).",
   "runs": [
     {
       "runId": "reconcile_cap_a",

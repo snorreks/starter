@@ -22,10 +22,12 @@
     "check:config": "bun run scripts/check_config.ts"
   },
   "dependencies": {
-    "@starter/logger": "workspace:*",
+    "@starter/database": "workspace:*",
     "@starter/jobs": "workspace:*",
+    "@starter/logger": "workspace:*",
     "@starter/schemas": "workspace:*",
-    "@starter/utils": "workspace:*"
+    "@starter/utils": "workspace:*",
+    "jose": "6.2.12"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "5.20261006.1",

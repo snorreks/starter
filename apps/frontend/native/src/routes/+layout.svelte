@@ -21,12 +21,14 @@ import '../app.css';
 import '#logger';
 import { onMount, type Snippet, untrack } from 'svelte';
 import {
-  authSessionService,
-  discardSession,
+  handleSupabaseCallback,
   nativeNavigation,
+  refreshNativeSession,
   sessionState,
+  signOutNativeSession,
 } from '#lib/composition/session.ts';
 import { browserLifecycleEvents } from '#lib/platform/app_lifecycle.ts';
+import { listenForAuthLinks } from '#lib/platform/deep_link_bridge.ts';
 import { createAppLifecycleViewModel } from '#lib/viewmodels/app_lifecycle_view_model.ts';
 
 type Props = { children: Snippet };
@@ -46,7 +48,13 @@ let unreachable = $state(false);
 onMount(() => {
   // One check on start: the credential may have been restored from the vault, and
   // the window must show who it belongs to without waiting for a click.
-  void authSessionService.refresh();
+  void refreshNativeSession();
+  let stopDeepLinks: (() => void) | null = null;
+  void listenForAuthLinks(handleSupabaseCallback)
+    .then((stop) => {
+      stopDeepLinks = stop;
+    })
+    .catch(() => undefined);
   const unsubscribe = sessionState.subscribe((next) => {
     user = next;
   });
@@ -61,7 +69,7 @@ onMount(() => {
   const viewModel = createAppLifecycleViewModel({
     events: browserLifecycleEvents(),
     refreshSession: () => {
-      void authSessionService.refresh();
+      void refreshNativeSession();
     },
   });
 
@@ -76,18 +84,18 @@ onMount(() => {
     unsubscribe();
     unsubscribePhase();
     stop();
+    stopDeepLinks?.();
   };
 });
 
 async function signOut(): Promise<void> {
   signOutError = '';
   try {
-    await authSessionService.signOut();
+    await signOutNativeSession();
   } catch (error) {
     signOutError =
       error instanceof Error ? error.message : 'The server could not revoke the session.';
   }
-  await discardSession();
   await nativeNavigation.go('/');
 }
 </script>

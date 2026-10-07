@@ -38,6 +38,7 @@ const ROOT_SCRIPTS: string[] = Object.keys(
 );
 
 const encodeTarget = (overrides: Partial<ResolvedTarget['compute']> = {}): ResolvedTarget => ({
+  deploymentProfile: 'legacy',
   environment: 'staging',
   project: 'starter',
   accountId: 'a'.repeat(32),
@@ -60,6 +61,7 @@ const encodeTarget = (overrides: Partial<ResolvedTarget['compute']> = {}): Resol
   },
   mailFrom: 'noreply@staging.example',
   nativeApiOrigin: null,
+  supabase: null,
   requiredSecretNames: ['BETTER_AUTH_SECRET', 'RESEND_API_KEY'],
   requiredVarNames: ['DEPLOYMENT_ENV', 'BETTER_AUTH_URL', 'MAIL_FROM', 'RELEASE'],
 });

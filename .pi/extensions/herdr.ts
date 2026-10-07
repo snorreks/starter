@@ -39,6 +39,25 @@ import { runBounded } from '../lib/process.ts';
 import { defineAction, registerNamespace } from '../lib/tool_namespace.ts';
 
 const REPO_ROOT = fileURLToPath(new URL('../../', import.meta.url));
+const PRIVATE_ENV_KEYS = new Set([
+  'CLOUDFLARE_API_TOKEN',
+  'CLOUDFLARE_API_KEY',
+  'CLOUDFLARE_EMAIL',
+  'BETTER_AUTH_SECRET',
+  'RESEND_API_KEY',
+  'SOPS_AGE_KEY',
+  'SOPS_AGE_KEY_FILE',
+  'SUPABASE_ACCESS_TOKEN',
+  'SUPABASE_DB_PASSWORD',
+  'SUPABASE_SERVICE_ROLE_KEY',
+  'SUPABASE_OWNER_TOKEN',
+  'OPENROUTER_API_KEY',
+  'E2E_VISION_API_KEY',
+  'STARTER_WORKTREE_ENV_SOURCE',
+]);
+
+const bootstrapEnvironment = (): NodeJS.ProcessEnv =>
+  Object.fromEntries(Object.entries(process.env).filter(([key]) => !PRIVATE_ENV_KEYS.has(key)));
 
 /**
  * Why `cwd` cannot be used as a repository root, or `undefined`.
@@ -394,6 +413,52 @@ export default function herdrExtension(pi: ExtensionAPI): void {
     const workspace = parsed.envelope.result?.workspace;
     const path = workspace?.worktree?.checkout_path ?? parsed.envelope.result?.worktree?.path;
 
+    if (action === 'create' && path !== undefined && existsSync(`${path}/.git`)) {
+      const source = process.env.STARTER_WORKTREE_ENV_SOURCE;
+      const bootstrapArgs = [
+        'develop',
+        '--command',
+        'bun',
+        'run',
+        'worktree:bootstrap',
+        ...(source === undefined ? [] : ['--from', source]),
+      ];
+      let bootstrap: BoundedRunResult;
+      try {
+        bootstrap = await runBounded('nix', bootstrapArgs, {
+          cwd: path,
+          timeoutMs: 15 * 60_000,
+          maxBytes: 2 * 1024 * 1024,
+          env: bootstrapEnvironment(),
+        });
+      } catch (error) {
+        if (!(error instanceof Error) || !('code' in error) || error.code !== 'ENOENT') {
+          throw error;
+        }
+        bootstrap = await runBounded(
+          'bun',
+          ['run', 'worktree:bootstrap', ...(source === undefined ? [] : ['--from', source])],
+          {
+            cwd: path,
+            timeoutMs: 15 * 60_000,
+            maxBytes: 2 * 1024 * 1024,
+            env: bootstrapEnvironment(),
+          },
+        );
+      }
+      if (bootstrap.code !== 0) {
+        const id =
+          workspace?.workspace_id ??
+          parsed.envelope.result?.worktree?.open_workspace_id ??
+          'unrecorded';
+        return fail(
+          `Herdr created checkout ${path} (workspace ${id}), but bootstrap exited ${bootstrap.code}. ` +
+            `Run \`bun run worktree:bootstrap\` from that checkout. ${bootstrap.stderr.slice(-800)}`,
+          { error: 'bootstrap_failed', action, checkoutPath: path, workspaceId: id },
+        );
+      }
+    }
+
     // Ids come out of the response and go nowhere else. Predicting one would be
     // the failure mode Herdr's own guide warns about.
     return {
@@ -406,8 +471,9 @@ export default function herdrExtension(pi: ExtensionAPI): void {
             `  workspace id:  ${workspace?.workspace_id ?? parsed.envelope.result?.worktree?.open_workspace_id ?? 'unrecorded'}`,
             `  active tab id: ${workspace?.active_tab_id ?? 'unrecorded'}`,
             '',
-            'A fresh worktree has no dependencies installed. Run `bun install` in the checkout ' +
-              'path above before any task, and record the path in a handoff note.',
+            action === 'create' && path !== undefined && existsSync(`${path}/.git`)
+              ? 'The fresh worktree was bootstrapped with its pinned runtime and dependencies. Record the checkout path in a handoff note.'
+              : 'Run `bun run worktree:bootstrap` in the checkout before any task, then record its path in a handoff note.',
           ].join('\n'),
         },
       ],

@@ -31,7 +31,10 @@ let { data }: { data: PageData } = $props();
 // closure, and the fix for that warning — moving the read into an effect — would
 // be wrong, because an effect does not run during server rendering and the first
 // paint would go back to the loading state.
-const viewModel = getNotesViewModel({ initialNotes: untrack(() => data.notes) });
+const viewModel = getNotesViewModel({
+  initialNotes: untrack(() => data.notes),
+  remote: untrack(() => data.remote),
+});
 
 // Re-seed when a client-side navigation produces a new list. Tracked on
 // `data.notes` alone, so an in-place mutation that does not re-run the load does

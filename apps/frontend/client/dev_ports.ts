@@ -7,7 +7,7 @@
 // somewhere different. One module, read by everything that needs a port, is what
 // makes that impossible.
 //
-// Override with the environment when a parallel checkout needs a different port.
+// Override with the environment when a caller intentionally owns a fixed port.
 // There is exactly one port now, and that is the change worth noticing: the API
 // used to be a second process on 8787 that this file also had to name, and the
 // dev server had to be told where to proxy `/api`. One origin means one port, one
@@ -27,6 +27,15 @@
  * present but not a usable port is a mistake, and this throws rather than
  * substituting a port nobody asked for.
  */
+import { createHash } from 'node:crypto';
+import { resolve } from 'node:path';
+
+/** Stable per-checkout default, so concurrent Herdr worktrees never share a dev listener. */
+export const defaultWorktreePort = (cwd: string): number => {
+  const digest = createHash('sha256').update(resolve(cwd)).digest();
+  return 5200 + ((((digest[0] as number) << 8) | (digest[1] as number)) % 400);
+};
+
 const readPort = (name: string, fallback: number): number => {
   const raw = process.env[name];
   if (raw === undefined || raw.trim() === '') {
@@ -50,7 +59,7 @@ const readPort = (name: string, fallback: number): number => {
  * to configure a second process and now configures nothing is a trap, and reading
  * it would be a command that succeeds while doing nothing.
  */
-export const CLIENT_DEV_PORT = readPort('PORT', 5173);
+export const CLIENT_DEV_PORT = readPort('PORT', defaultWorktreePort(process.cwd()));
 
 /** Host both the dev and preview servers bind. Loopback only: a dev server on
  *  0.0.0.0 is a mistake waiting to happen, and it also breaks the local

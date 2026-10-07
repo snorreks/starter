@@ -55,6 +55,8 @@ export type Role =
   | 'route-server'
   /** `src/lib/server/**`: authorization and persistence. */
   | 'server-module'
+  /** SvelteKit generated server endpoint with a browser-safe generated wrapper. */
+  | 'remote-module'
   /** A feature component: presentation and raised intents. */
   | 'view'
   /** Screen state and the commands a view raises. */
@@ -509,6 +511,7 @@ export const PLANE_PLACEMENTS: readonly { readonly test: RegExp; readonly plane:
   // The application's Worker half: its server-only area and the three route adapter
   // shapes SvelteKit itself compiles into the Worker.
   { test: /^apps\/frontend\/client\/src\/lib\/server\//, plane: 'worker' },
+  { test: /^apps\/frontend\/client\/src\/lib\/remote\/.*\.remote\.ts$/, plane: 'worker' },
   { test: /^apps\/frontend\/client\/src\/hooks\.server\.ts$/, plane: 'worker' },
   {
     test: /^apps\/frontend\/client\/src\/routes\/(?:.*\/)?\+(?:server|page\.server|layout\.server)\.ts$/,
@@ -551,6 +554,11 @@ export const PLANE_PLACEMENTS: readonly { readonly test: RegExp; readonly plane:
   // here for the same reason it is stated for that project above.
   { test: /^apps\/backend\/jobs\/(?:scripts|tests)\//, plane: 'node' },
   { test: /^apps\/backend\/jobs\//, plane: 'worker' },
+  // The finite Node process packaged beside the media crate is a runner, not the
+  // Worker plane that owns dispatch and grants.
+  { test: /^apps\/backend\/media\/runner\//, plane: 'node' },
+  // Database-owned CLI entrypoints generate artifacts and apply migrations from Bun.
+  { test: /^packages\/backend\/database\/tools\//, plane: 'node' },
   { test: /^packages\/shared\//, plane: 'portable' },
   { test: /^packages\/backend\//, plane: 'worker' },
   // `packages/frontend/*` is browser code, and the two shared packages added this
@@ -603,6 +611,8 @@ export const ROLE_PLACEMENTS: readonly { readonly test: RegExp; readonly role: R
   },
   { test: /^apps\/frontend\/client\/src\/routes\/.+\.svelte$/, role: 'route-view' },
   { test: /^apps\/frontend\/client\/src\/lib\/server\//, role: 'server-module' },
+  { test: /^apps\/frontend\/client\/src\/lib\/remote\/.*\.remote\.ts$/, role: 'remote-module' },
+  { test: /^apps\/frontend\/client\/src\/lib\/composition\//, role: 'composition' },
 
   // The static native application. Its routes are composition like the web app's, and
   // the whole of `src/lib/platform/**` is the bridge to the Tauri shell — the only

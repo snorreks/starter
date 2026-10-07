@@ -17,9 +17,9 @@
 
 import { describe, expect, test } from 'bun:test';
 import { createHttpTelemetryTransport } from '@starter/logger';
+import { checkSchema } from '@starter/schemas/common';
 import type { LogEvent } from '@starter/schemas/logging';
 import { createId } from '@starter/utils';
-import { Value } from 'typebox/value';
 import type { Container } from '#lib/server/container.ts';
 import type { RequestContext, RequestUser } from './request_context.ts';
 import {
@@ -130,18 +130,18 @@ describe('the payload the transport actually sends', () => {
     const body = await sent;
 
     expect(body).toBeDefined();
-    expect(Value.Check(IngestBodySchema, body)).toBe(true);
+    expect(checkSchema(IngestBodySchema, body)).toBe(true);
   });
 
   test('a bare event without clientReported is still admitted', () => {
-    expect(Value.Check(IngestBodySchema, browserEvent())).toBe(true);
+    expect(checkSchema(IngestBodySchema, browserEvent())).toBe(true);
   });
 });
 
 describe('the schema stays closed to everything else', () => {
   test('an unknown top-level field is refused', () => {
     const forged = { ...browserEvent(), trustedUserId: 'root', environment_: 'staging' };
-    expect(Value.Check(IngestBodySchema, forged)).toBe(false);
+    expect(checkSchema(IngestBodySchema, forged)).toBe(false);
   });
 
   test('a client cannot declare its own environment or source of record', () => {
@@ -149,11 +149,11 @@ describe('the schema stays closed to everything else', () => {
     // service overwrites them from the container. This test pins the field set;
     // the demotion is asserted below.
     const claimed = { ...browserEvent(), environment: 'production' };
-    expect(Value.Check(IngestBodySchema, claimed)).toBe(true);
+    expect(checkSchema(IngestBodySchema, claimed)).toBe(true);
   });
 
   test('an event name that is not a string is refused', () => {
-    expect(Value.Check(IngestBodySchema, { ...browserEvent(), event: 7 })).toBe(false);
+    expect(checkSchema(IngestBodySchema, { ...browserEvent(), event: 7 })).toBe(false);
   });
 
   test('an unknown field nested inside clientReported is refused', () => {
@@ -161,7 +161,7 @@ describe('the schema stays closed to everything else', () => {
       ...browserEvent(),
       clientReported: { userId: 'u', isAdmin: true },
     };
-    expect(Value.Check(IngestBodySchema, nested)).toBe(false);
+    expect(checkSchema(IngestBodySchema, nested)).toBe(false);
   });
 });
 
@@ -170,8 +170,8 @@ describe('one submission is bounded', () => {
     const records = (count: number): unknown[] =>
       Array.from({ length: count }, () => browserEvent());
 
-    expect(Value.Check(IngestBodySchema, records(MAX_RECORDS_PER_SUBMISSION))).toBe(true);
-    expect(Value.Check(IngestBodySchema, records(MAX_RECORDS_PER_SUBMISSION + 1))).toBe(false);
+    expect(checkSchema(IngestBodySchema, records(MAX_RECORDS_PER_SUBMISSION))).toBe(true);
+    expect(checkSchema(IngestBodySchema, records(MAX_RECORDS_PER_SUBMISSION + 1))).toBe(false);
   });
 });
 

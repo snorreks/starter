@@ -20,7 +20,7 @@
 // --------------------------------------------
 // It does not know what a `Note` or a `SessionUser` is. `request<T>` is a
 // transport, and the `T` it returns is asserted by the caller against a
-// TypeBox schema at the contract boundary — see `dto.ts`. Casting a body to `T`
+// Standard Schema contract at the boundary — see `dto.ts`. Casting a body to `T`
 // inside the transport would move the one place a wrong shape can enter the
 // application into the one place that has no schema to check it against.
 //

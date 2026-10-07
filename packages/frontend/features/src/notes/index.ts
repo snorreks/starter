@@ -17,6 +17,7 @@ export { NotesService } from './notes_service.ts';
 export { default as NotesView } from './notes_view.svelte';
 export {
   type NotesScreenOptions,
+  type NotesScreenService,
   type NotesStatus,
   NotesViewModel,
 } from './notes_view_model.svelte.ts';

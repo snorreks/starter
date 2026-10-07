@@ -13,7 +13,7 @@
 // that it exists, turning this page into an existence oracle for other users' data.
 
 import { error, redirect } from '@sveltejs/kit';
-import { createChatService } from '#lib/server/chat_service.ts';
+import { createRequestChatService } from '#lib/server/application_chat.ts';
 import type { PageServerLoad } from './$types';
 
 export const load: PageServerLoad = async ({ locals, params, url }) => {
@@ -26,16 +26,19 @@ export const load: PageServerLoad = async ({ locals, params, url }) => {
     redirect(307, `/login?next=${encodeURIComponent(url.pathname)}`);
   }
 
-  const service = createChatService(locals.container.db);
+  const service = createRequestChatService(locals);
   const conversation = await service.find(user.id, params.id);
   if (conversation === null) {
     throw error(404, 'That conversation does not exist.');
   }
 
+  const page = await service.messagePage(user.id, params.id, null);
   return {
     conversation,
     // The history travels with the page so the first paint is the whole transcript
     // rather than a spinner. The ViewModel is seeded with it and does not re-fetch.
-    messages: await service.messages(user.id, params.id),
+    messages: page.items,
+    olderCursor: page.nextCursor,
+    hasOlder: page.hasMore,
   };
 };

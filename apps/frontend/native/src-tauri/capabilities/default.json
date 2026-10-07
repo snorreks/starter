@@ -38,5 +38,5 @@
   ],
   "identifier": "default",
   "windows": ["main"],
-  "permissions": ["core:default", "opener:allow-open-url", "stronghold:default"]
+  "permissions": ["core:default", "opener:allow-open-url", "stronghold:default", "deep-link:default"]
 }

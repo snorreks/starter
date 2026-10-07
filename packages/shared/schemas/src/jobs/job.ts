@@ -20,52 +20,17 @@
 // the same number, and so that changing one is a visible diff rather than a
 // search for the literal 5.
 
-import { type Static, type TLiteral, type TSchema, type TUnion, Type } from 'typebox';
+import * as v from 'valibot';
 import type { Brand } from '../common/ids.ts';
 
-/**
- * One `TLiteral` per value, in the same order, as a mutable tuple.
- *
- * `-readonly` because `T` is a `readonly` tuple (`as const`) while `TUnion`
- * takes a mutable one.
- */
-type LiteralTuple<T extends readonly string[]> = {
-  -readonly [K in keyof T]: TLiteral<T[K] & string>;
-};
+export const literalUnion = <const T extends readonly [string, ...string[]]>(values: T) =>
+  v.picklist(values);
 
-/**
- * A closed union of the given literal strings.
- *
- * Written as a helper rather than inline `Type.Union([...])` so that every
- * enumerated set in this file has the same shape and the compiler keeps the
- * literal types: `Static` of the result is `'a' | 'b'`, never `string`. A union
- * that widened to `string` would accept any value, which is exactly what the
- * closed schemas below exist to prevent.
- *
- * TypeBox 1.x resolves `Static` of a union by walking its members as a
- * *tuple*, accumulating a union as it goes. An unbounded array type — what
- * `Array.prototype.map` returns — is not a tuple, so the walk stops
- * immediately and `Static` comes out `never`, which then rejects every value
- * that is one of the literals. `LiteralTuple` exists for that walk.
- */
-export const literalUnion = <const T extends readonly string[]>(
-  values: T,
-): TUnion<LiteralTuple<T>> => {
-  // Two details, and both are about the tuple above. `map` always returns an
-  // array, so the tuple is asserted rather than inferred; and `Type.Union`
-  // infers an array from a bare tuple argument, so the tuple is spread to
-  // survive. Nothing past this line is asserted: `TERMINAL_JOB_STATUSES`
-  // further down only typechecks because `JobStatus` resolved to the four
-  // literals rather than to `never`.
-  const schemas = values.map((value) => Type.Literal(value)) as LiteralTuple<T>;
-  return Type.Union([...schemas]);
-};
+export const JobIdSchema = v.pipe(v.string(), v.minLength(1), v.maxLength(64));
+export type JobId = v.InferOutput<typeof JobIdSchema> & Brand<string, 'JobId'>;
 
-export const JobIdSchema = Type.String({ minLength: 1, maxLength: 64 });
-export type JobId = Static<typeof JobIdSchema> & Brand<string, 'JobId'>;
-
-export const AttemptIdSchema = Type.String({ minLength: 1, maxLength: 128 });
-export type AttemptId = Static<typeof AttemptIdSchema> & Brand<string, 'AttemptId'>;
+export const AttemptIdSchema = v.pipe(v.string(), v.minLength(1), v.maxLength(128));
+export type AttemptId = v.InferOutput<typeof AttemptIdSchema> & Brand<string, 'AttemptId'>;
 
 /**
  * The only synthetic fixture this template will encode.
@@ -76,7 +41,7 @@ export type AttemptId = Static<typeof AttemptIdSchema> & Brand<string, 'AttemptI
  */
 export const JOB_FIXTURE_IDS = ['sample-v1'] as const;
 export const JobFixtureSchema = literalUnion(JOB_FIXTURE_IDS);
-export type JobFixture = Static<typeof JobFixtureSchema>;
+export type JobFixture = v.InferOutput<typeof JobFixtureSchema>;
 
 /**
  * The only encode configuration this template will run.
@@ -88,12 +53,12 @@ export type JobFixture = Static<typeof JobFixtureSchema>;
  */
 export const JOB_PRESET_IDS = ['demo-180p-v1'] as const;
 export const JobPresetSchema = literalUnion(JOB_PRESET_IDS);
-export type JobPreset = Static<typeof JobPresetSchema>;
+export type JobPreset = v.InferOutput<typeof JobPresetSchema>;
 
 /** `JobKind` is a union of one today and grows with a versioned migration. */
 export const JOB_KINDS = ['encode'] as const;
 export const JobKindSchema = literalUnion(JOB_KINDS);
-export type JobKind = Static<typeof JobKindSchema>;
+export type JobKind = v.InferOutput<typeof JobKindSchema>;
 
 /**
  * The four states a job is in. There is no "expired" state.
@@ -105,7 +70,7 @@ export type JobKind = Static<typeof JobKindSchema>;
  */
 export const JOB_STATUSES = ['pending', 'running', 'succeeded', 'failed'] as const;
 export const JobStatusSchema = literalUnion(JOB_STATUSES);
-export type JobStatus = Static<typeof JobStatusSchema>;
+export type JobStatus = v.InferOutput<typeof JobStatusSchema>;
 
 /** Terminal states. A job in one of these is never written by an attempt again. */
 export const TERMINAL_JOB_STATUSES: readonly JobStatus[] = ['succeeded', 'failed'];
@@ -113,7 +78,7 @@ export const TERMINAL_JOB_STATUSES: readonly JobStatus[] = ['succeeded', 'failed
 /** How far a dispatch attempt got. `pending` is the recoverable one. */
 export const JOB_DISPATCH_STATES = ['pending', 'dispatched', 'dispatch_failed'] as const;
 export const JobDispatchStateSchema = literalUnion(JOB_DISPATCH_STATES);
-export type JobDispatchState = Static<typeof JobDispatchStateSchema>;
+export type JobDispatchState = v.InferOutput<typeof JobDispatchStateSchema>;
 
 // -----------------------------------------------------------------------------
 // Admission bounds
@@ -168,13 +133,14 @@ export const IDEMPOTENCY_KEY_MAX_LENGTH = 100;
  */
 export const IDEMPOTENCY_KEY_PATTERN = '^[\\x21-\\x7e]+$';
 
-export const IdempotencyKeySchema = Type.String({
-  minLength: IDEMPOTENCY_KEY_MIN_LENGTH,
-  maxLength: IDEMPOTENCY_KEY_MAX_LENGTH,
-  pattern: IDEMPOTENCY_KEY_PATTERN,
-});
+export const IdempotencyKeySchema = v.pipe(
+  v.string(),
+  v.minLength(IDEMPOTENCY_KEY_MIN_LENGTH),
+  v.maxLength(IDEMPOTENCY_KEY_MAX_LENGTH),
+  v.regex(new RegExp(IDEMPOTENCY_KEY_PATTERN)),
+);
 
-export type IdempotencyKey = Static<typeof IdempotencyKeySchema>;
+export type IdempotencyKey = v.InferOutput<typeof IdempotencyKeySchema>;
 
 /** Header carrying the idempotency key. Frozen with the public contract. */
 export const IDEMPOTENCY_KEY_HEADER = 'idempotency-key';
@@ -194,15 +160,12 @@ export const WORKFLOW_ID_PREFIX = 'encode-';
  * to hand to a client for optimistic validation: every value it can hold is a
  * value this server will accept.
  */
-export const CreateEncodeJobSchema = Type.Object(
-  {
-    fixture: JobFixtureSchema,
-    preset: JobPresetSchema,
-  },
-  { additionalProperties: false },
-);
+export const CreateEncodeJobSchema = v.strictObject({
+  fixture: JobFixtureSchema,
+  preset: JobPresetSchema,
+});
 
-export type CreateEncodeJob = Static<typeof CreateEncodeJobSchema>;
+export type CreateEncodeJob = v.InferOutput<typeof CreateEncodeJobSchema>;
 
 // -----------------------------------------------------------------------------
 // Responses
@@ -219,27 +182,30 @@ export type CreateEncodeJob = Static<typeof CreateEncodeJobSchema>;
  * A hash is integrity, not identity: it is a claim that these are the bytes that
  * were stored, not that two hosts produce bit-identical FFmpeg output.
  */
-export const JobOutputSchema = Type.Object(
-  {
-    bytes: Type.Integer({ minimum: 1, maximum: 10 * 1024 * 1024 }),
-    sha256: Type.String({ pattern: '^[0-9a-f]{64}$' }),
-    containerFormat: Type.String({ minLength: 1, maxLength: 64 }),
-    videoCodec: Type.String({ minLength: 1, maxLength: 32 }),
-    width: Type.Integer({ minimum: 1, maximum: 8192 }),
-    height: Type.Integer({ minimum: 1, maximum: 8192 }),
-    durationMs: Type.Integer({ minimum: 1, maximum: 120 * 60 * 1000 }),
-    /** Epoch ms at which retention removes the bytes. */
-    expiresAt: Type.Number(),
-  },
-  { additionalProperties: false },
-);
+export const JobOutputSchema = v.strictObject({
+  bytes: v.pipe(v.number(), v.integer(), v.finite(), v.minValue(1), v.maxValue(10 * 1024 * 1024)),
+  sha256: v.pipe(v.string(), v.regex(/^[0-9a-f]{64}$/)),
+  containerFormat: v.pipe(v.string(), v.minLength(1), v.maxLength(64)),
+  videoCodec: v.pipe(v.string(), v.minLength(1), v.maxLength(32)),
+  width: v.pipe(v.number(), v.integer(), v.finite(), v.minValue(1), v.maxValue(8192)),
+  height: v.pipe(v.number(), v.integer(), v.finite(), v.minValue(1), v.maxValue(8192)),
+  durationMs: v.pipe(
+    v.number(),
+    v.integer(),
+    v.finite(),
+    v.minValue(1),
+    v.maxValue(120 * 60 * 1000),
+  ),
+  /** Epoch ms at which retention removes the bytes. */
+  expiresAt: v.pipe(v.number(), v.finite()),
+});
 
-export type JobOutput = Static<typeof JobOutputSchema>;
+export type JobOutput = v.InferOutput<typeof JobOutputSchema>;
 
 /**
  * Codes a *job* can fail with, as written by this repository.
  *
- * A closed union, not `Type.String()`. The alternative is a field that accepts
+ * A closed union, not `v.string()`. The alternative is a field that accepts
  * whatever a container, a subprocess or an exception put in it, and the comment
  * next to it would then be a lie: an error string that reaches a browser has to be
  * one this repository enumerated, and an open string cannot be.
@@ -251,7 +217,7 @@ export type JobOutput = Static<typeof JobOutputSchema>;
  */
 export const JOB_ERROR_CODES = ['encode_failed', 'attempts_exhausted', 'internal_error'] as const;
 export const JobErrorCodeSchema = literalUnion(JOB_ERROR_CODES);
-export type JobErrorCode = Static<typeof JobErrorCodeSchema>;
+export type JobErrorCode = v.InferOutput<typeof JobErrorCodeSchema>;
 
 /**
  * A job as the API returns it.
@@ -261,39 +227,33 @@ export type JobErrorCode = Static<typeof JobErrorCodeSchema>;
  * caller learns that a job exists, what state it is in, and — once the encode
  * succeeded — enough measured metadata to play the artifact.
  */
-export const JobDtoSchema = Type.Object(
-  {
-    id: JobIdSchema,
-    kind: JobKindSchema,
-    status: JobStatusSchema,
-    /** Epoch milliseconds. */
-    createdAt: Type.Number(),
-    updatedAt: Type.Number(),
-    /** False for a job that has not produced bytes, or whose bytes aged out. */
-    outputAvailable: Type.Boolean(),
-    /**
-     * A frozen code from `JOB_ERROR_CODES`, or null. Never prose and never a
-     * subprocess message.
-     */
-    errorCode: Type.Union([JobErrorCodeSchema, Type.Null()]),
-  },
-  { additionalProperties: false },
-);
+export const JobDtoSchema = v.strictObject({
+  id: JobIdSchema,
+  kind: JobKindSchema,
+  status: JobStatusSchema,
+  /** Epoch milliseconds. */
+  createdAt: v.pipe(v.number(), v.finite()),
+  updatedAt: v.pipe(v.number(), v.finite()),
+  /** False for a job that has not produced bytes, or whose bytes aged out. */
+  outputAvailable: v.boolean(),
+  /**
+   * A frozen code from `JOB_ERROR_CODES`, or null. Never prose and never a
+   * subprocess message.
+   */
+  errorCode: v.union([JobErrorCodeSchema, v.null()]),
+});
 
-export type JobDto = Static<typeof JobDtoSchema>;
+export type JobDto = v.InferOutput<typeof JobDtoSchema>;
 
 /** One page of a user's jobs. */
-export const JobListSchema = Type.Object(
-  {
-    jobs: Type.Array(JobDtoSchema),
-    /** Opaque. Null on the last page. */
-    nextCursor: Type.Union([Type.String({ minLength: 1 }), Type.Null()]),
-    serverTime: Type.Number(),
-  },
-  { additionalProperties: false },
-);
+export const JobListSchema = v.strictObject({
+  jobs: v.array(JobDtoSchema),
+  /** Opaque. Null on the last page. */
+  nextCursor: v.union([v.pipe(v.string(), v.minLength(1)), v.null()]),
+  serverTime: v.pipe(v.number(), v.finite()),
+});
 
-export type JobList = Static<typeof JobListSchema>;
+export type JobList = v.InferOutput<typeof JobListSchema>;
 
 /**
  * Codes a create request can be refused with.
@@ -324,9 +284,9 @@ export type JobAdmissionErrorCodeValue =
   (typeof JobAdmissionErrorCode)[keyof typeof JobAdmissionErrorCode];
 
 /**
- * Re-exported so a caller can type a validated value without importing TypeBox.
+ * Re-exported so a caller can type a validated value without importing Valibot.
  *
  * `TSchema` rather than a specific union: this is the parameter type of
- * `Value.Check`, and nothing here claims more precision than the validator uses.
+ * `checkSchema`, and nothing here claims more precision than the validator uses.
  */
-export type { TSchema as JobSchema };
+export type JobSchema = v.BaseSchema<unknown, unknown, v.BaseIssue<unknown>>;

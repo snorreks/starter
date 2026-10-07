@@ -5,15 +5,15 @@
 // single schema here is what makes cross-plane correlation possible: a browser
 // event and a Worker event are queryable with the same field names.
 //
-// Note on style: each union is written out as an explicit `Type.Union([...])`
-// rather than built with `.map()` over a const array. TypeBox's `Type.Union`
+// Note on style: each union is written out as an explicit `v.union([...])`
+// rather than built with `.map()` over a const array. Valibot's `picklist`
 // takes a *tuple*, so a mapped array collapses its static type to `never` —
 // which surfaces as a confusing "type X is not assignable to never" far from the
 // real mistake. The runtime arrays below stay the source of truth for
 // iteration, and `_appUnionIsSynced`/`_levelUnionIsSynced` make the compiler
 // enforce that the two never drift.
 
-import { type Static, Type } from 'typebox';
+import * as v from 'valibot';
 
 // -----------------------------------------------------------------------------
 // Severity
@@ -120,46 +120,39 @@ export const PROVIDER_SEVERITY_RANK: Record<ProviderLevel, number> = {
 // The event schema
 // -----------------------------------------------------------------------------
 
-export const LogEventSchema = Type.Object(
-  {
-    /** Epoch milliseconds. Assigned at capture time, not at render time. */
-    timestamp: Type.Number(),
-    app: Type.Union([Type.Literal('web'), Type.Literal('scripts')]),
-    environment: Type.Union([
-      Type.Literal('local'),
-      Type.Literal('staging'),
-      Type.Literal('production'),
-    ]),
-    source: Type.Union([Type.Literal('browser'), Type.Literal('worker'), Type.Literal('cli')]),
-    level: Type.Union([
-      Type.Literal('DEBUG'),
-      Type.Literal('INFO'),
-      Type.Literal('WARNING'),
-      Type.Literal('ERROR'),
-      Type.Literal('NONE'),
-    ]),
-    /** Stable machine-readable name, e.g. `notes.create`. */
-    event: Type.String({ minLength: 1, maxLength: 200 }),
-    /** Build identifier of the emitting artifact; the pivot for "which code?". */
-    release: Type.String({ minLength: 1, maxLength: 100 }),
-    /** Correlates a request across planes (Worker request id, fetch trace id). */
-    traceId: Type.Optional(Type.String({ maxLength: 200 })),
-    requestId: Type.Optional(Type.String({ maxLength: 200 })),
-    /**
-     * User id. On browser-forwarded events this is *client reported* and is sent
-     * under `clientReported` instead — see {@link TelemetryPayload}. The server
-     * never treats a self-asserted id as verified.
-     */
-    userId: Type.Optional(Type.String({ maxLength: 200 })),
-    sessionId: Type.Optional(Type.String({ maxLength: 200 })),
-    message: Type.Optional(Type.String({ maxLength: 4000 })),
-    /** Free-form, already redacted, size-bounded by the producer. */
-    data: Type.Optional(Type.Record(Type.String(), Type.Unknown())),
-  },
-  { additionalProperties: false },
-);
+export const LogEventSchema = v.strictObject({
+  /** Epoch milliseconds. Assigned at capture time, not at render time. */
+  timestamp: v.pipe(v.number(), v.finite()),
+  app: v.union([v.literal('web'), v.literal('scripts')]),
+  environment: v.union([v.literal('local'), v.literal('staging'), v.literal('production')]),
+  source: v.union([v.literal('browser'), v.literal('worker'), v.literal('cli')]),
+  level: v.union([
+    v.literal('DEBUG'),
+    v.literal('INFO'),
+    v.literal('WARNING'),
+    v.literal('ERROR'),
+    v.literal('NONE'),
+  ]),
+  /** Stable machine-readable name, e.g. `notes.create`. */
+  event: v.pipe(v.string(), v.minLength(1), v.maxLength(200)),
+  /** Build identifier of the emitting artifact; the pivot for "which code?". */
+  release: v.pipe(v.string(), v.minLength(1), v.maxLength(100)),
+  /** Correlates a request across planes (Worker request id, fetch trace id). */
+  traceId: v.optional(v.pipe(v.string(), v.maxLength(200))),
+  requestId: v.optional(v.pipe(v.string(), v.maxLength(200))),
+  /**
+   * User id. On browser-forwarded events this is *client reported* and is sent
+   * under `clientReported` instead — see {@link TelemetryPayload}. The server
+   * never treats a self-asserted id as verified.
+   */
+  userId: v.optional(v.pipe(v.string(), v.maxLength(200))),
+  sessionId: v.optional(v.pipe(v.string(), v.maxLength(200))),
+  message: v.optional(v.pipe(v.string(), v.maxLength(4000))),
+  /** Free-form, already redacted, size-bounded by the producer. */
+  data: v.optional(v.record(v.string(), v.unknown())),
+});
 
-export type LogEvent = Static<typeof LogEventSchema>;
+export type LogEvent = v.InferOutput<typeof LogEventSchema>;
 
 // -----------------------------------------------------------------------------
 // Compile-time sync guards
@@ -172,12 +165,12 @@ export type LogEvent = Static<typeof LogEventSchema>;
 
 type Exact<A, B> = [A] extends [B] ? ([B] extends [A] ? true : never) : never;
 
-const _levelUnionIsSynced: Exact<LogLevel, Static<typeof LogEventSchema>['level']> = true;
-const _appUnionIsSynced: Exact<LogApp, Static<typeof LogEventSchema>['app']> = true;
-const _sourceUnionIsSynced: Exact<LogSource, Static<typeof LogEventSchema>['source']> = true;
+const _levelUnionIsSynced: Exact<LogLevel, v.InferOutput<typeof LogEventSchema>['level']> = true;
+const _appUnionIsSynced: Exact<LogApp, v.InferOutput<typeof LogEventSchema>['app']> = true;
+const _sourceUnionIsSynced: Exact<LogSource, v.InferOutput<typeof LogEventSchema>['source']> = true;
 const _environmentUnionIsSynced: Exact<
   DeploymentEnvironment,
-  Static<typeof LogEventSchema>['environment']
+  v.InferOutput<typeof LogEventSchema>['environment']
 > = true;
 
 /** Referenced so the guards are not flagged as unused. */
@@ -199,15 +192,12 @@ export const SCHEMA_UNION_ASSERTIONS = [
  * self-reported identity for a verified one: `LogEvent.userId` is filled in by
  * the server from the session, and anything the client claims lands here.
  */
-export const ClientReportedContextSchema = Type.Object(
-  {
-    userId: Type.Optional(Type.String({ maxLength: 200 })),
-    sessionId: Type.Optional(Type.String({ maxLength: 200 })),
-    appVersion: Type.Optional(Type.String({ maxLength: 100 })),
-    platform: Type.Optional(Type.String({ maxLength: 100 })),
-    userAgent: Type.Optional(Type.String({ maxLength: 400 })),
-  },
-  { additionalProperties: false },
-);
+export const ClientReportedContextSchema = v.strictObject({
+  userId: v.optional(v.pipe(v.string(), v.maxLength(200))),
+  sessionId: v.optional(v.pipe(v.string(), v.maxLength(200))),
+  appVersion: v.optional(v.pipe(v.string(), v.maxLength(100))),
+  platform: v.optional(v.pipe(v.string(), v.maxLength(100))),
+  userAgent: v.optional(v.pipe(v.string(), v.maxLength(400))),
+});
 
-export type ClientReportedContext = Static<typeof ClientReportedContextSchema>;
+export type ClientReportedContext = v.InferOutput<typeof ClientReportedContextSchema>;
