@@ -95,9 +95,12 @@ the artifact and permits that one Auth origin; any additional foreign destinatio
 still fails.
 
 Build and inspect the explicit profile with the same resolved target values used by
-deployment. The project reference and callbacks are native target fields; Prompt 07
-must consume those fields from `resolveTarget` rather than introducing another
-destination source.
+deployment. Native Release accepts a profile and environment; the Supabase selection
+resolves `STARTER_DEPLOYMENT_TARGETS` in its credential-free preflight and forwards
+only the public URL, project ref, publishable key and native API origin to build
+jobs. It does not receive Supabase administrative credentials. The project reference
+and callbacks are native target fields, consumed from `resolveTarget` rather than a
+second destination source.
 
 ```bash
 VITE_NATIVE_AUTH_PROFILE=supabase \

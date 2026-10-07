@@ -8,7 +8,7 @@
 // what to do instead. A refusal that returns `null` or throws a bare `TypeError` is
 // not a refusal an operator can act on.
 
-import { describe, expect, test } from 'bun:test';
+import { afterEach, describe, expect, test } from 'bun:test';
 import {
   describeCredential,
   hasApiToken,
@@ -27,6 +27,14 @@ import type { DeploymentValues } from '../src/registry/deployment_values.ts';
 
 const ACCOUNT = 'abcdef0123456789abcdef0123456789';
 const OTHER_ACCOUNT = '99999999999999999999999999999999';
+const originalBackendProfile = process.env.STARTER_BACKEND_PROFILE;
+afterEach(() => {
+  if (originalBackendProfile === undefined) {
+    delete process.env.STARTER_BACKEND_PROFILE;
+  } else {
+    process.env.STARTER_BACKEND_PROFILE = originalBackendProfile;
+  }
+});
 
 /** A project with both environments fully provisioned and properly separated. */
 const configured = (overrides: Partial<DeploymentValues> = {}): DeploymentValues => ({
@@ -64,6 +72,21 @@ const resolved = (environment: string, values = configured()): ResolvedTarget =>
 };
 
 describe('resolveTarget answers with one complete destination', () => {
+  test('an explicit profile bypasses an invalid environment fallback', () => {
+    process.env.STARTER_BACKEND_PROFILE = 'invalid';
+    const explicit = resolveTarget('staging', {
+      values: supabaseConfigured(),
+      profile: 'supabase',
+    });
+    expect(explicit.ok).toBe(true);
+
+    const fallback = resolveTarget('staging', { values: configured() });
+    expect(fallback.ok).toBe(false);
+    if (!fallback.ok) {
+      expect(fallback.reason).toContain('STARTER_BACKEND_PROFILE must be legacy or supabase');
+    }
+  });
+
   test('every value a deploy touches comes from the same resolution', () => {
     // The point of the module. A plan built from one source and executed against
     // another is the failure this whole layer exists to make impossible, so the
@@ -238,6 +261,126 @@ describe('resolveTarget refuses before any mutation', () => {
     }
     expect(result.reason).toContain('is not a valid Cloudflare Worker name');
   });
+});
+
+const supabaseConfigured = (overrides: Partial<DeploymentValues> = {}): DeploymentValues => {
+  const base = configured();
+  const worker = (environment: 'staging' | 'production') => {
+    const isStaging = environment === 'staging';
+    const origin = isStaging
+      ? 'https://starter-staging.example.workers.dev'
+      : 'https://starter.example';
+    const ref = isStaging ? 'stageprojectref00001' : 'prodprojectref000001';
+    return targets({
+      workerName: isStaging ? 'starter-staging' : 'starter-production',
+      jobsWorkerName: `starter-jobs-${environment}`,
+      d1DatabaseId: isStaging ? 'db-staging' : 'db-production',
+      mediaBucketName: `starter-media-${environment}`,
+      encodeWorkflowName: `starter-encode-${environment}`,
+      maintenanceWorkflowName: `starter-maintenance-${environment}`,
+      containerImage: `europe-north1-docker.pkg.dev/starter-${environment}/media/runner@sha256:${'a'.repeat(64)}`,
+      imageProtocol: 'sample-v1',
+      containerProfile: 'basic',
+      jobsProfile: 'encode',
+      origin,
+      mailFrom: 'noreply@starter.example',
+      nativeApiOrigin: origin,
+      supabaseProjectRef: ref,
+      supabaseUrl: `https://${ref}.supabase.co`,
+      supabaseAuthUrl: `https://${ref}.supabase.co`,
+      supabasePublishableKey: 'sb_publishable_public-key',
+      nativeRedirectAllowlist: `${origin}/auth/callback,com.example.starter://auth/callback`,
+      googleProjectId: `starter-${environment}`,
+      googleRegion: 'europe-north1',
+      cloudRunJobName: `starter-media-${environment}`,
+      artifactImage: `europe-north1-docker.pkg.dev/starter-${environment}/media/runner@sha256:${'a'.repeat(64)}`,
+      runnerServiceAccount: `runner-${environment}@starter-${environment}.iam.gserviceaccount.com`,
+      dispatcherServiceAccount: `dispatch-${environment}@starter-${environment}.iam.gserviceaccount.com`,
+      processorProtocol: 'sample-v1',
+      processorCpu: '2',
+      processorMemory: '2Gi',
+      processorTimeoutSeconds: '900',
+    });
+  };
+  return {
+    ...base,
+    environments: { staging: worker('staging'), production: worker('production') },
+    ...overrides,
+  };
+};
+
+describe('the Supabase deployment profile resolves the complete preview target offline', () => {
+  test('keeps public publishable configuration distinct from administrative secret names', () => {
+    const result = resolveTarget('staging', { values: supabaseConfigured(), profile: 'supabase' });
+    expect(result.ok).toBe(true);
+    if (!result.ok) {
+      return;
+    }
+    expect(result.target.deploymentProfile).toBe('supabase');
+    expect(result.target.supabase?.publishableKey).toStartWith('sb_publishable_');
+    expect(result.target.requiredSecretNames).toEqual([
+      'SUPABASE_SERVICE_ROLE_KEY',
+      'RESEND_API_KEY',
+      'GOOGLE_DISPATCHER_CREDENTIAL',
+    ]);
+  });
+
+  test.each([
+    [
+      'production Supabase ref',
+      { supabaseProjectRef: 'prodprojectref000001' },
+      'production and staging both resolve to the Supabase project "prodprojectref000001"',
+    ],
+    [
+      'production Google project',
+      { googleProjectId: 'starter-production' },
+      'Google Cloud project',
+    ],
+    ['shared R2 bucket', { mediaBucketName: 'starter-media-production' }, 'R2 bucket'],
+    [
+      'shared runner identity',
+      { runnerServiceAccount: 'runner-production@starter-production.iam.gserviceaccount.com' },
+      'runner identity',
+    ],
+    [
+      'bad callback origin',
+      {
+        nativeRedirectAllowlist:
+          'https://foreign.example/auth/callback,com.example.starter://auth/callback',
+      },
+      'redirect allowlist',
+    ],
+    ['mismatched Auth origin', { supabaseAuthUrl: 'https://other-project.supabase.co' }, 'origins'],
+    [
+      'Supabase API path',
+      {
+        supabaseUrl: 'https://stageprojectref00001.supabase.co/rest/v1',
+        supabaseAuthUrl: 'https://stageprojectref00001.supabase.co/rest/v1',
+      },
+      'HTTPS origins',
+    ],
+    [
+      'mutable image',
+      { artifactImage: `europe-north1-docker.pkg.dev/starter-staging/media/runner:latest` },
+      'pinned by digest',
+    ],
+    ['disabled compute', { jobsProfile: 'disabled' }, 'Compute is disabled'],
+    ['missing dispatcher identity', { dispatcherServiceAccount: null }, 'dispatcherServiceAccount'],
+  ] as const)(
+    '%s fails during resolution before a provider can mutate',
+    (_case, changed, expected) => {
+      const base = supabaseConfigured();
+      const staging = { ...base.environments?.staging, ...changed };
+      const result = resolveTarget('staging', {
+        values: { ...base, environments: { ...base.environments, staging } as never },
+        profile: 'supabase',
+      });
+      expect(result.ok).toBe(false);
+      if (!result.ok) {
+        expect(result.reason).toContain(expected);
+      }
+    },
+  );
 });
 
 describe('staging and production may not share a resource', () => {

@@ -35,6 +35,7 @@ import {
   type JobsProfile,
   REQUIRED_REMOTE_SECRET_NAMES,
   REQUIRED_REMOTE_VAR_NAMES,
+  SUPABASE_REMOTE_SECRET_NAMES,
 } from '../registry/app_registry.ts';
 import {
   configuredTopologyFor,
@@ -61,6 +62,7 @@ export const DEPLOYABLE_ENVIRONMENTS = ['staging', 'production'] as const;
 export type TargetEnvironment = (typeof DEPLOYABLE_ENVIRONMENTS)[number];
 
 export interface ResolvedTarget {
+  deploymentProfile: 'legacy' | 'supabase';
   environment: TargetEnvironment;
   /** Project identity, from the committed registry. Never a secret. */
   project: string;
@@ -98,6 +100,23 @@ export interface ResolvedTarget {
   mailFrom: string;
   /** The https origin a packaged native build targets. Nullable: not every project ships one. */
   nativeApiOrigin: string | null;
+  supabase: null | {
+    projectRef: string;
+    url: string;
+    authUrl: string;
+    publishableKey: string;
+    nativeRedirectAllowlist: readonly string[];
+    googleProjectId: string;
+    googleRegion: string;
+    jobName: string;
+    image: string;
+    runnerServiceAccount: string;
+    dispatcherServiceAccount: string;
+    protocol: string;
+    cpu: string;
+    memory: string;
+    timeoutSeconds: number;
+  };
   /** Secret *names* required, in documented apply order. Never values. */
   requiredSecretNames: readonly string[];
   /** Nonsecret var names required. Never values. */
@@ -183,6 +202,23 @@ const OVERRIDABLE_DESTINATIONS: ReadonlyArray<[keyof EnvironmentTargets, string,
     'maintenance Workflow',
     'One environment would consume the other maintenance run key.',
   ],
+  ['supabaseProjectRef', 'Supabase project', 'A staging migration would change production data.'],
+  [
+    'googleProjectId',
+    'Google Cloud project',
+    'Staging provisioning would mutate production cloud resources.',
+  ],
+  ['cloudRunJobName', 'Cloud Run Job', 'The environments would execute in the same job.'],
+  [
+    'runnerServiceAccount',
+    'Cloud Run runner identity',
+    'One environment could mint grants for the other.',
+  ],
+  [
+    'dispatcherServiceAccount',
+    'Cloud Run dispatcher identity',
+    'One environment could dispatch into the other.',
+  ],
   ['origin', 'origin', "Staging would be verified against production's address, or the reverse."],
 ];
 
@@ -222,6 +258,11 @@ export const environmentIsolationProblem = (
     encodeWorkflow: string | null;
     maintenanceWorkflow: string | null;
     image: string | null;
+    supabaseProject: string | null;
+    googleProject: string | null;
+    cloudRunJob: string | null;
+    runner: string | null;
+    dispatcher: string | null;
   }
 
   const resolved = new Map<string, Destinations>();
@@ -236,6 +277,11 @@ export const environmentIsolationProblem = (
       encodeWorkflow: topology?.encodeWorkflowName ?? null,
       maintenanceWorkflow: topology?.maintenanceWorkflowName ?? null,
       image: topology?.containerImage ?? null,
+      supabaseProject: topology?.supabaseProjectRef ?? null,
+      googleProject: topology?.googleProjectId ?? null,
+      cloudRunJob: topology?.cloudRunJobName ?? null,
+      runner: topology?.runnerServiceAccount ?? null,
+      dispatcher: topology?.dispatcherServiceAccount ?? null,
     });
   }
 
@@ -355,6 +401,27 @@ export const environmentIsolationProblem = (
           'maintenanceWorkflow',
           'maintenance Workflow',
           'One environment would consume the other maintenance run key.',
+        ) ??
+        shared(
+          'supabaseProject',
+          'Supabase project',
+          'Both environments would migrate the same Postgres database.',
+        ) ??
+        shared(
+          'googleProject',
+          'Google Cloud project',
+          'Both environments would provision the same cloud project.',
+        ) ??
+        shared('cloudRunJob', 'Cloud Run Job', 'Both environments would execute in one job.') ??
+        shared(
+          'runner',
+          'Cloud Run runner identity',
+          'The runner would cross environment boundaries.',
+        ) ??
+        shared(
+          'dispatcher',
+          'Cloud Run dispatcher identity',
+          'The dispatcher would cross environment boundaries.',
         );
 
       if (problem !== null) {
@@ -388,9 +455,21 @@ export const resolveTarget = (
     values?: DeploymentValues;
     project?: string;
     requiredSecretNames?: readonly string[];
+    profile?: 'legacy' | 'supabase';
   } = {},
 ): TargetResult => {
   const values = options.values ?? effectiveDeploymentValues();
+  let profile = options.profile;
+  if (profile === undefined) {
+    const environmentProfile = process.env.STARTER_BACKEND_PROFILE;
+    if (environmentProfile !== undefined && !['legacy', 'supabase'].includes(environmentProfile)) {
+      return fail(
+        'STARTER_BACKEND_PROFILE must be legacy or supabase.',
+        'Select an explicit supported deployment profile.',
+      );
+    }
+    profile = environmentProfile === 'supabase' ? 'supabase' : 'legacy';
+  }
 
   // Refused before any other work, so an unknown word can never be resolved
   // against a default. `--env prod` must not reach the production entry it
@@ -470,6 +549,225 @@ export const resolveTarget = (
     );
   }
 
+  const rawOrigin = topology.origin;
+  if (rawOrigin === null) {
+    return fail(
+      `No public origin is configured for ${environment}, so a deploy could not be verified.`,
+      `bun run deploy:configure -- --env ${environment} --origin https://<host>`,
+    );
+  }
+  const parsed = parseOrigin(rawOrigin);
+  if (!parsed.ok) {
+    return fail(
+      `The configured origin for ${environment} ${parsed.problem}.`,
+      'Use an absolute https origin with no path, query or fragment.',
+    );
+  }
+  const jobsProfile = topology.jobsProfile;
+  if (jobsProfile === null || !(JOBS_PROFILES as readonly string[]).includes(jobsProfile)) {
+    return fail(
+      `The jobs profile for ${environment} is not configured or invalid.`,
+      `Set jobsProfile to one of ${JOBS_PROFILES.join(', ')}.`,
+    );
+  }
+
+  if (profile === 'supabase') {
+    const required = [
+      'supabaseProjectRef',
+      'supabaseUrl',
+      'supabaseAuthUrl',
+      'supabasePublishableKey',
+      'nativeRedirectAllowlist',
+      'googleProjectId',
+      'googleRegion',
+      'cloudRunJobName',
+      'artifactImage',
+      'runnerServiceAccount',
+      'dispatcherServiceAccount',
+      'processorProtocol',
+      'processorCpu',
+      'processorMemory',
+      'processorTimeoutSeconds',
+      'jobsWorkerName',
+      'mediaBucketName',
+      'encodeWorkflowName',
+      'maintenanceWorkflowName',
+      'containerProfile',
+    ] as const;
+    const missing = required.filter((field) => topology[field] === null || topology[field] === '');
+    if (missing.length > 0) {
+      return fail(
+        `The Supabase deployment target for ${environment} is incomplete: ${missing.join(', ')}.`,
+        'Configure these fields in the repository target map, then rerun the offline plan.',
+      );
+    }
+    if (jobsProfile !== 'encode') {
+      return fail(
+        `Compute is disabled for the Supabase ${environment} target.`,
+        'The preview requires Cloudflare Workflows and a Cloud Run Job; configure jobsProfile as "encode".',
+      );
+    }
+    const apiUrl = topology.supabaseUrl as string;
+    const authUrl = topology.supabaseAuthUrl as string;
+    if (apiUrl !== authUrl || topology.nativeApiOrigin !== parsed.origin) {
+      return fail(
+        'Supabase Auth and API origins, or the native API origin, do not match the configured destinations.',
+        'Set supabaseAuthUrl to supabaseUrl and nativeApiOrigin to the Cloudflare Worker origin.',
+      );
+    }
+    const apiOrigin = parseOrigin(apiUrl);
+    const authOrigin = parseOrigin(authUrl);
+    if (!apiOrigin.ok || !authOrigin.ok) {
+      return fail(
+        'Supabase API and Auth URLs must be absolute HTTPS origins without paths.',
+        'Set the hosted project HTTPS origins from the same Supabase project.',
+      );
+    }
+    const callbacks = (topology.nativeRedirectAllowlist as string)
+      .split(',')
+      .map((v) => v.trim())
+      .filter(Boolean);
+    const callbackPattern =
+      /^(https:\/\/[^/?#]+\/auth\/callback|[a-z][a-z0-9+.-]*:\/\/auth\/callback)$/i;
+    if (
+      callbacks.length < 2 ||
+      callbacks.some((callback) => !callbackPattern.test(callback)) ||
+      !callbacks.includes(`${parsed.origin}/auth/callback`)
+    ) {
+      return fail(
+        'The native redirect allowlist must contain exact web and native /auth/callback URIs, including the Worker callback.',
+        'Set nativeRedirectAllowlist to a comma-delimited list of exact callback URIs.',
+      );
+    }
+    if (topology.processorProtocol !== 'sample-v1') {
+      return fail(
+        'The Cloud Run image protocol does not match the integrated processor (sample-v1).',
+        'Set processorProtocol to sample-v1.',
+      );
+    }
+    if (!(topology.artifactImage as string).includes('@sha256:')) {
+      return fail(
+        'The Cloud Run image must be pinned by digest.',
+        'Set artifactImage to an Artifact Registry URI ending in @sha256:<digest>.',
+      );
+    }
+    if (topology.runnerServiceAccount === topology.dispatcherServiceAccount) {
+      return fail(
+        'Cloud Run runner and dispatcher identities must be distinct.',
+        'Configure separate least-privilege service accounts.',
+      );
+    }
+    const projectId = topology.googleProjectId as string;
+    const region = topology.googleRegion as string;
+    const accountSuffix = `@${projectId}.iam.gserviceaccount.com`;
+    if (
+      ![topology.runnerServiceAccount, topology.dispatcherServiceAccount].every(
+        (identity) =>
+          typeof identity === 'string' &&
+          /^[a-z][a-z0-9-]*$/.test(identity.slice(0, identity.indexOf('@'))) &&
+          identity.endsWith(accountSuffix),
+      )
+    ) {
+      return fail(
+        'Cloud Run runner and dispatcher identities must belong to the configured Google project.',
+        'Set both service account emails to identities in googleProjectId.',
+      );
+    }
+    const imageUri = topology.artifactImage as string;
+    if (!imageUri.startsWith(`${region}-docker.pkg.dev/${projectId}/`)) {
+      return fail(
+        'The Artifact Registry image does not belong to the configured Google project and region.',
+        'Set artifactImage to an immutable image in the configured project and region.',
+      );
+    }
+    if (
+      !['1', '2', '4', '8'].includes(topology.processorCpu as string) ||
+      !['1Gi', '2Gi', '4Gi', '8Gi'].includes(topology.processorMemory as string)
+    ) {
+      return fail(
+        'Cloud Run resource limits are outside the supported bounded profile.',
+        'Use processorCpu 1, 2, 4 or 8 and processorMemory 1Gi, 2Gi, 4Gi or 8Gi.',
+      );
+    }
+    if (!/^[a-z][a-z0-9-]{0,48}[a-z0-9]$/.test(topology.cloudRunJobName as string)) {
+      return fail('Cloud Run Job name is malformed.', 'Use a lowercase Cloud Run resource name.');
+    }
+    const timeoutSeconds = Number(topology.processorTimeoutSeconds);
+    if (!Number.isInteger(timeoutSeconds) || timeoutSeconds < 60 || timeoutSeconds > 900) {
+      return fail(
+        'processorTimeoutSeconds must be an integer from 60 through 900.',
+        'Set a timeout within the processor bound.',
+      );
+    }
+    if (!/^[a-z0-9-]{20}$/.test(topology.supabaseProjectRef as string)) {
+      return fail(
+        'Supabase project ref must be a 20-character project identity.',
+        'Copy the exact project ref from Supabase settings.',
+      );
+    }
+    if (!apiUrl.startsWith('https://') || !authUrl.startsWith('https://')) {
+      return fail(
+        'Supabase API and Auth URLs must use HTTPS.',
+        'Set the hosted project HTTPS URLs.',
+      );
+    }
+    if (topology.mailFrom === null || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(topology.mailFrom)) {
+      return fail(
+        'A valid verified mail sender is required for the Supabase target.',
+        'Set mailFrom to the verified sender address.',
+      );
+    }
+    const supabase: NonNullable<ResolvedTarget['supabase']> = {
+      projectRef: topology.supabaseProjectRef as string,
+      url: apiUrl,
+      authUrl,
+      publishableKey: topology.supabasePublishableKey as string,
+      nativeRedirectAllowlist: callbacks,
+      googleProjectId: topology.googleProjectId as string,
+      googleRegion: topology.googleRegion as string,
+      jobName: topology.cloudRunJobName as string,
+      image: topology.artifactImage as string,
+      runnerServiceAccount: topology.runnerServiceAccount as string,
+      dispatcherServiceAccount: topology.dispatcherServiceAccount as string,
+      protocol: topology.processorProtocol as string,
+      cpu: topology.processorCpu as string,
+      memory: topology.processorMemory as string,
+      timeoutSeconds,
+    };
+    const target: ResolvedTarget = {
+      deploymentProfile: 'supabase',
+      environment: environment as TargetEnvironment,
+      project: options.project ?? DEPLOYMENT_CONFIG.projectName,
+      accountId: accountId.toLowerCase(),
+      workerName,
+      d1DatabaseId: '',
+      origin: parsed.origin,
+      wranglerConfig: `${CLIENT_DIR_RELATIVE}/wrangler.jsonc`,
+      jobsWranglerConfig: `${JOBS_DIR_RELATIVE}/wrangler.jsonc`,
+      compute: {
+        enabled: true,
+        profile: 'encode',
+        jobsWorkerName: topology.jobsWorkerName,
+        mediaBucketName: topology.mediaBucketName,
+        encodeWorkflowName: topology.encodeWorkflowName,
+        maintenanceWorkflowName: topology.maintenanceWorkflowName,
+        containerImage: supabase.image,
+        imageProtocol: supabase.protocol,
+        containerProfile: topology.containerProfile,
+      },
+      mailFrom: topology.mailFrom,
+      nativeApiOrigin: topology.nativeApiOrigin,
+      supabase,
+      requiredSecretNames: options.requiredSecretNames ?? SUPABASE_REMOTE_SECRET_NAMES,
+      requiredVarNames: REQUIRED_REMOTE_VAR_NAMES,
+    };
+    const incoherent = targetCompatibilityProblem(target);
+    if (incoherent !== null) {
+      return fail(incoherent.reason, incoherent.remedy);
+    }
+    return { ok: true, target };
+  }
+
   const databaseId = topology.d1DatabaseId;
   if (databaseId === null) {
     return fail(
@@ -478,39 +776,10 @@ export const resolveTarget = (
     );
   }
 
-  const rawOrigin = topology.origin;
-  if (rawOrigin === null) {
-    return fail(
-      `No public origin is configured for ${environment}, so a deploy could not be verified.`,
-      `bun run deploy:configure -- --env ${environment} --origin https://<host>\n` +
-        '  The origin cannot be derived: the workers.dev subdomain belongs to the account, ' +
-        'and an operator may serve a custom domain instead.',
-    );
-  }
-  const parsed = parseOrigin(rawOrigin);
-  if (!parsed.ok) {
-    return fail(
-      `The configured origin for ${environment} ${parsed.problem}.`,
-      'It must be an absolute https URL with no path, query or fragment: it is the base ' +
-        'URL Better Auth issues cookies for and the address verification fetches.',
-    );
-  }
-
-  const jobsProfile = topology.jobsProfile;
-  if (jobsProfile === null || !(JOBS_PROFILES as readonly string[]).includes(jobsProfile)) {
-    return fail(
-      `The jobs profile for ${environment} is ${
-        jobsProfile === null ? 'not configured' : `"${jobsProfile}"`
-      }.`,
-      `It must be one of: ${JOBS_PROFILES.join(', ')}. "disabled" is a real refusal that ` +
-        'leaves notes and auth working; "encode" admits jobs and therefore needs an image.\n' +
-        `  bun run deploy:configure -- --env ${environment} --jobs-profile <${JOBS_PROFILES.join('|')}>`,
-    );
-  }
-
   const computeEnabled = jobsProfile === 'encode';
 
   const resolvedTarget: ResolvedTarget = {
+    deploymentProfile: 'legacy',
     environment: environment as TargetEnvironment,
     project: options.project ?? DEPLOYMENT_CONFIG.projectName,
     accountId: accountId.toLowerCase(),
@@ -532,6 +801,7 @@ export const resolveTarget = (
     },
     mailFrom: topology.mailFrom ?? '',
     nativeApiOrigin: topology.nativeApiOrigin,
+    supabase: null,
     requiredSecretNames: options.requiredSecretNames ?? REQUIRED_REMOTE_SECRET_NAMES,
     requiredVarNames: REQUIRED_REMOTE_VAR_NAMES,
   };

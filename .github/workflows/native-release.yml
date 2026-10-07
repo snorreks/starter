@@ -52,9 +52,21 @@ on:
   workflow_dispatch:
     inputs:
       api_origin:
-        description: 'Absolute https origin the packaged clients are compiled against'
-        required: true
+        description: 'Legacy profile only: absolute https origin the packaged clients use'
+        required: false
         type: string
+      backend_profile:
+        description: 'Resolved deployment profile used by the packaged client'
+        required: true
+        default: legacy
+        type: choice
+        options: [legacy, supabase]
+      environment:
+        description: 'Resolved native client environment'
+        required: true
+        default: staging
+        type: choice
+        options: [staging, production]
       targets:
         description: 'Which platforms to produce artifacts for'
         required: true
@@ -105,11 +117,42 @@ jobs:
     outputs:
       origin: ${{ steps.config.outputs.origin }}
       sign: ${{ steps.config.outputs.sign }}
+      profile: ${{ steps.config.outputs.profile }}
+      environment: ${{ steps.config.outputs.environment }}
+      supabase_url: ${{ steps.config.outputs.supabase_url }}
+      supabase_project_ref: ${{ steps.config.outputs.supabase_project_ref }}
+      supabase_publishable_key: ${{ steps.config.outputs.supabase_publishable_key }}
     steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+      - name: Install locked tooling
+        run: bun install --frozen-lockfile
+      - name: Resolve the complete public target
+        id: resolve-target
+        if: ${{ inputs.backend_profile == 'supabase' }}
+        env:
+          DEPLOY_ENVIRONMENT: ${{ inputs.environment }}
+          STARTER_BACKEND_PROFILE: supabase
+          STARTER_DEPLOYMENT_TARGETS: ${{ vars.STARTER_DEPLOYMENT_TARGETS }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+          TARGET_FILE: ${{ runner.temp }}/native-target.json
+        run: |
+          bun run deploy:check --env "$DEPLOY_ENVIRONMENT" --json > "$TARGET_FILE"
+          node -e 'const fs=require("node:fs");const t=JSON.parse(fs.readFileSync(process.env.TARGET_FILE,"utf8")).target;if(!t||t.deploymentProfile!=="supabase"||!t.nativeApiOrigin||!t.supabase?.publishableKey)process.exit(1);for(const [k,v] of Object.entries({origin:t.nativeApiOrigin,supabase_url:t.supabase.url,supabase_project_ref:t.supabase.projectRef,supabase_publishable_key:t.supabase.publishableKey}))fs.appendFileSync(process.env.GITHUB_OUTPUT,k+"="+v+"\n");'
       - name: Record the requested configuration and what is missing
         id: config
         env:
           API_ORIGIN: ${{ inputs.api_origin }}
+          BACKEND_PROFILE: ${{ inputs.backend_profile }}
+          ENVIRONMENT: ${{ inputs.environment }}
+          RESOLVED_ORIGIN: ${{ steps.resolve-target.outputs.origin }}
+          SUPABASE_URL: ${{ steps.resolve-target.outputs.supabase_url }}
+          SUPABASE_PROJECT_REF: ${{ steps.resolve-target.outputs.supabase_project_ref }}
+          SUPABASE_PUBLISHABLE_KEY: ${{ steps.resolve-target.outputs.supabase_publishable_key }}
           TARGETS: ${{ inputs.targets }}
           SIGN: ${{ inputs.sign }}
           WINDOWS_CERTIFICATE_BASE64: ${{ secrets.WINDOWS_CERTIFICATE_BASE64 }}
@@ -125,6 +168,7 @@ jobs:
           ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
         run: |
           set -euo pipefail
+          if [ "$BACKEND_PROFILE" = supabase ]; then API_ORIGIN="$RESOLVED_ORIGIN"; fi
           case "$API_ORIGIN" in
             https://*) ;;
             *)
@@ -173,6 +217,11 @@ jobs:
           {
             echo "origin=$API_ORIGIN"
             echo "sign=$SIGN"
+            echo "profile=$BACKEND_PROFILE"
+            echo "environment=$ENVIRONMENT"
+            echo "supabase_url=$SUPABASE_URL"
+            echo "supabase_project_ref=$SUPABASE_PROJECT_REF"
+            echo "supabase_publishable_key=$SUPABASE_PUBLISHABLE_KEY"
           } >> "$GITHUB_OUTPUT"
 
           {
@@ -232,6 +281,11 @@ jobs:
         # does not build the wrong thing — it builds nothing, several minutes in.
         env:
           VITE_NATIVE_API_ORIGIN: ${{ needs.preflight.outputs.origin }}
+          VITE_NATIVE_AUTH_PROFILE: ${{ needs.preflight.outputs.profile }}
+          VITE_NATIVE_ENVIRONMENT: ${{ needs.preflight.outputs.environment }}
+          VITE_NATIVE_SUPABASE_URL: ${{ needs.preflight.outputs.supabase_url }}
+          VITE_NATIVE_SUPABASE_PROJECT_REF: ${{ needs.preflight.outputs.supabase_project_ref }}
+          VITE_NATIVE_SUPABASE_ANON_KEY: ${{ needs.preflight.outputs.supabase_publishable_key }}
         run: bun run native:build -- --platform windows
 
       - name: Import the code-signing certificate
@@ -347,6 +401,11 @@ jobs:
       - name: Build the app bundle and the DMG
         env:
           VITE_NATIVE_API_ORIGIN: ${{ needs.preflight.outputs.origin }}
+          VITE_NATIVE_AUTH_PROFILE: ${{ needs.preflight.outputs.profile }}
+          VITE_NATIVE_ENVIRONMENT: ${{ needs.preflight.outputs.environment }}
+          VITE_NATIVE_SUPABASE_URL: ${{ needs.preflight.outputs.supabase_url }}
+          VITE_NATIVE_SUPABASE_PROJECT_REF: ${{ needs.preflight.outputs.supabase_project_ref }}
+          VITE_NATIVE_SUPABASE_ANON_KEY: ${{ needs.preflight.outputs.supabase_publishable_key }}
         run: bun run native:build -- --platform macos
 
       - name: Import the Developer ID certificate
@@ -526,6 +585,11 @@ jobs:
       - name: Build the binary, the AppImage and the .deb
         env:
           VITE_NATIVE_API_ORIGIN: ${{ needs.preflight.outputs.origin }}
+          VITE_NATIVE_AUTH_PROFILE: ${{ needs.preflight.outputs.profile }}
+          VITE_NATIVE_ENVIRONMENT: ${{ needs.preflight.outputs.environment }}
+          VITE_NATIVE_SUPABASE_URL: ${{ needs.preflight.outputs.supabase_url }}
+          VITE_NATIVE_SUPABASE_PROJECT_REF: ${{ needs.preflight.outputs.supabase_project_ref }}
+          VITE_NATIVE_SUPABASE_ANON_KEY: ${{ needs.preflight.outputs.supabase_publishable_key }}
         run: bun run native:build -- --platform linux
 
       - name: Name the artifacts
@@ -684,6 +748,11 @@ jobs:
       - name: Build the release bundle
         env:
           VITE_NATIVE_API_ORIGIN: ${{ needs.preflight.outputs.origin }}
+          VITE_NATIVE_AUTH_PROFILE: ${{ needs.preflight.outputs.profile }}
+          VITE_NATIVE_ENVIRONMENT: ${{ needs.preflight.outputs.environment }}
+          VITE_NATIVE_SUPABASE_URL: ${{ needs.preflight.outputs.supabase_url }}
+          VITE_NATIVE_SUPABASE_PROJECT_REF: ${{ needs.preflight.outputs.supabase_project_ref }}
+          VITE_NATIVE_SUPABASE_ANON_KEY: ${{ needs.preflight.outputs.supabase_publishable_key }}
         run: bun run native:android -- build --aab --ci
 
       - name: Verify the bundle is signed before calling it signed
@@ -711,6 +780,11 @@ jobs:
         env:
           SIGN: ${{ inputs.sign }}
           VITE_NATIVE_API_ORIGIN: ${{ needs.preflight.outputs.origin }}
+          VITE_NATIVE_AUTH_PROFILE: ${{ needs.preflight.outputs.profile }}
+          VITE_NATIVE_ENVIRONMENT: ${{ needs.preflight.outputs.environment }}
+          VITE_NATIVE_SUPABASE_URL: ${{ needs.preflight.outputs.supabase_url }}
+          VITE_NATIVE_SUPABASE_PROJECT_REF: ${{ needs.preflight.outputs.supabase_project_ref }}
+          VITE_NATIVE_SUPABASE_ANON_KEY: ${{ needs.preflight.outputs.supabase_publishable_key }}
         run: |
           set -euo pipefail
           dir="$(dirname "$(find apps/frontend/native/src-tauri/gen/android/app/build/outputs -name '*.aab' -type f | head -n 1)")"
@@ -872,6 +946,11 @@ jobs:
           # shell source.
           SIGN: ${{ inputs.sign }}
           VITE_NATIVE_API_ORIGIN: ${{ needs.preflight.outputs.origin }}
+          VITE_NATIVE_AUTH_PROFILE: ${{ needs.preflight.outputs.profile }}
+          VITE_NATIVE_ENVIRONMENT: ${{ needs.preflight.outputs.environment }}
+          VITE_NATIVE_SUPABASE_URL: ${{ needs.preflight.outputs.supabase_url }}
+          VITE_NATIVE_SUPABASE_PROJECT_REF: ${{ needs.preflight.outputs.supabase_project_ref }}
+          VITE_NATIVE_SUPABASE_ANON_KEY: ${{ needs.preflight.outputs.supabase_publishable_key }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
           APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
         run: |
@@ -895,6 +974,11 @@ jobs:
         env:
           SIGN: ${{ inputs.sign }}
           VITE_NATIVE_API_ORIGIN: ${{ needs.preflight.outputs.origin }}
+          VITE_NATIVE_AUTH_PROFILE: ${{ needs.preflight.outputs.profile }}
+          VITE_NATIVE_ENVIRONMENT: ${{ needs.preflight.outputs.environment }}
+          VITE_NATIVE_SUPABASE_URL: ${{ needs.preflight.outputs.supabase_url }}
+          VITE_NATIVE_SUPABASE_PROJECT_REF: ${{ needs.preflight.outputs.supabase_project_ref }}
+          VITE_NATIVE_SUPABASE_ANON_KEY: ${{ needs.preflight.outputs.supabase_publishable_key }}
         run: |
           set -euo pipefail
           archive="$(find apps/frontend/native/src-tauri/gen/apple -maxdepth 4 -name '*.xcarchive' -type d | head -n 1)"

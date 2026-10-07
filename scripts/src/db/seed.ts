@@ -10,6 +10,7 @@ import { join } from 'node:path';
 import { MOCK_NOTES, MOCK_USER } from '@starter/fixtures';
 import { runWrangler } from '../cloudflare/wrangler.ts';
 import { CLIENT_DIR } from '../shared/paths.ts';
+import { seedSupabaseLocal } from './seed_supabase.ts';
 
 const sql = (value: string): string => `'${value.replaceAll("'", "''")}'`;
 const epochSeconds = Math.floor(Date.now() / 1000);
@@ -39,7 +40,27 @@ export const SEED_STATEMENTS: readonly string[] = [
   ),
 ];
 
-export const main = (_args: readonly string[] = []): number => {
+export const main = async (args: readonly string[] = []): Promise<number> => {
+  if (process.env.STARTER_BACKEND_PROFILE === 'supabase') {
+    if (args.length > 0) {
+      process.stderr.write(
+        'Supabase synthetic seed accepts no remote target. It is restricted to the local loopback stack.\n',
+      );
+      return 2;
+    }
+    try {
+      const result = await seedSupabaseLocal();
+      process.stdout.write(
+        `Seeded local Supabase with synthetic user ${result.userId} and ${result.noteCount} notes.\n`,
+      );
+      return 0;
+    } catch (error) {
+      process.stderr.write(
+        `${error instanceof Error ? error.message : 'Local Supabase seed failed.'}\n`,
+      );
+      return 1;
+    }
+  }
   process.stdout.write(
     'Seeding the local database with synthetic data:\n' +
       `  1 user, ${MOCK_NOTES.length} notes — all synthetic, all addressed ${MOCK_USER.email}\n\n`,

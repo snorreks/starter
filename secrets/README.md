@@ -22,7 +22,7 @@ way `staging.enc.env` was — and its absence is a refusal, not a fallback:
 Nothing falls back to the GitHub environment secrets behind your back. If a
 production deploy needs its secrets today, run it with `secrets_source: github`.
 
-Each file holds exactly the two **runtime** secrets the Workers need, and nothing
+The legacy file holds exactly the two **runtime** secrets the Worker needs, and nothing
 else:
 
 ```
@@ -34,6 +34,17 @@ RESEND_API_KEY=ENC[…]
 scoped to an account, it belongs to the `staging` GitHub environment rather than to
 this repository's history, and it is never a runtime secret. Putting it here would
 give every developer who can read this file a working Cloudflare token.
+
+The Supabase preview has a separate runtime ciphertext per environment:
+`staging.supabase.enc.env` and `production.supabase.enc.env`. Its plaintext names are
+`SUPABASE_SERVICE_ROLE_KEY`, `RESEND_API_KEY`, and `GOOGLE_DISPATCHER_CREDENTIAL`.
+The web Worker needs the service-role and mail keys; the jobs Worker needs the
+service-role key for runner grants and the dispatcher credential for Cloud Run
+invocation. `SUPABASE_ACCESS_TOKEN` and short-lived `GOOGLE_ACCESS_TOKEN` are
+deployment credentials, not runtime values, and must not be stored in these files.
+GitHub-source installs use environment secrets with the runtime names above. Create
+profile-specific ciphertext with the protected editor and in-place SOPS encryption
+steps below; do not reuse the legacy ciphertext, which does not contain these values.
 
 ## Creating one
 
