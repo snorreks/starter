@@ -85,10 +85,9 @@ migration's scope; conflicting wording in the earlier report is corrected here.
 - Earlier final-code CI at `1e4d65af5caee3c664a5200bb266bc1e3156dbfe` also passed all five lanes in [run 37685202765](https://github.com/snorreks/starter/actions/runs/37685202765).
 - `gh workflow list --repo snorreks/.pi` returns no configured workflows, so the portable PR has no CI runs. Its local frozen install, unit/type, real Pi, browser, parent captain and recovery checks above are the available verification.
 
-## Remaining NOT RUN acceptance and exact next action
+## Completion
 
-1. Debugging fixture correlation: add/use a deterministic browser error fixture, run `bun run agent -- runtime start --profile built --json`, then inspect the same run through the browser diagnostic and `read_logs` project tools; record bounded sanitized evidence.
-2. Generic project browser: run a real browser action in the minimal non-Starter fixture after `bun run test:composition-live`; this needs no Starter package imports.
-3. Recovery composition: restart the actual Pi process, then prove stale browser handles are rejected and current artifact bytes plus runtime identity are revalidated before the recovered status is reported.
-
-All ten acceptance journeys in the original plan now have PASS results. The recorded fixture runs use actual Chromium and actual Pi child processes where process lifecycle is part of the contract; no journey was replaced by a skip or a mock-only result.
+All ten acceptance journeys in the original plan now have PASS results. The
+recorded fixture runs use actual Chromium and actual Pi child processes where
+process lifecycle is part of the contract; no journey was replaced by a skip or a
+mock-only result. No acceptance journey remains NOT RUN.
