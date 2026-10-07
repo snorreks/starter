@@ -3,6 +3,7 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { prepareReviewImage } from '../src/visual/images.ts';
+import { reviewPrompt } from '../src/visual/prompt.ts';
 import { requestStructuredVision } from '../src/visual/providers/structured_vision.ts';
 
 const runningServers: Array<{ stop: (force?: boolean) => void }> = [];
@@ -45,7 +46,7 @@ const config = (baseUrl: string) => ({
 });
 
 describe('vision provider boundary', () => {
-  test('sends an image data part and strict schema, then locally validates the reply', async () => {
+  test('requests a JSON object, includes the review contract, and locally validates the reply', async () => {
     let received: Record<string, unknown> | undefined;
     const server = Bun.serve({
       hostname: '127.0.0.1',
@@ -63,14 +64,36 @@ describe('vision provider boundary', () => {
     const response = await requestStructuredVision({
       config: config(`http://127.0.0.1:${server.port}/v1`),
       image: { bytes: imageBytes, mimeType: 'image/png' },
-      prompt: 'Check the title.',
+      prompt: reviewPrompt({
+        scenarioId: 'login',
+        app: 'web',
+        state: 'signed-out',
+        viewportTheme: 'desktop-light',
+        heading: 'Sign in',
+        controls: [],
+        requirements: ['title-visible'],
+        content: [],
+      }),
       requirementIds: ['title-visible'],
     });
     expect(response.review.summary).toBe('The title is clear.');
     expect(response.usage.inputTokens).toBe(101);
     const messages = received?.messages as Array<{ content: Array<Record<string, unknown>> }>;
     expect(messages[0]?.content.some((part) => part.type === 'image_url')).toBe(true);
-    expect(received?.response_format).toBeDefined();
+    expect(received?.response_format).toEqual({ type: 'json_object' });
+    const text = messages[0]?.content.find((part) => part.type === 'text')?.text;
+    expect(text).toContain('schemaVersion');
+    expect(text).toContain('responsiveFit');
+    expect(text).toContain(
+      'Requirement IDs (copy these exact strings into the requirements array): title-visible.',
+    );
+    expect(text).toContain('box must be null or an object');
+    expect(text).toContain(
+      'dimension must be one of layout, typography, hierarchy, consistency, responsiveFit, stateClarity',
+    );
+    expect(text).toContain(
+      'category, observation, region, impact, correction, and uncertainty must be strings',
+    );
   });
 
   test('makes at most one schema repair request and includes the image again', async () => {

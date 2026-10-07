@@ -16,6 +16,7 @@ Viewport and theme: ${input.viewportTheme}.
 Expected heading: ${input.heading}.
 Required visible controls: ${input.controls.join(', ') || 'none'}.
 Expected content: ${input.content.join('; ') || 'none'}.
+Requirement IDs (copy these exact strings into the requirements array): ${input.requirements.join(', ') || 'none'}.
 Visual requirements: ${input.requirements.join('; ')}.
 
 Use ratings 0 unusable/missing, 1 major impairment, 2 usable with clear problems,
