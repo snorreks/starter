@@ -19,8 +19,8 @@ silently rolling back unrelated work. Browser/Worker/E2E remain separate checks.
 | File | Read by | Should it be edited? |
 |---|---|---|
 | `config/toolchain.json` | Nix, doctor, update command | Authority; update through the CLI |
-| `.bun-version` | `oven-sh/setup-bun` in CI, and `proto` when Moon resolves the `bun` toolchain | Generated mirror |
-| `.github/workflows/ci.yml` → `BUN_VERSION` | CI | Only in step with `.bun-version` |
+| `.bun-version` | Local tooling; checked by setup doctor and `version-mirrors` | Generated mirror |
+| `.github/workflows/*.yml` → `BUN_VERSION` | CI via `oven-sh/setup-bun` | Literal mirror checked by `version-mirrors` |
 | `.moon/toolchains.yml` | Moon | **No.** The `version` key is deliberately absent; see below |
 
 ```bash
@@ -28,35 +28,21 @@ grep -h . .bun-version                      # 1.4.2
 grep A 'BUN_VERSION' .github/workflows/ci.yml
 ```
 
-## Why `.moon/toolchains.yml` does not pin a version
+## Moon and Proto
 
-It can, and it used to. Moon delegates toolchain management to `proto`, and proto
-treats an explicit `version` as a hard requirement: with one pinned, every task in
-every project fails with `missing_tool` unless that exact patch is installed, and
-proto will not fall back to a Bun on your `PATH`.
+Proto is **not required** by this repository's supported Moon configuration.
+`.moon/toolchains.yml` declares `bun: {}` without a version, and Moon runs the Bun
+already on `PATH`. We verified `moon run scripts:test` with `HOME` and
+`PROTO_HOME` pointed at empty directories and no Proto executable on `PATH`; Moon
+started the task and discovered the test suite. This repository neither reads
+`PROTO_HOME` nor relies on Proto for Moon tasks.
 
-That is right for a CI image you control and wrong for a template. A contributor
-on 1.4.3 would be told to downgrade to a version nobody asked them to use, and the
-first thing the repository teaches them is that it does not work on their
-machine. Without the pin, proto auto-detects, and `.bun-version` still governs CI.
-
-## If Moon reports a missing tool
-
-```
-proto::commands::run::missing_tool
-```
-
-Either install the version through proto:
-
-```bash
-proto install bun "$(cat .bun-version)"
-```
-
-or re-enter the pinned Nix shell (`nix develop`). Do not delete `.bun-version` to
-work around a missing tool: it is a verified CI mirror, not disposable local state.
-
-This error is the single most confusing thing a new contributor will hit here, and
-it is a consequence of a genuine trade-off rather than a bug.
+`.bun-version` remains a mirror of `config/toolchain.json`. CI uses a separate
+`BUN_VERSION` literal in its workflows, as documented in `config/toolchain.json`
+and checked by `version-mirrors`. `nix develop` supplies the configured version,
+and setup doctor plus `bun run guard` check the runtime and mirrors. Do not remove
+the pin to change Moon resolution; use the supported shell or install the version
+named by `config/toolchain.json`.
 
 ## The TypeScript compiler: `tsc`, not `tsgo`
 

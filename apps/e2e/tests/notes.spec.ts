@@ -24,6 +24,8 @@
 
 import { expect, type Page, test } from '@playwright/test';
 
+const SUPABASE_PREVIEW = process.env.STARTER_BACKEND_PROFILE === 'supabase';
+
 /**
  * A fresh account.
  *
@@ -63,6 +65,13 @@ const verificationLink = async (page: Page, email: string): Promise<string> => {
   if (line === undefined) {
     throw new Error('No link in the verification mail');
   }
+  if (!SUPABASE_PREVIEW) {
+    return line.trim();
+  }
+
+  // GoTrue's browser callback cannot resolve its loopback Auth host in Chromium.
+  // Redeem only the verification request in Node's request context, then let the
+  // browser navigate the real application callback and receive its session cookie.
   const responseFromAuth = await page.request.get(line.trim(), { maxRedirects: 0 });
   if (responseFromAuth.status() < 300 || responseFromAuth.status() >= 400) {
     throw new Error(`Auth verification endpoint returned HTTP ${responseFromAuth.status()}`);
@@ -79,8 +88,8 @@ const verificationLink = async (page: Page, email: string): Promise<string> => {
 /**
  * Sign up, confirm the address, then sign in — and land on the notes screen.
  *
- * Confirmation code exchange creates a session in the selected Supabase SDK. The
- * legacy backend preserves its separate sign-in step after email confirmation.
+ * Supabase exchanges its confirmation code at the application callback; legacy
+ * Better Auth confirms the address, then requires a separate sign-in.
  */
 const signUp = async (page: Page, account = newAccount()): Promise<void> => {
   await page.goto('/login');
@@ -101,8 +110,7 @@ const signUp = async (page: Page, account = newAccount()): Promise<void> => {
 
   await page.goto(await verificationLink(page, account.email));
   await expect(page).toHaveURL(/\/verify-email/);
-
-  if (process.env.STARTER_BACKEND_PROFILE === 'supabase') {
+  if (SUPABASE_PREVIEW) {
     await expect(page.getByTestId('current-user')).toHaveText(account.email);
   } else {
     await page.goto('/login');

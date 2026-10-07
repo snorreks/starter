@@ -507,6 +507,7 @@ describe('documented-paths', () => {
       'docs/lint.md',
       'docs/starter-extraction.md',
       'docs/testing.md',
+      'docs/worktrees.md',
       'docs/toolchain.md',
     ]) {
       expect(existsSync(join(REPO_ROOT, doc)), `Expected document is missing: ${doc}`).toBe(true);

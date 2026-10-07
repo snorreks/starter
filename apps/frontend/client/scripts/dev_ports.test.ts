@@ -52,7 +52,7 @@ describe('dev port environment overrides', () => {
   test('an unset port is the default', async () => {
     const ports = await loadPorts(undefined);
 
-    expect(ports.CLIENT_DEV_PORT).toBe(5173);
+    expect(ports.CLIENT_DEV_PORT).toBe(ports.defaultWorktreePort(process.cwd()));
     expect(ports.DEV_HOST).toBe('127.0.0.1');
   });
 
@@ -61,7 +61,14 @@ describe('dev port environment overrides', () => {
     // same reason: it is a leftover, not a port somebody chose.
     const ports = await loadPorts('   ');
 
-    expect(ports.CLIENT_DEV_PORT).toBe(5173);
+    expect(ports.CLIENT_DEV_PORT).toBe(ports.defaultWorktreePort(process.cwd()));
+  });
+
+  test('two checkout roots receive different stable defaults', async () => {
+    const ports = await loadPorts(undefined);
+    expect(ports.defaultWorktreePort('/worktrees/first/apps/frontend/client')).not.toBe(
+      ports.defaultWorktreePort('/worktrees/second/apps/frontend/client'),
+    );
   });
 
   test('a valid port is used verbatim', async () => {
