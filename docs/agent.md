@@ -355,11 +355,11 @@ concurrency, then silent failure, then boundary violations. It is told to state
 plainly when it found nothing in a category rather than inventing a finding — an
 invented finding costs more than a missed stylistic one.
 
-## One TypeBox
+## Pi tool schemas
 
-The extensions and the rest of the repository both import `typebox` (1.x).
-Pi's `registerTool` consumes a TypeBox 1.x schema object, so the whole
-repository uses one version.
+Pi's `registerTool` consumes TypeBox schema objects. The `.pi/` tool namespace
+keeps its TypeBox declarations and dispatch-time validation; application wire
+contracts use Valibot through Standard Schema instead.
 
 `typebox/value` is used for the dispatch-time validation in
 `lib/tool_namespace.ts`, so `params` are checked against each action's own schema

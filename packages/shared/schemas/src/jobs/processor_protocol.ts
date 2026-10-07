@@ -17,7 +17,7 @@
 // the other, so a field added on one side without the other is a mismatch this
 // schema refuses to paper over.
 
-import { type Static, Type } from 'typebox';
+import * as v from 'valibot';
 import { literalUnion } from './job.ts';
 
 /**
@@ -41,88 +41,73 @@ export const PROCESSOR_HEADER_PRESET = 'x-preset';
 export const PROCESSOR_HEADER_ATTEMPT = 'x-attempt-id';
 
 /** Every bound the processor enforces, as its `/health` reports it. */
-export const ProcessorLimitsSchema = Type.Object(
-  {
-    max_input_bytes: Type.Integer({ minimum: 1 }),
-    max_output_bytes: Type.Integer({ minimum: 1 }),
-    encode_deadline_ms: Type.Integer({ minimum: 1 }),
-    probe_deadline_ms: Type.Integer({ minimum: 1 }),
-    max_encode_threads: Type.Integer({ minimum: 1 }),
-    max_concurrent_encodes: Type.Integer({ minimum: 1 }),
-    max_attempt_id_len: Type.Integer({ minimum: 1 }),
-    stderr_keep_bytes: Type.Integer({ minimum: 1 }),
-  },
-  { additionalProperties: false },
-);
+export const ProcessorLimitsSchema = v.strictObject({
+  max_input_bytes: v.pipe(v.number(), v.integer(), v.finite(), v.minValue(1)),
+  max_output_bytes: v.pipe(v.number(), v.integer(), v.finite(), v.minValue(1)),
+  encode_deadline_ms: v.pipe(v.number(), v.integer(), v.finite(), v.minValue(1)),
+  probe_deadline_ms: v.pipe(v.number(), v.integer(), v.finite(), v.minValue(1)),
+  max_encode_threads: v.pipe(v.number(), v.integer(), v.finite(), v.minValue(1)),
+  max_concurrent_encodes: v.pipe(v.number(), v.integer(), v.finite(), v.minValue(1)),
+  max_attempt_id_len: v.pipe(v.number(), v.integer(), v.finite(), v.minValue(1)),
+  stderr_keep_bytes: v.pipe(v.number(), v.integer(), v.finite(), v.minValue(1)),
+});
 
-export type ProcessorLimits = Static<typeof ProcessorLimitsSchema>;
+export type ProcessorLimits = v.InferOutput<typeof ProcessorLimitsSchema>;
 
 /** One accepted preset, described well enough for a caller to display it. */
-export const ProcessorPresetSummarySchema = Type.Object(
-  {
-    id: Type.String({ minLength: 1 }),
-    width: Type.Integer({ minimum: 1 }),
-    height: Type.Integer({ minimum: 1 }),
-    fps: Type.Integer({ minimum: 1 }),
-    video_codec: Type.String({ minLength: 1 }),
-    /** `null` for a preset with no audio stream. */
-    audio_codec: Type.Union([Type.String({ minLength: 1 }), Type.Null()]),
-    container: Type.String({ minLength: 1 }),
-  },
-  { additionalProperties: false },
-);
+export const ProcessorPresetSummarySchema = v.strictObject({
+  id: v.pipe(v.string(), v.minLength(1)),
+  width: v.pipe(v.number(), v.integer(), v.finite(), v.minValue(1)),
+  height: v.pipe(v.number(), v.integer(), v.finite(), v.minValue(1)),
+  fps: v.pipe(v.number(), v.integer(), v.finite(), v.minValue(1)),
+  video_codec: v.pipe(v.string(), v.minLength(1)),
+  /** `null` for a preset with no audio stream. */
+  audio_codec: v.union([v.pipe(v.string(), v.minLength(1)), v.null()]),
+  container: v.pipe(v.string(), v.minLength(1)),
+});
 
-export type ProcessorPresetSummary = Static<typeof ProcessorPresetSummarySchema>;
+export type ProcessorPresetSummary = v.InferOutput<typeof ProcessorPresetSummarySchema>;
 
 /** What the processor can do, from its `GET /health`. */
-export const ProcessorHealthSchema = Type.Object(
-  {
-    release: Type.String({ minLength: 1 }),
-    protocol: Type.String({ minLength: 1 }),
-    presets: Type.Array(ProcessorPresetSummarySchema, { minItems: 1 }),
-    fixture: Type.String({ minLength: 1 }),
-    limits: ProcessorLimitsSchema,
-  },
-  { additionalProperties: false },
-);
+export const ProcessorHealthSchema = v.strictObject({
+  release: v.pipe(v.string(), v.minLength(1)),
+  protocol: v.pipe(v.string(), v.minLength(1)),
+  presets: v.pipe(v.array(ProcessorPresetSummarySchema), v.minLength(1)),
+  fixture: v.pipe(v.string(), v.minLength(1)),
+  limits: ProcessorLimitsSchema,
+});
 
-export type ProcessorHealth = Static<typeof ProcessorHealthSchema>;
+export type ProcessorHealth = v.InferOutput<typeof ProcessorHealthSchema>;
 
 /** What ffprobe actually measured about the produced file. */
-export const ProcessorProbeSummarySchema = Type.Object(
-  {
-    container_format: Type.String({ minLength: 1 }),
-    video_codec: Type.String({ minLength: 1 }),
-    width: Type.Integer({ minimum: 1 }),
-    height: Type.Integer({ minimum: 1 }),
-    duration_ms: Type.Integer({ minimum: 1 }),
-    video_streams: Type.Integer({ minimum: 1 }),
-    audio_streams: Type.Integer({ minimum: 0 }),
-  },
-  { additionalProperties: false },
-);
+export const ProcessorProbeSummarySchema = v.strictObject({
+  container_format: v.pipe(v.string(), v.minLength(1)),
+  video_codec: v.pipe(v.string(), v.minLength(1)),
+  width: v.pipe(v.number(), v.integer(), v.finite(), v.minValue(1)),
+  height: v.pipe(v.number(), v.integer(), v.finite(), v.minValue(1)),
+  duration_ms: v.pipe(v.number(), v.integer(), v.finite(), v.minValue(1)),
+  video_streams: v.pipe(v.number(), v.integer(), v.finite(), v.minValue(1)),
+  audio_streams: v.pipe(v.number(), v.integer(), v.finite(), v.minValue(0)),
+});
 
-export type ProcessorProbeSummary = Static<typeof ProcessorProbeSummarySchema>;
+export type ProcessorProbeSummary = v.InferOutput<typeof ProcessorProbeSummarySchema>;
 
 /** The metadata a successful `/encode` reports about the bytes it produced. */
-export const ProcessorEncodeSuccessSchema = Type.Object(
-  {
-    protocol: Type.String({ minLength: 1 }),
-    preset: Type.String({ minLength: 1 }),
-    attempt_id: Type.String({ minLength: 1 }),
-    output_bytes: Type.Integer({ minimum: 1 }),
-    output_sha256: Type.String({ pattern: '^[0-9a-f]{64}$' }),
-    probe: ProcessorProbeSummarySchema,
-  },
-  { additionalProperties: false },
-);
+export const ProcessorEncodeSuccessSchema = v.strictObject({
+  protocol: v.pipe(v.string(), v.minLength(1)),
+  preset: v.pipe(v.string(), v.minLength(1)),
+  attempt_id: v.pipe(v.string(), v.minLength(1)),
+  output_bytes: v.pipe(v.number(), v.integer(), v.finite(), v.minValue(1)),
+  output_sha256: v.pipe(v.string(), v.regex(/^[0-9a-f]{64}$/)),
+  probe: ProcessorProbeSummarySchema,
+});
 
-export type ProcessorEncodeSuccess = Static<typeof ProcessorEncodeSuccessSchema>;
+export type ProcessorEncodeSuccess = v.InferOutput<typeof ProcessorEncodeSuccessSchema>;
 
 /**
  * The processor's frozen error tokens.
  *
- * Enumerated rather than `Type.String()` because a caller branching on them
+ * Enumerated rather than `v.string()` because a caller branching on them
  * needs the *union*, and because the retry decision depends on it: only the
  * codes marked retryable may be retried, and everything else is terminal.
  */
@@ -145,7 +130,7 @@ export const PROCESSOR_ERROR_CODES = [
 
 export const ProcessorErrorCodeSchema = literalUnion(PROCESSOR_ERROR_CODES);
 
-export type ProcessorErrorCode = Static<typeof ProcessorErrorCodeSchema>;
+export type ProcessorErrorCode = v.InferOutput<typeof ProcessorErrorCodeSchema>;
 
 /**
  * The subset worth retrying with the same bytes.
@@ -165,19 +150,13 @@ export const isRetryableProcessorError = (code: ProcessorErrorCode): boolean =>
   RETRYABLE_PROCESSOR_ERROR_CODES.includes(code);
 
 /** The body of every non-2xx processor response. */
-export const ProcessorErrorSchema = Type.Object(
-  {
-    error: Type.Object(
-      {
-        code: ProcessorErrorCodeSchema,
-        /** A fixed sentence. Never contains caller data, paths or stderr. */
-        message: Type.String({ minLength: 1 }),
-        retryable: Type.Boolean(),
-      },
-      { additionalProperties: false },
-    ),
-  },
-  { additionalProperties: false },
-);
+export const ProcessorErrorSchema = v.strictObject({
+  error: v.strictObject({
+    code: ProcessorErrorCodeSchema,
+    /** A fixed sentence. Never contains caller data, paths or stderr. */
+    message: v.pipe(v.string(), v.minLength(1)),
+    retryable: v.boolean(),
+  }),
+});
 
-export type ProcessorError = Static<typeof ProcessorErrorSchema>;
+export type ProcessorError = v.InferOutput<typeof ProcessorErrorSchema>;

@@ -1,6 +1,6 @@
 # @starter/schemas
 
-Portable TypeBox schemas and the project app registry.
+Portable Valibot application contracts.
 
 ## Purpose and runtime
 
@@ -10,11 +10,12 @@ runtime dependencies on other projects** — not "few", none.
 
 - Import the subpath you need (`@starter/schemas/notes`) rather than the barrel.
 - `LogEventSchema` is the single structured log shape for every plane.
-- `app_registry.ts` is the only place app -> worker / bucket / adapter mappings
-  live. Deployment tooling, `bun run logs` and the Pi log tool all read it.
+- Deployment registry configuration stays in `scripts/src/registry/app_registry.ts`;
+  it is tooling configuration, not an application wire contract.
 
-TypeBox is the TypeScript authority for wire shapes. A wire fixture is the
-documented check that a non-TypeScript implementation agrees with it.
+Valibot schemas implement Standard Schema v1 synchronously. `strictObject` refuses
+unknown keys, and parsing leaves the wire values unchanged. Rust protocol goldens
+check that the non-TypeScript processor agrees with its shared contract.
 
 ## Setup and configuration
 

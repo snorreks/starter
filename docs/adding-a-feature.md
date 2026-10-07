@@ -13,29 +13,31 @@ One file per entity. The schema is the single source of truth for the client's
 type, the Worker's validation, and the database column types.
 
 ```ts
-export const ThingSchema = Type.Object({
+import * as v from 'valibot';
+
+export const ThingSchema = v.strictObject({
   id: ThingIdSchema,
   ownerId: UserIdSchema,           // ownership is almost always present
-  name: Type.String({ minLength: 1, maxLength: 120 }),
-  createdAt: Type.Number(),         // epoch milliseconds
-}, { additionalProperties: false });
-export type Thing = Static<typeof ThingSchema>;
+  name: v.pipe(v.string(), v.minLength(1), v.maxLength(120)),
+  createdAt: v.number(),           // epoch milliseconds
+});
+export type Thing = v.InferOutput<typeof ThingSchema>;
 ```
 
-`additionalProperties: false` on every object. It is what makes `Value.Check` a
-refusal rather than a coercion mechanism: without it an unknown field is silently
-dropped, and the client is told the write succeeded.
+Use `strictObject` on every object. Unknown fields are refused rather than silently
+dropped, and the client is not told a write succeeded when the contract rejected it.
 
 Derive create and update schemas separately:
 
 ```ts
-export const ThingCreateSchema = Type.Object({
-  name: Type.String({ minLength: 1, maxLength: 120 }),
-}, { additionalProperties: false });
+export const ThingCreateSchema = v.strictObject({
+  name: v.pipe(v.string(), v.minLength(1), v.maxLength(120)),
+});
 
-export const ThingUpdateSchema = Type.Object({
-  name: Type.Optional(Type.String({ minLength: 1, maxLength: 120 })),
-}, { additionalProperties: false, minProperties: 1 });
+export const ThingUpdateSchema = v.pipe(
+  v.strictObject({ name: v.optional(v.pipe(v.string(), v.minLength(1), v.maxLength(120))) }),
+  v.check((value) => Object.keys(value).length > 0, 'At least one field must be provided.'),
+);
 ```
 
 `ThingCreateSchema` must not accept `ownerId`. Ownership comes from the session,

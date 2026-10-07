@@ -62,7 +62,7 @@
 // echoes the resolved target.
 
 import type { DeploymentEnvironment } from '@starter/schemas';
-import { Value } from 'typebox/value';
+import { checkSchema } from '@starter/schemas/common';
 import {
   DeploymentEnvironmentMapSchema,
   ENVIRONMENT_TARGET_FIELDS,
@@ -200,7 +200,7 @@ export const parseEnvironmentMap = (raw: string | undefined): MapResult => {
   const problems: MapProblem[] = [];
   const map: Partial<Record<DeploymentEnvironment, EnvironmentTargets>> = {};
 
-  if (!Value.Check(DeploymentEnvironmentMapSchema, parsed)) {
+  if (!checkSchema(DeploymentEnvironmentMapSchema, parsed)) {
     if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
       problems.push({
         message: `${ENVIRONMENT_MAP_VARIABLE} must be a JSON object keyed by environment.`,

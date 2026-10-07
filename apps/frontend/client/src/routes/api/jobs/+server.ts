@@ -3,7 +3,7 @@
 // `/api/jobs` — the collection. Two verbs, both thin.
 //
 // Thin is a specific claim: this file resolves who the caller is, validates the
-// request against the shared TypeBox schema, maps a service outcome to a status
+// request against the shared schema, maps a service outcome to a status
 // code, and logs the write. It contains no SQL, no budget arithmetic and no
 // ownership rule, because those live in `#lib/server/jobs_service.ts` and
 // `@starter/jobs` where they are reachable from a server load and a scheduled
@@ -23,12 +23,12 @@
 // serve notes and auth perfectly well while answering *this* endpoint with a name
 // for what is missing — not a 500, and not a 404 that reads like a wrong URL.
 
+import { checkSchema } from '@starter/schemas/common';
 import {
   CreateEncodeJobSchema,
   IDEMPOTENCY_KEY_HEADER,
   IdempotencyKeySchema,
 } from '@starter/schemas/jobs';
-import { Value } from 'typebox/value';
 import { json, jsonError, readJsonBody, unauthorized } from '#lib/server/http.ts';
 import type { RequestHandler } from './$types';
 
@@ -131,7 +131,7 @@ export const POST: RequestHandler = async ({ locals, request }) => {
   // client that omits or malforms it needs to be told *that*, not "validation
   // failed".
   const idempotencyKey = request.headers.get(IDEMPOTENCY_KEY_HEADER);
-  if (idempotencyKey === null || !Value.Check(IdempotencyKeySchema, idempotencyKey)) {
+  if (idempotencyKey === null || !checkSchema(IdempotencyKeySchema, idempotencyKey)) {
     return invalidKey();
   }
 

@@ -41,15 +41,14 @@ import {
   type DeviceCodeResponse,
   DeviceCodeResponseSchema,
   type DeviceTokenError,
-  type DeviceTokenErrorResponse,
   DeviceTokenErrorResponseSchema,
   type DeviceTokenResponse,
   DeviceTokenResponseSchema,
   MIN_DEVICE_POLL_INTERVAL_MS,
   SLOW_DOWN_INCREMENT_MS,
 } from '@starter/schemas/auth';
+import { checkSchema } from '@starter/schemas/common';
 import { AppError } from '@starter/utils';
-import { Value } from 'typebox/value';
 
 /**
  * RFC 8628's device-code grant type, verbatim.
@@ -111,9 +110,7 @@ const readDeviceError = (error: unknown): DeviceTokenError | null => {
     return null;
   }
   const cause: unknown = error.cause;
-  return Value.Check(DeviceTokenErrorResponseSchema, cause)
-    ? (cause as DeviceTokenErrorResponse).error
-    : null;
+  return checkSchema(DeviceTokenErrorResponseSchema, cause) ? cause.error : null;
 };
 
 export interface DeviceAuthorizationServiceOptions {

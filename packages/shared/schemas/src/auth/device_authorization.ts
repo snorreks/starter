@@ -15,7 +15,7 @@
 // prevented is a client that treats an unknown error code as "keep polling",
 // because that turns a denial into an indefinite wait.
 
-import { type Static, Type } from 'typebox';
+import * as v from 'valibot';
 
 /**
  * The public client identifier.
@@ -29,8 +29,8 @@ import { type Static, Type } from 'typebox';
  * `access_token` below is an ordinary Better Auth session token, verifiable by
  * the same call that verifies a cookie.
  */
-export const ClientIdSchema = Type.String({ minLength: 1, maxLength: 64, pattern: '^\\S+$' });
-export type ClientId = Static<typeof ClientIdSchema>;
+export const ClientIdSchema = v.pipe(v.string(), v.minLength(1), v.maxLength(64), v.regex(/^\S+$/));
+export type ClientId = v.InferOutput<typeof ClientIdSchema>;
 
 /**
  * What `POST /api/auth/device/code` answers.
@@ -41,20 +41,17 @@ export type ClientId = Static<typeof ClientIdSchema>;
  * to. Both come from the server: a client that built either itself would be
  * choosing where an approval link lands.
  */
-export const DeviceCodeResponseSchema = Type.Object(
-  {
-    device_code: Type.String({ minLength: 1, maxLength: 512 }),
-    /** Short code, meant to be read aloud and typed by a person. */
-    user_code: Type.String({ minLength: 1, maxLength: 64 }),
-    verification_uri: Type.String({ minLength: 1, maxLength: 2048 }),
-    verification_uri_complete: Type.String({ minLength: 1, maxLength: 4096 }),
-    expires_in: Type.Integer({ minimum: 1 }),
-    /** Minimum seconds between polls. The client must not poll faster. */
-    interval: Type.Integer({ minimum: 1 }),
-  },
-  { additionalProperties: false },
-);
-export type DeviceCodeResponse = Static<typeof DeviceCodeResponseSchema>;
+export const DeviceCodeResponseSchema = v.strictObject({
+  device_code: v.pipe(v.string(), v.minLength(1), v.maxLength(512)),
+  /** Short code, meant to be read aloud and typed by a person. */
+  user_code: v.pipe(v.string(), v.minLength(1), v.maxLength(64)),
+  verification_uri: v.pipe(v.string(), v.minLength(1), v.maxLength(2048)),
+  verification_uri_complete: v.pipe(v.string(), v.minLength(1), v.maxLength(4096)),
+  expires_in: v.pipe(v.number(), v.integer(), v.finite(), v.minValue(1)),
+  /** Minimum seconds between polls. The client must not poll faster. */
+  interval: v.pipe(v.number(), v.integer(), v.finite(), v.minValue(1)),
+});
+export type DeviceCodeResponse = v.InferOutput<typeof DeviceCodeResponseSchema>;
 
 /**
  * What `POST /api/auth/device/token` answers on success.
@@ -64,18 +61,15 @@ export type DeviceCodeResponse = Static<typeof DeviceCodeResponseSchema>;
  * verifies it that verifies a cookie, so there is one session model rather than
  * two.
  */
-export const DeviceTokenResponseSchema = Type.Object(
-  {
-    access_token: Type.String({ minLength: 1, maxLength: 512 }),
-    /** Only `"Bearer"` exists. The union is the assertion. */
-    token_type: Type.Union([Type.Literal('Bearer')]),
-    expires_in: Type.Integer({ minimum: 0 }),
-    /** Space-separated. Empty for this application, which grants no scopes. */
-    scope: Type.String({ maxLength: 512 }),
-  },
-  { additionalProperties: false },
-);
-export type DeviceTokenResponse = Static<typeof DeviceTokenResponseSchema>;
+export const DeviceTokenResponseSchema = v.strictObject({
+  access_token: v.pipe(v.string(), v.minLength(1), v.maxLength(512)),
+  /** Only `"Bearer"` exists. The union is the assertion. */
+  token_type: v.union([v.literal('Bearer')]),
+  expires_in: v.pipe(v.number(), v.integer(), v.finite(), v.minValue(0)),
+  /** Space-separated. Empty for this application, which grants no scopes. */
+  scope: v.pipe(v.string(), v.maxLength(512)),
+});
+export type DeviceTokenResponse = v.InferOutput<typeof DeviceTokenResponseSchema>;
 
 /**
  * The four non-success answers the token endpoint gives, all HTTP 400.
@@ -98,14 +92,11 @@ export const DEVICE_TOKEN_ERRORS = [
 ] as const;
 export type DeviceTokenError = (typeof DEVICE_TOKEN_ERRORS)[number];
 
-export const DeviceTokenErrorResponseSchema = Type.Object(
-  {
-    error: Type.Union(DEVICE_TOKEN_ERRORS.map((code) => Type.Literal(code))),
-    error_description: Type.Optional(Type.String({ maxLength: 512 })),
-  },
-  { additionalProperties: false },
-);
-export type DeviceTokenErrorResponse = Static<typeof DeviceTokenErrorResponseSchema>;
+export const DeviceTokenErrorResponseSchema = v.strictObject({
+  error: v.union(DEVICE_TOKEN_ERRORS.map((code) => v.literal(code))),
+  error_description: v.optional(v.pipe(v.string(), v.maxLength(512))),
+});
+export type DeviceTokenErrorResponse = v.InferOutput<typeof DeviceTokenErrorResponseSchema>;
 
 /** `verification_uri` this application's server is configured to hand out. */
 export const DEVICE_VERIFICATION_PATH = '/device';

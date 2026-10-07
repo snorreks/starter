@@ -73,7 +73,7 @@ launch and checks the additional Node and Docker prerequisites.
 From this package, `bun run test:e2e`, `bun run test:visual`, `bun run test:audit`,
 `bun run test:full`, `bun run test:tooling`, `bun run typecheck`, `bun run lint` and
 `bun run format` run the respective lanes directly. The shared scenario manifest
-is TypeBox-validated and compared to dynamically discovered `+page.svelte` routes;
+is Standard Schema-validated and compared to dynamically discovered `+page.svelte` routes;
 an added route without a declared scenario fails tooling tests.
 
 ## Boundaries

@@ -3,14 +3,14 @@
 // The refusals, which are the whole point.
 //
 // Every test here names the request that must be turned away and what an
-// acceptance would cost. `additionalProperties: false` is what turns
-// `Value.Check` into a refusal mechanism, and a closed schema that quietly
+// acceptance would cost. `strictObject` is what turns
+// schema validation into a refusal mechanism, and a closed schema that quietly
 // accepts-and-drops a field makes the client believe a write succeeded — which is
 // how a request carrying somebody else's `ownerId` becomes an authorization
 // question instead of a validation error.
 
 import { describe, expect, test } from 'bun:test';
-import { Value } from 'typebox/value';
+import { checkSchema } from '../validation.ts';
 import {
   CreateEncodeJobSchema,
   IDEMPOTENCY_KEY_HEADER,
@@ -28,7 +28,7 @@ const validRequest = () => ({ fixture: 'sample-v1', preset: 'demo-180p-v1' });
 
 describe('CreateEncodeJobSchema', () => {
   test('accepts the one request this API can express', () => {
-    expect(Value.Check(CreateEncodeJobSchema, validRequest())).toBe(true);
+    expect(checkSchema(CreateEncodeJobSchema, validRequest())).toBe(true);
   });
 
   test('refuses a client that names its own owner', () => {
@@ -37,7 +37,7 @@ describe('CreateEncodeJobSchema', () => {
     // the caller would believe it created one for somebody else. Accepting the
     // field would make that a supported request instead of a mistake.
     expect(
-      Value.Check(CreateEncodeJobSchema, { ...validRequest(), ownerId: 'user_somebody_else' }),
+      checkSchema(CreateEncodeJobSchema, { ...validRequest(), ownerId: 'user_somebody_else' }),
     ).toBe(false);
   });
 
@@ -45,7 +45,7 @@ describe('CreateEncodeJobSchema', () => {
     // "Encode anything I point at" is the feature that turns a demo into an open
     // fetch-and-encode service pointed at somebody else's infrastructure.
     expect(
-      Value.Check(CreateEncodeJobSchema, {
+      checkSchema(CreateEncodeJobSchema, {
         fixture: 'https://example.invalid/v.mp4',
         preset: 'demo-180p-v1',
       }),
@@ -53,44 +53,44 @@ describe('CreateEncodeJobSchema', () => {
   });
 
   test('refuses an ffmpeg argument vector', () => {
-    expect(Value.Check(CreateEncodeJobSchema, { ...validRequest(), args: ['-f', 'lavfi'] })).toBe(
+    expect(checkSchema(CreateEncodeJobSchema, { ...validRequest(), args: ['-f', 'lavfi'] })).toBe(
       false,
     );
   });
 
   test('refuses a preset outside the frozen set', () => {
     expect(
-      Value.Check(CreateEncodeJobSchema, { fixture: 'sample-v1', preset: 'uhd-2160p-v1' }),
+      checkSchema(CreateEncodeJobSchema, { fixture: 'sample-v1', preset: 'uhd-2160p-v1' }),
     ).toBe(false);
   });
 
   test('refuses a missing field', () => {
-    expect(Value.Check(CreateEncodeJobSchema, { fixture: 'sample-v1' })).toBe(false);
-    expect(Value.Check(CreateEncodeJobSchema, { preset: 'demo-180p-v1' })).toBe(false);
+    expect(checkSchema(CreateEncodeJobSchema, { fixture: 'sample-v1' })).toBe(false);
+    expect(checkSchema(CreateEncodeJobSchema, { preset: 'demo-180p-v1' })).toBe(false);
   });
 });
 
 describe('IdempotencyKeySchema', () => {
   test('accepts a client-generated UUID', () => {
-    expect(Value.Check(IdempotencyKeySchema, 'b8f1c0de-2f2b-4a2e-9a5a-7f6a1b2c3d4e')).toBe(true);
+    expect(checkSchema(IdempotencyKeySchema, 'b8f1c0de-2f2b-4a2e-9a5a-7f6a1b2c3d4e')).toBe(true);
   });
 
   test('refuses an empty key', () => {
     // An empty key would collapse every request from one user onto one row, and
     // the second request would answer with the first job instead of creating one.
-    expect(Value.Check(IdempotencyKeySchema, '')).toBe(false);
+    expect(checkSchema(IdempotencyKeySchema, '')).toBe(false);
   });
 
   test('refuses a key with whitespace', () => {
     // Headers cannot carry a raw newline, and a space is not trimmed identically
     // by every hop; a key that differs by invisible characters is a key that
     // defeats idempotency without the caller noticing.
-    expect(Value.Check(IdempotencyKeySchema, 'abc def')).toBe(false);
+    expect(checkSchema(IdempotencyKeySchema, 'abc def')).toBe(false);
   });
 
   test('refuses a key longer than the bound', () => {
-    expect(Value.Check(IdempotencyKeySchema, 'k'.repeat(101))).toBe(false);
-    expect(Value.Check(IdempotencyKeySchema, 'k'.repeat(100))).toBe(true);
+    expect(checkSchema(IdempotencyKeySchema, 'k'.repeat(101))).toBe(false);
+    expect(checkSchema(IdempotencyKeySchema, 'k'.repeat(100))).toBe(true);
   });
 
   test('is read from the frozen header name', () => {
@@ -110,36 +110,36 @@ describe('JobDtoSchema', () => {
   });
 
   test('accepts a pending job', () => {
-    expect(Value.Check(JobDtoSchema, validDto())).toBe(true);
+    expect(checkSchema(JobDtoSchema, validDto())).toBe(true);
   });
 
   test('accepts each of the four states', () => {
     for (const status of ['pending', 'running', 'succeeded', 'failed']) {
-      expect(Value.Check(JobDtoSchema, { ...validDto(), status })).toBe(true);
+      expect(checkSchema(JobDtoSchema, { ...validDto(), status })).toBe(true);
     }
   });
 
   test('refuses a fifth state', () => {
     // There is no `expired`. Retention is reported through `outputAvailable`, so
     // a caller can always tell an aged-out artifact from a failed encode.
-    expect(Value.Check(JobDtoSchema, { ...validDto(), status: 'expired' })).toBe(false);
+    expect(checkSchema(JobDtoSchema, { ...validDto(), status: 'expired' })).toBe(false);
   });
 
   test('refuses to carry an owner id back to a client', () => {
     // Echoing `ownerId` is harmless on its own; including it is what makes the DTO
     // the place a second, unchecked copy of the ownership rule can grow.
-    expect(Value.Check(JobDtoSchema, { ...validDto(), ownerId: 'user_1' })).toBe(false);
+    expect(checkSchema(JobDtoSchema, { ...validDto(), ownerId: 'user_1' })).toBe(false);
   });
 
   test('refuses to carry the private storage key', () => {
-    expect(Value.Check(JobDtoSchema, { ...validDto(), outputKey: 'jobs/j1/out.mp4' })).toBe(false);
+    expect(checkSchema(JobDtoSchema, { ...validDto(), outputKey: 'jobs/j1/out.mp4' })).toBe(false);
   });
 
   test('refuses raw subprocess output in the error field', () => {
     // The error field is a closed union of the codes this repository enumerates.
     // A message would be the one place a container's stderr could reach a browser.
     expect(
-      Value.Check(JobDtoSchema, {
+      checkSchema(JobDtoSchema, {
         ...validDto(),
         status: 'failed',
         errorCode: 'ffmpeg exited 1: Invalid data found',
@@ -148,13 +148,13 @@ describe('JobDtoSchema', () => {
     // And a processor code is not a job code: the repository maps one onto the
     // other, so a processor token never reaches a client verbatim.
     expect(
-      Value.Check(JobDtoSchema, { ...validDto(), status: 'failed', errorCode: 'invalid_media' }),
+      checkSchema(JobDtoSchema, { ...validDto(), status: 'failed', errorCode: 'invalid_media' }),
     ).toBe(false);
   });
 
   test('a succeeded job with an expired artifact still says succeeded', () => {
     const aged = { ...validDto(), status: 'succeeded', outputAvailable: false };
-    expect(Value.Check(JobDtoSchema, aged)).toBe(true);
+    expect(checkSchema(JobDtoSchema, aged)).toBe(true);
   });
 });
 
@@ -171,23 +171,23 @@ describe('JobOutputSchema', () => {
   });
 
   test('accepts measured metadata', () => {
-    expect(Value.Check(JobOutputSchema, validOutput())).toBe(true);
+    expect(checkSchema(JobOutputSchema, validOutput())).toBe(true);
   });
 
   test('refuses a non-lowercase hash', () => {
-    expect(Value.Check(JobOutputSchema, { ...validOutput(), sha256: 'A'.repeat(64) })).toBe(false);
+    expect(checkSchema(JobOutputSchema, { ...validOutput(), sha256: 'A'.repeat(64) })).toBe(false);
   });
 
   test('refuses output above the processor ceiling', () => {
     // 10 MiB is the processor's own `max_output_bytes`; a DTO that allowed more
     // would let a caller expect bytes the container cannot produce.
-    expect(Value.Check(JobOutputSchema, { ...validOutput(), bytes: 10 * 1024 * 1024 + 1 })).toBe(
+    expect(checkSchema(JobOutputSchema, { ...validOutput(), bytes: 10 * 1024 * 1024 + 1 })).toBe(
       false,
     );
   });
 
   test('refuses a zero-byte artifact', () => {
-    expect(Value.Check(JobOutputSchema, { ...validOutput(), bytes: 0 })).toBe(false);
+    expect(checkSchema(JobOutputSchema, { ...validOutput(), bytes: 0 })).toBe(false);
   });
 });
 
@@ -203,16 +203,16 @@ describe('JobListSchema', () => {
   });
 
   test('accepts a page with and without a cursor', () => {
-    expect(Value.Check(JobListSchema, { jobs: [job()], nextCursor: 'job_0', serverTime: 1 })).toBe(
+    expect(checkSchema(JobListSchema, { jobs: [job()], nextCursor: 'job_0', serverTime: 1 })).toBe(
       true,
     );
-    expect(Value.Check(JobListSchema, { jobs: [], nextCursor: null, serverTime: 1 })).toBe(true);
+    expect(checkSchema(JobListSchema, { jobs: [], nextCursor: null, serverTime: 1 })).toBe(true);
   });
 
   test('refuses an undefined cursor', () => {
     // `undefined` disappears through `JSON.stringify`, so a client would read it as
     // "no next page" while the server meant "malformed".
-    expect(Value.Check(JobListSchema, { jobs: [], serverTime: 1 })).toBe(false);
+    expect(checkSchema(JobListSchema, { jobs: [], serverTime: 1 })).toBe(false);
   });
 });
 

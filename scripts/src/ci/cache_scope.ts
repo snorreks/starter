@@ -48,6 +48,8 @@ export const SHARED_INPUTS = [
   'bunfig.toml',
   'package.json',
   '.syncpackrc',
+  '.moon/workspace.yml',
+  'config/tsconfig/tsconfig.native.json',
   'config/toolchain.json',
   'config/tsconfig/tsconfig.base.json',
   'config/tsconfig/tsconfig.backend.json',
@@ -68,6 +70,16 @@ export const PACKAGE_SOURCE_DIRS = [
   'packages/frontend/ui',
   'packages/backend/database',
   'packages/backend/auth',
+  'packages/frontend/features',
+  'packages/frontend/platform',
+  'packages/backend/jobs',
+  'apps/backend/jobs',
+] as const;
+
+/** Inputs consumed outside TypeScript source roots but used by migrations/builds. */
+export const AUXILIARY_INPUT_DIRS = [
+  'packages/backend/database/drizzle-d1',
+  'apps/backend/media/fixtures',
 ] as const;
 
 export interface CacheScope {
@@ -121,6 +133,9 @@ export const filesInScope = (root: string = REPO_ROOT): string[] => {
     if (isFile(manifest)) {
       packages.push(manifest);
     }
+  }
+  for (const relative of AUXILIARY_INPUT_DIRS) {
+    walk(join(root, relative), packages);
   }
 
   return [...shared, ...packages].sort();

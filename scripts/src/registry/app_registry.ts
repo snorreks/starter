@@ -25,7 +25,7 @@
 //      by a code path that needs remote credentials.
 
 import type { DeploymentEnvironment } from '@starter/schemas/logging';
-import { type Static, Type } from 'typebox';
+import * as v from 'valibot';
 
 /** How a given app's logs are obtained in a given environment. */
 export const LOG_ADAPTER_KINDS = [
@@ -45,71 +45,60 @@ export type LogAdapterKind = (typeof LOG_ADAPTER_KINDS)[number];
  * What an adapter can actually do. The CLI checks these before building a filter,
  * so an unsupported flag is a clear error and never a silent no-op.
  */
-export const LogAdapterCapabilitiesSchema = Type.Object(
-  {
-    historicalQuery: Type.Boolean(),
-    liveTail: Type.Boolean(),
-    /** Can the provider filter by verified user id (not client-reported)? */
-    userIdFilter: Type.Boolean(),
-    traceIdFilter: Type.Boolean(),
-    /** Provider returns a resumable cursor. */
-    cursor: Type.Boolean(),
-  },
-  { additionalProperties: false },
-);
+export const LogAdapterCapabilitiesSchema = v.strictObject({
+  historicalQuery: v.boolean(),
+  liveTail: v.boolean(),
+  /** Can the provider filter by verified user id (not client-reported)? */
+  userIdFilter: v.boolean(),
+  traceIdFilter: v.boolean(),
+  /** Provider returns a resumable cursor. */
+  cursor: v.boolean(),
+});
 
-export type LogAdapterCapabilities = Static<typeof LogAdapterCapabilitiesSchema>;
+export type LogAdapterCapabilities = v.InferOutput<typeof LogAdapterCapabilitiesSchema>;
 
-/** One adapter kind. Written out so TypeBox receives a real tuple. */
-const AdapterKindSchema = Type.Union([
-  Type.Literal('local-file'),
-  Type.Literal('cloudflare-observability'),
-  Type.Literal('wrangler-tail'),
-  Type.Literal('client-forward'),
+/** One adapter kind. Written out so the validator receives a literal tuple. */
+const AdapterKindSchema = v.union([
+  v.literal('local-file'),
+  v.literal('cloudflare-observability'),
+  v.literal('wrangler-tail'),
+  v.literal('client-forward'),
 ]);
 
 /** Ordered adapter preference for one environment. */
-const adapterListSchema = Type.Array(AdapterKindSchema);
+const adapterListSchema = v.array(AdapterKindSchema);
 
-export const AppLogConfigSchema = Type.Object(
-  {
-    app: Type.String({ minLength: 1 }),
-    /**
-     * Wrangler worker name for this app. `null` means "not provisioned yet".
-     *
-     * Nullable rather than `''` on purpose: an empty string satisfies a
-     * `minLength: 1` check by not being one, so a `''` placeholder silently
-     * defeats the validation that was supposed to catch it — the registry shipped
-     * failing its own schema until this was fixed. `DEPLOYMENT_CONFIG` uses the
-     * same convention, so "not provisioned" reads the same everywhere.
-     */
-    workerName: Type.Union([Type.String({ minLength: 1 }), Type.Null()]),
-    /** Which producer sources can appear for this app. */
-    sources: Type.Array(
-      Type.Union([Type.Literal('browser'), Type.Literal('worker'), Type.Literal('cli')]),
-    ),
-    /**
-     * environment -> ordered adapter preference. The first entry is the one used.
-     *
-     * Spelled as an explicit object rather than `Type.Record` with a union key: a
-     * Record over a union key collapses the value type to `never` in TypeBox v1,
-     * which turns a typo in one environment's adapter list into a confusing error
-     * far from its cause.
-     */
-    adapters: Type.Object(
-      {
-        local: adapterListSchema,
-        staging: adapterListSchema,
-        production: adapterListSchema,
-      },
-      { additionalProperties: false },
-    ),
-    capabilities: Type.Array(LogAdapterCapabilitiesSchema),
-  },
-  { additionalProperties: false },
-);
+export const AppLogConfigSchema = v.strictObject({
+  app: v.pipe(v.string(), v.minLength(1)),
+  /**
+   * Wrangler worker name for this app. `null` means "not provisioned yet".
+   *
+   * Nullable rather than `''` on purpose: an empty string satisfies a
+   * `minLength: 1` check by not being one, so a `''` placeholder silently
+   * defeats the validation that was supposed to catch it — the registry shipped
+   * failing its own schema until this was fixed. `DEPLOYMENT_CONFIG` uses the
+   * same convention, so "not provisioned" reads the same everywhere.
+   */
+  workerName: v.union([v.pipe(v.string(), v.minLength(1)), v.null()]),
+  /** Which producer sources can appear for this app. */
+  sources: v.array(v.union([v.literal('browser'), v.literal('worker'), v.literal('cli')])),
+  /**
+   * environment -> ordered adapter preference. The first entry is the one used.
+   *
+   * Spelled as an explicit object rather than `Type.Record` with a union key: a
+   * Record over a union key collapses the value type to `never`,
+   * which turns a typo in one environment's adapter list into a confusing error
+   * far from its cause.
+   */
+  adapters: v.strictObject({
+    local: adapterListSchema,
+    staging: adapterListSchema,
+    production: adapterListSchema,
+  }),
+  capabilities: v.array(LogAdapterCapabilitiesSchema),
+});
 
-export type AppLogConfig = Static<typeof AppLogConfigSchema>;
+export type AppLogConfig = v.InferOutput<typeof AppLogConfigSchema>;
 
 /**
  * What an environment needs, and where each half of it now lives.
@@ -123,71 +112,65 @@ export type AppLogConfig = Static<typeof AppLogConfigSchema>;
  * gone rather than left as a shape that looks authoritative.
  */
 
-export const DEPLOYMENT_CONFIG_SCHEMA = Type.Object(
-  {
-    /**
-     * Project identity, and the stem every derived name uses.
-     *
-     * Not a secret and not a resource id: it is the name this template keeps when
-     * it is renamed, and it is what ties a release record to a project rather than
-     * to whichever Worker happened to answer.
-     */
-    projectName: Type.String({ minLength: 1 }),
-    /**
-     * The Cloudflare Worker name. `null` means "not provisioned yet" — the deploy
-     * dry-run reports that as an actionable error instead of inventing a target.
-     *
-     * One value, not one per app. The application deploys as a single Worker plus
-     * its static assets, so there is exactly one name to provision; a `client` and
-     * an `api` entry would be two names for one resource, and the registry's own
-     * stated rule is that a value in more than one place is a value nobody can
-     * tell is in effect.
-     *
-     * This is the *single-set* fallback, used only by a project that has never
-     * declared per-environment targets. `resolveTarget` refuses rather than falling
-     * back to it for a deployed environment, because a staging request answered with
-     * production names is the outcome this whole layer exists to prevent.
-     */
-    workerName: Type.Union([Type.String({ minLength: 1 }), Type.Null()]),
-    /**
-     * The D1 database id. Must be filled by the operator; never committed.
-     *
-     * `minLength: 1` for the same reason `workerName` has it: an empty string
-     * satisfies `Type.String()` and defeats the validation that is supposed to
-     * catch an unset value. `null` is how "not provisioned" is spelled.
-     */
-    d1DatabaseId: Type.Union([Type.String({ minLength: 1 }), Type.Null()]),
-    /** Optional R2 bucket for user uploads. A documented future capability. */
-    r2BucketNames: Type.Object(
-      {
-        uploads: Type.Union([Type.String(), Type.Null()]),
-      },
-      { additionalProperties: false },
-    ),
-    /**
-     * Custom domain. Empty by default; the starter never assumes a domain it does
-     * not control, and `configure --provision` is how a user sets this.
-     */
-    customDomain: Type.Union([Type.String(), Type.Null()]),
-    /**
-     * Cloudflare account id, or `null` when unprovisioned.
-     *
-     * Required by every account-scoped API endpoint, including the Workers
-     * Observability query the log adapter now sends. `wrangler` infers it from its
-     * own auth, which is why nothing needed it until now: a historical log query
-     * goes over plain HTTP, where the account is part of the URL and has to be
-     * stated.
-     *
-     * Not an inherited resource id in the sense the others are: it identifies an
-     * account rather than a resource inside one, and `null` still means "nothing
-     * has been configured", so a fresh clone targets nobody.
-     */
-    accountId: Type.Union([Type.String(), Type.Null()]),
-  },
-  { additionalProperties: false },
-);
+export const DEPLOYMENT_CONFIG_SCHEMA = v.strictObject({
+  /**
+   * Project identity, and the stem every derived name uses.
+   *
+   * Not a secret and not a resource id: it is the name this template keeps when
+   * it is renamed, and it is what ties a release record to a project rather than
+   * to whichever Worker happened to answer.
+   */
+  projectName: v.pipe(v.string(), v.minLength(1)),
+  /**
+   * The Cloudflare Worker name. `null` means "not provisioned yet" — the deploy
+   * dry-run reports that as an actionable error instead of inventing a target.
+   *
+   * One value, not one per app. The application deploys as a single Worker plus
+   * its static assets, so there is exactly one name to provision; a `client` and
+   * an `api` entry would be two names for one resource, and the registry's own
+   * stated rule is that a value in more than one place is a value nobody can
+   * tell is in effect.
+   *
+   * This is the *single-set* fallback, used only by a project that has never
+   * declared per-environment targets. `resolveTarget` refuses rather than falling
+   * back to it for a deployed environment, because a staging request answered with
+   * production names is the outcome this whole layer exists to prevent.
+   */
+  workerName: v.union([v.pipe(v.string(), v.minLength(1)), v.null()]),
+  /**
+   * The D1 database id. Must be filled by the operator; never committed.
+   *
+   * `minLength: 1` for the same reason `workerName` has it: an empty string
+   * satisfies a bare string schema and defeats the validation that is supposed to
+   * catch an unset value. `null` is how "not provisioned" is spelled.
+   */
+  d1DatabaseId: v.union([v.pipe(v.string(), v.minLength(1)), v.null()]),
+  /** Optional R2 bucket for user uploads. A documented future capability. */
+  r2BucketNames: v.strictObject({
+    uploads: v.union([v.string(), v.null()]),
+  }),
+  /**
+   * Custom domain. Empty by default; the starter never assumes a domain it does
+   * not control, and `configure --provision` is how a user sets this.
+   */
+  customDomain: v.union([v.string(), v.null()]),
+  /**
+   * Cloudflare account id, or `null` when unprovisioned.
+   *
+   * Required by every account-scoped API endpoint, including the Workers
+   * Observability query the log adapter now sends. `wrangler` infers it from its
+   * own auth, which is why nothing needed it until now: a historical log query
+   * goes over plain HTTP, where the account is part of the URL and has to be
+   * stated.
+   *
+   * Not an inherited resource id in the sense the others are: it identifies an
+   * account rather than a resource inside one, and `null` still means "nothing
+   * has been configured", so a fresh clone targets nobody.
+   */
+  accountId: v.union([v.string(), v.null()]),
+});
 
-export type DeploymentConfig = Static<typeof DEPLOYMENT_CONFIG_SCHEMA>;
+export type DeploymentConfig = v.InferOutput<typeof DEPLOYMENT_CONFIG_SCHEMA>;
 
 /**
  * Placeholder project identity. Every value here is intentionally empty or
@@ -529,7 +512,7 @@ export type JobsProfile = (typeof JOBS_PROFILES)[number];
  * stop the run.
  */
 /**
- * Every field is `Type.Optional`, and `null` is accepted.
+ * Every field is optional, and `null` is accepted.
  *
  * Both for the same reason: a CI map is *partial by nature*. An operator writes
  * the fields they have and leaves the rest out, and requiring thirteen keys to
@@ -538,17 +521,22 @@ export type JobsProfile = (typeof JOBS_PROFILES)[number];
  * `nullTargets()` re-adds every field before anything reads it, so a partial map
  * can never reach `resolveTarget` as an `undefined`.
  */
-export const EnvironmentTargetsSchema = Type.Object(
-  Object.fromEntries(
-    ENVIRONMENT_TARGET_FIELDS.map((field) => [
-      field,
-      Type.Optional(Type.Union([Type.String({ minLength: 1 }), Type.Null()])),
-    ]),
-  ) as unknown as Record<EnvironmentTargetField, ReturnType<typeof Type.Optional>>,
-  { additionalProperties: false },
-);
+export const EnvironmentTargetsSchema = v.strictObject({
+  workerName: v.optional(v.union([v.pipe(v.string(), v.minLength(1)), v.null()])),
+  jobsWorkerName: v.optional(v.union([v.pipe(v.string(), v.minLength(1)), v.null()])),
+  mediaBucketName: v.optional(v.union([v.pipe(v.string(), v.minLength(1)), v.null()])),
+  encodeWorkflowName: v.optional(v.union([v.pipe(v.string(), v.minLength(1)), v.null()])),
+  maintenanceWorkflowName: v.optional(v.union([v.pipe(v.string(), v.minLength(1)), v.null()])),
+  containerImage: v.optional(v.union([v.pipe(v.string(), v.minLength(1)), v.null()])),
+  imageProtocol: v.optional(v.union([v.pipe(v.string(), v.minLength(1)), v.null()])),
+  containerProfile: v.optional(v.union([v.pipe(v.string(), v.minLength(1)), v.null()])),
+  jobsProfile: v.optional(v.union([v.pipe(v.string(), v.minLength(1)), v.null()])),
+  origin: v.optional(v.union([v.pipe(v.string(), v.minLength(1)), v.null()])),
+  mailFrom: v.optional(v.union([v.pipe(v.string(), v.minLength(1)), v.null()])),
+  nativeApiOrigin: v.optional(v.union([v.pipe(v.string(), v.minLength(1)), v.null()])),
+});
 
-export type EnvironmentTargetsInput = Static<typeof EnvironmentTargetsSchema>;
+export type EnvironmentTargetsInput = v.InferOutput<typeof EnvironmentTargetsSchema>;
 
 /**
  * A CI environment map: every environment this project deploys, by name.
@@ -557,15 +545,12 @@ export type EnvironmentTargetsInput = Static<typeof EnvironmentTargetsSchema>;
  * key, for the same reason `EnvironmentTargets` is per-environment: a missing
  * entry is a refusal, never a fallback to another environment.
  */
-export const DeploymentEnvironmentMapSchema = Type.Object(
-  {
-    staging: Type.Optional(EnvironmentTargetsSchema),
-    production: Type.Optional(EnvironmentTargetsSchema),
-  },
-  { additionalProperties: false },
-);
+export const DeploymentEnvironmentMapSchema = v.strictObject({
+  staging: v.optional(EnvironmentTargetsSchema),
+  production: v.optional(EnvironmentTargetsSchema),
+});
 
-export type DeploymentEnvironmentMap = Static<typeof DeploymentEnvironmentMapSchema>;
+export type DeploymentEnvironmentMap = v.InferOutput<typeof DeploymentEnvironmentMapSchema>;
 
 // `Partial`: presence is the signal. A project with only staging must be able to say so
 // without a placeholder for production, and a placeholder is indistinguishable from a

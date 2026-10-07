@@ -15,6 +15,7 @@ import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import {
+  AUXILIARY_INPUT_DIRS,
   filesInScope,
   fingerprintScope,
   PACKAGE_SOURCE_DIRS,
@@ -42,6 +43,10 @@ const writeFixture = (root: string): void => {
     mkdirSync(join(root, relative, 'src'), { recursive: true });
     writeFileSync(join(root, relative, 'src', 'index.ts'), `export const from = '${relative}';\n`);
     writeFileSync(join(root, relative, 'package.json'), `{ "name": "${relative}" }\n`);
+  }
+  for (const relative of AUXILIARY_INPUT_DIRS) {
+    mkdirSync(join(root, relative), { recursive: true });
+    writeFileSync(join(root, relative, 'input.sql'), `-- ${relative}\n`);
   }
 };
 
@@ -83,7 +88,9 @@ describe('a fingerprint that reads nothing must not be treated as a fingerprint'
     const first = resolveCacheMode({ root, previous: null });
 
     expect(first.mode).toBe('off');
-    expect(first.filesRead).toBe(SHARED_INPUTS.length + PACKAGE_SOURCE_DIRS.length * 2);
+    expect(first.filesRead).toBe(
+      SHARED_INPUTS.length + PACKAGE_SOURCE_DIRS.length * 2 + AUXILIARY_INPUT_DIRS.length,
+    );
     expect(first.fingerprint).toHaveLength(64);
     expect(first.reason).toContain('records one');
   });
@@ -140,6 +147,22 @@ describe('a fingerprint that reads nothing must not be treated as a fingerprint'
 
     expect(after.mode).toBe('off');
     expect(after.reason).toContain('changed');
+  });
+
+  test('feature, platform, jobs Worker and migration edits invalidate a warmed scope', () => {
+    for (const relative of [
+      'packages/frontend/features/src/index.ts',
+      'packages/frontend/platform/src/index.ts',
+      'apps/backend/jobs/src/index.ts',
+      'packages/backend/database/drizzle-d1/input.sql',
+    ]) {
+      writeFixture(root);
+      const first = resolveCacheMode({ root, previous: null });
+      writeFileSync(join(root, relative), 'export const changed = true;\n');
+      expect(resolveCacheMode({ root, previous: first.fingerprint }).mode).toBe('off');
+      rmSync(root, { recursive: true, force: true });
+      mkdirSync(root, { recursive: true });
+    }
   });
 
   test('a file outside the scope does not switch the cache off', () => {

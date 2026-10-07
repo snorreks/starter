@@ -38,7 +38,7 @@ import {
   type LogEvent,
   LogEventSchema,
 } from '@starter/schemas/logging';
-import { type Static, Type } from 'typebox';
+import * as v from 'valibot';
 import type { RequestContext } from './request_context.ts';
 
 /** Hard ceiling on one submission, in bytes. Rejected by the route before parsing. */
@@ -78,20 +78,17 @@ const SWEEP_INTERVAL_MS = 5_000;
  * step, so a field added to the event is admitted here too, while `false` keeps
  * every other unknown field refused.
  */
-export const IngestRecordSchema = Type.Object(
-  {
-    ...LogEventSchema.properties,
-    clientReported: Type.Optional(ClientReportedContextSchema),
-  },
-  { additionalProperties: false },
-);
+export const IngestRecordSchema = v.strictObject({
+  ...LogEventSchema.entries,
+  clientReported: v.optional(ClientReportedContextSchema),
+});
 
-export const IngestBodySchema = Type.Union([
+export const IngestBodySchema = v.union([
   IngestRecordSchema,
-  Type.Array(IngestRecordSchema, { maxItems: MAX_RECORDS_PER_SUBMISSION }),
+  v.pipe(v.array(IngestRecordSchema), v.maxLength(MAX_RECORDS_PER_SUBMISSION)),
 ]);
 
-export type IngestRecord = Static<typeof IngestRecordSchema>;
+export type IngestRecord = v.InferOutput<typeof IngestRecordSchema>;
 
 /**
  * Fixed-window submission counter.

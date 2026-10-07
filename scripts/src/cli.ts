@@ -31,6 +31,7 @@ const COMMANDS: Record<string, CommandLoader> = {
   guard: async () => (await import('./commands/guard.ts')).guardCommand,
   logs: async () => (await import('./commands/logs.ts')).logsCommand,
   native: async () => (await import('./commands/native.ts')).nativeCommand,
+  'pr-budget': async () => (await import('./commands/pr_budget.ts')).prBudgetCommand,
   secrets: async () => (await import('./commands/secrets.ts')).secretsCommand,
   setup: async () => (await import('./commands/setup.ts')).setupCommand,
   smoke: async () => (await import('./commands/smoke.ts')).smokeCommand,

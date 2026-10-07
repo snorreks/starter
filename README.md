@@ -234,8 +234,9 @@ the import level; the guards additionally cover what a linter cannot see.
 - **Ownership is enforced in the query**, never after the fetch.
 - **A server load calls the service directly.** A `+page.server.ts` imports
   `#lib/server/…`; it never fetches its own origin. There is one mutation path.
-- **One TypeBox.** `typebox`, validated identically by the browser and the
-  Worker. One documented exception in `.pi/`, where Pi's API requires the 1.x line.
+- **One application contract.** Valibot schemas implement Standard Schema and are
+  validated identically by the browser and the Worker. `.pi/` keeps TypeBox because
+  Pi's tool registration API requires TypeBox schemas.
 - **No `as unknown as`, no `as any`.** If a cast is needed, the boundary is wrong.
 
 ## Documentation

@@ -20,7 +20,7 @@
 
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { LOG_SOURCES, type LogEvent, LogEventSchema } from '@starter/schemas';
-import { Value } from 'typebox/value';
+import { checkSchema } from '@starter/schemas/common';
 import { parseArgs, toQuery } from '../src/commands/logs.ts';
 import {
   buildHistoricalRequest,
@@ -400,7 +400,7 @@ describe('parseNdjson', () => {
 
   test('every fixture validates against the canonical schema', () => {
     for (const fixture of FIXTURES) {
-      expect(Value.Check(LogEventSchema, fixture)).toBe(true);
+      expect(checkSchema(LogEventSchema, fixture)).toBe(true);
     }
   });
 });

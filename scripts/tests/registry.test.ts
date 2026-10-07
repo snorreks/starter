@@ -12,7 +12,7 @@
 // tool that invents a target when it has none is worse than one that stops.
 
 import { describe, expect, test } from 'bun:test';
-import { Value } from 'typebox/value';
+import { checkSchema } from '@starter/schemas/common';
 import {
   APP_IDS,
   APP_LOG_CONFIG,
@@ -35,9 +35,7 @@ describe('APP_LOG_CONFIG', () => {
     // consumer inherited the mistake. Nothing checked.
     for (const app of APP_IDS) {
       const config = APP_LOG_CONFIG[app];
-      const errors = [...Value.Errors(AppLogConfigSchema, config)];
-
-      expect(errors.map((error) => `${error.instancePath} ${error.message}`)).toEqual([]);
+      expect(checkSchema(AppLogConfigSchema, config)).toBe(true);
     }
   });
 
@@ -110,7 +108,7 @@ describe('capabilitiesFor', () => {
 
 describe('DEPLOYMENT_CONFIG', () => {
   test('validates against its own schema', () => {
-    expect([...Value.Errors(DEPLOYMENT_CONFIG_SCHEMA, DEPLOYMENT_CONFIG)]).toEqual([]);
+    expect(checkSchema(DEPLOYMENT_CONFIG_SCHEMA, DEPLOYMENT_CONFIG)).toBe(true);
   });
 
   test('a fresh clone has provisioned nothing', () => {
@@ -126,12 +124,10 @@ describe('DEPLOYMENT_CONFIG', () => {
     // `''` used to pass every type check and be invalid at runtime. Asserted for
     // both the log config and the deployment config, because both now carry a
     // single name and a second unchecked `string` is one refactor away.
-    expect(
-      [...Value.Errors(AppLogConfigSchema, { ...APP_LOG_CONFIG.web, workerName: '' })].length,
-    ).toBeGreaterThan(0);
-    expect(
-      [...Value.Errors(DEPLOYMENT_CONFIG_SCHEMA, { ...DEPLOYMENT_CONFIG, workerName: '' })].length,
-    ).toBeGreaterThan(0);
+    expect(checkSchema(AppLogConfigSchema, { ...APP_LOG_CONFIG.web, workerName: '' })).toBe(false);
+    expect(checkSchema(DEPLOYMENT_CONFIG_SCHEMA, { ...DEPLOYMENT_CONFIG, workerName: '' })).toBe(
+      false,
+    );
   });
 });
 
