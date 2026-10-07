@@ -73,7 +73,7 @@ on:
       backend_profile:
         description: 'Complete runtime profile to deploy'
         required: true
-        default: legacy
+        default: supabase
         type: choice
         options:
           - legacy
@@ -109,7 +109,7 @@ permissions:
 
 env:
   BUN_VERSION: '1.4.2'
-  STARTER_BACKEND_PROFILE: ${{ inputs.backend_profile || 'legacy' }}
+  STARTER_BACKEND_PROFILE: ${{ inputs.backend_profile || 'supabase' }}
   # ── repository-scoped, nonsecret ────────────────────────────────────────────
   #
   # This is the whole nonsecret configuration a plan needs, and it is

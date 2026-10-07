@@ -468,7 +468,7 @@ export const resolveTarget = (
         'Select an explicit supported deployment profile.',
       );
     }
-    profile = environmentProfile === 'supabase' ? 'supabase' : 'legacy';
+    profile = environmentProfile === 'legacy' ? 'legacy' : 'supabase';
   }
 
   // Refused before any other work, so an unknown word can never be resolved
@@ -578,21 +578,6 @@ export const resolveTarget = (
       'supabaseAuthUrl',
       'supabasePublishableKey',
       'nativeRedirectAllowlist',
-      'googleProjectId',
-      'googleRegion',
-      'cloudRunJobName',
-      'artifactImage',
-      'runnerServiceAccount',
-      'dispatcherServiceAccount',
-      'processorProtocol',
-      'processorCpu',
-      'processorMemory',
-      'processorTimeoutSeconds',
-      'jobsWorkerName',
-      'mediaBucketName',
-      'encodeWorkflowName',
-      'maintenanceWorkflowName',
-      'containerProfile',
     ] as const;
     const missing = required.filter((field) => topology[field] === null || topology[field] === '');
     if (missing.length > 0) {
@@ -601,11 +586,33 @@ export const resolveTarget = (
         'Configure these fields in the repository target map, then rerun the offline plan.',
       );
     }
-    if (jobsProfile !== 'encode') {
-      return fail(
-        `Compute is disabled for the Supabase ${environment} target.`,
-        'The preview requires Cloudflare Workflows and a Cloud Run Job; configure jobsProfile as "encode".',
+    if (jobsProfile === 'encode') {
+      const computeFields = [
+        'googleProjectId',
+        'googleRegion',
+        'cloudRunJobName',
+        'artifactImage',
+        'runnerServiceAccount',
+        'dispatcherServiceAccount',
+        'processorProtocol',
+        'processorCpu',
+        'processorMemory',
+        'processorTimeoutSeconds',
+        'jobsWorkerName',
+        'mediaBucketName',
+        'encodeWorkflowName',
+        'maintenanceWorkflowName',
+        'containerProfile',
+      ] as const;
+      const missingCompute = computeFields.filter(
+        (field) => topology[field] === null || topology[field] === '',
       );
+      if (missingCompute.length > 0) {
+        return fail(
+          `Enabled compute for ${environment} is missing prerequisites: ${missingCompute.join(', ')}.`,
+          'Configure the Cloud Run and Cloudflare compute resources, or set jobsProfile to "disabled".',
+        );
+      }
     }
     const apiUrl = topology.supabaseUrl as string;
     const authUrl = topology.supabaseAuthUrl as string;
@@ -639,19 +646,23 @@ export const resolveTarget = (
         'Set nativeRedirectAllowlist to a comma-delimited list of exact callback URIs.',
       );
     }
-    if (topology.processorProtocol !== 'sample-v1') {
+    let timeoutSeconds = 0;
+    if (jobsProfile === 'encode' && topology.processorProtocol !== 'sample-v1') {
       return fail(
         'The Cloud Run image protocol does not match the integrated processor (sample-v1).',
         'Set processorProtocol to sample-v1.',
       );
     }
-    if (!(topology.artifactImage as string).includes('@sha256:')) {
+    if (jobsProfile === 'encode' && !(topology.artifactImage as string).includes('@sha256:')) {
       return fail(
         'The Cloud Run image must be pinned by digest.',
         'Set artifactImage to an Artifact Registry URI ending in @sha256:<digest>.',
       );
     }
-    if (topology.runnerServiceAccount === topology.dispatcherServiceAccount) {
+    if (
+      jobsProfile === 'encode' &&
+      topology.runnerServiceAccount === topology.dispatcherServiceAccount
+    ) {
       return fail(
         'Cloud Run runner and dispatcher identities must be distinct.',
         'Configure separate least-privilege service accounts.',
@@ -661,6 +672,7 @@ export const resolveTarget = (
     const region = topology.googleRegion as string;
     const accountSuffix = `@${projectId}.iam.gserviceaccount.com`;
     if (
+      jobsProfile === 'encode' &&
       ![topology.runnerServiceAccount, topology.dispatcherServiceAccount].every(
         (identity) =>
           typeof identity === 'string' &&
@@ -674,26 +686,36 @@ export const resolveTarget = (
       );
     }
     const imageUri = topology.artifactImage as string;
-    if (!imageUri.startsWith(`${region}-docker.pkg.dev/${projectId}/`)) {
+    if (
+      jobsProfile === 'encode' &&
+      !imageUri.startsWith(`${region}-docker.pkg.dev/${projectId}/`)
+    ) {
       return fail(
         'The Artifact Registry image does not belong to the configured Google project and region.',
         'Set artifactImage to an immutable image in the configured project and region.',
       );
     }
     if (
-      !['1', '2', '4', '8'].includes(topology.processorCpu as string) ||
-      !['1Gi', '2Gi', '4Gi', '8Gi'].includes(topology.processorMemory as string)
+      jobsProfile === 'encode' &&
+      (!['1', '2', '4', '8'].includes(topology.processorCpu as string) ||
+        !['1Gi', '2Gi', '4Gi', '8Gi'].includes(topology.processorMemory as string))
     ) {
       return fail(
         'Cloud Run resource limits are outside the supported bounded profile.',
         'Use processorCpu 1, 2, 4 or 8 and processorMemory 1Gi, 2Gi, 4Gi or 8Gi.',
       );
     }
-    if (!/^[a-z][a-z0-9-]{0,48}[a-z0-9]$/.test(topology.cloudRunJobName as string)) {
+    if (
+      jobsProfile === 'encode' &&
+      !/^[a-z][a-z0-9-]{0,48}[a-z0-9]$/.test(topology.cloudRunJobName as string)
+    ) {
       return fail('Cloud Run Job name is malformed.', 'Use a lowercase Cloud Run resource name.');
     }
-    const timeoutSeconds = Number(topology.processorTimeoutSeconds);
-    if (!Number.isInteger(timeoutSeconds) || timeoutSeconds < 60 || timeoutSeconds > 900) {
+    timeoutSeconds = Number(topology.processorTimeoutSeconds ?? 0);
+    if (
+      jobsProfile === 'encode' &&
+      (!Number.isInteger(timeoutSeconds) || timeoutSeconds < 60 || timeoutSeconds > 900)
+    ) {
       return fail(
         'processorTimeoutSeconds must be an integer from 60 through 900.',
         'Set a timeout within the processor bound.',
@@ -723,16 +745,16 @@ export const resolveTarget = (
       authUrl,
       publishableKey: topology.supabasePublishableKey as string,
       nativeRedirectAllowlist: callbacks,
-      googleProjectId: topology.googleProjectId as string,
-      googleRegion: topology.googleRegion as string,
-      jobName: topology.cloudRunJobName as string,
-      image: topology.artifactImage as string,
-      runnerServiceAccount: topology.runnerServiceAccount as string,
-      dispatcherServiceAccount: topology.dispatcherServiceAccount as string,
-      protocol: topology.processorProtocol as string,
-      cpu: topology.processorCpu as string,
-      memory: topology.processorMemory as string,
-      timeoutSeconds,
+      googleProjectId: topology.googleProjectId ?? '',
+      googleRegion: topology.googleRegion ?? '',
+      jobName: topology.cloudRunJobName ?? '',
+      image: topology.artifactImage ?? '',
+      runnerServiceAccount: topology.runnerServiceAccount ?? '',
+      dispatcherServiceAccount: topology.dispatcherServiceAccount ?? '',
+      protocol: topology.processorProtocol ?? '',
+      cpu: topology.processorCpu ?? '',
+      memory: topology.processorMemory ?? '',
+      timeoutSeconds: timeoutSeconds || 0,
     };
     const target: ResolvedTarget = {
       deploymentProfile: 'supabase',
@@ -745,20 +767,24 @@ export const resolveTarget = (
       wranglerConfig: `${CLIENT_DIR_RELATIVE}/wrangler.jsonc`,
       jobsWranglerConfig: `${JOBS_DIR_RELATIVE}/wrangler.jsonc`,
       compute: {
-        enabled: true,
-        profile: 'encode',
-        jobsWorkerName: topology.jobsWorkerName,
-        mediaBucketName: topology.mediaBucketName,
-        encodeWorkflowName: topology.encodeWorkflowName,
-        maintenanceWorkflowName: topology.maintenanceWorkflowName,
-        containerImage: supabase.image,
-        imageProtocol: supabase.protocol,
-        containerProfile: topology.containerProfile,
+        enabled: jobsProfile === 'encode',
+        profile: jobsProfile as JobsProfile,
+        jobsWorkerName: jobsProfile === 'encode' ? topology.jobsWorkerName : null,
+        mediaBucketName: jobsProfile === 'encode' ? topology.mediaBucketName : null,
+        encodeWorkflowName: jobsProfile === 'encode' ? topology.encodeWorkflowName : null,
+        maintenanceWorkflowName: jobsProfile === 'encode' ? topology.maintenanceWorkflowName : null,
+        containerImage: jobsProfile === 'encode' ? supabase.image : null,
+        imageProtocol: jobsProfile === 'encode' ? supabase.protocol : null,
+        containerProfile: jobsProfile === 'encode' ? topology.containerProfile : null,
       },
       mailFrom: topology.mailFrom,
       nativeApiOrigin: topology.nativeApiOrigin,
       supabase,
-      requiredSecretNames: options.requiredSecretNames ?? SUPABASE_REMOTE_SECRET_NAMES,
+      requiredSecretNames:
+        options.requiredSecretNames ??
+        (jobsProfile === 'encode'
+          ? SUPABASE_REMOTE_SECRET_NAMES
+          : SUPABASE_REMOTE_SECRET_NAMES.filter((name) => name !== 'GOOGLE_DISPATCHER_CREDENTIAL')),
       requiredVarNames: REQUIRED_REMOTE_VAR_NAMES,
     };
     const incoherent = targetCompatibilityProblem(target);
