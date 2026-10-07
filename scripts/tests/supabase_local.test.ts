@@ -1,10 +1,12 @@
 import { describe, expect, test } from 'bun:test';
+import { createServer } from 'node:net';
 import { mkdtemp, readFile, readlink, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
   allocateSupabaseLocal,
   assertSupabaseOwnership,
+  ensureSupabasePortsAvailable,
   persistSupabaseOwnership,
   requireContainerRuntime,
   resetSupabaseLocal,
@@ -46,6 +48,27 @@ describe('isolated local Supabase allocation', () => {
     expect(first.urls.mail).toBe(`http://127.0.0.1:${first.ports.mail}`);
     expect(first.urls.smtp).toBe(`127.0.0.1:${first.ports.smtp}`);
     expect(first.urls.pop3).toBe(`127.0.0.1:${first.ports.pop3}`);
+  });
+
+  test('a local service already using one allocated port makes the run select a free block', async () => {
+    const allocation = allocateSupabaseLocal('/checkouts/port-conflict', 'same-run');
+    const occupiedPort = allocation.ports.mail;
+    const listener = createServer();
+    await new Promise<void>((resolve, reject) => {
+      listener.once('error', reject);
+      listener.listen(occupiedPort, '0.0.0.0', () => resolve());
+    });
+
+    try {
+      const selected = await ensureSupabasePortsAvailable(allocation);
+      expect(selected.ports.mail).not.toBe(occupiedPort);
+      expect(selected.urls.mail).toBe(`http://127.0.0.1:${selected.ports.mail}`);
+      expect(selected.ports.postgres).toBe(selected.ports.api + 1);
+    } finally {
+      await new Promise<void>((resolve, reject) => {
+        listener.close((error) => (error === undefined ? resolve() : reject(error)));
+      });
+    }
   });
 
   test('stale ownership cannot stop or reset another allocation', async () => {

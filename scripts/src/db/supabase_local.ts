@@ -1,6 +1,7 @@
 import { spawnSync } from 'node:child_process';
 import { createHash, randomBytes } from 'node:crypto';
 import { access, mkdir, readFile, rm, symlink, writeFile } from 'node:fs/promises';
+import { createServer } from 'node:net';
 import { join } from 'node:path';
 import { DATABASE_DIR, REPO_ROOT } from '../shared/paths.ts';
 import { publicToolEnvironment } from '../shared/private_environment.ts';
@@ -54,6 +55,30 @@ export const removeOwnedWorkerVars = async (path: string, contents: string): Pro
 };
 
 const PORT_NAMES = ['api', 'postgres', 'studio', 'mail', 'smtp', 'pop3'] as const;
+const FIRST_PORT = 54_321;
+const PORT_BLOCKS = 1_200;
+const portBlock = (block: number): SupabaseLocalAllocation['ports'] => {
+  const first = FIRST_PORT + block * 8;
+  return {
+    api: first,
+    postgres: first + 1,
+    studio: first + 2,
+    mail: first + 3,
+    smtp: first + 4,
+    pop3: first + 5,
+  };
+};
+const urlsForPorts = (ports: SupabaseLocalAllocation['ports']): SupabaseLocalAllocation['urls'] => {
+  const host = '127.0.0.1';
+  return {
+    api: `http://${host}:${ports.api}`,
+    postgres: `postgresql://postgres:postgres@${host}:${ports.postgres}/postgres`,
+    studio: `http://${host}:${ports.studio}`,
+    mail: `http://${host}:${ports.mail}`,
+    smtp: `${host}:${ports.smtp}`,
+    pop3: `${host}:${ports.pop3}`,
+  };
+};
 const projectFor = (root: string, runId: string): string =>
   `st${createHash('sha256').update(`${root}\0${runId}`).digest('hex').slice(0, 18)}`;
 
@@ -65,25 +90,50 @@ export const allocateSupabaseLocal = (
   const scope = runScope(runId, root);
   const digest = createHash('sha256').update(`${root}\0${runId}`).digest();
   const block = digest.readUInt32BE(0) % 1_200;
-  const ports = Object.fromEntries(
-    PORT_NAMES.map((name, index) => [name, 54_321 + block * 8 + index]),
-  ) as SupabaseLocalAllocation['ports'];
-  const host = '127.0.0.1';
+  const ports = portBlock(block);
   return {
     projectId: projectFor(root, runId),
     runId,
     ownerToken,
     root: scope.dir,
     ports,
-    urls: {
-      api: `http://${host}:${ports.api}`,
-      postgres: `postgresql://postgres:postgres@${host}:${ports.postgres}/postgres`,
-      studio: `http://${host}:${ports.studio}`,
-      mail: `http://${host}:${ports.mail}`,
-      smtp: `${host}:${ports.smtp}`,
-      pop3: `${host}:${ports.pop3}`,
-    },
+    urls: urlsForPorts(ports),
   };
+};
+
+const canBind = (port: number): Promise<boolean> =>
+  new Promise((resolve) => {
+    const server = createServer();
+    server.once('error', () => resolve(false));
+    server.listen(port, '0.0.0.0', () => {
+      server.close((error) => resolve(error === undefined));
+    });
+  });
+
+/** Select a complete free port block before asking the container engine to bind it. */
+export const ensureSupabasePortsAvailable = async (
+  allocation: SupabaseLocalAllocation,
+): Promise<SupabaseLocalAllocation> => {
+  const originalBlock = Math.floor((allocation.ports.api - FIRST_PORT) / 8);
+  for (let offset = 0; offset < PORT_BLOCKS; offset += 1) {
+    const block = (originalBlock + offset) % PORT_BLOCKS;
+    const ports = portBlock(block);
+    const available = await Promise.all([
+      ...PORT_NAMES.map((name) => canBind(ports[name])),
+      canBind(ports.postgres + 6),
+    ]);
+    if (available.every(Boolean)) {
+      allocation.ports = ports;
+      allocation.urls = urlsForPorts(ports);
+      if (block !== originalBlock) {
+        process.stdout.write(
+          `Supabase port block ${originalBlock} is occupied; using free block ${block}.\n`,
+        );
+      }
+      return allocation;
+    }
+  }
+  throw new Error('No free local Supabase port block is available in 54321–63920.');
 };
 
 export const requireContainerRuntime = (options: { dockerPath: string | undefined }): string => {
@@ -300,6 +350,7 @@ export const startSupabaseLocal = async (
   requireContainerRuntime({
     dockerPath: probe.error === undefined && probe.status === 0 ? runtime : undefined,
   });
+  await ensureSupabasePortsAvailable(allocation);
   await persistSupabaseOwnership(allocation, options);
   const code = await runCli(allocation, ['start']);
   if (code !== 0) {
