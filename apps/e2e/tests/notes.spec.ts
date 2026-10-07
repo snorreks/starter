@@ -80,7 +80,7 @@ const verificationLink = async (page: Page, email: string): Promise<string> => {
  * Sign up, confirm the address, then sign in — and land on the notes screen.
  *
  * Confirmation code exchange creates a session in the selected Supabase SDK. The
- * helper asserts that session and enters notes before the test's product assertions.
+ * legacy backend preserves its separate sign-in step after email confirmation.
  */
 const signUp = async (page: Page, account = newAccount()): Promise<void> => {
   await page.goto('/login');
@@ -102,7 +102,14 @@ const signUp = async (page: Page, account = newAccount()): Promise<void> => {
   await page.goto(await verificationLink(page, account.email));
   await expect(page).toHaveURL(/\/verify-email/);
 
-  await expect(page.getByTestId('current-user')).toHaveText(account.email);
+  if (process.env.STARTER_BACKEND_PROFILE === 'supabase') {
+    await expect(page.getByTestId('current-user')).toHaveText(account.email);
+  } else {
+    await page.goto('/login');
+    await page.getByTestId('auth-email-input').fill(account.email);
+    await page.getByTestId('auth-password-input').fill(account.password);
+    await page.getByTestId('auth-submit').click();
+  }
   await page.goto('/notes');
 };
 
