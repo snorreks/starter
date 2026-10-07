@@ -784,7 +784,7 @@
       "result": "2204 passed, 0 failed across 15 project tasks.",
       "count": 2204,
       "recordedAt": "2026-10-07T18:39:52.170Z",
-      "artifact": "https://github.com/snorreks/starter/actions/runs/37668175168/job/112952708227"
+      "artifact": null
     },
     {
       "capability": "Browser lane (real Svelte, real Chromium)",
@@ -795,7 +795,7 @@
       "result": "29 passed across 3 files.",
       "count": 29,
       "recordedAt": "2026-10-07T18:39:56.282Z",
-      "artifact": "https://github.com/snorreks/starter/actions/runs/37668175168/job/112952708227"
+      "artifact": null
     },
     {
       "capability": "Worker lane (built bundle in real workerd, local D1)",
@@ -806,7 +806,7 @@
       "result": "88 passed, 0 failed against the built Worker and local D1.",
       "count": 88,
       "recordedAt": "2026-10-07T18:38:48.295Z",
-      "artifact": "https://github.com/snorreks/starter/actions/runs/37668175168/job/112952707829"
+      "artifact": null
     },
     {
       "capability": "End to end (built client and Worker, one origin)",
@@ -817,7 +817,7 @@
       "result": "33 passed in real Chromium against the built client and Worker.",
       "count": 33,
       "recordedAt": "2026-10-07T18:39:36.499Z",
-      "artifact": "https://github.com/snorreks/starter/actions/runs/37668175168/job/112952708255"
+      "artifact": null
     },
     {
       "capability": "Local Supabase Auth, Postgres and RLS integration",
@@ -828,7 +828,7 @@
       "result": "6 integration tests (84 assertions) and 24 SQL tests passed.",
       "count": 30,
       "recordedAt": "2026-10-07T18:38:55.269Z",
-      "artifact": "https://github.com/snorreks/starter/actions/runs/37668175168/job/112952708197"
+      "artifact": null
     },
     {
       "capability": "Typecheck, every project",
@@ -839,7 +839,7 @@
       "result": "16 tasks completed; Svelte diagnostics reported zero errors or warnings.",
       "count": null,
       "recordedAt": "2026-10-07T18:37:36.755Z",
-      "artifact": "https://github.com/snorreks/starter/actions/runs/37668175168/job/112952708251"
+      "artifact": null
     },
     {
       "capability": "Lint (Biome, verified not applied)",
@@ -850,7 +850,7 @@
       "result": "16 project tasks completed; no fixes applied.",
       "count": null,
       "recordedAt": "2026-10-07T18:37:37.928Z",
-      "artifact": "https://github.com/snorreks/starter/actions/runs/37668175168/job/112952708251"
+      "artifact": null
     },
     {
       "capability": "Format (Biome, verified not applied)",
@@ -861,7 +861,7 @@
       "result": "16 project tasks completed; no formatting changes.",
       "count": null,
       "recordedAt": "2026-10-07T18:37:38.881Z",
-      "artifact": "https://github.com/snorreks/starter/actions/runs/37668175168/job/112952708251"
+      "artifact": null
     },
     {
       "capability": "Whole-repository guards",
@@ -872,7 +872,7 @@
       "result": "8 of 8 guards passed.",
       "count": 8,
       "recordedAt": "2026-10-07T18:37:41.000Z",
-      "artifact": "https://github.com/snorreks/starter/actions/runs/37668175168/job/112952708251"
+      "artifact": null
     },
     {
       "capability": "Build and bundle boundary check",
