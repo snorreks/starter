@@ -120,6 +120,13 @@ export const ConversationListSchema = v.strictObject({
 });
 
 export type ConversationList = v.InferOutput<typeof ConversationListSchema>;
+export const ConversationPageSchema = v.strictObject({
+  items: v.array(ConversationSchema),
+  nextCursor: v.union([v.pipe(v.string(), v.minLength(1)), v.null()]),
+  hasMore: v.boolean(),
+  serverTime: v.pipe(v.number(), v.finite()),
+});
+export type ConversationPage = v.InferOutput<typeof ConversationPageSchema>;
 
 export const MessageListSchema = v.strictObject({
   messages: v.array(MessageSchema),
@@ -127,6 +134,13 @@ export const MessageListSchema = v.strictObject({
 });
 
 export type MessageList = v.InferOutput<typeof MessageListSchema>;
+export const MessagePageSchema = v.strictObject({
+  items: v.array(MessageSchema),
+  nextCursor: v.union([v.pipe(v.string(), v.minLength(1)), v.null()]),
+  hasMore: v.boolean(),
+  serverTime: v.pipe(v.number(), v.finite()),
+});
+export type MessagePage = v.InferOutput<typeof MessagePageSchema>;
 
 /**
  * A message submitted to start a turn.

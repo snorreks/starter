@@ -112,6 +112,11 @@ const stateLabel = (message: ChatMessageView): string | null => {
         testId="chat-empty"
       />
     {:else}
+      {#if viewModel.hasOlder}
+        <button type="button" class="ui-button ui-button--secondary" data-testid="chat-load-older" onclick={() => void viewModel.loadOlder()}>
+          Load older messages
+        </button>
+      {/if}
       <ol
         class="chat__transcript"
         data-testid="chat-transcript"

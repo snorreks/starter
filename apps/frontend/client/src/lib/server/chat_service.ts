@@ -38,9 +38,15 @@
 //     the one projection, so a database column cannot reach a response by accident.
 
 import { conversations, messages } from '@starter/database';
-import type { Conversation, ConversationCreate, Message, MessageRole } from '@starter/schemas/chat';
+import type {
+  Conversation,
+  ConversationCreate,
+  Message,
+  MessagePage,
+  MessageRole,
+} from '@starter/schemas/chat';
 import { createId } from '@starter/utils';
-import { and, asc, desc, eq, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, lt, or, sql } from 'drizzle-orm';
 import type { DrizzleD1Database } from 'drizzle-orm/d1';
 import type { AppSchema } from './container.ts';
 
@@ -107,6 +113,7 @@ export interface ChatService {
    * newest-first page would land every new turn above every old one.
    */
   messages(ownerId: string, conversationId: string): Promise<Message[]>;
+  messagePage(ownerId: string, conversationId: string, cursor: string | null): Promise<MessagePage>;
   /**
    * Store the caller's message.
    *
@@ -151,7 +158,7 @@ export const createChatService = (db: ChatDatabase): ChatService => ({
       })
       .from(conversations)
       .where(eq(conversations.ownerId, ownerId))
-      .orderBy(desc(conversations.updatedAt))
+      .orderBy(desc(conversations.updatedAt), desc(conversations.id))
       .limit(MAX_LISTED_CONVERSATIONS);
 
     return rows.map((row) => toWireConversation(row.conversation, row.messageCount));
@@ -204,10 +211,72 @@ export const createChatService = (db: ChatDatabase): ChatService => ({
       .from(messages)
       .innerJoin(conversations, eq(conversations.id, messages.conversationId))
       .where(and(eq(messages.conversationId, conversationId), eq(conversations.ownerId, ownerId)))
-      .orderBy(asc(messages.createdAt))
+      .orderBy(asc(messages.createdAt), asc(messages.id))
       .limit(MAX_LISTED_MESSAGES);
 
     return rows.map((row) => toWireMessage(row.message));
+  },
+
+  async messagePage(ownerId, conversationId, cursor) {
+    let boundary: { createdAt: number; id: string } | null = null;
+    if (cursor !== null) {
+      try {
+        const value: unknown = JSON.parse(atob(cursor));
+        if (
+          typeof value !== 'object' ||
+          value === null ||
+          !('createdAt' in value) ||
+          !('id' in value) ||
+          !('ownerId' in value) ||
+          !('conversationId' in value) ||
+          value.ownerId !== ownerId ||
+          value.conversationId !== conversationId ||
+          typeof value.createdAt !== 'number' ||
+          typeof value.id !== 'string' ||
+          value.id.length === 0
+        ) {
+          throw new Error();
+        }
+        boundary = { createdAt: value.createdAt, id: value.id };
+      } catch {
+        throw new TypeError('Message cursor is malformed.');
+      }
+    }
+    const predicates = [
+      eq(messages.conversationId, conversationId),
+      eq(conversations.ownerId, ownerId),
+    ];
+    if (boundary !== null) {
+      const older = or(
+        lt(messages.createdAt, new Date(boundary.createdAt)),
+        and(eq(messages.createdAt, new Date(boundary.createdAt)), lt(messages.id, boundary.id)),
+      );
+      if (older !== undefined) {
+        predicates.push(older);
+      }
+    }
+    const rows = await db
+      .select({ message: messages })
+      .from(messages)
+      .innerJoin(conversations, eq(conversations.id, messages.conversationId))
+      .where(and(...predicates))
+      .orderBy(desc(messages.createdAt), desc(messages.id))
+      .limit(51);
+    const hasMore = rows.length > 50;
+    const selected = rows.slice(0, 50);
+    const items = selected.reverse().map((row) => toWireMessage(row.message));
+    const first = items[0];
+    return {
+      items,
+      nextCursor:
+        hasMore && first
+          ? btoa(
+              JSON.stringify({ ownerId, conversationId, createdAt: first.createdAt, id: first.id }),
+            )
+          : null,
+      hasMore,
+      serverTime: Date.now(),
+    };
   },
 
   async appendUserMessage(ownerId, conversationId, content, clientId) {

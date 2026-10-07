@@ -22,6 +22,7 @@
 //      visitor, which is the same confusion an HTTP 200 with an empty list causes.
 
 import { redirect } from '@sveltejs/kit';
+import { listNotes } from '#lib/remote/notes.remote.ts';
 import { createRequestNotesService } from '#lib/server/notes_service.ts';
 import type { PageServerLoad } from './$types';
 
@@ -34,7 +35,17 @@ export const load: PageServerLoad = async ({ locals }) => {
   // The ViewModel's own `load()` is the browser's refresh path. This is the
   // *first* paint, so the list arrives with the HTML and there is no duplicate
   // initial fetch; see `notes/+page.svelte`.
+  if (locals.context.backendProfile === 'supabase') {
+    const page = await listNotes({ cursor: null, limit: 50 });
+    return {
+      notes: page.items,
+      nextCursor: page.nextCursor,
+      hasMore: page.hasMore,
+      serverTime: page.serverTime,
+      remote: true,
+    };
+  }
   const notes = await createRequestNotesService(locals).list(user.id);
 
-  return { notes, serverTime: Date.now() };
+  return { notes, serverTime: Date.now(), remote: false };
 };

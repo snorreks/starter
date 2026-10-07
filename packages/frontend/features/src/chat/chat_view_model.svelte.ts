@@ -36,7 +36,7 @@ import {
 import { createClientId, toAppError } from '@starter/utils';
 import type { ChatService, ChatStreamUpdate, StreamTurnResult } from './chat_service.ts';
 
-type ChatScreenService = Pick<ChatService, 'listMessages' | 'streamTurn'>;
+type ChatScreenService = Pick<ChatService, 'listMessages' | 'listMessagesPage' | 'streamTurn'>;
 
 /**
  * A message as this screen holds it.
@@ -70,6 +70,8 @@ export interface ChatScreenOptions {
   readonly conversation: Conversation | null;
   /** The history the server already rendered, so the first paint is not empty. */
   readonly initialMessages?: readonly Message[];
+  readonly olderCursor?: string | null;
+  readonly hasOlder?: boolean;
   /**
    * Injected so a test drives real frames rather than a model of them.
    *
@@ -115,6 +117,8 @@ export class ChatViewModel implements ScreenOwner, ScreenGuards {
   #conversation: Conversation | null;
   #seeded = false;
   #deferredSnapshot: readonly Message[] | null = null;
+  olderCursor = $state<string | null>(null);
+  hasOlder = $state(false);
   /** The in-flight turn's abort controller, or `null` when nothing is streaming. */
   #turn = $state<AbortController | null>(null);
   #inFlight = $state(0);
@@ -123,6 +127,8 @@ export class ChatViewModel implements ScreenOwner, ScreenGuards {
     this.#chat = options.chat;
     this.#conversation = options.conversation;
     this.#newClientId = options.newClientId ?? createClientId;
+    this.olderCursor = options.olderCursor ?? null;
+    this.hasOlder = options.hasOlder ?? false;
     if (options.initialMessages !== undefined) {
       this.seed(options.initialMessages);
     }
@@ -222,6 +228,30 @@ export class ChatViewModel implements ScreenOwner, ScreenGuards {
         retryable: appError.errorType !== 'forbidden' && appError.errorType !== 'unauthorized',
       };
     }
+  }
+
+  async loadOlder(): Promise<void> {
+    if (!this.hasOlder || this.olderCursor === null || this.conversationId === null) {
+      return;
+    }
+    const page = await this.#chat.listMessagesPage(this.conversationId, this.olderCursor);
+    const byId = new Map<string, ChatMessageView>();
+    for (const message of page.items) {
+      byId.set(message.id, toView(message));
+    }
+    for (const message of this.messages) {
+      const key = message.serverId ?? message.clientId;
+      if (!byId.has(key)) {
+        byId.set(key, message);
+      }
+    }
+    this.messages = [...byId.values()].sort(
+      (a, b) =>
+        a.createdAt - b.createdAt ||
+        (a.serverId ?? a.clientId).localeCompare(b.serverId ?? b.clientId),
+    );
+    this.olderCursor = page.nextCursor;
+    this.hasOlder = page.hasMore;
   }
 
   setDraft(value: string): void {

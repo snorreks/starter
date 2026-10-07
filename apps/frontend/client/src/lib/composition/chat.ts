@@ -20,6 +20,8 @@ export interface ChatComposition {
   conversation?: Conversation | null;
   /** The history the SSR load already produced, so the first paint is not empty. */
   initialMessages?: readonly Message[];
+  olderCursor?: string | null;
+  hasOlder?: boolean;
   /** Injected so a test drives deterministic client ids. */
   newClientId?: () => string;
 }
@@ -39,6 +41,8 @@ export const getChatViewModel = (options: ChatComposition = {}): ChatViewModel =
     chat: options.chat ?? chatService,
     conversation: options.conversation ?? null,
     ...(options.initialMessages === undefined ? {} : { initialMessages: options.initialMessages }),
+    ...(options.olderCursor === undefined ? {} : { olderCursor: options.olderCursor }),
+    ...(options.hasOlder === undefined ? {} : { hasOlder: options.hasOlder }),
     ...(options.newClientId === undefined ? {} : { newClientId: options.newClientId }),
   });
 

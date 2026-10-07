@@ -34,6 +34,13 @@ export const NoteListSchema = v.strictObject({
   serverTime: v.number(),
 });
 export type NoteList = v.InferOutput<typeof NoteListSchema>;
+export const NotePageSchema = v.strictObject({
+  items: v.array(NoteSchema),
+  nextCursor: v.union([v.pipe(v.string(), v.minLength(1)), v.null()]),
+  hasMore: v.boolean(),
+  serverTime: v.pipe(v.number(), v.finite()),
+});
+export type NotePage = v.InferOutput<typeof NotePageSchema>;
 export const validateNoteInput = (input: {
   title: string;
   body: string;

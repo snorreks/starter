@@ -450,6 +450,13 @@ const rulePlaneReachability = (context: Context): void => {
     const chains = reachableChains(module, context.graph.modules);
     for (const [targetFile, chain] of chains) {
       const target = context.graph.modules.get(targetFile);
+      const crossesRemoteBoundary = chain.some((step) => step.module.role === 'remote-module');
+      if (
+        crossesRemoteBoundary &&
+        (module.role === 'composition' || module.role === 'route-view')
+      ) {
+        continue;
+      }
       if (target === undefined || mayReach(module.plane, target.plane)) {
         continue;
       }

@@ -3,8 +3,8 @@ import { expect, test } from 'bun:test';
 import { readdirSync, readFileSync } from 'node:fs';
 import { decodeChatStream, isChatStreamEvent } from '@starter/schemas/chat';
 import { drizzle } from 'drizzle-orm/bun-sqlite';
-import { POST } from '../../routes/api/chat/conversations/[id]/messages/+server.ts';
-import type { ChatModel } from './chat_model.ts';
+import { POST, _streamTurn } from '../../routes/api/chat/conversations/[id]/messages/+server.ts';
+import { type ChatModel, createWorkersAiChatModel } from './chat_model.ts';
 import { type ChatDatabase, createChatService } from './chat_service.ts';
 
 const migrations = new URL(
@@ -143,6 +143,165 @@ test('the timestamp migration preserves history, constraints, and millisecond or
     expect(sql.query('PRAGMA foreign_key_check').all()).toEqual([]);
     sql.run("DELETE FROM conversations WHERE id='conversation'");
     expect(sql.query('SELECT * FROM messages').all()).toEqual([]);
+  } finally {
+    sql.close();
+  }
+});
+
+test('cursor pages keep newest history visible and traverse more than 500 tied timestamps', async () => {
+  const { sql, service } = setup();
+  try {
+    for (let index = 0; index < 537; index += 1) {
+      const id = `msg_${String(index).padStart(4, '0')}`;
+      sql.run(
+        'INSERT INTO messages (id,conversation_id,author_id,role,content,client_id,created_at) VALUES (?,?,?,?,?,?,?)',
+        [
+          id,
+          'conversation',
+          'owner',
+          index % 2 ? 'assistant' : 'user',
+          `body-${index}`,
+          `client-${index}`,
+          1700000000000,
+        ],
+      );
+    }
+    const newestReload = await service.messagePage('owner', 'conversation', null);
+    expect(newestReload.items).toHaveLength(50);
+    expect(newestReload.items.at(-1)?.id).toBe('msg_0536');
+
+    const seen = [...newestReload.items.map((message) => message.id)];
+    let cursor = newestReload.nextCursor;
+    while (cursor !== null) {
+      const older = await service.messagePage('owner', 'conversation', cursor);
+      seen.unshift(...older.items.map((message) => message.id));
+      cursor = older.nextCursor;
+    }
+    expect(seen).toHaveLength(537);
+    expect(new Set(seen).size).toBe(537);
+    expect(seen[0]).toBe('msg_0000');
+    expect(seen.at(-1)).toBe('msg_0536');
+    await expect(service.messagePage('owner', 'conversation', '%%%')).rejects.toThrow('malformed');
+    const foreign = btoa(
+      JSON.stringify({
+        ownerId: 'other',
+        conversationId: 'conversation',
+        createdAt: 1700000000000,
+        id: 'msg_0500',
+      }),
+    );
+    await expect(service.messagePage('owner', 'conversation', foreign)).rejects.toThrow(
+      'malformed',
+    );
+  } finally {
+    sql.close();
+  }
+});
+
+test('injected deadline and output byte budgets end with validated failure frames and never persist', async () => {
+  const { sql, service } = setup();
+  const userMessage = await service.appendUserMessage(
+    'owner',
+    'conversation',
+    'prompt',
+    'turn-budget',
+  );
+  if (userMessage === null) {
+    throw new Error('fixture message did not persist');
+  }
+  const persisted: string[] = [];
+  const outcomes: string[] = [];
+  try {
+    const deadline = _streamTurn({
+      model: {
+        profile: 'delayed-fixture',
+        async *generate(_prompt, signal) {
+          await new Promise((resolve) => setTimeout(resolve, 20));
+          if (!signal.aborted) {
+            yield { text: 'late' };
+          }
+        },
+      },
+      prompt: 'prompt',
+      replyId: 'msg_deadline',
+      conversationId: 'conversation',
+      userMessage,
+      clientId: 'turn-budget',
+      signal: new AbortController().signal,
+      deadlineMs: 1,
+      persistAssistantReply: async () => {
+        persisted.push('deadline');
+        return null;
+      },
+      onTerminal: (outcome) => outcomes.push(outcome),
+    });
+    const deadlineEvents = decodeChatStream(await deadline.text());
+    expect(deadlineEvents.at(-1)).toMatchObject({ type: 'error', code: 'aborted' });
+
+    const output = _streamTurn({
+      model: {
+        profile: 'output-fixture',
+        async *generate() {
+          yield { text: '123' };
+        },
+      },
+      prompt: 'prompt',
+      replyId: 'msg_output',
+      conversationId: 'conversation',
+      userMessage,
+      clientId: 'turn-budget',
+      signal: new AbortController().signal,
+      maxOutputBytes: 2,
+      persistAssistantReply: async () => {
+        persisted.push('output');
+        return null;
+      },
+      onTerminal: (outcome) => outcomes.push(outcome),
+    });
+    const outputEvents = decodeChatStream(await output.text());
+    expect(outputEvents.at(-1)).toMatchObject({ type: 'error', code: 'output_limit' });
+    expect(persisted).toEqual([]);
+    expect(outcomes).toEqual(['failed', 'failed']);
+  } finally {
+    sql.close();
+  }
+});
+
+test('abort during a delayed Workers AI response forwards cancellation and persists no output', async () => {
+  const { sql, db } = setup();
+  const abort = new AbortController();
+  let forwarded: AbortSignal | undefined;
+  let providerStarted!: () => void;
+  const started = new Promise<void>((resolve) => {
+    providerStarted = resolve;
+  });
+  try {
+    const model = createWorkersAiChatModel({
+      binding: {
+        async run(_model, _input, options) {
+          forwarded = options?.signal as AbortSignal;
+          providerStarted();
+          await new Promise((resolve) => setTimeout(resolve, 20));
+          return new ReadableStream({
+            start(controller) {
+              controller.enqueue(
+                new TextEncoder().encode('data: {"response":"late"}\n\ndata: [DONE]\n\n'),
+              );
+              controller.close();
+            },
+          });
+        },
+      },
+    });
+    const response = await post(db, model, abort.signal);
+    const reading = response.text();
+    await started;
+    abort.abort(new Error('navigation'));
+    const events = decodeChatStream(await reading);
+    expect(forwarded?.aborted).toBe(true);
+    expect(events.some((event) => event.type === 'delta' || event.type === 'complete')).toBe(false);
+    expect(events.at(-1)).toMatchObject({ type: 'error', code: 'aborted' });
+    expect(sql.query("SELECT id FROM messages WHERE role='assistant'").all()).toEqual([]);
   } finally {
     sql.close();
   }
