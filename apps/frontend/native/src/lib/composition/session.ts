@@ -24,7 +24,12 @@
 //   * nowhere else. It is not in a URL, not in a log line, and not in a
 //     module-level export a bundler could inline into the bundle.
 
-import { AuthSessionService, createAccountService, SessionState } from '@starter/features/auth';
+import {
+  AuthSessionService,
+  createAccountService,
+  createDeviceAuthorizationService,
+  SessionState,
+} from '@starter/features/auth';
 import { type Navigation, parseDto } from '@starter/platform';
 import { type SessionUser, SessionUserSchema } from '@starter/schemas/auth';
 import { createBearerTransport } from '#lib/platform/bearer_transport.ts';
@@ -32,6 +37,7 @@ import { createExternalBrowser } from '#lib/platform/external_browser.ts';
 import { StrongholdVault } from '#lib/platform/stronghold_vault.ts';
 import {
   type SupabaseAuthConfig,
+  SupabaseAuthError,
   SupabaseNativeAuth,
   type SupabaseUser,
 } from '#lib/platform/supabase_auth.ts';
@@ -40,6 +46,7 @@ import {
   VaultSessionStore,
 } from '#lib/platform/vault_session_store.ts';
 import { nativeConfig } from '#lib/runtime/config.ts';
+import { NativeSignInViewModel } from '#lib/viewmodels/native_sign_in_view_model.svelte.ts';
 import { goto } from '$app/navigation';
 
 /**
@@ -312,14 +319,25 @@ export const refreshNativeSession = async (): Promise<void> => {
       supabaseNativeAuth.accessToken === null
         ? await supabaseNativeAuth.restore()
         : supabaseNativeAuth.user;
+    if (restored !== null) {
+      await supabaseNativeAuth.ensureFreshAccessToken();
+    }
     const identity = restored === null ? null : await supabaseNativeAuth.getCurrentUser();
     if (identity === null) {
       sessionState.set(null);
       return;
     }
     sessionState.set(toSessionUser(identity));
-  } catch {
+  } catch (error) {
     sessionState.set(null);
+    if (
+      error instanceof SupabaseAuthError &&
+      (error.status === 401 ||
+        error.status === 403 ||
+        (error.status === 400 && error.path === '/auth/v1/token?grant_type=refresh_token'))
+    ) {
+      await supabaseNativeAuth.signOut().catch(() => undefined);
+    }
   }
 };
 
@@ -343,3 +361,26 @@ export const unlockSupabaseVault = async (passphrase: string): Promise<void> => 
   await supabaseVaultStore.unlock(passphrase);
   await refreshNativeSession();
 };
+
+/** Each sign-in screen owns its state; this root selects its host operations. */
+export const createNativeSignInViewModel = (): NativeSignInViewModel =>
+  new NativeSignInViewModel({
+    authProfile: nativeConfig.authProfile,
+    apiOrigin,
+    session: sessionState,
+    activeVault: supabaseVaultStore ?? vaultStore,
+    refreshSession: refreshNativeSession,
+    requiresReauthentication: () => supabaseNativeAuth?.requiresReauthentication ?? false,
+    hasSession: () => sessionState.user !== null,
+    unlockSupabaseVault,
+    unlockVault,
+    beginSupabaseOAuth,
+    authSessionService,
+    deviceService: createDeviceAuthorizationService({
+      transport: nativeTransport,
+      clientId: nativeConfig.clientId,
+    }),
+    externalBrowser,
+    adoptSession,
+    nativeNavigation,
+  });

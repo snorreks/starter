@@ -85,7 +85,12 @@ fn vault_snapshot_path(app: tauri::AppHandle) -> Result<String, String> {
 /// Build and run the application.
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    let builder = tauri::Builder::default()
+    let builder = tauri::Builder::default();
+    // This must be first so subsequent desktop launches forward their deep links.
+    #[cfg(desktop)]
+    let builder = builder.plugin(tauri_plugin_single_instance::init(|_app, _args, _cwd| {}));
+
+    let builder = builder
         // Structured native logs. Without this, a packaged app's logs go to
         // stdout on a machine nobody can read them from.
         .plugin(tauri_plugin_log::Builder::new().build())
@@ -96,7 +101,15 @@ pub fn run() {
         // not a webview.
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_deep_link::init())
-        .invoke_handler(tauri::generate_handler![vault_snapshot_path]);
+        .invoke_handler(tauri::generate_handler![vault_snapshot_path])
+        .setup(|_app| {
+            #[cfg(all(target_os = "linux", debug_assertions))]
+            {
+                use tauri_plugin_deep_link::DeepLinkExt;
+                _app.deep_link().register_all()?;
+            }
+            Ok(())
+        });
 
     builder
         .build(tauri::generate_context!())

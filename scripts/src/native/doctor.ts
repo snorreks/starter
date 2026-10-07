@@ -172,12 +172,22 @@ const crateCheck = (): Check => {
 };
 
 const supabaseAuthProfileCheck = (): Check => {
-  if (process.env.VITE_NATIVE_AUTH_PROFILE !== 'supabase') {
+  const profile = process.env.VITE_NATIVE_AUTH_PROFILE;
+  if (profile === undefined || profile === '' || profile === 'legacy') {
     return {
       name: 'native auth profile',
       severity: 'required',
       ok: true,
       detail: 'legacy default',
+    };
+  }
+  if (profile !== 'supabase') {
+    return {
+      name: 'native auth profile',
+      severity: 'required',
+      ok: false,
+      detail: 'Unsupported native auth profile',
+      remedy: 'Set VITE_NATIVE_AUTH_PROFILE to legacy or supabase, or leave it unset for legacy.',
     };
   }
   const required = [

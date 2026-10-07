@@ -355,7 +355,8 @@ describe('native Supabase PKCE', () => {
     await auth.signOut();
     await auth.beginOAuth('google');
     await auth.handleCallback(callback(opened));
-    expect(store.value?.accountId).toBe('user-2');
+    expect(auth.user?.id).toBe('user-2');
+    expect(store.value).toBeNull(); // Signing out resets the persistence opt-in.
   });
 
   test('restores expired access tokens through the refresh endpoint', async () => {
@@ -385,6 +386,7 @@ describe('native Supabase PKCE', () => {
     });
     expect((await auth.restore())?.id).toBe('user-1');
     expect(auth.accessToken).toBe('access-1');
+    expect(store.value?.refreshToken).toBe('refresh-1');
   });
 
   test('surfaces a legacy credential as an explicit reauthentication outcome', async () => {
@@ -397,4 +399,114 @@ describe('native Supabase PKCE', () => {
     expect(await auth.restore()).toBeNull();
     expect(auth.requiresReauthentication).toBe(true);
   });
+});
+
+for (const failure of [400, 401, 403, 429, 500, 503, 'network', 'timeout'] as const) {
+  test(`restore preserves retryable credentials after ${failure}`, async () => {
+    const store = new Store();
+    const scope = { ...config, accountId: 'user-1' };
+    const credential: SessionCredential = {
+      version: 1,
+      accountId: 'user-1',
+      supabaseProjectRef: config.supabaseProjectRef,
+      apiOrigin: config.apiOrigin,
+      accessToken: 'expired',
+      refreshToken: 'saved-refresh',
+      expiresAt: 0,
+    };
+    await store.save(scope, credential);
+    let retry = false;
+    const auth = new SupabaseNativeAuth({
+      config,
+      store,
+      openBrowser: async () => {},
+      fetch: async () => {
+        if (retry) {
+          return Response.json(tokenResponse());
+        }
+        if (failure === 'network') {
+          throw new TypeError('Network failure');
+        }
+        if (failure === 'timeout') {
+          throw new DOMException('Timed out', 'TimeoutError');
+        }
+        return new Response(null, { status: failure });
+      },
+    });
+    expect(await auth.restore()).toBeNull();
+    expect(auth.accessToken).toBeNull();
+    if (failure === 400 || failure === 401) {
+      expect(store.value).toBeNull();
+    } else {
+      expect(store.value).toEqual(credential);
+      retry = true;
+      expect((await auth.restore())?.id).toBe('user-1');
+      expect(store.value?.refreshToken).toBe('refresh-1');
+    }
+  });
+}
+
+test('memory-only logout never accesses the locked store but still logs out remotely', async () => {
+  const store = new Store();
+  store.clear = async () => {
+    throw new Error('Locked store must not be accessed');
+  };
+  let opened = '';
+  let logouts = 0;
+  const auth = new SupabaseNativeAuth({
+    config,
+    store,
+    openBrowser: async (url) => {
+      opened = url;
+    },
+    fetch: async (input) => {
+      if (String(input).includes('/logout')) {
+        logouts += 1;
+        return new Response(null, { status: 204 });
+      }
+      return Response.json(tokenResponse());
+    },
+  });
+  auth.setPersistenceEnabled(true);
+  await auth.signOut(); // No current account, even with persistence enabled.
+  await auth.beginOAuth('google');
+  await auth.handleCallback(callback(opened));
+  await auth.signOut();
+  expect(logouts).toBe(1);
+  expect(store.saves).toBe(0);
+  expect(auth.accessToken).toBeNull();
+});
+
+test('logout removes a persisted refresh that finishes saving after cleanup', async () => {
+  const store = new Store();
+  let opened = '';
+  const auth = new SupabaseNativeAuth({
+    config,
+    store,
+    openBrowser: async (url) => {
+      opened = url;
+    },
+    fetch: async (input) =>
+      String(input).includes('/logout')
+        ? new Response(null, { status: 204 })
+        : Response.json(tokenResponse()),
+  });
+  auth.setPersistenceEnabled(true);
+  await auth.beginOAuth('google');
+  await auth.handleCallback(callback(opened));
+  const saving = deferred<void>();
+  const release = deferred<void>();
+  const save = store.save.bind(store);
+  store.save = async (scope, credential) => {
+    saving.resolve();
+    await release.promise;
+    await save(scope, credential);
+  };
+  const refresh = auth.refresh();
+  await saving.promise;
+  await auth.signOut();
+  release.resolve();
+  await refresh;
+  expect(store.value).toBeNull();
+  expect(auth.accessToken).toBeNull();
 });

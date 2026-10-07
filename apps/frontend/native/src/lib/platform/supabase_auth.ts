@@ -32,6 +32,15 @@ export type AuthFetch = (input: RequestInfo | URL, init?: RequestInit) => Promis
 
 export class SupabaseAuthError extends Error {
   override readonly name: string = 'SupabaseAuthError';
+
+  readonly status: number | undefined;
+  readonly path: string | undefined;
+
+  constructor(message: string, status?: number, path?: string) {
+    super(message);
+    this.status = status;
+    this.path = path;
+  }
 }
 
 export class InvalidAuthCallbackError extends SupabaseAuthError {
@@ -310,14 +319,21 @@ export class SupabaseNativeAuth {
       await this.#store.clear(this.#scope(stored.accountId));
       return null;
     }
+    this.#persistEnabled = true;
     this.#credential = stored;
     this.#requiresReauthentication = false;
     if (stored.expiresAt - this.#now() < 60_000) {
       try {
         await this.refresh();
-      } catch {
+      } catch (error) {
         this.#credential = null;
-        await this.#store.clear(this.#scope(stored.accountId));
+        if (
+          error instanceof SupabaseAuthError &&
+          error.path === '/auth/v1/token?grant_type=refresh_token' &&
+          (error.status === 400 || error.status === 401)
+        ) {
+          await this.#store.clear(this.#scope(stored.accountId));
+        }
         return null;
       }
     }
@@ -396,8 +412,11 @@ export class SupabaseNativeAuth {
     this.#refreshPromise = null;
     this.#credential = null;
     this.#pending = null;
-    const scope = this.#scope(current?.accountId);
-    const tasks: Promise<unknown>[] = [this.#store.clear(scope)];
+    const tasks: Promise<unknown>[] = [];
+    if (this.#persistEnabled && current !== null) {
+      tasks.push(this.#store.clear(this.#scope(current.accountId)));
+    }
+    this.#persistEnabled = false;
     if (current !== null) {
       tasks.push(
         this.#request('/auth/v1/logout?scope=global', {
@@ -453,7 +472,8 @@ export class SupabaseNativeAuth {
       throw new SupabaseAuthError('Credential deployment scope does not match this native app.');
     }
     const scope = this.#scope(credential.accountId);
-    if (this.#persistEnabled) {
+    const persist = this.#persistEnabled;
+    if (persist) {
       try {
         await this.#store.save(scope, credential);
       } catch (error) {
@@ -464,7 +484,7 @@ export class SupabaseNativeAuth {
       }
     }
     if (generation !== this.#generation) {
-      if (this.#persistEnabled) {
+      if (persist) {
         await this.#store.clear(scope);
       }
       return;
@@ -494,7 +514,11 @@ export class SupabaseNativeAuth {
       redirect: 'error',
     });
     if (!response.ok) {
-      throw new SupabaseAuthError(`Supabase Auth request failed (${response.status}).`);
+      throw new SupabaseAuthError(
+        `Supabase Auth request failed (${response.status}).`,
+        response.status,
+        path,
+      );
     }
     if (response.status === 204) {
       return null;

@@ -11,7 +11,7 @@ export const listenForAuthLinks = async (
   const current = await getCurrent();
   if (current !== null) {
     for (const url of current) {
-      await handle(url);
+      await handle(url).catch(() => undefined);
     }
   }
   const unlisten = await onOpenUrl((urls) => {

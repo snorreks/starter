@@ -72,6 +72,10 @@ tauri-plugin-stronghold = "=2.4.0"
 # else, so the password-hash and getrandom halves of the crate are not pulled in.
 argon2 = { version = "=0.6.0", default-features = false, features = ["alloc"] }
 
+[target.'cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))'.dependencies]
+# Forward callback URLs from subsequent launches to the running desktop process.
+tauri-plugin-single-instance = { version = "=2.5.2", features = ["deep-link"] }
+
 [features]
 # Enabled by `tauri dev`, not in a shipped build. A custom protocol that serves
 # the frontend is only correct against a built bundle.
