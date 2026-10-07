@@ -20,7 +20,9 @@ type Props = {
 let { viewModel, progressive = false }: Props = $props();
 
 const fieldId = 'chat-composer';
-const errors = $derived(validateMessageInput({ content: viewModel.draft }));
+const errors = $derived(
+  viewModel.draft === '' ? {} : validateMessageInput({ content: viewModel.draft }),
+);
 
 const onInput = (event: Event): void => {
   viewModel.setDraft((event.currentTarget as HTMLTextAreaElement).value);
@@ -156,6 +158,10 @@ const onSubmit = (event: SubmitEvent): void => {
     border-radius: var(--radius-1);
     background: var(--color-surface);
     color: var(--color-text);
+  }
+
+  .composer__input[aria-invalid='true'] {
+    border-color: var(--color-danger-border);
   }
 
   .composer__error {

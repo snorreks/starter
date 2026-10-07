@@ -101,6 +101,7 @@ export const actions: Actions = {
       // a new link — and distinguishing them would confirm that a token they hold
       // was once valid.
       return fail(400, {
+        tokenInvalid: true,
         errors: {
           newPassword:
             code === AccountErrorCode.expiredToken
