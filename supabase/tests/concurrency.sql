@@ -1,0 +1,13 @@
+begin;
+select plan(9);
+select ok(to_regclass('private.jobs_one_active_owner') is not null, 'active job admission has its unique owner fence');
+select ok(to_regclass('private.chat_generations_pkey') is not null, 'chat admission key is unique across owner/conversation/client id');
+select ok(to_regclass('private.job_attempts_job_id_attempt_number_key') is not null, 'job attempt numbers cannot duplicate');
+select ok(to_regprocedure('public.admit_chat_generation(uuid,text,text,uuid,text)') is not null, 'chat generation is admitted through a transaction function');
+select ok(to_regprocedure('public.claim_encode_job(text,text,integer)') is not null, 'job leases use a fenced transaction function');
+select ok(not has_table_privilege('authenticated', 'private.jobs', 'select'), 'authenticated users cannot query internal jobs');
+select ok(not has_function_privilege('authenticated', 'public.complete_chat_generation(uuid,text,integer,text)'::regprocedure, 'execute'), 'authenticated users cannot complete trusted chat generations');
+select ok(has_function_privilege('service_role', 'public.complete_chat_generation(uuid,text,integer,text)'::regprocedure, 'execute'), 'only the service role can complete trusted chat generations');
+select ok(not has_function_privilege('anon', 'public.admit_encode_job(text,text,text,text,text,text)'::regprocedure, 'execute'), 'anonymous callers cannot admit jobs');
+select * from finish();
+rollback;

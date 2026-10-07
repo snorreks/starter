@@ -1,0 +1,48 @@
+# The local lifecycle copies this file into its run-owned project directory and
+# replaces only project_id and service ports from the single checkout allocation.
+project_id = "starter-local"
+
+[api]
+enabled = true
+port = 54321
+schemas = ["public", "graphql_public"]
+extra_search_path = ["public", "extensions"]
+max_rows = 500
+
+[db]
+port = 54322
+shadow_port = 54320
+password = "postgres"
+major_version = 17
+
+[db.migrations]
+enabled = true
+
+[db.seed]
+enabled = true
+sql_paths = ["./seed.sql"]
+
+[studio]
+enabled = true
+port = 54323
+api_url = "http://127.0.0.1:54321"
+
+[local_smtp]
+enabled = true
+port = 54324
+smtp_port = 54325
+pop3_port = 54326
+
+[auth]
+enabled = true
+site_url = "http://127.0.0.1:5173"
+additional_redirect_urls = ["http://127.0.0.1:5173"]
+enable_signup = true
+
+[auth.email]
+enable_signup = true
+double_confirm_changes = true
+enable_confirmations = false
+
+[analytics]
+enabled = false
