@@ -113,6 +113,60 @@ describe('request scoped Supabase clients', () => {
     ]);
   });
 
+  test('Cloud Run execution records, failure and grants remain service-role and attempt scoped', async () => {
+    const headers = captureRequests([
+      true,
+      true,
+      [
+        {
+          job_id: 'job_a',
+          attempt_id: 'attempt_a',
+          fixture: 'sample-v1',
+          preset: 'demo-180p-v1',
+          output_key: 'media/v1/jobs/job_a/attempts/attempt_a.mp4',
+          expires_at: '2026-10-07T12:00:00.000Z',
+        },
+      ],
+      [],
+    ]);
+    const repository = createSupabaseJobRepository(userClient(), adminClient());
+    expect(
+      await repository.recordExecution(
+        'job_a',
+        'attempt_a',
+        'projects/p/locations/r/jobs/j/executions/e',
+      ),
+    ).toBe(true);
+    expect(await repository.fail('job_a', 'attempt_a', 'internal_error', true)).toBe(true);
+    expect(
+      await repository.authorizeRunner(
+        'job_a',
+        'attempt_a',
+        'projects/p/locations/r/jobs/j/executions/e',
+      ),
+    ).toEqual({
+      jobId: 'job_a',
+      attemptId: 'attempt_a',
+      fixture: 'sample-v1',
+      preset: 'demo-180p-v1',
+      outputKey: 'media/v1/jobs/job_a/attempts/attempt_a.mp4',
+      expiresAt: Date.parse('2026-10-07T12:00:00.000Z'),
+    });
+    expect(
+      await repository.authorizeRunner(
+        'job_a',
+        'attempt_stale',
+        'projects/p/locations/r/jobs/j/executions/e',
+      ),
+    ).toBeNull();
+    expect(headers.map((request) => request.get('Authorization'))).toEqual([
+      'Bearer local-only-service-role',
+      'Bearer local-only-service-role',
+      'Bearer local-only-service-role',
+      'Bearer local-only-service-role',
+    ]);
+  });
+
   test('job status and list use owner-scoped RPCs and reject malformed DTO data', async () => {
     const status = {
       id: 'job_preview_1',

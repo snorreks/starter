@@ -54,7 +54,7 @@ export const MEDIA_CONTAINER_PORT = 8080;
  * literally true for both.
  */
 export interface JobsEnv {
-  /** The shared, environment-isolated D1 database. */
+  /** The legacy default remains until prompt 08 removes D1. */
   readonly DB: D1Database;
   /** Private R2: named fixtures and encoded artifacts. Never public. */
   readonly MEDIA: R2Bucket;
@@ -62,6 +62,19 @@ export interface JobsEnv {
   readonly MAINTENANCE_WORKFLOW: WorkflowInstanceBinding;
   /** One Durable Object per job; the only component that may reach the container. */
   readonly CONTAINER: DurableObjectNamespace;
+  readonly STARTER_BACKEND_PROFILE?: string;
+  readonly SUPABASE_URL?: string;
+  readonly SUPABASE_ANON_KEY?: string;
+  readonly SUPABASE_SERVICE_ROLE_KEY?: string;
+  readonly GOOGLE_CLOUD_PROJECT?: string;
+  readonly GOOGLE_CLOUD_REGION?: string;
+  readonly GOOGLE_CLOUD_RUN_JOB?: string;
+  readonly GOOGLE_RUNNER_SERVICE_ACCOUNT?: string;
+  readonly GOOGLE_RUNNER_SUBJECT?: string;
+  readonly GOOGLE_RUNNER_AUDIENCE?: string;
+  /** Worker secret, never a Wrangler var or child-process argument. */
+  readonly GOOGLE_DISPATCHER_CREDENTIAL?: string;
+  readonly COMPUTE_PROTOCOL?: string;
   readonly DEPLOYMENT_ENV?: string;
   readonly JOBS_PROFILE?: string;
   /** `http://host:port` of a processor this Worker does not run itself. */
@@ -109,7 +122,14 @@ export const requireJobsDeploymentEnvironment = (env: { DEPLOYMENT_ENV?: string 
   }
 };
 
-const REQUIRED_BINDINGS = ['DB', 'MEDIA', 'ENCODE_WORKFLOW', 'MAINTENANCE_WORKFLOW', 'CONTAINER'];
+const REQUIRED_LEGACY_BINDINGS = [
+  'DB',
+  'MEDIA',
+  'ENCODE_WORKFLOW',
+  'MAINTENANCE_WORKFLOW',
+  'CONTAINER',
+];
+const REQUIRED_SUPABASE_BINDINGS = ['MEDIA', 'ENCODE_WORKFLOW', 'MAINTENANCE_WORKFLOW'];
 
 /**
  * Narrow an unknown platform value to the binding set this Worker needs.
@@ -126,9 +146,36 @@ export const requireJobsBindings = (raw: unknown): JobsEnv => {
       `The jobs Worker received no bindings. Declared in apps/backend/jobs/wrangler.jsonc.`,
     );
   }
-  const missing = REQUIRED_BINDINGS.filter(
-    (name) => candidate[name as keyof JobsEnv] === undefined,
-  );
+  const profile = candidate.STARTER_BACKEND_PROFILE?.trim() ?? 'legacy';
+  if (!['legacy', 'supabase'].includes(profile)) {
+    throw new Error('STARTER_BACKEND_PROFILE must be legacy or supabase.');
+  }
+  const required = profile === 'supabase' ? REQUIRED_SUPABASE_BINDINGS : REQUIRED_LEGACY_BINDINGS;
+  const missing = required.filter((name) => candidate[name as keyof JobsEnv] === undefined);
+  if (profile === 'supabase' && candidate.JOBS_PROFILE === 'encode') {
+    const cloudRun = [
+      ['SUPABASE_URL', candidate.SUPABASE_URL],
+      ['SUPABASE_ANON_KEY', candidate.SUPABASE_ANON_KEY],
+      ['SUPABASE_SERVICE_ROLE_KEY', candidate.SUPABASE_SERVICE_ROLE_KEY],
+      ['GOOGLE_CLOUD_PROJECT', candidate.GOOGLE_CLOUD_PROJECT],
+      ['GOOGLE_CLOUD_REGION', candidate.GOOGLE_CLOUD_REGION],
+      ['GOOGLE_CLOUD_RUN_JOB', candidate.GOOGLE_CLOUD_RUN_JOB],
+      ['GOOGLE_RUNNER_SERVICE_ACCOUNT', candidate.GOOGLE_RUNNER_SERVICE_ACCOUNT],
+      ['GOOGLE_RUNNER_SUBJECT', candidate.GOOGLE_RUNNER_SUBJECT],
+      ['GOOGLE_RUNNER_AUDIENCE', candidate.GOOGLE_RUNNER_AUDIENCE],
+      ['GOOGLE_DISPATCHER_CREDENTIAL', candidate.GOOGLE_DISPATCHER_CREDENTIAL],
+    ]
+      .filter(([, value]) => value === undefined || value === '')
+      .map(([name]) => name);
+    if (cloudRun.length) {
+      throw new Error(
+        `Supabase Cloud Run compute configuration is incomplete: ${cloudRun.join(', ')}.`,
+      );
+    }
+    if (candidate.COMPUTE_PROTOCOL !== 'sample-v1') {
+      throw new Error('COMPUTE_PROTOCOL must be sample-v1 for this runner.');
+    }
+  }
   if (missing.length > 0) {
     throw new Error(
       `The jobs Worker is missing its bindings: ${missing.join(', ')}.\n` +

@@ -46,6 +46,10 @@ declare global {
       readonly SUPABASE_ANON_KEY?: string;
       readonly SUPABASE_SERVICE_ROLE_KEY?: string;
       readonly SUPABASE_MAIL_URL?: string;
+      readonly RUNNER_GRANT_SECRET?: string;
+      readonly GOOGLE_RUNNER_AUDIENCE?: string;
+      readonly GOOGLE_RUNNER_SERVICE_ACCOUNT?: string;
+      readonly GOOGLE_RUNNER_SUBJECT?: string;
       readonly DEPLOYMENT_ENV?: string;
       readonly BETTER_AUTH_URL?: string;
       readonly BETTER_AUTH_SECRET?: string;
@@ -85,6 +89,10 @@ declare global {
       readonly SUPABASE_ANON_KEY?: string;
       readonly SUPABASE_SERVICE_ROLE_KEY?: string;
       readonly SUPABASE_MAIL_URL?: string;
+      readonly RUNNER_GRANT_SECRET?: string;
+      readonly GOOGLE_RUNNER_AUDIENCE?: string;
+      readonly GOOGLE_RUNNER_SERVICE_ACCOUNT?: string;
+      readonly GOOGLE_RUNNER_SUBJECT?: string;
       readonly DEPLOYMENT_ENV?: string;
       readonly BETTER_AUTH_URL?: string;
       readonly BETTER_AUTH_SECRET?: string;

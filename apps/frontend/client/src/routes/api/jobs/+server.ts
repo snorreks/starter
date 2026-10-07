@@ -23,6 +23,7 @@
 // serve notes and auth perfectly well while answering *this* endpoint with a name
 // for what is missing — not a 500, and not a 404 that reads like a wrong URL.
 
+import { workflowIdFor } from '@starter/jobs';
 import { checkSchema } from '@starter/schemas/common';
 import {
   CreateEncodeJobSchema,
@@ -141,7 +142,13 @@ export const POST: RequestHandler = async ({ locals, request }) => {
     if (!repository || locals.applicationServices?.identity.user.id !== user.id) {
       return unauthorized();
     }
+    if (repository.computeRequested && repository.dispatch !== 'cloud_run') {
+      return capabilityUnavailable(
+        'Supabase compute is enabled without its Cloud Run Workflow binding. Configure the compute profile before admitting jobs.',
+      );
+    }
     const id = createId('job');
+    const attemptId = createId('attempt');
     const bytes = new TextEncoder().encode(JSON.stringify(parsed.value));
     const digest = await crypto.subtle.digest('SHA-256', bytes);
     const outcome = await repository.admit({
@@ -152,7 +159,7 @@ export const POST: RequestHandler = async ({ locals, request }) => {
       fingerprint: [...new Uint8Array(digest)]
         .map((byte) => byte.toString(16).padStart(2, '0'))
         .join(''),
-      workflowId: `preview-disabled:${id}`,
+      workflowId: workflowIdFor(id),
     });
     if (outcome.outcome === 'idempotency_conflict') {
       return conflict('That idempotency key was used for a different request.');
@@ -161,11 +168,20 @@ export const POST: RequestHandler = async ({ locals, request }) => {
       return budgetExceeded('The job admission limit has been reached.');
     }
     if (outcome.outcome === 'created' && outcome.jobId !== null) {
-      if (!(await repository.disableDispatch(outcome.jobId))) {
+      const started =
+        repository.dispatch === 'cloud_run'
+          ? await repository.startEncode({
+              jobId: outcome.jobId,
+              attemptId,
+              fixture: parsed.value.fixture,
+              preset: parsed.value.preset,
+            })
+          : await repository.disableDispatch(outcome.jobId);
+      if (!started) {
         return jsonError(
           503,
-          'job_unavailable',
-          'The admitted job dispatch could not be disabled.',
+          'job_dispatch_failed',
+          'The job was admitted, but its Workflow could not be started. Retry with the same idempotency key.',
         );
       }
     }

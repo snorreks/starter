@@ -1,5 +1,5 @@
 begin;
-select plan(14);
+select plan(19);
 select ok(to_regclass('private.jobs_one_active_owner') is not null, 'active job admission has its unique owner fence');
 select ok(to_regclass('private.chat_generations_pkey') is not null, 'chat admission key is unique across owner/conversation/client id');
 select ok(to_regclass('private.job_attempts_job_id_attempt_number_key') is not null, 'job attempt numbers cannot duplicate');
@@ -8,6 +8,11 @@ select ok(to_regprocedure('public.claim_encode_job(text,text,integer)') is not n
 select ok(not has_table_privilege('authenticated', 'private.jobs', 'select'), 'authenticated users cannot query internal jobs');
 select ok(not has_function_privilege('authenticated', 'public.complete_chat_generation(uuid,text,integer,text)'::regprocedure, 'execute'), 'authenticated users cannot complete trusted chat generations');
 select ok(has_function_privilege('service_role', 'public.complete_chat_generation(uuid,text,integer,text)'::regprocedure, 'execute'), 'only the service role can complete trusted chat generations');
+select ok(exists (select 1 from information_schema.columns where table_schema='private' and table_name='job_attempts' and column_name='execution_name'), 'runner execution identity is stored with the fenced attempt');
+select ok(not has_function_privilege('anon', 'public.authorize_job_runner(text,text,text)'::regprocedure, 'execute'), 'anonymous callers cannot request runner grants');
+select ok(has_function_privilege('service_role', 'public.authorize_job_runner(text,text,text)'::regprocedure, 'execute'), 'only the service role can authorize a runner attempt');
+select ok((select count(*)=1 from cron.job where jobname='starter-maintenance-history'), 'database history has exactly one Supabase Cron owner');
+select ok(not has_function_privilege('anon', 'public.prune_maintenance_history()'::regprocedure, 'execute'), 'anonymous callers cannot run maintenance retention');
 select ok(not has_function_privilege('anon', 'public.admit_encode_job(text,text,text,text,text,text)'::regprocedure, 'execute'), 'anonymous callers cannot admit jobs');
 select ok((select bool_and(has_table_privilege('authenticated', 'public.profiles', privilege) = (privilege in ('SELECT','UPDATE'))) from unnest(array['SELECT','INSERT','UPDATE','DELETE','TRUNCATE','REFERENCES','TRIGGER']) as privilege), 'authenticated profiles privileges are limited to the intended grants');
 select ok((select bool_and(has_table_privilege('authenticated', 'public.notes', privilege) = (privilege in ('SELECT','INSERT','UPDATE','DELETE'))) from unnest(array['SELECT','INSERT','UPDATE','DELETE','TRUNCATE','REFERENCES','TRIGGER']) as privilege), 'authenticated notes privileges are limited to the intended grants');

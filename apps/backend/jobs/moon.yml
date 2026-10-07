@@ -33,6 +33,7 @@ fileGroups:
   workspaceSources:
     - '/packages/backend/jobs/src/**/*'
     - '/packages/backend/database/src/**/*'
+    - '/packages/backend/database/src/supabase/**/*'
     - '/packages/backend/database/drizzle-d1/**/*'
     - '/packages/shared/schemas/src/**/*'
     - '/packages/shared/utils/src/**/*'
@@ -40,6 +41,8 @@ fileGroups:
   tests:
     - 'tests/**/*'
     - 'scripts/**/*'
+    - '/apps/backend/media/runner/**/*'
+    - '/apps/backend/media/Dockerfile.job'
 
 toolchains:
   bun:

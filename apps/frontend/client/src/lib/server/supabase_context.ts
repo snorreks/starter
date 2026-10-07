@@ -13,6 +13,12 @@ import {
   createUserDatabaseClient,
   type SupabaseAdminConfig,
 } from '@starter/database/supabase';
+import {
+  createWorkflowDispatchPort,
+  type WorkflowInstanceBinding,
+  workflowIdFor,
+} from '@starter/jobs';
+import type { JobFixture, JobPreset } from '@starter/schemas/jobs';
 import type { CookieMethodsServer } from '@supabase/ssr';
 import { createServerClient } from '@supabase/ssr';
 import type { Cookies } from '@sveltejs/kit';
@@ -21,13 +27,26 @@ export interface SupabaseWebConfig extends SupabaseAdminConfig {
   origin: string;
   allowedCallbacks: readonly string[];
   mailUrl?: string;
+  jobsProfile?: string;
+  encodeWorkflow?: WorkflowInstanceBinding;
+}
+
+export interface SupabaseApplicationJobs extends JobRepository {
+  computeRequested: boolean;
+  dispatch: 'disabled_pending_prompt_06' | 'cloud_run';
+  startEncode(input: {
+    jobId: string;
+    attemptId: string;
+    fixture: JobFixture;
+    preset: JobPreset;
+  }): Promise<boolean>;
 }
 
 export interface ApplicationServices {
   identity: VerifiedIdentity;
   notes: NotesRepository;
   chat: ChatRepository;
-  jobs: JobRepository & { dispatch: 'disabled_pending_prompt_06' };
+  jobs: SupabaseApplicationJobs;
   account: SupabaseAccountService;
 }
 
@@ -41,12 +60,36 @@ export const createApplicationServices = (
   }
   const userClient = createUserDatabaseClient(config, identity.accessToken);
   const adminClient = createAdminDatabaseClient(config);
+  const repository = createSupabaseJobRepository(userClient, adminClient);
+  const dispatch = createWorkflowDispatchPort(config.encodeWorkflow);
+  const computeEnabled = config.jobsProfile === 'encode' && config.encodeWorkflow !== undefined;
   return {
     identity,
     notes: createSupabaseNotesRepository(userClient),
     chat: createSupabaseChatRepository(userClient, adminClient),
-    jobs: Object.assign(createSupabaseJobRepository(userClient, adminClient), {
-      dispatch: 'disabled_pending_prompt_06' as const,
+    jobs: Object.assign(repository, {
+      computeRequested: config.jobsProfile === 'encode',
+      dispatch: computeEnabled ? ('cloud_run' as const) : ('disabled_pending_prompt_06' as const),
+      async startEncode(input: {
+        jobId: string;
+        attemptId: string;
+        fixture: JobFixture;
+        preset: JobPreset;
+      }) {
+        if (!computeEnabled) {
+          return false;
+        }
+        const outcome = await dispatch.dispatch({
+          ...input,
+          workflowId: workflowIdFor(input.jobId),
+        });
+        if (!outcome.ok) {
+          await repository.markDispatchFailed(input.jobId, outcome.code);
+          return false;
+        }
+        await repository.markDispatched(input.jobId);
+        return true;
+      },
     }),
     account: createSupabaseAccountService(userClient, adminClient, config),
   };

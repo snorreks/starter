@@ -130,11 +130,25 @@ test('notes follow pages until the last page or the 200-note limit', async () =>
   }
 });
 
-test('job replay never disables dispatch and failed dispatch disabling returns 503', async () => {
+test('Supabase job admission starts one Cloudflare Workflow and a failed start is visible', async () => {
   for (const outcome of ['created', 'replayed'] as const) {
     const jobs = {
-      admit: async () => ({ outcome, jobId: 'job' }),
+      dispatch: 'cloud_run',
+      admit: mock(
+        async (input: { id: string; fixture: string; preset: string; workflowId: string }) => ({
+          outcome,
+          jobId: input.id,
+        }),
+      ),
       disableDispatch: mock(async () => false),
+      startEncode: mock(
+        async (_input: {
+          jobId: string;
+          fixture: 'sample-v1';
+          preset: 'demo-180p-v1';
+          attemptId: string;
+        }) => false,
+      ),
       getForOwner: mock(async () => ({ id: 'job' })),
     };
     const response = await postJob({
@@ -149,9 +163,18 @@ test('job replay never disables dispatch and failed dispatch disabling returns 5
       }),
     } as unknown as Parameters<typeof postJob>[0]);
     expect(response.status).toBe(outcome === 'created' ? 503 : 202);
-    expect(jobs.disableDispatch).toHaveBeenCalledTimes(outcome === 'created' ? 1 : 0);
+    expect(jobs.startEncode).toHaveBeenCalledTimes(outcome === 'created' ? 1 : 0);
+    expect(jobs.disableDispatch).not.toHaveBeenCalled();
     if (outcome === 'created') {
-      expect(await response.json()).toMatchObject({ error: 'job_unavailable' });
+      const admitted = jobs.admit.mock.calls[0]?.[0];
+      expect(admitted).toMatchObject({ fixture: 'sample-v1', preset: 'demo-180p-v1' });
+      expect(admitted?.workflowId).toBe(`encode-${admitted?.id}`);
+      expect(jobs.startEncode.mock.calls[0]?.[0]).toMatchObject({
+        jobId: admitted?.id,
+        fixture: 'sample-v1',
+        preset: 'demo-180p-v1',
+      });
+      expect(await response.json()).toMatchObject({ error: 'job_dispatch_failed' });
       expect(jobs.getForOwner).not.toHaveBeenCalled();
     }
   }
