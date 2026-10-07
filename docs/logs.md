@@ -18,6 +18,7 @@ bun run logs web --mode local --follow   # tail it
 bun run logs web --mode local --level error        # just failures
 bun run logs web --mode local --trace trace_abc123 # one request, end to end
 bun run logs web --mode local --source browser     # just the browser's half
+bun run logs web --mode local --run e2e_run_42     # one owned run only
 ```
 
 No credentials are needed for `--mode local`. That is deliberate: local log
@@ -76,6 +77,7 @@ browser` says so rather than returning nothing.
 | `--trace <id>` | Correlate to one request. |
 | `--uid <id>` | Filter by a **server-verified** user id. |
 | `--since <duration>` | How far back: `s`, `m`, `h`, `d`, `w`. |
+| `--run <run-id>` | Read one local run under `.wrangler/runs/<run-id>/logs`; local mode only. |
 | `--limit <n>` | Maximum events. Default 50, cap 500. |
 | `--follow` | Stream live. `--duration` bounds it (default 60s, max 300s). |
 | `--json` | Machine-readable. |

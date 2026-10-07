@@ -90,8 +90,9 @@ actually emits. It is local, read-only, and needs no credentials.
 ## The log tool
 
 ```ts
-read_logs({ app: "api", mode: "local", level: "ERROR" })
-read_logs({ app: "api", mode: "local", traceId: "trace_abc" })
+read_logs({ app: "web", mode: "local", source: "worker", level: "ERROR" })
+read_logs({ app: "web", mode: "local", source: "browser", since: "15m" })
+read_logs({ app: "web", mode: "local", runId: "e2e_run_42" })
 ```
 
 It shells out to `bun run logs`, so an agent debugs against the same adapters,
@@ -152,7 +153,7 @@ throw on a valid response.
 ### `dev_process` — owned long-running processes
 
 ```ts
-dev_process { action: "start", params: { args: ["bun", "run", "dev:api"] } }
+dev_process { action: "start", params: { args: ["bun", "run", "dev"] } }
 dev_process { action: "status", params: { job: "job-…" } }
 dev_process { action: "logs",   params: { job: "job-…" } }
 dev_process { action: "stop",   params: { job: "job-…" } }

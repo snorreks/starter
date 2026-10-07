@@ -22,6 +22,7 @@ import { join } from 'node:path';
 import type { LogEvent } from '@starter/schemas/logging';
 import { APP_LOG_CONFIG, type AppId } from '../registry/app_registry.ts';
 import { REPO_ROOT } from '../shared/paths.ts';
+import { runScope } from '../shared/run_scope.ts';
 import { buildFilter } from './filter.ts';
 import { capabilitiesFor } from './registry.ts';
 import type { LogQuery, LogQueryResult } from './types.ts';
@@ -42,7 +43,25 @@ export const LOCAL_LOG_DIR = process.env.STARTER_LOG_DIR ?? join(REPO_ROOT, '.wr
  * "no local log file" for a real app, which reads as a broken tool.
  */
 const FILE_FOR_APP: Record<AppId, string> = {
-  web: join(LOCAL_LOG_DIR, 'app.ndjson'),
+  web: 'app.ndjson',
+};
+
+export interface LocalReadOptions {
+  root?: string;
+  defaultLogDir?: string;
+}
+
+/** Resolve a selected run only through the repository's existing run authority. */
+export const localLogPath = (
+  app: AppId,
+  options: LocalReadOptions & { runId?: string } = {},
+): string => {
+  const directory =
+    options.runId === undefined
+      ? (options.defaultLogDir ??
+        (options.root === undefined ? LOCAL_LOG_DIR : join(options.root, '.wrangler', 'logs')))
+      : runScope(options.runId, options.root ?? REPO_ROOT).logDir;
+  return join(directory, FILE_FOR_APP[app]);
 };
 
 /** Parse NDJSON, skipping a truncated final line rather than failing. */
@@ -71,16 +90,24 @@ export const parseNdjson = (contents: string): LogEvent[] => {
 };
 
 /** Every log file that currently exists, for `bun run logs all --mode local`. */
-export const discoverLocalFiles = async (): Promise<Record<string, string>> => {
-  if (!existsSync(LOCAL_LOG_DIR)) {
+export const discoverLocalFiles = async (
+  options: LocalReadOptions & { runId?: string } = {},
+): Promise<Record<string, string>> => {
+  const directory =
+    options.runId === undefined
+      ? (options.defaultLogDir ??
+        (options.root === undefined ? LOCAL_LOG_DIR : join(options.root, '.wrangler', 'logs')))
+      : runScope(options.runId, options.root ?? REPO_ROOT).logDir;
+  if (!existsSync(directory)) {
     return {};
   }
 
-  const entries = await readdir(LOCAL_LOG_DIR);
+  const entries = await readdir(directory);
   const found: Record<string, string> = {};
 
-  for (const [app, path] of Object.entries(FILE_FOR_APP)) {
-    if (entries.includes(path.split('/').pop() ?? '')) {
+  for (const app of Object.keys(FILE_FOR_APP) as AppId[]) {
+    const path = localLogPath(app, options);
+    if (entries.includes(FILE_FOR_APP[app])) {
       found[app] = path;
     }
   }
@@ -101,8 +128,9 @@ export interface LocalTailHandle {
  */
 export const readLocal = async (
   query: LogQuery,
+  options: LocalReadOptions = {},
 ): Promise<{ result: LogQueryResult; tail?: LocalTailHandle }> => {
-  const path = FILE_FOR_APP[query.app];
+  const path = localLogPath(query.app, { ...options, runId: query.runId });
 
   if (path === undefined || !existsSync(path)) {
     return {
@@ -110,9 +138,14 @@ export const readLocal = async (
         status: 'unavailable',
         events: [],
         message:
-          `No local log file for "${query.app}". Run \`bun run dev\` first; it writes ` +
-          `${LOCAL_LOG_DIR}.`,
-        limitations: ['Local capture is only active when the dev server is running.'],
+          query.runId === undefined
+            ? `No local log file for "${query.app}". Run \`bun run dev\` first; it writes ${path}.`
+            : `No local log file for run "${query.runId}" at ${path}. The selected run is never replaced with another run's logs.`,
+        limitations: [
+          query.runId === undefined
+            ? 'Local capture is only active when the dev server is running.'
+            : 'The selected run has no local log file.',
+        ],
       },
     };
   }
@@ -186,12 +219,15 @@ export const readLocal = async (
 };
 
 /** Every app's local logs, for `--app all`. */
-export const readAllLocal = async (query: Omit<LogQuery, 'app'>): Promise<LogQueryResult[]> => {
+export const readAllLocal = async (
+  query: Omit<LogQuery, 'app'>,
+  options: LocalReadOptions = {},
+): Promise<LogQueryResult[]> => {
   const apps = Object.keys(APP_LOG_CONFIG) as Array<LogQuery['app']>;
   const results: LogQueryResult[] = [];
 
   for (const app of apps) {
-    const { result, tail } = await readLocal({ ...query, app });
+    const { result, tail } = await readLocal({ ...query, app }, options);
     tail?.stop();
     results.push(result);
   }

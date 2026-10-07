@@ -51,7 +51,6 @@ const LIMITS = {
 /** Tasks in this repository that do not exit, i.e. what this tool is for. */
 const LONG_RUNNING = {
   dev: 'bun run dev',
-  devApi: 'bun run dev:api',
 } as const;
 
 const fail = (text: string, details: unknown): AgentToolResult<unknown> =>
@@ -108,13 +107,13 @@ export default function devProcessExtension(pi: ExtensionAPI): void {
     actions: [
       defineAction({
         action: 'start',
-        summary: `Start a long-running process. Returns a handle immediately. Common: "${LONG_RUNNING.devApi}".`,
+        summary: `Start a long-running process. Returns a handle immediately. Common: "${LONG_RUNNING.dev}".`,
         parameters: Type.Object({
           command: Type.Optional(
             Type.String({
               description:
-                'The command to run, as a single string, split on whitespace — e.g. "bun run dev:api". ' +
-                'Omit to use the api dev server.',
+                'The command to run, as a single string, split on whitespace — e.g. "bun run dev". ' +
+                'Omit to use the web dev server.',
             }),
           ),
           args: Type.Optional(
@@ -136,7 +135,7 @@ export default function devProcessExtension(pi: ExtensionAPI): void {
           const argv =
             params.args !== undefined && params.args.length > 0
               ? params.args
-              : (params.command ?? LONG_RUNNING.devApi).trim().split(/\s+/).filter(Boolean);
+              : (params.command ?? LONG_RUNNING.dev).trim().split(/\s+/).filter(Boolean);
 
           const binary = argv[0];
           if (binary === undefined) {
