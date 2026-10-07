@@ -400,7 +400,8 @@ accessibility, best-practices, SEO, LCP, CLS, TBT, transfer bytes and requests.
 Current targets are the public landing and login pages. Local lab scores do not
 represent field INP or deployed performance. The provisional thresholds fail this
 local audit when exceeded, but are not yet CI quality gates. No authenticated route
-is reported as audited.
+is reported as audited. Optional Unlighthouse route exploration is not implemented;
+the scenario manifest is the route-coverage authority.
 
 `bun run e2e:full` is the explicit Docker lane. It builds the shipped web and jobs
 Workers, derives their shared D1/R2 and cross-Worker Workflow graph from Wrangler

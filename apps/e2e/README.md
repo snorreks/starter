@@ -59,7 +59,9 @@ TBT, transfer bytes and request count, plus raw reports and median summaries. Th
 local measurements are not field Core Web Vitals. Their provisional thresholds are
 recorded in each report and fail this local audit when exceeded; they are not yet
 CI quality gates. Authenticated scenarios are omitted rather than audited after a
-login redirect.
+login redirect. The optional Unlighthouse public-route exploration command is not
+implemented; the declarative scenario manifest remains the route-coverage
+authority.
 
 ## Setup and artifacts
 
