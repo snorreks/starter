@@ -1,0 +1,587 @@
+{
+  "schemaVersion": 1,
+  "model": "google/gemini-2.5-flash",
+  "piVersion": "1.0.2",
+  "starterRevision": "1e4d65af5caee3c664a5200bb266bc1e3156dbfe",
+  "portablePackageRevision": "6312f08763fbae084485b768d431c4ce06723725",
+  "runId": "agent_runtime_feec967469bc4b0795c3d7802b0e9dd8",
+  "jobId": "job-1791408092603-0c1a41",
+  "processExit": 0,
+  "journey": {
+    "accountCreated": true,
+    "emailVerified": true,
+    "signedIn": true,
+    "noteCreated": true,
+    "noteEdited": true,
+    "reloaded": true,
+    "persistenceObserved": true,
+    "browsersClosed": true,
+    "runtimeStopped": true
+  },
+  "routeStatuses": [
+    {
+      "method": "POST",
+      "path": "/api/auth/sign-up/email",
+      "status": 200
+    },
+    {
+      "method": "POST",
+      "path": "/api/auth/sign-up/email",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/dev/mail",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/dev/mail",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/auth/verify-email",
+      "status": 302
+    },
+    {
+      "method": "GET",
+      "path": "/api/auth/verify-email",
+      "status": 302
+    },
+    {
+      "method": "GET",
+      "path": "/verify-email",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/verify-email",
+      "status": 200
+    },
+    {
+      "method": "POST",
+      "path": "/api/auth/sign-in/email",
+      "status": 200
+    },
+    {
+      "method": "POST",
+      "path": "/api/auth/sign-in/email",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/notes",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/notes",
+      "status": 200
+    },
+    {
+      "method": "POST",
+      "path": "/api/notes",
+      "status": 200
+    },
+    {
+      "method": "POST",
+      "path": "/api/notes",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/notes",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/notes",
+      "status": 200
+    },
+    {
+      "method": "PATCH",
+      "path": "/api/notes/:id",
+      "status": 200
+    },
+    {
+      "method": "PATCH",
+      "path": "/api/notes/:id",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/notes",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/notes",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/notes",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/notes",
+      "status": 200
+    }
+  ],
+  "screenshot": {
+    "urlPath": "/notes",
+    "sha256": "be70856336a55f833d879d8af5fd794ed48440b814dbb4e030946c239cb41cac",
+    "bytes": 37402,
+    "width": 1440,
+    "height": 900
+  },
+  "recoveredAttempts": [
+    "model navigated to /register; observed 404, then used snapshot and visible account switch control",
+    "ambiguous and unsupported browser locators were corrected after snapshot"
+  ],
+  "toolCalls": [
+    {
+      "tool": "tool_search",
+      "ok": true,
+      "action": "discover-deferred-tools"
+    },
+    {
+      "tool": "dev_process",
+      "ok": true,
+      "action": "start_profile"
+    },
+    {
+      "tool": "browser",
+      "ok": true,
+      "action": "open",
+      "runtimeRunId": "agent_runtime_feec967469bc4b0795c3d7802b0e9dd8",
+      "urlPath": "/",
+      "identity": "runtime identity verified"
+    },
+    {
+      "tool": "browser",
+      "ok": false,
+      "action": "click",
+      "target": {
+        "kind": "link",
+        "name": "redacted-or-dynamic"
+      },
+      "errorClass": "locator-cardinality"
+    },
+    {
+      "tool": "browser",
+      "ok": true,
+      "action": "snapshot",
+      "observation": "snapshot-read"
+    },
+    {
+      "tool": "browser",
+      "ok": true,
+      "action": "open",
+      "urlPath": "/register",
+      "identity": "exploratory; no project runtime identity was supplied"
+    },
+    {
+      "tool": "browser",
+      "ok": false,
+      "action": "fill",
+      "target": {
+        "kind": "textbox",
+        "name": "Name"
+      },
+      "errorClass": "locator-cardinality"
+    },
+    {
+      "tool": "browser",
+      "ok": true,
+      "action": "snapshot",
+      "observation": "snapshot-read"
+    },
+    {
+      "tool": "browser",
+      "ok": false,
+      "action": "click",
+      "target": {
+        "kind": "link",
+        "name": "Sign in"
+      },
+      "errorClass": "locator-cardinality"
+    },
+    {
+      "tool": "browser",
+      "ok": true,
+      "action": "snapshot",
+      "observation": "snapshot-read"
+    },
+    {
+      "tool": "browser",
+      "ok": false,
+      "action": "click",
+      "target": {
+        "kind": "link",
+        "name": "Sign in"
+      },
+      "errorClass": "locator-cardinality"
+    },
+    {
+      "tool": "browser",
+      "ok": false,
+      "action": "click",
+      "target": {
+        "kind": "link",
+        "name": "Sign in"
+      },
+      "errorClass": "locator-cardinality"
+    },
+    {
+      "tool": "browser",
+      "ok": false,
+      "action": "click",
+      "target": {
+        "kind": "link",
+        "name": "Sign in"
+      },
+      "errorClass": "locator-cardinality"
+    },
+    {
+      "tool": "browser",
+      "ok": false,
+      "action": "click",
+      "errorClass": "schema-rejected"
+    },
+    {
+      "tool": "browser",
+      "ok": false,
+      "action": "click",
+      "target": {
+        "kind": "link",
+        "name": "redacted-or-dynamic"
+      },
+      "errorClass": "locator-validation"
+    },
+    {
+      "tool": "browser",
+      "ok": true,
+      "action": "snapshot",
+      "observation": "snapshot-read"
+    },
+    {
+      "tool": "browser",
+      "ok": false,
+      "action": "click",
+      "target": {
+        "kind": "link",
+        "name": "redacted-or-dynamic"
+      },
+      "errorClass": "locator-validation"
+    },
+    {
+      "tool": "browser",
+      "ok": true,
+      "action": "snapshot",
+      "observation": "snapshot-read"
+    },
+    {
+      "tool": "browser",
+      "ok": true,
+      "action": "open",
+      "urlPath": "/login",
+      "identity": "exploratory; no project runtime identity was supplied"
+    },
+    {
+      "tool": "browser",
+      "ok": true,
+      "action": "snapshot",
+      "observation": "snapshot-read"
+    },
+    {
+      "tool": "browser",
+      "ok": true,
+      "action": "click",
+      "target": {
+        "kind": "button",
+        "name": "I need an account"
+      }
+    },
+    {
+      "tool": "browser",
+      "ok": true,
+      "action": "snapshot",
+      "observation": "snapshot-read"
+    },
+    {
+      "tool": "browser",
+      "ok": true,
+      "action": "fill",
+      "target": {
+        "kind": "textbox",
+        "name": "Name"
+      }
+    },
+    {
+      "tool": "browser",
+      "ok": true,
+      "action": "fill",
+      "target": {
+        "kind": "textbox",
+        "name": "Email"
+      }
+    },
+    {
+      "tool": "browser",
+      "ok": true,
+      "action": "fill",
+      "target": {
+        "kind": "textbox",
+        "name": "Password"
+      }
+    },
+    {
+      "tool": "browser",
+      "ok": true,
+      "action": "click",
+      "target": {
+        "kind": "button",
+        "name": "Create account"
+      }
+    },
+    {
+      "tool": "browser",
+      "ok": true,
+      "action": "snapshot",
+      "observation": "snapshot-read"
+    },
+    {
+      "tool": "browser",
+      "ok": true,
+      "action": "open",
+      "urlPath": "/api/dev/mail",
+      "identity": "exploratory; no project runtime identity was supplied"
+    },
+    {
+      "tool": "browser",
+      "ok": true,
+      "action": "snapshot",
+      "observation": "snapshot-read"
+    },
+    {
+      "tool": "browser",
+      "ok": false,
+      "action": "open",
+      "errorClass": "browser-session-limit"
+    },
+    {
+      "tool": "browser",
+      "ok": true,
+      "action": "close"
+    },
+    {
+      "tool": "browser",
+      "ok": true,
+      "action": "close"
+    },
+    {
+      "tool": "browser",
+      "ok": true,
+      "action": "open",
+      "urlPath": "/verify-email",
+      "identity": "exploratory; no project runtime identity was supplied"
+    },
+    {
+      "tool": "browser",
+      "ok": true,
+      "action": "snapshot",
+      "observation": "snapshot-read"
+    },
+    {
+      "tool": "browser",
+      "ok": true,
+      "action": "fill",
+      "target": {
+        "kind": "textbox",
+        "name": "Email"
+      }
+    },
+    {
+      "tool": "browser",
+      "ok": true,
+      "action": "fill",
+      "target": {
+        "kind": "textbox",
+        "name": "Email"
+      }
+    },
+    {
+      "tool": "browser",
+      "ok": true,
+      "action": "fill",
+      "target": {
+        "kind": "textbox",
+        "name": "Password"
+      }
+    },
+    {
+      "tool": "browser",
+      "ok": false,
+      "action": "click",
+      "target": {
+        "kind": "button",
+        "name": "Sign in"
+      },
+      "errorClass": "locator-cardinality"
+    },
+    {
+      "tool": "browser",
+      "ok": true,
+      "action": "click",
+      "target": {
+        "kind": "button",
+        "name": "redacted-or-dynamic"
+      }
+    },
+    {
+      "tool": "browser",
+      "ok": true,
+      "action": "fill",
+      "target": {
+        "kind": "textbox",
+        "name": "Email"
+      }
+    },
+    {
+      "tool": "browser",
+      "ok": true,
+      "action": "fill",
+      "target": {
+        "kind": "textbox",
+        "name": "Password"
+      }
+    },
+    {
+      "tool": "browser",
+      "ok": true,
+      "action": "click",
+      "target": {
+        "kind": "button",
+        "name": "Sign in"
+      }
+    },
+    {
+      "tool": "browser",
+      "ok": true,
+      "action": "snapshot",
+      "observation": "snapshot-read"
+    },
+    {
+      "tool": "browser",
+      "ok": true,
+      "action": "fill",
+      "target": {
+        "kind": "textbox",
+        "name": "Title"
+      }
+    },
+    {
+      "tool": "browser",
+      "ok": true,
+      "action": "fill",
+      "target": {
+        "kind": "textbox",
+        "name": "Body"
+      }
+    },
+    {
+      "tool": "browser",
+      "ok": true,
+      "action": "click",
+      "target": {
+        "kind": "button",
+        "name": "redacted-or-dynamic"
+      }
+    },
+    {
+      "tool": "browser",
+      "ok": true,
+      "action": "snapshot",
+      "observation": "snapshot-read"
+    },
+    {
+      "tool": "browser",
+      "ok": true,
+      "action": "click",
+      "target": {
+        "kind": "button",
+        "name": "redacted-or-dynamic"
+      }
+    },
+    {
+      "tool": "browser",
+      "ok": true,
+      "action": "snapshot",
+      "observation": "snapshot-read"
+    },
+    {
+      "tool": "browser",
+      "ok": true,
+      "action": "fill",
+      "target": {
+        "kind": "textbox",
+        "name": "Body"
+      }
+    },
+    {
+      "tool": "browser",
+      "ok": true,
+      "action": "click",
+      "target": {
+        "kind": "button",
+        "name": "redacted-or-dynamic"
+      }
+    },
+    {
+      "tool": "browser",
+      "ok": true,
+      "action": "reload"
+    },
+    {
+      "tool": "browser",
+      "ok": true,
+      "action": "snapshot",
+      "observation": "snapshot-read"
+    },
+    {
+      "tool": "browser",
+      "ok": true,
+      "action": "screenshot",
+      "capture": {
+        "urlPath": "/notes",
+        "sha256": "be70856336a55f833d879d8af5fd794ed48440b814dbb4e030946c239cb41cac",
+        "bytes": 37402,
+        "width": 1440,
+        "height": 900
+      }
+    },
+    {
+      "tool": "browser",
+      "ok": true,
+      "action": "close"
+    },
+    {
+      "tool": "browser",
+      "ok": true,
+      "action": "close"
+    },
+    {
+      "tool": "browser",
+      "ok": true,
+      "action": "close"
+    },
+    {
+      "tool": "dev_process",
+      "ok": true,
+      "action": "stop_profile"
+    }
+  ]
+}

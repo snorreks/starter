@@ -1,84 +1,93 @@
-# Pi global project tools acceptance audit — 2026-10-07
+# Pi global project tools acceptance audit — 2026-10-08
 
-This audit records observed results, including failed and unrun acceptance. No
-credentials, verification links, browser cookies, or raw environment values are
-included. PRs remain drafts; merge and publication are pending.
+This is the final evidence audit for the acceptance journeys in the original
+implementation plan. `PASS` means the specified behavior was observed at the
+revision listed; `FAIL` is reserved for an observed current check failure;
+`NOT RUN` means the check was not completed. Earlier failed attempts are retained
+as diagnosis evidence and do not replace a later passing rerun. Credentials,
+passwords, verification URLs/tokens, cookies and raw model output are excluded.
+Both pull requests remain drafts; merge and publication are pending.
 
 ## Revisions and environment
 
 | Work | Revision tested |
 | --- | --- |
-| Starter | `083c304a16ad306818f84086888e6cc1d42a5174` plus the evidence-manifest correction in the working tree. The model-driven attempt ran against this exact source tree. |
-| Portable workflow package | `3b6edfcb4fab4ebd80b1c23e66bef385bd9e991b` |
-| Runtime tools | Pi 1.0.2; Bun 1.4.2; package runtime browser tests use locked Playwright/Chromium. |
+| Starter adapter and harness | `1e4d65af5caee3c664a5200bb266bc1e3156dbfe` (unchanged code; this audit adds evidence only) |
+| Portable workflow package | `6312f08763fbae084485b768d431c4ce06723725` |
+| Model journey | Pi 1.0.2, `google/gemini-2.5-flash`, built Starter profile, run `agent_runtime_feec967469bc4b0795c3d7802b0e9dd8`, job `job-1791408092603-0c1a41`; process exit 0 |
+| Browser/test runtime | Bun 1.4.2; package's locked Playwright and Chromium; Docker available for compute |
 
-## Acceptance requirements
+## Acceptance journeys
 
-| Requirement | Status | Command / run | Artifact and result |
+| Requirement | Status | Command / run and tested revision | Evidence and observed result |
 | --- | --- | --- | --- |
-| Fresh install; isolated global/project Pi composition and ownership | PASS | `bun run test:pi-live` and `bun run test:composition-live` in `packages/workflow-helpers` at `3b6edfcb4fab4ebd80b1c23e66bef385bd9e991b` | Real Pi CLI 1.0.2; 1+1 tests passed, 31 assertions. Fresh isolated `PI_CODING_AGENT_DIR`; no extension errors. [Portable real-Pi test transcript](artifacts/portable-real-pi-tests.transcript.txt), SHA-256 `79ed5db61cb300284bd2a81fbc08a03c0592f6ef5f376c54c13de3249f7fd6ec`. |
-| Starter built UI account/notes journey with model-driven Pi | FAIL | Real Pi 1.0.2 with offline `acceptance/scripted` faux provider: `agent_runtime_5fe46e2d065540a1b705df1dbce5372a`, `agent_runtime_cf632ade23ad4b5cb79f78b8396e41ba`; live OpenRouter model `google/gemini-2.5-flash`: `agent_runtime_389fb655275c4ed89332da035a367891` | Offline attempts reached 403 verification/sign-in and then 200 sign-in but failed to observe an edited note. The live-model attempt loaded the built account page and repeatedly requested verification; it timed out at 900 seconds before any note mutation. Raw Pi output was discarded because it might contain synthetic credentials. Sanitized live [transcript](artifacts/pi-live-model-timeout.transcript.txt), SHA-256 `3022a4db6648c6eb6ee008d39bbb0c373c361f8931ea67af67605593e8cc0a86`; earlier redacted [Pi transcript](artifacts/pi-account-notes-redacted.transcript.txt), SHA-256 `3793a254f1ed6f5a04bc45d82c7b2eff3ab6f42041e274a9213b7e7f7e858ad2`; first-attempt [Worker log](artifacts/pi-account-notes-worker.txt), SHA-256 `d254361e6baaf55e4bfb65da0adfdec272fc87b72a4aa2ff1c6913e669af4f25`. Every owned runtime was stopped through the token-verified supervisor. |
-| Screenshot of the resulting account/notes state with matching run metadata | FAIL | Same Starter Pi runs above | Journey did not reach a verified edited note; no qualifying screenshot or hash. The live attempt's filtered Worker request sequence is preserved in its transcript; no auth values or verification query parameters are retained. |
-| Fixture error visible in bounded browser console/network and matching runtime logs, with no stale or leaked auth evidence | NOT RUN | No controlled browser error fixture was introduced in this pass | Existing log path was exercised and run-filtered; that does not prove the error-injection requirement. |
-| Same stored visual capture reviewed through CLI and Pi with matching grade, policy and provenance | PASS | `bun run agent -- visual review --run visual_36b4515f-c9cc-44f4-a890-400d678f7c7e --json`; `PI_VISUAL_REVIEW_RUN_ID=visual_36b4515f-c9cc-44f4-a890-400d678f7c7e bun test .pi/tests/live/visual_review_facade.test.ts` | The CLI and Pi facade matched all 76 grades and provider/model provenance (1 test, 9 assertions). [Parity transcript](artifacts/visual-cli-pi-parity.transcript.txt), SHA-256 `cdd0ab3935b17420c825b264a039ff626423eb4f0e09a5cb83bc781792c94dee`. Review JSON SHA-256 `cb11ed4a8a4aa46a63d49b7757ca55ac76d48075adb5b82cab3d4d7c77dbc313`; HTML SHA-256 `c25db88161a1f1ddb50efc77c50974dd2610d24927389da0de140d39d74f782e`. The review itself is `failed` (62 passed, 6 failed, 8 needs-human-review); those outcomes were surfaced identically and not retried. |
-| Two concurrent parent captains isolate runtime state, browser sessions, artifacts, logs and stop authority | FAIL | `bun run test:qa-live` at package revision above exercises concurrent isolated QA children, not two parent captain Pi processes | 2 real supervised Pi QA children passed, but direct parent-captain acceptance remains open. This test is supporting evidence only, not a PASS for this requirement. |
-| Bounded delegated QA with explicit tools and no recursive/publication access | PASS | `bun run test:qa-live` | 2 real Pi QA tests passed: owned browser checks, reload persistence, evidence capture and linked-worktree separation. Transcript above, SHA-256 `79ed5db61cb300284bd2a81fbc08a03c0592f6ef5f376c54c13de3249f7fd6ec`. |
-| Cancellation removes task-owned runtime/browser processes | NOT RUN | No real-Pi cancellation acceptance was executed. During the live model timeout, the parent Pi exited at the 900-second bound while the Worker remained alive; `stopJob` then stopped its token-verified owned job. | The cleanup outcome is evidenced, but this did not prove cancellation propagation from Pi. No matching run-owned browser process remained. Live transcript SHA-256 `3022a4db6648c6eb6ee008d39bbb0c373c361f8931ea67af67605593e8cc0a86`. |
-| Generic non-Starter project uses portable fallback and browser without Starter imports | FAIL | `bun run test:composition-live` | Trusted generic, denied and Aikami-shaped composition passed (1 test, 18 assertions); the required generic browser journey was not exercised. |
-| Docker-backed full browser-to-FFmpeg compute, output hash and media probe | PASS | `bun run agent -- compute full --json` at Starter source revision above; run `agent_full_4000c2e5-cf63-44ee-b1b7-1c26537db887` | One Playwright test passed. Encoded MP4 SHA-256 `8804503517b67b738b437eb470cabe0f3aa0644f4103e74d6a0fcb0f03f57c9c` (112,717 bytes); evidence JSON SHA-256 `c52770a3ab9457e0b7503c72eab6334662bcbfbb4b148fa10ff75a09c85f319e`; media probe: H.264, 320×180, 3.019 s. Paths are under `.wrangler/runs/<runId>/artifacts/compute/`. |
-| Pi process restart/recovery reattaches only owned jobs, invalidates stale browser handles, and revalidates current evidence | NOT RUN | Pure helper checks exist; no actual Pi process restart acceptance was run | The current evidence proves explicit stop, not restart/recovery. |
+| Fresh install; isolated global/project Pi composition and ownership | PASS | `bun install --frozen-lockfile`; `bun run test:pi-live`; `bun run test:composition-live` in `~/.pi/worktrees/workflow-helpers/agent/packages/workflow-helpers` at `6312f08763fbae084485b768d431c4ce06723725` | Frozen install had no changes. Real Pi CLI 1.0.2 isolated install/RPC passed (13 assertions); composition passed (18 assertions). [Portable process transcript](artifacts/portable-real-pi-tests.transcript.txt), SHA-256 `79ed5db61cb300284bd2a81fbc08a03c0592f6ef5f376c54c13de3249f7fd6ec`. |
+| Starter built UI account/notes journey with model-driven Pi | PASS | Actual Pi process through `bun run agent -- ...` global model env; built profile run `agent_runtime_feec967469bc4b0795c3d7802b0e9dd8`; Starter `1e4d65a`, package `6312f08` | Account signup, mailbox verification, sign-in, create/edit note, reload and persistence observation completed. Worker observed `POST /api/auth/sign-up/email 200`, verification redirect and page 200, sign-in 200, `POST /api/notes 200`, `PATCH /api/notes/:id 200`, subsequent `GET /api/notes 200` and `/notes 200`. Sanitized [Pi transcript](artifacts/pi-model-driven-account-notes-6312.transcript.json), SHA-256 `bde9a172857664613e956a1b0f3c4270ad9ddafd9b3559bed0d4f2e3774acb28`. |
+| Screenshot of resulting account/notes state with matching run metadata | PASS | Same model run; browser screenshot at `http://127.0.0.1:4241/notes` | [Screenshot](artifacts/model-driven-account-notes-6312.png), SHA-256 `be70856336a55f833d879d8af5fd794ed48440b814dbb4e030946c239cb41cac`, 37,402 bytes, 1440×900; transcript records matching run ID and URL path. Screenshot preserves original capture. |
+| Debugging: introduced fixture error correlated to bounded browser console/network and matching run logs; no stale evidence or leaked auth | NOT RUN | No controlled error fixture was introduced in the final acceptance pass | Prior log reading is not an injected-error test. Required follow-up: start an owned built run with `bun run agent -- runtime start --profile built --json`, introduce a deterministic fixture error in the selected browser page, then run the documented run-filtered browser/log inspection commands from `bun run agent -- describe --json`. Preserve the run ID and sanitized route/error evidence. |
+| Visual QA: same stored capture reviewed through CLI and Pi, matching grade/policy/provenance | PASS | `bun run agent -- visual review --run visual_36b4515f-c9cc-44f4-a890-400d678f7c7e --json`; `PI_VISUAL_REVIEW_RUN_ID=visual_36b4515f-c9cc-44f4-a890-400d678f7c7e bun test .pi/tests/live/visual_review_facade.test.ts` at Starter visual harness revision | CLI/Pi facade matched all 76 grades and provider/model provenance (1 test, 9 assertions). [Parity transcript](artifacts/visual-cli-pi-parity.transcript.txt), SHA-256 `cdd0ab3935b17420c825b264a039ff626423eb4f0e09a5cb83bc781792c94dee`. Review result itself was `failed`: 62 passed, 6 failed, 8 needs-human-review; the grade was surfaced identically and not retried. Review JSON SHA-256 `cb11ed4a8a4aa46a63d49b7757ca55ac76d48075adb5b82cab3d4d7c77dbc313`; HTML SHA-256 `c25db88161a1f1ddb50efc77c50974dd2610d24927389da0de140d39d74f782e`. |
+| Two concurrent parent captains isolate state, browser sessions, artifacts, logs and stop authority | PASS | `PI_PARENT_CAPTAIN_ARTIFACTS=<Starter evidence>/artifacts/parent-captains bun run test:parent-captains-live` at package `6312f08` | Two actual concurrent parent Pi processes and two real Pi child processes had separate session/run/browser IDs, screenshots/artifacts and own-page/log assertions. Both foreign stop attempts were refused while both runtime PIDs remained alive; each captain then stopped only its owned runtime. Cancellation closed browser sessions; no owned Pi runtime process remained. [Summary](artifacts/parent-captains/parent-captains-summary.json), SHA-256 `20db51bcdf26f70097ddf75549c3d2e8e694a31d9ed3a5f47ca57072d91006ae`; screenshot hashes `683d6d10079cd9dfbcc118103f3861f6d9fe65a6b7fe7e39feb2039783314d56` and `1b96b00858a83a762ce768dcb5db85d14cdbb9a06ebad0baa240296832ba8821`. |
+| Bounded delegated QA: explicit tools, browser checks, linked worktrees, no recursive/publication access | PASS | `bun run test:qa-live` at package `6312f08` | Two actual supervised Pi QA child processes passed with separate linked worktrees, origins, contexts, artifacts and persisted browser state; role restrictions were verified. Included in [portable process transcript](artifacts/portable-real-pi-tests.transcript.txt), SHA-256 above. |
+| Cancellation cleans up task-owned runtime and browser processes | PASS | `bun run test:parent-captains-live`; `bun run test:browser-live` at package `6312f08` | Live captain test verifies cancellation/owned stop leaves no runtime Pi process and closes each browser session; browser suite also covers cancellation before an operation begins, closing the context and rejecting stale session use. `test:browser-live`: 5 tests / 38 assertions. |
+| Generic non-Starter project uses portable fallback and browser without Starter imports | NOT RUN | `bun run test:composition-live` at package `6312f08` | Generic trusted/denied and Aikami-shaped composition was tested (18 assertions), but an actual browser interaction in the minimal generic fixture was not run. |
+| Full compute: real browser-to-FFmpeg journey through the Pi facade with hash and media probe | PASS | `bun run --cwd .pi test:compute-facade` at Starter `1e4d65a` | Real Docker-backed journey invoked by loaded Pi project tool, run `agent_full_b64eb326-b1ff-4c53-9e6c-638d0cc94504`, 1 test / 7 assertions. MP4 SHA-256 `8804503517b67b738b437eb470cabe0f3aa0644f4103e74d6a0fcb0f03f57c9c`, 112,717 bytes; evidence JSON SHA-256 `d1289d6b585cac6f8ebf3f2d78008140f0699e1f0c7b51036de41e62ffd1beb2`; H.264, 320×180, 3.019 s. |
+| Recovery: actual Pi process restart/reload discovers only retained owned jobs | PASS | `PI_PARENT_RECOVERY_EVIDENCE=<Starter evidence>/artifacts/parent-recovery-transcript.json bun run test:parent-recovery-live` at package `6312f08` | Two actual Pi processes restarted with same session ID. Restart attached the persisted session, announced the owned run and ignored the foreign run. Owned run `a6021869-4c8d-42f2-8d70-41683b039519`; foreign `ec418747-018e-4851-8fd0-2176d3026707`. Transcript SHA-256 `a95882779eebce231365c2966387284bf6ccc12a6368cd381d94458a5661aaf3`. |
+| Recovery after restart also invalidates stale browser handles and revalidates artifact bytes/runtime identity before reporting current state | NOT RUN | Not exercised as one actual-Pi restart journey | Restart ownership and standalone browser cancellation are proven independently; stale-handle invalidation plus artifact/runtime revalidation after restart remain to be joined. |
 
-## Repository verification commands
+## Model timeout diagnosis
 
-| Command | Result at the Starter source revision above |
+The earlier live run `agent_runtime_389fb655275c4ed89332da035a367891` timed out after 900 seconds. Its last useful functional progress was account signup/mailbox delivery; verification was repeatedly revisited and sign-in returned 403, with no notes mutation or screenshot. The sanitized historical trace is [here](artifacts/pi-live-model-timeout.transcript.txt), SHA-256 `3022a4db6648c6eb6ee008d39bbb0c373c361f8931ea67af67605593e8cc0a86`.
+
+The direct diagnosis run established that discovery and orchestration were working: Pi loaded the browser tool, started the built Worker, verified its run identity, opened a browser attached to that run, and read the page snapshot. The model's intuitive semantic locator shapes were rejected by a role-only schema, after which repeated locator errors stalled progress. That is a browser API/schema interaction defect; the runtime was alive and correctly identified, and no evidence points to tool discovery or orchestration as the cause. Sanitized [schema diagnosis transcript](artifacts/pi-model-browser-schema-diagnosis.transcript.jsonl), SHA-256 `28a187c1b73c5ebdf0a943e4d22bb4fde0f7d8c99f44dd8dd90e6aa94efd3de4`.
+
+The package fix adds accepted semantic aliases and useful locator validation, plus cleanup when an already-cancelled call reaches a browser session. TDD red/green cases cover link/textbox/button targets and cancelled-before-start cleanup. The final model run still made a `/register` 404 attempt and a few ambiguous locator attempts, but used the browser snapshot to recover, switched to the actual account form, completed verification/sign-in/notes, reloaded and captured the screenshot. These recovered attempts are recorded without raw prompts, form values, mailbox bodies or verification links in the final transcript.
+
+## Other verification at the tested revisions
+
+Portable package at `6312f08763fbae084485b768d431c4ce06723725`:
+
+| Command | Result |
+| --- | --- |
+| `bun install --frozen-lockfile` | PASS; no lockfile changes. |
+| `bun test lib tests` | PASS, 306 tests / 25 files / 671 assertions. |
+| `bun run typecheck` | PASS. |
+| `bun run test:pi-live` | PASS, actual Pi 1.0.2 compatibility, 13 assertions. |
+| `bun run test:composition-live` | PASS, 18 assertions. |
+| `bun run test:qa-live` | PASS, two actual Pi children / 26 assertions. |
+| `bun run test:browser-live` | PASS, 5 tests / 38 assertions. |
+| `bun run test:parent-captains-live` | PASS, actual concurrent parent and child Pi processes / 13 assertions. |
+| `bun run test:parent-recovery-live` | PASS, actual Pi restart / 6 assertions. |
+
+Starter at `1e4d65af5caee3c664a5200bb266bc1e3156dbfe`:
+
+| Command | Result |
 | --- | --- |
 | `bun run --cwd .pi test` | PASS, 239 tests / 20 files / 1,197 assertions. |
-| `bun run test` | PASS, 917 tests / 60 files / 39,636 assertions; 15 tasks completed (1 executed, 14 cache hits). |
-| `bun test tests/jobs.test.ts` from `.pi` | PASS, 23 tests / 70 assertions, including timeout, cancellation and token-verified stop boundaries. |
-| `bun run typecheck` | PASS; `pi:typecheck` executed against the changed supervisor, other unchanged Moon tasks were cache hits. |
+| `bun run test` | PASS, 917 tests / 60 files / 39,636 assertions. |
+| `bun test tests/jobs.test.ts` from `.pi` | PASS, 23 tests / 70 assertions. |
 | `bun run --cwd .pi loader:smoke` | PASS, 4 tests / 10 assertions. |
-| `bun run e2e:visual` | PASS, 88 tests; complete manifest run `visual_36b4515f-c9cc-44f4-a890-400d678f7c7e`, 76/76 captures; manifest SHA-256 `f7fcd379b12b32b16d51442d8805df78569e39fea7e03c75a89f96a33b53dff5`. |
-| `bun run agent -- compute full --json` | PASS; see the full-compute row above. |
+| `bun run typecheck`, `bun run lint`, `bun run format`, `bun run guard`, `bun run workflows`, `bun run evidence` | PASS at the recorded source verification revision. |
+| `bun run e2e:visual` | PASS, 88 tests; 76/76 captures in `visual_36b4515f-c9cc-44f4-a890-400d678f7c7e`; manifest SHA-256 `f7fcd379b12b32b16d51442d8805df78569e39fea7e03c75a89f96a33b53dff5`. |
+| `bun run --cwd .pi test:compute-facade` | PASS; see full-compute row above. |
 
-The targeted three direct gaps therefore remain open: the account/notes journey is
-FAIL, actual process restart/recovery is NOT RUN, and two concurrent parent captains
-are FAIL (concurrent QA children are not an equivalent observation). Cancellation
-cleanup is also NOT RUN.
+## Compute scope
 
-## Full-compute profile scope ruling
+The accepted design is a one-shot Docker compute journey invoked through Pi. The
+live Pi facade executed that real browser-to-FFmpeg journey and preserved output
+hash and probe evidence. A persistent full-compute runtime is outside this
+migration's scope; conflicting wording in the earlier report is corrected here.
 
-No persistent `full` `dev_process` profile was added. The implemented authority and
-the linked E2E plan define full compute as a bounded, Docker-backed one-shot operation
-(`bun run agent -- compute full --json`), and this audit executed that operation
-successfully. The acceptance table's “persistent full-compute profile” phrase
-conflicts with that explicit one-shot boundary. This is a scope discrepancy for the
-requester to decide; adding a long-lived Docker compute service would change the
-authority and lifecycle contract without support from the agreed one-shot design.
+## CI and pull requests
 
-## CI and PR status
+- Starter PR [#44](https://github.com/snorreks/starter/pull/44) targets `main` and remains draft.
+- Portable package PR [#1](https://github.com/snorreks/.pi/pull/1) targets `master` and remains draft.
+- Starter CI previously passed all five lanes at `1e4d65af5caee3c664a5200bb266bc1e3156dbfe` in [run 37685202765](https://github.com/snorreks/starter/actions/runs/37685202765). This audit/evidence commit will trigger a new head run; its result must be checked and recorded before reporting final readiness.
+- `gh workflow list --repo snorreks/.pi` returns no configured workflows, so the portable PR has no CI runs. Its local frozen install, unit/type, real Pi, browser, parent captain and recovery checks above are the available verification.
 
-- Starter pull request #44, base `main`, draft.
-- Portable package PR [#1](https://github.com/snorreks/.pi/pull/1), base `master`, draft.
-- Portable package head `3b6edfcb4fab4ebd80b1c23e66bef385bd9e991b` has no CI run because that repository has no Actions workflows configured (`gh workflow list --repo snorreks/.pi` returned no workflows). Local commands in the validation table are the remaining available checks there.
-- A manual Starter CI run, [37680587080](https://github.com/snorreks/starter/actions/runs/37680587080), ran against predecessor head `62466bbf1349a9f6f9cc6a5d83bf39fbe1f8df27`: Compute integration and Worker integration passed. Static and unit lanes failed on the visual-manifest link, report provenance references, and a doctor-test assumption about Chromium installation. Its E2E lane stayed in Playwright Chromium installation, so I requested cancellation to free the ref for final-head CI.
-- Final-head CI [37682202351](https://github.com/snorreks/starter/actions/runs/37682202351) at `083c304a16ad306818f84086888e6cc1d42a5174` passed E2E, Worker integration and compute; static/unit failed because the generated matrix still included an older observed visual row linking ignored run `visual_e0df9292-d351-4130-925f-0552203ee6b1`. The manifest now marks that row historical and points the active row to the dated audit.
-- CI [37684502139](https://github.com/snorreks/starter/actions/runs/37684502139) passed all five lanes at `0c335bf2625458ee9b5e0997e0ef0dc7ba936628`: Worker integration, E2E, unit/browser, typecheck/lint/guards, and compute. Chromium installation took about five minutes; it completed successfully. The follow-up evidence-only commit records this result, so this run tests the same code and prior report, while the final report commit receives its own CI run.
-- Portable package PR #1 has no CI run because its repository has no Actions workflows configured (`gh workflow list --repo snorreks/.pi` returned none). Its local process/browser checks are in the portable transcript above. No merge or publication is part of this audit.
+## Remaining NOT RUN acceptance and exact next action
 
-## Reruns
+1. Debugging fixture correlation: add/use a deterministic browser error fixture, run `bun run agent -- runtime start --profile built --json`, then inspect the same run through the browser diagnostic and `read_logs` project tools; record bounded sanitized evidence.
+2. Generic project browser: run a real browser action in the minimal non-Starter fixture after `bun run test:composition-live`; this needs no Starter package imports.
+3. Recovery composition: restart the actual Pi process, then prove stale browser handles are rejected and current artifact bytes plus runtime identity are revalidated before the recovered status is reported.
 
-```bash
-# Portable process/browser checks
-cd /home/sonny/.pi/worktrees/workflow-helpers/agent/packages/workflow-helpers
-bun run test:pi-live
-bun run test:composition-live
-bun run test:qa-live
-
-# Docker-backed full compute
-cd <Starter worktree>
-bun run agent -- compute full --json
-
-# Remaining acceptance work: complete the direct account/notes, two-parent,
-# restart/recovery, cancellation, browser-error and paired-visual journeys before
-# treating this PR as ready to merge.
-```
+These checks were not replaced by skips or mock-only results. No external prerequisite is currently identified for them.
