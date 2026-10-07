@@ -6,7 +6,6 @@ import { join } from 'node:path';
 import type { ExtensionAPI } from '@earendil-works/pi-coding-agent';
 import { fileURLToPath } from 'node:url';
 import repoTaskExtension from '../extensions/repo_task.ts';
-import { runScope } from '../../scripts/src/shared/run_scope.ts';
 
 const REPO_ROOT = fileURLToPath(new URL('../../', import.meta.url)).replace(/\/$/, '');
 const scratch: string[] = [];
@@ -24,8 +23,7 @@ test('repo_task imports a verified interactive browser capture through the proje
   );
   await writeFile(file, png);
   const runId = `pi_interactive_${randomUUID().replaceAll('-', '')}`;
-  const scope = runScope(runId, REPO_ROOT);
-  scratch.push(scope.dir);
+  scratch.push(join(REPO_ROOT, '.wrangler', 'runs', runId));
   let tool:
     | {
         execute: (
