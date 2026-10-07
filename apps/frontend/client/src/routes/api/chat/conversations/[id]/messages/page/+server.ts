@@ -1,4 +1,4 @@
-import { MessagePageSchema } from '@starter/schemas/chat';
+import { MessageCursorError, MessagePageSchema } from '@starter/schemas/chat';
 import * as v from 'valibot';
 import { createRequestChatService } from '#lib/server/application_chat.ts';
 import { json, jsonError, unauthorized } from '#lib/server/http.ts';
@@ -30,7 +30,7 @@ export const GET: RequestHandler = async ({ locals, params, url }) => {
       ),
     );
   } catch (cause) {
-    if (cause instanceof TypeError) {
+    if (cause instanceof MessageCursorError) {
       return jsonError(
         400,
         'invalid_cursor',

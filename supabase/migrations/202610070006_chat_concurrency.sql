@@ -21,7 +21,7 @@ begin
   on conflict(owner_id, conversation_id, client_id) do nothing returning * into v_row;
   v_created := found;
   if v_created then
-    if (select count(*) from private.chat_generations g where g.owner_id=v_owner and g.state='admitted') > 2 then
+    if (select count(*) from private.chat_generations g where g.owner_id=v_owner and g.state='admitted' and g.updated_at >= now() - interval '60 seconds') > 2 then
       raise exception using errcode='P0001', message='owner chat concurrency limit reached';
     end if;
     insert into private.admission_counters(owner_id, bucket_start, admitted) values(v_owner, v_bucket, 0)
@@ -31,13 +31,20 @@ begin
     if not found then raise exception using errcode = 'P0001', message = 'chat admission limit reached'; end if;
   else
     select * into v_row from private.chat_generations g where g.owner_id=v_owner and g.conversation_id=p_conversation_id and g.client_id=p_client_id for update;
-    if v_row.request_fingerprint = p_request_fingerprint and v_row.state in ('failed','cancelled') then
+    if v_row.request_fingerprint = p_request_fingerprint and (v_row.state in ('failed','cancelled') or (v_row.state='admitted' and v_row.updated_at < now() - interval '60 seconds')) then
       update private.chat_generations as generation set state='admitted',attempt=generation.attempt+1,updated_at=now()
         where generation.owner_id=v_owner and generation.conversation_id=p_conversation_id and generation.client_id=p_client_id
         returning * into v_row;
       v_created := found;
-      if v_created and (select count(*) from private.chat_generations g where g.owner_id=v_owner and g.state='admitted') > 2 then
+      if v_created and (select count(*) from private.chat_generations g where g.owner_id=v_owner and g.state='admitted' and g.updated_at >= now() - interval '60 seconds') > 2 then
         raise exception using errcode='P0001', message='owner chat concurrency limit reached';
+      end if;
+      if v_created then
+        insert into private.admission_counters(owner_id, bucket_start, admitted) values(v_owner, v_bucket, 0)
+        on conflict do nothing;
+        update private.admission_counters set admitted = admitted + 1
+          where owner_id = v_owner and bucket_start = v_bucket and admitted < 5;
+        if not found then raise exception using errcode = 'P0001', message = 'chat admission limit reached'; end if;
       end if;
     end if;
   end if;

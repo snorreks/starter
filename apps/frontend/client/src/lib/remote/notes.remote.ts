@@ -5,9 +5,9 @@ import {
   NoteSchema,
   NoteUpdateSchema,
 } from '@starter/schemas/notes';
-import { error, invalid } from '@sveltejs/kit';
+import { error } from '@sveltejs/kit';
 import * as v from 'valibot';
-import { createNotesRemoteService } from '#lib/server/notes_remote_service.ts';
+import { createNotesRemoteService, NoteNotFoundError } from '#lib/server/notes_remote_service.ts';
 import { command, form, getRequestEvent, query } from '$app/server';
 
 const CursorInput = v.strictObject({
@@ -44,22 +44,22 @@ export const listNotes = query(CursorInput, async ({ cursor, limit = 30 }) => {
 });
 
 export const createNote = form(NoteCreateSchema, async (input) => {
-  try {
-    return v.parse(NoteSchema, await adapter().create(input));
-  } catch (cause) {
-    if (cause instanceof Error) {
-      invalid(cause.message);
-    }
-    invalid('The note could not be saved.');
-  }
+  return v.parse(NoteSchema, await adapter().create(input));
 });
 export const createNoteCommand = command(NoteCreateSchema, async (input) =>
   v.parse(NoteSchema, await adapter().create(input)),
 );
 
-export const updateNote = command(UpdateInput, async ({ id, input }) =>
-  v.parse(NoteSchema, await adapter().update(id, input)),
-);
+export const updateNote = command(UpdateInput, async ({ id, input }) => {
+  try {
+    return v.parse(NoteSchema, await adapter().update(id, input));
+  } catch (cause) {
+    if (cause instanceof NoteNotFoundError) {
+      error(404, cause.message);
+    }
+    throw cause;
+  }
+});
 
 export const deleteNote = command(IdInput, async ({ id }) =>
   v.parse(DeleteResultSchema, { deleted: await adapter().remove(id) }),

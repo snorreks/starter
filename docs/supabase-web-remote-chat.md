@@ -11,9 +11,10 @@ facades.
 the first HTML response contains its first bounded page. The page composition uses a
 host adapter over generated remote query/command wrappers for refresh, create, update,
 and delete. The portable Notes feature imports no remote query object. The exported
-`createNote` remote form uses Valibot validation and `invalid(...)` for submit errors;
-the current feature facade uses the validated command so its existing field-level
-state and error presentation remain intact.
+`createNote` remote form validates inputs with Valibot; infrastructure and repository
+failures remain server errors instead of being copied into client validation state.
+Missing updates map to a typed not-found response. The SSR first page and each remote
+refresh stop at 200 notes.
 
 Cursor pages carry `items`, `nextCursor`, `hasMore`, and `serverTime`. Notes cursors
 are opaque, owner-bound keys over `(updated_at,id)`; invalid or foreign cursors are
@@ -30,8 +31,11 @@ them immediately.
 Older web history uses the additive named endpoint
 `GET /api/chat/conversations/:id/messages/page?cursor=...`. Its strict DTO is
 `{ items, nextCursor, hasMore, serverTime }`; pages are bounded at 50 and ordered by
-`(created_at,id)`. The first page is newest, and older pages prepend. Native clients
-do not need to consume this endpoint. A future change to the existing HTTP envelope
+`(created_at,id)`. The first page is newest, and older pages prepend. Message DTOs
+carry optional `clientId` so retries can omit their persisted user turn from prompt
+history; older DTOs remain valid during rollout. Native clients must validate schemas
+and classify incompatible envelopes instead of treating unknown data as an empty
+transcript. Native clients do not need to consume this endpoint. A future change to the existing HTTP envelope
 requires a versioned endpoint or an explicit compatibility rollout; generated remote
 function identifiers are never a native API.
 
@@ -44,15 +48,18 @@ consumer treats an unknown envelope as an empty transcript.
 The explicit provider model is `@cf/meta/llama-3.1-8b-instruct-fp8`. Cloudflare lists
 its context window as 32,000 tokens ([model limits](https://developers.cloudflare.com/workers-ai/models/llama-3.1-8b-instruct-fp8/)). The adapter requests genuine SSE streaming ([Workers AI streaming](https://developers.cloudflare.com/workers-ai/configuration/bindings/)) and
 caps provider output at 768 tokens; local output is also capped at 12,288 UTF-8 bytes.
-Recent prompt history uses at most 20 messages and 24,576 UTF-8 bytes. The byte ceiling
-is an input bound; this app has no model tokenizer and does not report a guessed token
-count as exact. The 45-second total generation deadline is injectable in tests.
+Recent prompt history uses at most 20 messages and 24,576 UTF-8 bytes. Oldest history
+entries are discarded to fit while preserving the new message. This app has no model
+tokenizer and does not report a guessed token count as exact. The 45-second total
+generation deadline is injectable in tests.
 
 Owner concurrency is capped at two active generations by the transactional Postgres
 admission function, serialized per owner across Worker isolates. The existing
-five-per-hour owner admission quota remains. Failed and cancelled attempts are marked
-through `fail_chat_generation` and may be retried with the same key; a retry uses the
-stable reply id and a fenced incremented attempt.
+five-per-hour owner admission quota includes failed/cancelled retries. Failed and
+cancelled attempts are marked through `fail_chat_generation` and may be retried with
+the same key; a retry uses the stable reply id and a fenced incremented attempt. An
+admitted row older than 60 seconds can be reclaimed, and stale rows do not occupy the
+two active-generation slots (the stream deadline is 45 seconds).
 
 ## Admission, replay, and telemetry
 

@@ -158,6 +158,13 @@ describe('architecture: browser code cannot reach the Worker half', () => {
       forFile(
         allowedViolations,
         'plane-reachability',
+        'apps/frontend/client/src/routes/notes/+page.svelte',
+      ),
+    ).toBeUndefined();
+    expect(
+      forFile(
+        allowedViolations,
+        'plane-reachability',
         'apps/frontend/client/src/lib/remote/notes.remote.ts',
       ),
     ).toBeUndefined();

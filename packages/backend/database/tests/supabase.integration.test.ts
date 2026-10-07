@@ -199,6 +199,11 @@ describe('transactional admission and attempt fencing in Postgres', () => {
     expect(retried.error?.message ?? retried.data?.[0]?.outcome).toBe('admitted');
     expect(retried.data?.[0]?.assistant_message_id).toBe(admittedRow.assistant_message_id);
     expect(retried.data?.[0]?.attempt).toBe(admittedRow.attempt + 1);
+    await sql`update private.chat_generations set updated_at=now()-interval '61 seconds'
+      where owner_id=${userA.id} and conversation_id=${conversation.id} and client_id=${args.p_client_id}`;
+    const reclaimed = await userA.client.rpc('admit_chat_generation', args);
+    expect(reclaimed.data?.[0]?.outcome).toBe('admitted');
+    expect(reclaimed.data?.[0]?.attempt).toBe(admittedRow.attempt + 2);
     const secondOwnerSlot = await userA.client.rpc('admit_chat_generation', {
       ...args,
       p_client_id: 'second-active-generation',
@@ -255,7 +260,7 @@ describe('transactional admission and attempt fencing in Postgres', () => {
     const completed = await admin.rpc('complete_chat_generation', {
       p_conversation_id: conversation.id,
       p_client_id: args.p_client_id,
-      p_attempt: admittedRow.attempt + 1,
+      p_attempt: reclaimed.data?.[0]?.attempt ?? 0,
       p_content: 'trusted server completion',
     });
     expect(completed.error).toBeNull();

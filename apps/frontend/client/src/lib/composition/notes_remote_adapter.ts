@@ -11,10 +11,19 @@ export const createRemoteNotesFeatureService = () => ({
     const all = [];
     let cursor: string | null = null;
     do {
+      if (signal?.aborted) {
+        throw signal.reason;
+      }
       const query = listNotes({ cursor, limit: 50 });
       await query.refresh();
+      if (signal?.aborted) {
+        throw signal.reason;
+      }
       const page = await query;
-      all.push(...page.items);
+      if (signal?.aborted) {
+        throw signal.reason;
+      }
+      all.push(...page.items.slice(0, 200 - all.length));
       cursor = page.hasMore ? page.nextCursor : null;
     } while (cursor !== null && all.length < 200);
     return all;

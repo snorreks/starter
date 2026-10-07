@@ -36,12 +36,22 @@ export const load: PageServerLoad = async ({ locals }) => {
   // *first* paint, so the list arrives with the HTML and there is no duplicate
   // initial fetch; see `notes/+page.svelte`.
   if (locals.context.backendProfile === 'supabase') {
-    const page = await listNotes({ cursor: null, limit: 50 });
+    const items = [];
+    let cursor: string | null = null;
+    let hasMore = false;
+    let serverTime = Date.now();
+    do {
+      const page = await listNotes({ cursor, limit: 50 });
+      items.push(...page.items.slice(0, 200 - items.length));
+      cursor = page.nextCursor;
+      hasMore = page.hasMore;
+      serverTime = page.serverTime;
+    } while (cursor !== null && items.length < 200);
     return {
-      notes: page.items,
-      nextCursor: page.nextCursor,
-      hasMore: page.hasMore,
-      serverTime: page.serverTime,
+      notes: items,
+      nextCursor: cursor,
+      hasMore,
+      serverTime,
       remote: true,
     };
   }

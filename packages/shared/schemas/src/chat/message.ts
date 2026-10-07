@@ -63,6 +63,8 @@ export const MessageStatusSchema = literalUnion(MESSAGE_STATUSES);
 /** A message exactly as the API returns it. */
 export const MessageSchema = v.strictObject({
   id: MessageIdSchema,
+  /** Stable caller key, used to exclude an already-admitted turn from prompt history. */
+  clientId: v.optional(v.pipe(v.string(), v.minLength(1), v.maxLength(118))),
   conversationId: ConversationIdSchema,
   authorId: UserIdSchema,
   role: MessageRoleSchema,
@@ -141,6 +143,14 @@ export const MessagePageSchema = v.strictObject({
   serverTime: v.pipe(v.number(), v.finite()),
 });
 export type MessagePage = v.InferOutput<typeof MessagePageSchema>;
+
+/** Raised only when a message page cursor fails its owner/shape checks. */
+export class MessageCursorError extends Error {
+  constructor() {
+    super('Message cursor is malformed.');
+    this.name = 'MessageCursorError';
+  }
+}
 
 /**
  * A message submitted to start a turn.

@@ -3,7 +3,7 @@ import { expect, test } from 'bun:test';
 import { readdirSync, readFileSync } from 'node:fs';
 import { decodeChatStream, isChatStreamEvent } from '@starter/schemas/chat';
 import { drizzle } from 'drizzle-orm/bun-sqlite';
-import { POST, _streamTurn } from '../../routes/api/chat/conversations/[id]/messages/+server.ts';
+import { _streamTurn, POST } from '../../routes/api/chat/conversations/[id]/messages/+server.ts';
 import { type ChatModel, createWorkersAiChatModel } from './chat_model.ts';
 import { type ChatDatabase, createChatService } from './chat_service.ts';
 
@@ -182,6 +182,19 @@ test('cursor pages keep newest history visible and traverse more than 500 tied t
     expect(seen[0]).toBe('msg_0000');
     expect(seen.at(-1)).toBe('msg_0536');
     await expect(service.messagePage('owner', 'conversation', '%%%')).rejects.toThrow('malformed');
+    for (const createdAt of [1e30, -1e30]) {
+      const invalidDateCursor = btoa(
+        JSON.stringify({
+          ownerId: 'owner',
+          conversationId: 'conversation',
+          createdAt,
+          id: 'msg_0500',
+        }),
+      );
+      await expect(service.messagePage('owner', 'conversation', invalidDateCursor)).rejects.toThrow(
+        'malformed',
+      );
+    }
     const foreign = btoa(
       JSON.stringify({
         ownerId: 'other',
@@ -236,7 +249,11 @@ test('injected deadline and output byte budgets end with validated failure frame
       onTerminal: (outcome) => outcomes.push(outcome),
     });
     const deadlineEvents = decodeChatStream(await deadline.text());
-    expect(deadlineEvents.at(-1)).toMatchObject({ type: 'error', code: 'aborted' });
+    expect(deadlineEvents.at(-1)).toMatchObject({
+      type: 'error',
+      code: 'deadline_exceeded',
+      message: 'The generation deadline elapsed.',
+    });
 
     const output = _streamTurn({
       model: {

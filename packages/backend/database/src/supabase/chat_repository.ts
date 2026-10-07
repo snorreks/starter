@@ -1,4 +1,5 @@
 import type { Conversation, Message, MessagePage } from '@starter/schemas/chat';
+import { MessageCursorError } from '@starter/schemas/chat';
 import type { SupabaseClient } from './client.ts';
 import type { Database } from './database.types.ts';
 
@@ -110,6 +111,7 @@ export const createSupabaseChatRepository = (
     }
     return {
       id: fromDbId(data.id, 'msg'),
+      clientId: data.client_id,
       conversationId,
       authorId: data.author_id,
       role: data.role,
@@ -181,7 +183,7 @@ export const createSupabaseChatRepository = (
         }
         boundary = { createdAt: parsed.createdAt, id: parsed.id };
       } catch {
-        throw new TypeError('Message cursor is malformed.');
+        throw new MessageCursorError();
       }
       query = query.or(
         `created_at.lt.${boundary.createdAt},and(created_at.eq.${boundary.createdAt},id.lt.${boundary.id})`,
@@ -203,6 +205,7 @@ export const createSupabaseChatRepository = (
       }
       return {
         id: fromDbId(row.id, 'msg'),
+        clientId: row.client_id,
         conversationId,
         authorId: row.author_id,
         role: row.role as 'assistant' | 'user',

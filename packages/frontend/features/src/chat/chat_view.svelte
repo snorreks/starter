@@ -113,9 +113,10 @@ const stateLabel = (message: ChatMessageView): string | null => {
       />
     {:else}
       {#if viewModel.hasOlder}
-        <button type="button" class="ui-button ui-button--secondary" data-testid="chat-load-older" onclick={() => void viewModel.loadOlder()}>
-          Load older messages
+        <button type="button" class="ui-button ui-button--secondary" data-testid="chat-load-older" disabled={viewModel.olderStatus.kind === 'loading'} onclick={() => void viewModel.loadOlder()}>
+          {viewModel.olderStatus.kind === 'loading' ? 'Loading…' : 'Load older messages'}
         </button>
+        {#if viewModel.olderStatus.kind === 'error'}<p role="alert">{viewModel.olderStatus.message}</p>{/if}
       {/if}
       <ol
         class="chat__transcript"

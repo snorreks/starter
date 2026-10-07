@@ -45,6 +45,7 @@ import type {
   MessagePage,
   MessageRole,
 } from '@starter/schemas/chat';
+import { MessageCursorError } from '@starter/schemas/chat';
 import { createId } from '@starter/utils';
 import { and, asc, desc, eq, lt, or, sql } from 'drizzle-orm';
 import type { DrizzleD1Database } from 'drizzle-orm/d1';
@@ -75,6 +76,7 @@ const toWireConversation = (row: ConversationRow, messageCount: number): Convers
 
 export const toWireMessage = (row: MessageRow): Message => ({
   id: row.id,
+  clientId: row.clientId,
   conversationId: row.conversationId,
   authorId: row.authorId,
   // The column is `text`; the union is the assertion. A role outside the two is a
@@ -232,6 +234,8 @@ export const createChatService = (db: ChatDatabase): ChatService => ({
           value.ownerId !== ownerId ||
           value.conversationId !== conversationId ||
           typeof value.createdAt !== 'number' ||
+          !Number.isFinite(value.createdAt) ||
+          !Number.isFinite(new Date(value.createdAt).getTime()) ||
           typeof value.id !== 'string' ||
           value.id.length === 0
         ) {
@@ -239,7 +243,7 @@ export const createChatService = (db: ChatDatabase): ChatService => ({
         }
         boundary = { createdAt: value.createdAt, id: value.id };
       } catch {
-        throw new TypeError('Message cursor is malformed.');
+        throw new MessageCursorError();
       }
     }
     const predicates = [

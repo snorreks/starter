@@ -22,9 +22,16 @@ export const createNotesRemoteService = (repository: NotesRepository, ownerId: s
   async update(id: string, input: NoteUpdate) {
     const note = await repository.update(ownerId, id, input);
     if (note === null) {
-      throw new Error('That note does not exist.');
+      throw new NoteNotFoundError();
     }
     return v.parse(NoteSchema, note);
   },
   remove: (id: string) => repository.remove(ownerId, id),
 });
+
+export class NoteNotFoundError extends Error {
+  constructor() {
+    super('That note does not exist.');
+    this.name = 'NoteNotFoundError';
+  }
+}

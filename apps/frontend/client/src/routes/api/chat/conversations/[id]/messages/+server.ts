@@ -114,16 +114,12 @@ export const POST: RequestHandler = async ({ locals, params, request }) => {
   }
 
   const { content, clientId } = body.value;
-  const history = (await service.messagePage(user.id, params.id, null)).items;
-  const prompt = buildPrompt(
-    history.map((message) => `${message.role}: ${message.content}`).concat(`user: ${content}`),
-  );
-  if (new TextEncoder().encode(prompt).byteLength > CHAT_PROMPT_MAX_BYTES) {
-    return jsonError(
-      413,
-      'prompt_too_large',
-      'Recent conversation history exceeds the prompt byte budget.',
-    );
+  const history = (await service.messagePage(user.id, params.id, null)).items
+    .filter((message) => message.clientId !== clientId)
+    .map((message) => `${message.role}: ${message.content}`);
+  const prompt = buildBoundedPrompt(history, `user: ${content}`);
+  if (prompt === null) {
+    return jsonError(413, 'prompt_too_large', 'The new message exceeds the prompt byte budget.');
   }
 
   // Before the first frame, so a failure here is still an HTTP status. Idempotent on
@@ -139,6 +135,9 @@ export const POST: RequestHandler = async ({ locals, params, request }) => {
         'owner_concurrency',
         'The active generation limit has been reached. Retry shortly.',
       );
+    }
+    if (error instanceof Error && error.message.includes('chat admission limit reached')) {
+      return jsonError(429, 'admission_quota', 'The hourly generation quota has been reached.');
     }
     throw error;
   }
@@ -222,6 +221,23 @@ export const POST: RequestHandler = async ({ locals, params, request }) => {
 };
 
 const buildPrompt = (messages: readonly string[]): string => messages.slice(-20).join('\n');
+
+const buildBoundedPrompt = (history: readonly string[], current: string): string | null => {
+  const encoder = new TextEncoder();
+  if (encoder.encode(current).byteLength > CHAT_PROMPT_MAX_BYTES) {
+    return null;
+  }
+  const bounded = [...history, current].slice(-20);
+  while (
+    encoder.encode(buildPrompt(bounded)).byteLength > CHAT_PROMPT_MAX_BYTES &&
+    bounded.length > 1
+  ) {
+    bounded.shift();
+  }
+  return encoder.encode(buildPrompt(bounded)).byteLength <= CHAT_PROMPT_MAX_BYTES
+    ? buildPrompt(bounded)
+    : null;
+};
 
 export interface StreamTurnOptions {
   readonly model: ChatModel;
@@ -337,12 +353,21 @@ export const _streamTurn = (options: StreamTurnOptions): Response => {
     controller.close();
   };
 
+  const abortEvent = (): ChatStreamEvent =>
+    deadlineExceeded
+      ? {
+          type: 'error',
+          code: 'deadline_exceeded',
+          message: 'The generation deadline elapsed.',
+        }
+      : { type: 'error', code: 'aborted', message: 'The request was cancelled.' };
+
   const completeTurn = async (
     controller: ReadableStreamDefaultController<Uint8Array>,
   ): Promise<void> => {
     if (aborter.signal.aborted) {
       await releaseFailedAttempt(deadlineExceeded ? 'failed' : 'cancelled');
-      finish(controller, { type: 'error', code: 'aborted', message: 'The request was cancelled.' });
+      finish(controller, abortEvent());
       return;
     }
     let stored: Message | null;
@@ -394,11 +419,7 @@ export const _streamTurn = (options: StreamTurnOptions): Response => {
         if (aborter.signal.aborted) {
           done = true;
           await releaseFailedAttempt(deadlineExceeded ? 'failed' : 'cancelled');
-          finish(controller, {
-            type: 'error',
-            code: 'aborted',
-            message: 'The request was cancelled.',
-          });
+          finish(controller, abortEvent());
           return;
         }
 
@@ -418,11 +439,7 @@ export const _streamTurn = (options: StreamTurnOptions): Response => {
         if (aborter.signal.aborted) {
           done = true;
           await releaseFailedAttempt(deadlineExceeded ? 'failed' : 'cancelled');
-          finish(controller, {
-            type: 'error',
-            code: 'aborted',
-            message: 'The request was cancelled.',
-          });
+          finish(controller, abortEvent());
           void iterator.return?.();
           return;
         }
