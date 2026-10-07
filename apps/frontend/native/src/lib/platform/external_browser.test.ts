@@ -34,13 +34,27 @@ describe('the URL allowance', () => {
     // else's origin would otherwise get the user to open a page carrying a sign-in
     // code, from this app, in their real browser.
     expect(() => assertOpenable('https://evil.test/device', ORIGIN)).toThrow(
-      /only hands URLs belonging to/,
+      /only hands configured provider and API origins/,
     );
   });
 
   test('refuses a value that is not a URL at all', () => {
     expect(() => assertOpenable('/device', ORIGIN)).toThrow(/not an absolute URL/);
     expect(() => assertOpenable('', ORIGIN)).toThrow(ExternalBrowserRefused);
+  });
+
+  test('allows HTTP only for an explicitly configured loopback development origin', () => {
+    expect(() =>
+      assertOpenable(
+        'http://127.0.0.1:54321/auth/v1/authorize',
+        ORIGIN,
+        ['http://127.0.0.1:54321'],
+        true,
+      ),
+    ).not.toThrow();
+    expect(() =>
+      assertOpenable('http://evil.test/auth', ORIGIN, ['http://evil.test'], true),
+    ).toThrow(/Only https is allowed/);
   });
 });
 

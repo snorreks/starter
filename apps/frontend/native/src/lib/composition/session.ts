@@ -25,11 +25,20 @@
 //     module-level export a bundler could inline into the bundle.
 
 import { AuthSessionService, createAccountService, SessionState } from '@starter/features/auth';
-import type { Navigation, SessionStore } from '@starter/platform';
+import { type Navigation, parseDto } from '@starter/platform';
+import { type SessionUser, SessionUserSchema } from '@starter/schemas/auth';
 import { createBearerTransport } from '#lib/platform/bearer_transport.ts';
 import { createExternalBrowser } from '#lib/platform/external_browser.ts';
 import { StrongholdVault } from '#lib/platform/stronghold_vault.ts';
-import { VaultSessionStore } from '#lib/platform/vault_session_store.ts';
+import {
+  type SupabaseAuthConfig,
+  SupabaseNativeAuth,
+  type SupabaseUser,
+} from '#lib/platform/supabase_auth.ts';
+import {
+  CredentialVaultSessionStore,
+  VaultSessionStore,
+} from '#lib/platform/vault_session_store.ts';
 import { nativeConfig } from '#lib/runtime/config.ts';
 import { goto } from '$app/navigation';
 
@@ -48,6 +57,76 @@ const memory = {
 /** The public API origin, validated at module load by `#lib/runtime/config.ts`. */
 export const apiOrigin = nativeConfig.apiOrigin;
 
+const strongholdVault = new StrongholdVault();
+export const externalBrowser = createExternalBrowser({
+  origin: apiOrigin,
+  allowLoopbackHttp: nativeConfig.dev,
+  ...(nativeConfig.supabaseUrl === undefined ? {} : { allowedOrigins: [nativeConfig.supabaseUrl] }),
+});
+const supabaseConfiguration = (): SupabaseAuthConfig | null => {
+  if (nativeConfig.authProfile !== 'supabase') {
+    return null;
+  }
+  const {
+    environment,
+    supabaseProjectRef,
+    supabaseUrl,
+    supabaseAnonKey,
+    nativeCallback,
+    webCallback,
+    allowedCallbacks,
+  } = nativeConfig;
+  if (
+    environment === undefined ||
+    supabaseProjectRef === undefined ||
+    supabaseUrl === undefined ||
+    supabaseAnonKey === undefined ||
+    nativeCallback === undefined ||
+    webCallback === undefined ||
+    allowedCallbacks === undefined
+  ) {
+    throw new Error('The Supabase native profile is missing validated runtime configuration.');
+  }
+  return {
+    environment,
+    supabaseProjectRef,
+    apiOrigin,
+    supabaseUrl,
+    anonKey: supabaseAnonKey,
+    nativeCallback,
+    webCallback,
+    allowedCallbacks,
+  };
+};
+const supabaseConfig = supabaseConfiguration();
+const supabaseScope =
+  supabaseConfig === null
+    ? null
+    : {
+        environment: supabaseConfig.environment,
+        supabaseProjectRef: supabaseConfig.supabaseProjectRef,
+        apiOrigin: supabaseConfig.apiOrigin,
+      };
+export const supabaseVaultStore =
+  supabaseScope === null
+    ? null
+    : new CredentialVaultSessionStore({
+        vault: strongholdVault,
+        scope: supabaseScope,
+      });
+export const supabaseNativeAuth =
+  supabaseConfig === null
+    ? null
+    : new SupabaseNativeAuth({
+        config: supabaseConfig,
+        store: supabaseVaultStore ?? missingSupabaseStore(),
+        openBrowser: async (url) => externalBrowser.open(url),
+      });
+
+function missingSupabaseStore(): never {
+  throw new Error('Supabase session store is unavailable.');
+}
+
 /**
  * The HTTP seam: absolute origin, bearer header, no cookies.
  *
@@ -57,7 +136,10 @@ export const apiOrigin = nativeConfig.apiOrigin;
  */
 export const nativeTransport = createBearerTransport({
   origin: apiOrigin,
-  getToken: () => memory.token,
+  getToken: () => supabaseNativeAuth?.accessToken ?? memory.token,
+  ...(supabaseNativeAuth === null
+    ? {}
+    : { beforeRequest: () => supabaseNativeAuth.ensureFreshAccessToken() }),
 });
 
 /** Shared with the web host's own singleton, and for the same reason. */
@@ -69,8 +151,6 @@ export const authSessionService = new AuthSessionService({
 });
 
 export const accountService = createAccountService(nativeTransport);
-
-export const externalBrowser = createExternalBrowser({ origin: apiOrigin });
 
 /**
  * Persistence. Opt-in, unlocked by the user, scoped to this origin.
@@ -86,7 +166,7 @@ export const vaultStore = new VaultSessionStore({
 });
 
 /** Where a credential goes when "remember me" is on. An interface, not a class. */
-export const persistedSessionStore: SessionStore = vaultStore;
+export const persistedSessionStore = vaultStore;
 
 export const nativeNavigation: Navigation = {
   go: async (path: string) => {
@@ -183,4 +263,83 @@ const knownAccounts = (): Promise<string[]> => vaultStore.knownAccounts();
 export const unlockVault = async (passphrase: string): Promise<string | null> => {
   await vaultStore.unlock(passphrase);
   return restoreSession();
+};
+
+const toSessionUser = (user: SupabaseUser): SessionUser => {
+  if (user.email === null) {
+    throw new Error('Supabase did not return an email for this account.');
+  }
+  return parseDto(
+    SessionUserSchema,
+    {
+      id: user.id,
+      email: user.email,
+      displayName: user.displayName?.trim() || user.email,
+      provider: 'email',
+      emailVerified: user.emailVerified ?? false,
+    },
+    'a native Supabase session user',
+  );
+};
+
+export const beginSupabaseOAuth = async (provider: string, remember = false): Promise<void> => {
+  if (supabaseNativeAuth === null) {
+    throw new Error('The native Supabase profile is not enabled.');
+  }
+  if (remember && supabaseVaultStore !== null && !(await supabaseVaultStore.isAvailable())) {
+    throw new Error('Unlock the secure session store before choosing remember sign-in.');
+  }
+  supabaseNativeAuth.setPersistenceEnabled(remember);
+  await supabaseNativeAuth.beginOAuth(provider);
+};
+
+export const handleSupabaseCallback = async (url: string): Promise<void> => {
+  if (supabaseNativeAuth === null) {
+    throw new Error('The native Supabase profile is not enabled.');
+  }
+  const identity = await supabaseNativeAuth.handleCallback(url);
+  sessionState.set(toSessionUser(identity));
+  await nativeNavigation.go('/notes');
+};
+
+export const refreshNativeSession = async (): Promise<void> => {
+  if (supabaseNativeAuth === null) {
+    await authSessionService.refresh();
+    return;
+  }
+  try {
+    const restored =
+      supabaseNativeAuth.accessToken === null
+        ? await supabaseNativeAuth.restore()
+        : supabaseNativeAuth.user;
+    const identity = restored === null ? null : await supabaseNativeAuth.getCurrentUser();
+    if (identity === null) {
+      sessionState.set(null);
+      return;
+    }
+    sessionState.set(toSessionUser(identity));
+  } catch {
+    sessionState.set(null);
+  }
+};
+
+export const signOutNativeSession = async (): Promise<void> => {
+  if (supabaseNativeAuth === null) {
+    await authSessionService.signOut();
+    await discardSession();
+    return;
+  }
+  try {
+    await supabaseNativeAuth.signOut();
+  } finally {
+    sessionState.set(null);
+  }
+};
+
+export const unlockSupabaseVault = async (passphrase: string): Promise<void> => {
+  if (supabaseVaultStore === null) {
+    throw new Error('The native Supabase profile is not enabled.');
+  }
+  await supabaseVaultStore.unlock(passphrase);
+  await refreshNativeSession();
 };

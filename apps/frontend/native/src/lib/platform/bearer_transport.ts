@@ -46,6 +46,8 @@ export interface BearerTransportOptions {
   /** Absolute origin, already validated by `#lib/runtime/config.ts`. */
   readonly origin: string;
   readonly getToken: TokenReader;
+  /** Refresh only when the current access token is near expiry. */
+  readonly beforeRequest?: () => Promise<void>;
   /** Injected so a test replaces it rather than the global. */
   readonly fetch?: typeof globalThis.fetch;
 }
@@ -84,26 +86,35 @@ export const createBearerTransport = (
   };
 
   return {
-    request: <T>(path: string, requestOptions: TransportRequestOptions = {}): Promise<T> =>
-      inner.request<T>(path, {
+    request: async <T>(path: string, requestOptions: TransportRequestOptions = {}): Promise<T> => {
+      await options.beforeRequest?.();
+      return inner.request<T>(path, {
         ...requestOptions,
         credentials: 'omit',
         headers: authenticated(requestOptions.headers),
-      }),
-    fetchBytes: (
+      });
+    },
+    fetchBytes: async (
       path: string,
       requestOptions: ArtifactRequestOptions = {},
-    ): Promise<ArtifactBytes> =>
-      inner.fetchBytes(path, {
+    ): Promise<ArtifactBytes> => {
+      await options.beforeRequest?.();
+      return inner.fetchBytes(path, {
         ...requestOptions,
         credentials: 'omit',
         headers: authenticated(requestOptions.headers),
-      }),
-    openStream: (path: string, requestOptions: TransportRequestOptions = {}): Promise<Response> =>
-      inner.openStream(path, {
+      });
+    },
+    openStream: async (
+      path: string,
+      requestOptions: TransportRequestOptions = {},
+    ): Promise<Response> => {
+      await options.beforeRequest?.();
+      return inner.openStream(path, {
         ...requestOptions,
         credentials: 'omit',
         headers: authenticated(requestOptions.headers),
-      }),
+      });
+    },
   };
 };

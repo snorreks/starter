@@ -66,6 +66,36 @@ describe('the origin shared by the shell and frontend', () => {
     expect(JSON.parse(configured.config).app.security.csp).toContain(DEFAULT_DEV_API_ORIGIN);
   });
 
+  test('the Supabase profile adds exactly its configured Auth origin to the CSP', () => {
+    const configured = nativeConfiguration('build', {
+      VITE_NATIVE_AUTH_PROFILE: 'supabase',
+      VITE_NATIVE_API_ORIGIN: 'https://api.example.test',
+      VITE_NATIVE_SUPABASE_URL: 'https://project.supabase.co',
+    });
+    const csp = JSON.parse(configured.config).app.security.csp as string;
+    expect(csp).toContain('https://api.example.test https://project.supabase.co');
+    expect(() =>
+      assertNativeCsp(csp, 'https://api.example.test', ['https://project.supabase.co']),
+    ).not.toThrow();
+    expect(() => assertNativeCsp(csp, 'https://api.example.test')).toThrow(/disagree/);
+  });
+
+  test('the Supabase profile refuses a missing or foreign shaped Auth origin', () => {
+    expect(() =>
+      nativeConfiguration('build', {
+        VITE_NATIVE_AUTH_PROFILE: 'supabase',
+        VITE_NATIVE_API_ORIGIN: 'https://api.example.test',
+      }),
+    ).toThrow(/VITE_NATIVE_SUPABASE_URL/);
+    expect(() =>
+      nativeConfiguration('build', {
+        VITE_NATIVE_AUTH_PROFILE: 'supabase',
+        VITE_NATIVE_API_ORIGIN: 'https://api.example.test',
+        VITE_NATIVE_SUPABASE_URL: 'https://project.supabase.co/other',
+      }),
+    ).toThrow(/HTTPS origin/);
+  });
+
   test('a build refuses a missing or insecure origin', () => {
     expect(() => nativeConfiguration('build', {})).toThrow(/No API origin/);
     expect(() =>

@@ -171,7 +171,42 @@ const crateCheck = (): Check => {
   };
 };
 
+const supabaseAuthProfileCheck = (): Check => {
+  if (process.env.VITE_NATIVE_AUTH_PROFILE !== 'supabase') {
+    return {
+      name: 'native auth profile',
+      severity: 'required',
+      ok: true,
+      detail: 'legacy default',
+    };
+  }
+  const required = [
+    'VITE_NATIVE_API_ORIGIN',
+    'VITE_NATIVE_ENVIRONMENT',
+    'VITE_NATIVE_SUPABASE_URL',
+    'VITE_NATIVE_SUPABASE_PROJECT_REF',
+    'VITE_NATIVE_SUPABASE_ANON_KEY',
+  ];
+  const missing = required.filter((key) => !process.env[key]);
+  return missing.length === 0
+    ? {
+        name: 'native auth profile',
+        severity: 'required',
+        ok: true,
+        detail: 'Supabase target configured',
+      }
+    : {
+        name: 'native auth profile',
+        severity: 'required',
+        ok: false,
+        detail: `Supabase profile missing ${missing.join(', ')}`,
+        remedy:
+          'Set these public target values before building the Supabase native profile; callbacks are fixed by the native target configuration.',
+      };
+};
+
 const CHECKS = [
+  supabaseAuthProfileCheck,
   crateCheck,
   tauriCheck,
   cargoCheck,

@@ -10,8 +10,10 @@
 // this class rather than by the driver.
 
 import { beforeEach, describe, expect, test } from 'bun:test';
-import type { SessionScope } from '@starter/platform';
+import { ReauthenticationRequiredError, type SessionCredential } from '@starter/platform';
+import type { LegacySessionScope as SessionScope } from './vault_session_store.ts';
 import {
+  CredentialVaultSessionStore,
   redactSecret,
   sessionVaultKey,
   VaultLockedError,
@@ -226,5 +228,86 @@ describe('messages', () => {
     await fresh.unlock(vault.passphrase);
     const error = await fresh.save(STAGING, TOKEN).catch((caught: unknown) => caught);
     expect(String(error)).not.toContain(TOKEN);
+  });
+});
+
+describe('versioned Supabase vault credentials', () => {
+  const scope = {
+    environment: 'staging',
+    supabaseProjectRef: 'local-project',
+    apiOrigin: 'https://staging.example.test',
+  };
+  const credential = (accountId = 'user-a', expiresAt = 1_800_000_000_000): SessionCredential => ({
+    accountId,
+    supabaseProjectRef: scope.supabaseProjectRef,
+    apiOrigin: scope.apiOrigin,
+    version: 1,
+    accessToken: 'supabase-access',
+    refreshToken: 'supabase-refresh',
+    expiresAt,
+  });
+  const scoped = (accountId = 'user-a') => ({ ...scope, accountId });
+  let secure: CredentialVaultSessionStore;
+
+  beforeEach(() => {
+    vault = new FakeVault();
+    secure = new CredentialVaultSessionStore({ vault, scope, now: () => clock });
+  });
+
+  test('does not read or write while unavailable and locked', async () => {
+    const record = credential();
+    expect(await secure.knownAccounts(scope)).toEqual([]);
+    await expect(secure.save(scoped(), record)).rejects.toBeInstanceOf(VaultLockedError);
+  });
+
+  test('a wrong passphrase leaves the secure store locked', async () => {
+    await expect(secure.unlock('wrong passphrase')).rejects.toThrow();
+    expect(await secure.isAvailable()).toBe(false);
+    expect(await secure.knownAccounts(scope)).toEqual([]);
+  });
+
+  test('persists exact versioned token fields when explicitly unlocked', async () => {
+    await secure.unlock(vault.passphrase);
+    const record = credential();
+    await secure.save(scoped(), record);
+    expect(await secure.knownAccounts(scope)).toEqual(['user-a']);
+    expect(await secure.load(scoped())).toEqual(record);
+  });
+
+  test('expired access credentials remain available to the refresh lifecycle', async () => {
+    await secure.unlock(vault.passphrase);
+    const record = credential('user-a', clock - 1);
+    await secure.save(scoped(), record);
+    expect(await secure.load(scoped())).toEqual(record);
+  });
+
+  test('refuses environment, project, origin, and account scope mismatches', async () => {
+    await secure.unlock(vault.passphrase);
+    const record = credential();
+    await secure.save(scoped(), record);
+    for (const other of [
+      { ...scoped(), environment: 'production' },
+      { ...scoped(), supabaseProjectRef: 'another-project' },
+      { ...scoped(), apiOrigin: 'https://other.example.test' },
+      { ...scoped(), accountId: 'user-b' },
+    ]) {
+      await expect(secure.load(other)).rejects.toBeInstanceOf(VaultScopeError);
+    }
+  });
+
+  test('removes old token-only bearer entries and requires reauthentication', async () => {
+    await secure.unlock(vault.passphrase);
+    const previous = { origin: scope.apiOrigin, account: 'user-a' };
+    vault.entries.set(
+      sessionVaultKey(previous),
+      JSON.stringify({ version: 1, token: TOKEN, expiresAt: null }),
+    );
+    vault.entries.set(
+      `starter.native.last-account.${encodeURIComponent(scope.apiOrigin)}`,
+      'user-a',
+    );
+    expect(await secure.knownAccounts(scope)).toEqual(['user-a']);
+    await expect(secure.load(scoped())).rejects.toBeInstanceOf(ReauthenticationRequiredError);
+    expect(vault.entries.has(sessionVaultKey(previous))).toBe(false);
   });
 });

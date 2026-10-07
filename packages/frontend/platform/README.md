@@ -21,7 +21,7 @@ interface a host fulfils or a piece of mechanism more than one host needs:
 | `parseDto` | Runtime validation of a response body against a Standard Schema contract |
 | `Navigation` | `go(path)` — move the host to an application path |
 | `ExternalBrowser` | `open(url)` — hand a URL to the user's own browser |
-| `SessionStore`, `MemorySessionStore`, `SessionScope` | Where a credential lives between launches |
+| `SessionStore`, `MemorySessionStore`, `SessionScope`, `SessionCredential` | Where a credential lives between launches |
 
 ## Setup and configuration
 
@@ -48,6 +48,12 @@ bun run test        # bun test
 The tests here are the proof that this package needs no application runtime: they
 construct a transport with an injected `fetch` and assert on recorded calls, and
 nothing in the file imports Svelte, SvelteKit or a host bridge.
+
+`SessionCredential` is the version 1 record: `accessToken`, `refreshToken`,
+`expiresAt`, `accountId`, `supabaseProjectRef`, and `apiOrigin`. The store key
+also includes the environment, so environment scope does not add another field to
+the persisted record. `MemorySessionStore` remains the default and writes nothing
+to browser storage.
 
 ## Validation and artifacts
 

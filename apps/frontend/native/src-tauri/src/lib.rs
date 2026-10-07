@@ -95,6 +95,7 @@ pub fn run() {
         // `src/lib/platform/external_browser.ts` for why this is a capability and
         // not a webview.
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_deep_link::init())
         .invoke_handler(tauri::generate_handler![vault_snapshot_path]);
 
     builder

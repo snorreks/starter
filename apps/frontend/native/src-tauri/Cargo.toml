@@ -53,6 +53,7 @@ tauri-build = { version = "=2.7.1", features = [] }
 
 [dependencies]
 tauri = { version = "=2.12.1", features = [] }
+serde_json = "=1.0.151"
 # Structured native logs, forwarded to the same NDJSON the other log producers
 # write, so one `bun run logs` covers the app and the Worker.
 tauri-plugin-log = "=2.10.0"
@@ -60,6 +61,8 @@ tauri-plugin-log = "=2.10.0"
 # `src/lib/platform/external_browser.ts` for why this is a capability and not a
 # webview.
 tauri-plugin-opener = "=2.7.0"
+# Routes the one configured PKCE callback back to the native app.
+tauri-plugin-deep-link = "=2.6.1"
 # The encrypted vault behind opt-in "remember me". Cross-platform on desktop and
 # mobile; the passphrase is the user's and is never stored. The key is derived
 # from it with argon2id in `src/lib.rs`.

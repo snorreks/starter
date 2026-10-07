@@ -50,6 +50,23 @@ test('every response mode enforces cookie omission and case-insensitive session 
   }
 });
 
+test('every response mode refreshes before reading the current access token', async () => {
+  for (const mode of ['request', 'fetchBytes', 'openStream'] as const) {
+    const { fetch, seen } = capture([ok()]);
+    let token = 'old-token';
+    const transport = createBearerTransport({
+      origin: 'https://api.example.test',
+      getToken: () => token,
+      beforeRequest: async () => {
+        token = 'rotated-token';
+      },
+      fetch,
+    });
+    await transport[mode]('/api/resource');
+    expect(new Headers(seen[0]?.init?.headers).get('authorization')).toBe('Bearer rotated-token');
+  }
+});
+
 describe('the bearer transport', () => {
   test('addresses an absolute origin, not the shell', async () => {
     // A relative URL here would resolve against the custom protocol the shell

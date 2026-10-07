@@ -53,23 +53,90 @@ const readEnv = (key: string): string | undefined => {
  */
 const isDevBuild = import.meta.env.DEV === true;
 
+export type NativeAuthProfile = 'legacy' | 'supabase';
+
+const parseAuthProfile = (raw: string | undefined): NativeAuthProfile => {
+  if (raw === undefined || raw === 'legacy') {
+    return 'legacy';
+  }
+  if (raw === 'supabase') {
+    return 'supabase';
+  }
+  throw new Error('VITE_NATIVE_AUTH_PROFILE must be legacy or supabase.');
+};
+
+const requiredEnv = (key: string): string => {
+  const value = readEnv(key);
+  if (value === undefined) {
+    throw new Error(`Supabase native profile requires ${key}.`);
+  }
+  return value;
+};
+
+const profile = parseAuthProfile(readEnv('VITE_NATIVE_AUTH_PROFILE'));
+const apiOrigin = resolveApiOrigin({
+  raw: readEnv('VITE_NATIVE_API_ORIGIN'),
+  dev: isDevBuild,
+  devHost: isDevBuild ? readEnv(DEV_API_HOST_ENV) : undefined,
+});
+
+const supabaseUrl = profile === 'supabase' ? requiredEnv('VITE_NATIVE_SUPABASE_URL') : undefined;
+if (supabaseUrl !== undefined) {
+  const parsed = new URL(supabaseUrl);
+  if (
+    parsed.protocol !== 'https:' &&
+    !(isDevBuild && ['localhost', '127.0.0.1'].includes(parsed.hostname))
+  ) {
+    throw new Error('VITE_NATIVE_SUPABASE_URL must use HTTPS outside local development.');
+  }
+  if (
+    parsed.origin !== supabaseUrl ||
+    parsed.pathname !== '/' ||
+    parsed.search.length > 0 ||
+    parsed.hash.length > 0
+  ) {
+    throw new Error(
+      'VITE_NATIVE_SUPABASE_URL must be an origin without a path, query, or fragment.',
+    );
+  }
+}
+
+const supabaseProjectRef =
+  profile === 'supabase' ? requiredEnv('VITE_NATIVE_SUPABASE_PROJECT_REF') : undefined;
+const supabaseAnonKey =
+  profile === 'supabase' ? requiredEnv('VITE_NATIVE_SUPABASE_ANON_KEY') : undefined;
+const environment = profile === 'supabase' ? requiredEnv('VITE_NATIVE_ENVIRONMENT') : undefined;
+const nativeCallback = 'com.example.starter://auth/callback';
+const webCallback = `${apiOrigin}/auth/callback`;
+
 export interface NativeConfig {
+  readonly authProfile: NativeAuthProfile;
   readonly apiOrigin: string;
   readonly clientId: string;
   readonly dev: boolean;
+  readonly environment?: string;
+  readonly supabaseUrl?: string;
+  readonly supabaseProjectRef?: string;
+  readonly supabaseAnonKey?: string;
+  readonly nativeCallback?: string;
+  readonly webCallback?: string;
+  readonly allowedCallbacks?: readonly string[];
 }
 
 export const nativeConfig: NativeConfig = {
-  apiOrigin: resolveApiOrigin({
-    raw: readEnv('VITE_NATIVE_API_ORIGIN'),
-    dev: isDevBuild,
-    // The development machine's address, for a phone that cannot see the
-    // developer's loopback. Read only when this bundle is a dev build, and
-    // refused outright by `resolveApiOrigin` when it is not — so the same
-    // environment that makes `native android dev --host …` work cannot point a
-    // packaged build at one machine on one network.
-    devHost: isDevBuild ? readEnv(DEV_API_HOST_ENV) : undefined,
-  }),
+  authProfile: profile,
+  apiOrigin,
   clientId: resolveClientId(readEnv('VITE_NATIVE_CLIENT_ID')),
   dev: isDevBuild,
+  ...(profile === 'supabase'
+    ? {
+        environment,
+        supabaseUrl,
+        supabaseProjectRef,
+        supabaseAnonKey,
+        nativeCallback,
+        webCallback,
+        allowedCallbacks: [nativeCallback, webCallback],
+      }
+    : {}),
 };

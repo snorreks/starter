@@ -23,15 +23,20 @@
 // cancellation rather than as a failure.
 
 import { createDeviceAuthorizationService } from '@starter/features/auth';
-import { onDestroy } from 'svelte';
+import { onDestroy, onMount } from 'svelte';
 import {
   adoptSession,
   apiOrigin,
   authSessionService,
+  beginSupabaseOAuth,
   externalBrowser,
   nativeNavigation,
   nativeTransport,
+  refreshNativeSession,
   sessionState,
+  supabaseNativeAuth,
+  supabaseVaultStore,
+  unlockSupabaseVault,
   unlockVault,
   vaultStore,
 } from '#lib/composition/session.ts';
@@ -59,6 +64,7 @@ let errorText = $state('');
 let remember = $state(false);
 let passphrase = $state('');
 let vaultAvailable = $state(false);
+let reauthenticationRequired = $state(false);
 
 let inFlight = new AbortController();
 
@@ -66,8 +72,14 @@ onDestroy(() => {
   inFlight.abort();
 });
 
-vaultStore.isAvailable().then((available) => {
+const activeVault = supabaseVaultStore ?? vaultStore;
+activeVault.isAvailable().then((available) => {
   vaultAvailable = available;
+});
+
+onMount(async () => {
+  await refreshNativeSession();
+  reauthenticationRequired = supabaseNativeAuth?.requiresReauthentication ?? false;
 });
 
 async function signInWithBrowser(): Promise<void> {
@@ -77,7 +89,29 @@ async function signInWithBrowser(): Promise<void> {
   const { signal } = inFlight;
 
   try {
-    if (remember && !(await vaultStore.isAvailable())) {
+    if (nativeConfig.authProfile === 'supabase') {
+      if (remember && !(await activeVault.isAvailable())) {
+        if (passphrase.length === 0) {
+          errorText = 'Enter a passphrase to unlock the secure store, or clear "remember me".';
+          return;
+        }
+        await unlockSupabaseVault(passphrase);
+        passphrase = '';
+        vaultAvailable = true;
+        reauthenticationRequired = supabaseNativeAuth?.requiresReauthentication ?? false;
+        if (supabaseNativeAuth?.accessToken) {
+          await nativeNavigation.go('/notes');
+          return;
+        }
+      }
+      phase = 'waiting';
+      statusText = 'Opening Supabase sign-in in your browser…';
+      await beginSupabaseOAuth('google', remember);
+      statusText = 'Complete sign-in in your browser. This app will reopen when it is finished.';
+      return;
+    }
+
+    if (remember && !(await activeVault.isAvailable())) {
       if (passphrase.length === 0) {
         errorText = 'Enter a passphrase to unlock the vault, or clear "remember me".';
         return;
@@ -166,9 +200,18 @@ async function signInWithBrowser(): Promise<void> {
       Go to your notes
     </a>
   {:else}
+    {#if reauthenticationRequired}
+      <p role="status" data-testid="native-reauth-required">
+        A saved session used an older credential format and was removed. Sign in again to create a secure Supabase session.
+      </p>
+    {/if}
     <p class="native__explain">
-      This app never asks for your password. It shows a short code, your browser approves it, and
-      the session comes back to this window.
+      {#if nativeConfig.authProfile === 'supabase'}
+        This app opens Supabase in your browser. After sign-in, the one-time callback returns here.
+      {:else}
+        This app never asks for your password. It shows a short code, your browser approves it, and
+        the session comes back to this window.
+      {/if}
     </p>
 
     <button
@@ -183,7 +226,7 @@ async function signInWithBrowser(): Promise<void> {
 
     <label class="native__remember">
       <input type="checkbox" bind:checked={remember} data-testid="native-remember" />
-      Remember me on this device (stores a token in an encrypted vault)
+      Remember me on this device (stores credentials in an encrypted vault)
     </label>
 
     {#if remember && !vaultAvailable}

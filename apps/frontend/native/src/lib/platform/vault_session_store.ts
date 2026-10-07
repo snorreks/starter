@@ -34,7 +34,13 @@
 // is no field on this class that holds one. That is why this class can be read in
 // full as an answer to "where does the unlock secret live".
 
-import { type SessionScope, type SessionStore, sessionScopeKey } from '@starter/platform';
+import {
+  ReauthenticationRequiredError,
+  type SessionCredential,
+  type SessionScope,
+  type SessionStore,
+  sessionScopeKey,
+} from '@starter/platform';
 
 /**
  * The narrow surface of a keychain this store needs.
@@ -50,6 +56,11 @@ export interface VaultPort {
   read(key: string): Promise<string | null>;
   write(key: string, value: string): Promise<void>;
   remove(key: string): Promise<void>;
+}
+
+export interface LegacySessionScope {
+  readonly origin: string;
+  readonly account: string;
 }
 
 /** The vault is locked. Nothing is readable or writable until it is unlocked. */
@@ -122,8 +133,10 @@ const hex = new TextEncoder();
  * mapping is injective, and a key can still be read back to its scope by whoever
  * is debugging a vault on a user's machine.
  */
-export const sessionVaultKey = (scope: SessionScope): string => {
-  const bytes = hex.encode(sessionScopeKey(scope));
+export const sessionVaultKey = (scope: SessionScope | LegacySessionScope): string => {
+  const key =
+    'environment' in scope ? sessionScopeKey(scope) : `${scope.origin}\u0000${scope.account}`;
+  const bytes = hex.encode(key);
   let encoded = '';
   for (const byte of bytes) {
     encoded += byte.toString(16).padStart(2, '0');
@@ -145,7 +158,9 @@ export interface VaultSessionStoreOptions {
   readonly now?: () => number;
 }
 
-export class VaultSessionStore implements SessionStore {
+const legacySessionVaultKey = (scope: LegacySessionScope): string => sessionVaultKey(scope);
+
+export class VaultSessionStore {
   readonly #vault: VaultPort;
   readonly #origin: string;
   readonly #now: () => number;
@@ -187,7 +202,7 @@ export class VaultSessionStore implements SessionStore {
     this.#pendingRemovals.clear();
   }
 
-  #assertScope(scope: SessionScope): string {
+  #assertScope(scope: LegacySessionScope): string {
     if (scope.origin !== this.#origin) {
       throw new VaultScopeError(
         redactSecret(
@@ -202,7 +217,7 @@ export class VaultSessionStore implements SessionStore {
           'credential is revoked and removed rather than left behind in the vault.',
       );
     }
-    return sessionVaultKey(scope);
+    return legacySessionVaultKey(scope);
   }
 
   // Separate namespace from session records, with a fixed key per origin.
@@ -226,7 +241,7 @@ export class VaultSessionStore implements SessionStore {
     return account === null ? [] : [account];
   }
 
-  async load(scope: SessionScope): Promise<string | null> {
+  async load(scope: LegacySessionScope): Promise<string | null> {
     const key = this.#assertScope(scope);
 
     if (!(await this.#vault.isUnlocked())) {
@@ -255,7 +270,7 @@ export class VaultSessionStore implements SessionStore {
     return stored.token;
   }
 
-  async save(scope: SessionScope, token: string): Promise<void> {
+  async save(scope: LegacySessionScope, token: string): Promise<void> {
     const key = this.#assertScope(scope);
 
     if (!(await this.#vault.isUnlocked())) {
@@ -271,7 +286,7 @@ export class VaultSessionStore implements SessionStore {
     await this.rememberStoredAccount(scope.account);
   }
 
-  async clear(scope: SessionScope): Promise<void> {
+  async clear(scope: LegacySessionScope): Promise<void> {
     // Scope is asserted even here: `clear` for a scope this store does not own is
     // a caller bug, and ignoring it would make a typo look like a sign-out.
     const key = this.#assertScope(scope);
@@ -304,3 +319,183 @@ export class VaultSessionStore implements SessionStore {
     this.#boundAccount = null;
   }
 }
+
+const legacyKey = (scope: SessionScope): string => {
+  const legacyScope = `${scope.apiOrigin}\u0000${scope.accountId}`;
+  return `${SESSION_KEY_PREFIX}${[...new TextEncoder().encode(legacyScope)].map((byte) => byte.toString(16).padStart(2, '0')).join('')}`;
+};
+
+/** Versioned Supabase credentials in Stronghold, isolated from legacy bearer records. */
+export class CredentialVaultSessionStore implements SessionStore {
+  readonly #vault: VaultPort;
+  readonly #scope: Omit<SessionScope, 'accountId'>;
+  readonly #now: () => number;
+  #boundAccount: string | null = null;
+
+  constructor(options: {
+    readonly vault: VaultPort;
+    readonly scope: Omit<SessionScope, 'accountId'>;
+    readonly now?: () => number;
+  }) {
+    this.#vault = options.vault;
+    this.#scope = options.scope;
+    this.#now = options.now ?? Date.now;
+  }
+
+  unlock(passphrase: string): Promise<void> {
+    return this.#vault.unlock(passphrase);
+  }
+
+  #key(scope: SessionScope): string {
+    if (
+      scope.environment !== this.#scope.environment ||
+      scope.supabaseProjectRef !== this.#scope.supabaseProjectRef ||
+      scope.apiOrigin !== this.#scope.apiOrigin
+    ) {
+      throw new VaultScopeError(
+        'Refusing a credential for a different environment, Supabase project, or API origin.',
+      );
+    }
+    if (this.#boundAccount !== null && this.#boundAccount !== scope.accountId) {
+      throw new VaultScopeError('Sign out before binding another account to this secure store.');
+    }
+    return sessionVaultKey(scope);
+  }
+
+  #accountsKey(): string {
+    return `starter.native.supabase.accounts.${encodeURIComponent(JSON.stringify(this.#scope))}`;
+  }
+
+  async knownAccounts(scope: Omit<SessionScope, 'accountId'>): Promise<string[]> {
+    this.#assertBaseScope(scope);
+    if (!(await this.#vault.isUnlocked())) {
+      return [];
+    }
+    const current = await this.#vault.read(this.#accountsKey());
+    if (current !== null) {
+      try {
+        const parsed: unknown = JSON.parse(current);
+        if (Array.isArray(parsed) && parsed.every((account) => typeof account === 'string')) {
+          return parsed;
+        }
+      } catch {
+        /* Corrupt index is removed below. */
+      }
+      await this.#vault.remove(this.#accountsKey());
+      throw new ReauthenticationRequiredError(
+        'The saved account index is incompatible. Sign in again.',
+      );
+    }
+    // Older versions kept one origin-scoped account index and a token-only record.
+    const legacyAccount = await this.#vault.read(
+      `starter.native.last-account.${encodeURIComponent(scope.apiOrigin)}`,
+    );
+    return legacyAccount === null ? [] : [legacyAccount];
+  }
+
+  async load(scope: SessionScope): Promise<SessionCredential | null> {
+    const key = this.#key(scope);
+    if (!(await this.#vault.isUnlocked())) {
+      return null;
+    }
+    const raw = await this.#vault.read(key);
+    if (raw !== null) {
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(raw);
+      } catch {
+        parsed = null;
+      }
+      if (!isCredential(parsed) || !matchesScope(parsed, scope)) {
+        await this.#vault.remove(key);
+        throw new ReauthenticationRequiredError(
+          'The saved credential format is incompatible. Sign in again.',
+        );
+      }
+      if (parsed.expiresAt <= this.#now()) {
+        this.#boundAccount = parsed.accountId;
+        return parsed;
+      }
+      this.#boundAccount = parsed.accountId;
+      return parsed;
+    }
+    const previous = await this.#vault.read(legacyKey(scope));
+    if (previous !== null) {
+      await this.#vault.remove(legacyKey(scope));
+      await this.#vault.remove(
+        `starter.native.last-account.${encodeURIComponent(scope.apiOrigin)}`,
+      );
+      this.#boundAccount = null;
+      throw new ReauthenticationRequiredError(
+        'A legacy bearer credential cannot be used as a Supabase refresh session. Sign in again.',
+      );
+    }
+    return null;
+  }
+
+  async save(scope: SessionScope, credential: SessionCredential): Promise<void> {
+    const key = this.#key(scope);
+    if (!isCredential(credential) || !matchesScope(credential, scope)) {
+      throw new VaultScopeError('Refusing a malformed or differently scoped Supabase credential.');
+    }
+    if (!(await this.#vault.isUnlocked())) {
+      throw new VaultLockedError('Unlock the secure store before opting in to remember sign-in.');
+    }
+    await this.#vault.write(key, JSON.stringify(credential));
+    await this.#vault.write(this.#accountsKey(), JSON.stringify([credential.accountId]));
+    this.#boundAccount = credential.accountId;
+  }
+
+  async clear(scope: SessionScope): Promise<void> {
+    const key = this.#key(scope);
+    if (!(await this.#vault.isUnlocked())) {
+      throw new VaultLockedError('Unlock the secure store to remove the persisted session.');
+    }
+    await this.#vault.remove(key);
+    await this.#vault.remove(this.#accountsKey());
+    this.#boundAccount = null;
+  }
+
+  async isAvailable(): Promise<boolean> {
+    return this.#vault.isUnlocked();
+  }
+
+  releaseBinding(): void {
+    this.#boundAccount = null;
+  }
+
+  #assertBaseScope(scope: Omit<SessionScope, 'accountId'>): void {
+    if (
+      scope.environment !== this.#scope.environment ||
+      scope.supabaseProjectRef !== this.#scope.supabaseProjectRef ||
+      scope.apiOrigin !== this.#scope.apiOrigin
+    ) {
+      throw new VaultScopeError(
+        'Refusing a different environment, Supabase project, or API origin.',
+      );
+    }
+  }
+}
+
+const isCredential = (value: unknown): value is SessionCredential => {
+  if (typeof value !== 'object' || value === null) {
+    return false;
+  }
+  const item = value as Partial<SessionCredential>;
+  return (
+    item.version === 1 &&
+    typeof item.accessToken === 'string' &&
+    item.accessToken.length > 0 &&
+    typeof item.refreshToken === 'string' &&
+    item.refreshToken.length > 0 &&
+    typeof item.expiresAt === 'number' &&
+    typeof item.accountId === 'string' &&
+    typeof item.supabaseProjectRef === 'string' &&
+    typeof item.apiOrigin === 'string'
+  );
+};
+
+const matchesScope = (credential: SessionCredential, scope: SessionScope): boolean =>
+  credential.supabaseProjectRef === scope.supabaseProjectRef &&
+  credential.apiOrigin === scope.apiOrigin &&
+  credential.accountId === scope.accountId;

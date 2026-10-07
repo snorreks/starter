@@ -1,6 +1,7 @@
 // apps/frontend/native/scripts/check_artifacts.ts
 //
 //   bun run --cwd apps/frontend/native check:artifacts -- <dir> --origin <url>
+//     [--supabase-url <url>]
 //
 // What a mobile artifact is, and what is inside it.
 //
@@ -36,8 +37,8 @@
 // fails loudly on anything it does not understand.
 
 import { readdirSync, readFileSync, statSync } from 'node:fs';
-import { inflateRawSync } from 'node:zlib';
 import { join } from 'node:path';
+import { inflateRawSync } from 'node:zlib';
 
 // ── ZIP reading ──────────────────────────────────────────────────────────────
 
@@ -371,6 +372,8 @@ export interface VerifyOptions {
   /** The revision this run built. Compared against each name. */
   readonly revision: string;
   readonly platform: 'android' | 'ios';
+  /** The configured Auth origin, allowed as a second deployment destination. */
+  readonly supabaseUrl?: string;
 }
 
 export const verifyArtifacts = (options: VerifyOptions): ArtifactProblem[] => {
@@ -499,6 +502,11 @@ const scanContainer = (path: string, name: string, options: VerifyOptions): Arti
       ) {
         continue;
       }
+      const authOrigin =
+        options.supabaseUrl === undefined ? null : new URL(options.supabaseUrl).origin;
+      if (candidate === authOrigin) {
+        continue;
+      }
       if (isForeignOrigin(candidate, expected)) {
         foreign.add(candidate);
       }
@@ -530,7 +538,7 @@ const scanContainer = (path: string, name: string, options: VerifyOptions): Arti
 
 // ── Entry point ──────────────────────────────────────────────────────────────
 
-const USAGE = `check:artifacts <dir> [<dir> …] --origin <url> --revision <sha> --platform <android|ios>
+const USAGE = `check:artifacts <dir> [<dir> …] --origin <url> [--supabase-url <url>] --revision <sha> --platform <android|ios>
 check:artifacts --name <platform> <target> <apk|aab|ipa> <signed|unsigned>
 
 Verifies that every .apk/.aab/.ipa in each <dir> names its platform, target and
@@ -554,7 +562,7 @@ scheme is how a lane starts uploading files nothing can attribute.
  * flags that take a value consume it here, and `--` is dropped rather than being
  * handed to a path resolver as a file called `--`.
  */
-const VALUE_FLAGS: readonly string[] = ['--origin', '--revision', '--platform'];
+const VALUE_FLAGS: readonly string[] = ['--origin', '--revision', '--platform', '--supabase-url'];
 
 export const parseArgs = (
   args: readonly string[],
@@ -639,6 +647,7 @@ export const main = (args: readonly string[]): number => {
   const expectedOrigin = flag('--origin');
   const revision = flag('--revision');
   const platform = flag('--platform');
+  const supabaseUrl = flag('--supabase-url');
 
   if (
     positional.length === 0 ||
@@ -658,7 +667,13 @@ export const main = (args: readonly string[]): number => {
   // the same claim about the same build, and checking only the first is how a
   // release `.aab` with the wrong origin ships next to a verified `.apk`.
   const problems = positional.flatMap((dir) =>
-    verifyArtifacts({ dir, expectedOrigin, revision, platform }),
+    verifyArtifacts({
+      dir,
+      expectedOrigin,
+      revision,
+      platform,
+      ...(supabaseUrl === undefined ? {} : { supabaseUrl }),
+    }),
   );
 
   if (problems.length === 0) {
