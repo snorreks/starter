@@ -153,14 +153,21 @@ describe('a row must be reproducible and identified', () => {
     }
   });
 
-  test('two rows for one capability are refused rather than silently ranked', () => {
+  test('the same capability may have one row per revision but cannot repeat within a revision', () => {
     const dir = root();
     try {
-      write(dir, { revision: 'f2374d1', rows: [row(), row()] });
+      write(dir, {
+        revision: 'f2374d1',
+        rows: [row(), row({ revision: 'c1a8e37', kind: 'historical' })],
+      });
       const result = readManifest(dir);
-      expect(result.ok).toBe(false);
-      if (!result.ok) {
-        expect(result.problems[0]).toContain('duplicate capability');
+      expect(result.ok).toBe(true);
+
+      write(dir, { revision: 'f2374d1', rows: [row(), row()] });
+      const duplicate = readManifest(dir);
+      expect(duplicate.ok).toBe(false);
+      if (!duplicate.ok) {
+        expect(duplicate.problems[0]).toContain('duplicate capability');
       }
     } finally {
       rmSync(dir, { recursive: true, force: true });

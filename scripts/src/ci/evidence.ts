@@ -213,10 +213,11 @@ export const readManifest = (root: string = REPO_ROOT): ManifestResult => {
       if (row.count !== null && row.count !== undefined && !Number.isInteger(row.count)) {
         problems.push(`${at}: count must be an integer or null; got ${JSON.stringify(row.count)}.`);
       }
-      if (seen.has(row?.capability)) {
-        problems.push(`${at}: duplicate capability; one row per capability per revision.`);
+      const revisionKey = `${row?.capability}\0${row?.revision}`;
+      if (seen.has(revisionKey)) {
+        problems.push(`${at}: duplicate capability for revision ${row?.revision}.`);
       }
-      seen.add(row?.capability);
+      seen.add(revisionKey);
     }
   }
 
