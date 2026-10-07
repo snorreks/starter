@@ -1,0 +1,18 @@
+begin;
+select plan(14);
+select ok(to_regclass('private.jobs_one_active_owner') is not null, 'active job admission has its unique owner fence');
+select ok(to_regclass('private.chat_generations_pkey') is not null, 'chat admission key is unique across owner/conversation/client id');
+select ok(to_regclass('private.job_attempts_job_id_attempt_number_key') is not null, 'job attempt numbers cannot duplicate');
+select ok(to_regprocedure('public.admit_chat_generation(uuid,text,text,uuid,text)') is not null, 'chat generation is admitted through a transaction function');
+select ok(to_regprocedure('public.claim_encode_job(text,text,integer)') is not null, 'job leases use a fenced transaction function');
+select ok(not has_table_privilege('authenticated', 'private.jobs', 'select'), 'authenticated users cannot query internal jobs');
+select ok(not has_function_privilege('authenticated', 'public.complete_chat_generation(uuid,text,integer,text)'::regprocedure, 'execute'), 'authenticated users cannot complete trusted chat generations');
+select ok(has_function_privilege('service_role', 'public.complete_chat_generation(uuid,text,integer,text)'::regprocedure, 'execute'), 'only the service role can complete trusted chat generations');
+select ok(not has_function_privilege('anon', 'public.admit_encode_job(text,text,text,text,text,text)'::regprocedure, 'execute'), 'anonymous callers cannot admit jobs');
+select ok((select bool_and(has_table_privilege('authenticated', 'public.profiles', privilege) = (privilege in ('SELECT','UPDATE'))) from unnest(array['SELECT','INSERT','UPDATE','DELETE','TRUNCATE','REFERENCES','TRIGGER']) as privilege), 'authenticated profiles privileges are limited to the intended grants');
+select ok((select bool_and(has_table_privilege('authenticated', 'public.notes', privilege) = (privilege in ('SELECT','INSERT','UPDATE','DELETE'))) from unnest(array['SELECT','INSERT','UPDATE','DELETE','TRUNCATE','REFERENCES','TRIGGER']) as privilege), 'authenticated notes privileges are limited to the intended grants');
+select ok((select bool_and(has_table_privilege('authenticated', 'public.conversations', privilege) = (privilege in ('SELECT','INSERT','UPDATE','DELETE'))) from unnest(array['SELECT','INSERT','UPDATE','DELETE','TRUNCATE','REFERENCES','TRIGGER']) as privilege), 'authenticated conversations privileges are limited to the intended grants');
+select ok((select bool_and(has_table_privilege('authenticated', 'public.messages', privilege) = (privilege in ('SELECT'))) from unnest(array['SELECT','INSERT','UPDATE','DELETE','TRUNCATE','REFERENCES','TRIGGER']) as privilege), 'authenticated messages privileges are limited to the intended grants');
+select ok((select bool_and(not has_table_privilege('anon', 'public.' || table_name, privilege)) from unnest(array['profiles','notes','conversations','messages']) as table_name cross join unnest(array['SELECT','INSERT','UPDATE','DELETE','TRUNCATE','REFERENCES','TRIGGER']) as privilege), 'anonymous callers have no public table privileges');
+select * from finish();
+rollback;

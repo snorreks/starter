@@ -551,6 +551,8 @@ export const PLANE_PLACEMENTS: readonly { readonly test: RegExp; readonly plane:
   // here for the same reason it is stated for that project above.
   { test: /^apps\/backend\/jobs\/(?:scripts|tests)\//, plane: 'node' },
   { test: /^apps\/backend\/jobs\//, plane: 'worker' },
+  // Database-owned CLI entrypoints generate artifacts and apply migrations from Bun.
+  { test: /^packages\/backend\/database\/tools\//, plane: 'node' },
   { test: /^packages\/shared\//, plane: 'portable' },
   { test: /^packages\/backend\//, plane: 'worker' },
   // `packages/frontend/*` is browser code, and the two shared packages added this

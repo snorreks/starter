@@ -11,6 +11,7 @@ Start here. Nothing below is required reading before running a command — the
 | run something | [../AGENTS.md](../AGENTS.md) |
 | know what is actually verified | [capability-matrix.md](capability-matrix.md) |
 | write or run tests | [testing.md](testing.md) |
+| run local Supabase or review its SQL/RLS boundary | [supabase-local.md](supabase-local.md) |
 | understand a past decision | [first-round-review.md](first-round-review.md) |
 | review the current DX/security repairs and remaining limits | [optimization-review.md](optimization-review.md) |
 | change the architecture | [architecture.md](architecture.md) |
@@ -21,8 +22,9 @@ Start here. Nothing below is required reading before running a command — the
 
 ## Guides
 
-- [testing.md](testing.md) — the four lanes, why they are separate, and how each is
+- [testing.md](testing.md) — the unit, browser, Worker, E2E, database and compute lanes, why they are separate, and how each is
   verified
+- [supabase-local.md](supabase-local.md) — local project allocation, migrations, generated types, repositories and policies
 - [auth.md](auth.md) — the account lifecycle, the rate limiter, and mail
 - [cloudflare.md](cloudflare.md) — Workers, D1, credentials, and the Worker's
   deployment-mode binding

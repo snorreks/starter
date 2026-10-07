@@ -17,6 +17,7 @@
       "!**/playwright-report",
       "!**/.evidence",
       "!**/drizzle-d1/meta",
+      "!packages/backend/database/src/supabase/database.types.ts",
       "!**/*.min.js"
     ],
     "ignoreUnknown": true

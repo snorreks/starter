@@ -469,6 +469,7 @@ describe('roots: the policy table classifies a path with no file behind it', () 
     ['apps/frontend/native/vite.config.ts', 'node', 'config'],
     ['apps/frontend/native/src-tauri/tauri.conf.json', 'node', 'module'],
     ['apps/backend/jobs/src/index.ts', 'worker', 'module'],
+    ['packages/backend/database/tools/types_generate.ts', 'node', 'module'],
   ])('classifies %s as %s/%s', (file, plane, role) => {
     expect(planeOf(file)).toBe(plane);
     expect(roleOf(file)).toBe(role);

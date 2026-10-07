@@ -1,0 +1,6 @@
+{
+  "users": [
+    { "email": "supabase-a@example.test", "password": "Test-only-password-A-51!" },
+    { "email": "supabase-b@example.test", "password": "Test-only-password-B-62!" }
+  ]
+}
