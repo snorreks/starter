@@ -14,20 +14,21 @@
 // and a warm hit is a real statement about this tree. When they moved, Moon runs
 // `--cache off` and every task re-runs.
 
-import { spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, rmdirSync, unlinkSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
 import { purgeMoonCache, resolveCacheMode, writeStamp } from '../ci/cache_scope.ts';
 import {
   allocateSupabaseLocal,
   hasSupabaseOwnership,
   readSupabaseOwnership,
+  removeOwnedWorkerVars,
   startSupabaseLocal,
   stopSupabaseLocal,
+  writeOwnedWorkerVars,
 } from '../db/supabase_local.ts';
 import type { Command } from '../shared/command.ts';
 import { EXIT, fail, wantsHelp } from '../shared/command.ts';
 import { REPO_ROOT } from '../shared/paths.ts';
+import { publicToolEnvironment } from '../shared/private_environment.ts';
+import { runBounded } from '../shared/run_bounded.ts';
 import { resolveWorkspaceBin } from '../shared/tools.ts';
 
 const USAGE = `cached [--backend legacy|supabase] [--] <moon targets...>
@@ -151,19 +152,20 @@ const run = async (args: readonly string[]): Promise<number> => {
   // `stdio: 'inherit'` so the lane's own output and its exit status are the
   // command's. A wrapper that captured and reformatted output would swallow the
   // exit status, which is the one thing the caller needs.
-  const invoke = (env: NodeJS.ProcessEnv): number => {
-    const result = spawnSync(moon, ['run', '--cache', scope.mode, ...targets], {
-      cwd: process.cwd(),
+  const invoke = async (env: NodeJS.ProcessEnv): Promise<number> => {
+    const result = await runBounded({
+      command: moon,
+      args: ['run', '--cache', scope.mode, ...targets],
+      cwd: REPO_ROOT,
       env,
       stdio: 'inherit',
+      timeoutMs: 90 * 60_000,
+      maxBytes: 16 * 1024 * 1024,
     });
-    if (result.error !== undefined) {
-      return fail(`could not run moon: ${result.error.message}`, EXIT.unavailable);
-    }
-    return result.status ?? EXIT.failed;
+    return result.code;
   };
   if (backend === 'legacy') {
-    return invoke(process.env);
+    return invoke(publicToolEnvironment(process.env));
   }
 
   const allocation = allocateSupabaseLocal(
@@ -171,56 +173,41 @@ const run = async (args: readonly string[]): Promise<number> => {
     `web_${process.pid}_${crypto.randomUUID().slice(0, 8)}`,
   );
   let exitCode: number = EXIT.failed;
-  const devVars = join(REPO_ROOT, 'apps/frontend/client/.dev.vars');
-  const lockDir = join(REPO_ROOT, 'apps/frontend/client/.dev.vars.supabase-lock');
-  let wroteDevVars = false;
-  let ownsLock = false;
+  let ownedEnvFile: { path: string; contents: string } | undefined;
   try {
-    const lockDeadline = Date.now() + 300_000;
-    while (!ownsLock && Date.now() < lockDeadline) {
-      try {
-        mkdirSync(lockDir, { mode: 0o700 });
-        ownsLock = true;
-      } catch (error) {
-        if (!(error instanceof Error) || !('code' in error) || error.code !== 'EEXIST') {
-          throw error;
-        }
-        await new Promise((resolve) => setTimeout(resolve, 250));
-      }
-    }
-    if (!ownsLock) {
-      throw new Error('Timed out waiting for the other isolated Supabase preview lane to finish.');
-    }
-    if (existsSync(devVars)) {
-      throw new Error(
-        'apps/frontend/client/.dev.vars already exists; refusing to replace local credentials.',
-      );
-    }
     const supabaseEnv = await startSupabaseLocal(allocation, {
       emailConfirmations: targets.includes('e2e:e2e'),
       jwtExpirySeconds: targets.includes('client:test-worker') ? 2 : 3600,
     });
-    const workerVars = { ...supabaseEnv, STARTER_BACKEND_PROFILE: 'supabase' };
-    writeFileSync(
-      devVars,
-      `${Object.entries(workerVars)
-        .map(([key, value]) => `${key}=${JSON.stringify(value)}`)
-        .join('\n')}\n`,
-      { mode: 0o600, flag: 'wx' },
-    );
-    wroteDevVars = true;
-    exitCode = invoke({ ...process.env, ...workerVars, STARTER_BACKEND_PROFILE: 'supabase' });
+    const workerVars: Record<string, string> = {
+      ...supabaseEnv,
+      STARTER_BACKEND_PROFILE: 'supabase',
+    };
+    const varsFile = await writeOwnedWorkerVars(allocation, workerVars);
+    workerVars.STARTER_DEV_VARS_PATH = varsFile.path;
+    ownedEnvFile = varsFile;
+    const childEnvironment = {
+      ...publicToolEnvironment(process.env),
+      ...Object.fromEntries(
+        Object.entries(workerVars).filter(([key]) => key !== 'SUPABASE_SERVICE_ROLE_KEY'),
+      ),
+    };
+    exitCode = await invoke(childEnvironment);
   } catch (error) {
     return fail(
       `Supabase preview setup failed: ${error instanceof Error ? error.message : String(error)}`,
       EXIT.unavailable,
     );
   } finally {
-    if (wroteDevVars) {
-      unlinkSync(devVars);
-    }
-    if (ownsLock) {
-      rmdirSync(lockDir);
+    if (ownedEnvFile !== undefined) {
+      try {
+        await removeOwnedWorkerVars(ownedEnvFile.path, ownedEnvFile.contents);
+      } catch {
+        process.stderr.write(
+          'Supabase preview could not remove its unchanged run-owned environment file.\n',
+        );
+        exitCode = EXIT.failed;
+      }
     }
     try {
       if (await hasSupabaseOwnership(allocation)) {

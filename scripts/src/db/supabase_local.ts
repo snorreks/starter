@@ -3,6 +3,8 @@ import { createHash, randomBytes } from 'node:crypto';
 import { access, mkdir, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { DATABASE_DIR, REPO_ROOT } from '../shared/paths.ts';
+import { publicToolEnvironment } from '../shared/private_environment.ts';
+import { runBounded } from '../shared/run_bounded.ts';
 import { runScope } from '../shared/run_scope.ts';
 
 export interface SupabaseLocalAllocation {
@@ -20,6 +22,36 @@ export interface SupabaseLocalAllocation {
   };
   urls: { api: string; postgres: string; studio: string; mail: string; smtp: string; pop3: string };
 }
+
+/** Keep generated Worker vars inside this run's private scope, away from user .dev.vars. */
+export const writeOwnedWorkerVars = async (
+  allocation: SupabaseLocalAllocation,
+  values: Record<string, string>,
+): Promise<{ path: string; contents: string }> => {
+  await mkdir(allocation.root, { recursive: true });
+  const path = join(allocation.root, 'supabase.dev.vars');
+  const contents = `${Object.entries(values)
+    .map(([key, value]) => `${key}=${JSON.stringify(value)}`)
+    .join('\n')}\n`;
+  await writeFile(path, contents, { mode: 0o600, flag: 'wx' });
+  return { path, contents };
+};
+
+/** Preserve a run file if another process changed it before teardown. */
+export const removeOwnedWorkerVars = async (path: string, contents: string): Promise<void> => {
+  try {
+    const current = await readFile(path, 'utf8');
+    if (current !== contents) {
+      throw new Error('The owned run env file changed before teardown; preserving it.');
+    }
+    await rm(path);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+      return;
+    }
+    throw error;
+  }
+};
 
 const PORT_NAMES = ['api', 'postgres', 'studio', 'mail', 'smtp', 'pop3'] as const;
 const projectFor = (root: string, runId: string): string =>
@@ -123,19 +155,24 @@ export const persistSupabaseOwnership = async (
 // Leave time for integration checks and teardown within the 25-minute CI job.
 const CLI_TIMEOUT_MS = 3 * 60 * 1000;
 
-const runCli = (allocation: SupabaseLocalAllocation, args: string[]): number => {
-  const result = spawnSync(
-    'bun',
-    ['run', '--cwd', DATABASE_DIR, 'supabase', '--', '--workdir', projectDir(allocation), ...args],
-    {
-      encoding: 'utf8',
-      env: { ...process.env, SUPABASE_WORKDIR: projectDir(allocation) },
-      timeout: CLI_TIMEOUT_MS,
-    },
-  );
-  if (result.error !== undefined) {
-    throw result.error;
-  }
+const runCli = async (allocation: SupabaseLocalAllocation, args: string[]): Promise<number> => {
+  const result = await runBounded({
+    command: 'bun',
+    args: [
+      'run',
+      '--cwd',
+      DATABASE_DIR,
+      'supabase',
+      '--',
+      '--workdir',
+      projectDir(allocation),
+      ...args,
+    ],
+    cwd: REPO_ROOT,
+    env: publicToolEnvironment({ ...process.env, SUPABASE_WORKDIR: projectDir(allocation) }),
+    timeoutMs: CLI_TIMEOUT_MS,
+    maxBytes: 2 * 1024 * 1024,
+  });
   const output = result.stdout
     .split('\n')
     .filter((line) => !line.includes('"SERVICE_ROLE_KEY"') && !line.includes('"ANON_KEY"'))
@@ -146,25 +183,30 @@ const runCli = (allocation: SupabaseLocalAllocation, args: string[]): number => 
   if (result.stderr.length > 0) {
     process.stderr.write(result.stderr);
   }
-  return result.status ?? 1;
+  return result.code;
 };
 
-const captureCli = (allocation: SupabaseLocalAllocation, args: string[]): string => {
-  const result = spawnSync(
-    'bun',
-    ['run', '--cwd', DATABASE_DIR, 'supabase', '--', '--workdir', projectDir(allocation), ...args],
-    {
-      encoding: 'utf8',
-      env: { ...process.env, SUPABASE_WORKDIR: projectDir(allocation) },
-      timeout: CLI_TIMEOUT_MS,
-    },
-  );
-  if (result.error !== undefined) {
-    throw result.error;
-  }
-  if (result.status !== 0) {
+const captureCli = async (allocation: SupabaseLocalAllocation, args: string[]): Promise<string> => {
+  const result = await runBounded({
+    command: 'bun',
+    args: [
+      'run',
+      '--cwd',
+      DATABASE_DIR,
+      'supabase',
+      '--',
+      '--workdir',
+      projectDir(allocation),
+      ...args,
+    ],
+    cwd: REPO_ROOT,
+    env: publicToolEnvironment({ ...process.env, SUPABASE_WORKDIR: projectDir(allocation) }),
+    timeoutMs: CLI_TIMEOUT_MS,
+    maxBytes: 2 * 1024 * 1024,
+  });
+  if (result.code !== 0) {
     throw new Error(
-      `Supabase CLI ${args.join(' ')} failed with exit ${result.status}: ${result.stderr}`,
+      `Supabase CLI ${args.join(' ')} failed with exit ${result.code}; see the bounded CLI output above.`,
     );
   }
   return result.stdout;
@@ -175,17 +217,22 @@ export const runDatabaseIntegration = async (): Promise<number> => {
   let exitCode = 1;
   try {
     const environment = await startSupabaseLocal(allocation);
-    const result = spawnSync('bun', ['run', '--cwd', DATABASE_DIR, 'test:integration'], {
+    const result = await runBounded({
+      command: 'bun',
+      args: ['run', '--cwd', DATABASE_DIR, 'test:integration'],
+      cwd: REPO_ROOT,
       stdio: 'inherit',
-      env: { ...process.env, ...environment, SUPABASE_WORKDIR: projectDir(allocation) },
-      timeout: 20 * 60 * 1000,
+      env: {
+        ...publicToolEnvironment(process.env),
+        ...environment,
+        SUPABASE_WORKDIR: projectDir(allocation),
+      },
+      timeoutMs: 20 * 60 * 1000,
+      maxBytes: 16 * 1024 * 1024,
     });
-    if (result.error !== undefined) {
-      throw result.error;
-    }
-    exitCode = result.status ?? 1;
+    exitCode = result.code;
     if (exitCode === 0) {
-      exitCode = runCli(allocation, ['test', 'db']);
+      exitCode = await runCli(allocation, ['test', 'db']);
     }
   } finally {
     try {
@@ -210,19 +257,20 @@ export const runDatabaseTypeCommand = async (
   let exitCode = 1;
   try {
     await startSupabaseLocal(allocation);
-    const result = spawnSync('bun', ['run', '--cwd', DATABASE_DIR, command], {
+    const result = await runBounded({
+      command: 'bun',
+      args: ['run', '--cwd', DATABASE_DIR, command],
+      cwd: REPO_ROOT,
       stdio: 'inherit',
       env: {
-        ...process.env,
+        ...publicToolEnvironment(process.env),
         ...supabaseAllocationEnvironment(allocation),
         SUPABASE_WORKDIR: projectDir(allocation),
       },
-      timeout: 10 * 60 * 1000,
+      timeoutMs: 10 * 60 * 1000,
+      maxBytes: 16 * 1024 * 1024,
     });
-    if (result.error !== undefined) {
-      throw result.error;
-    }
-    exitCode = result.status ?? 1;
+    exitCode = result.code;
   } finally {
     try {
       if (await hasSupabaseOwnership(allocation)) {
@@ -244,16 +292,20 @@ export const startSupabaseLocal = async (
   options: { emailConfirmations?: boolean; jwtExpirySeconds?: number } = {},
 ): Promise<Record<string, string>> => {
   const runtime = process.env.DOCKER_BIN ?? 'docker';
-  const probe = spawnSync(runtime, ['info'], { stdio: 'ignore', timeout: 10_000 });
+  const probe = spawnSync(runtime, ['info'], {
+    stdio: 'ignore',
+    timeout: 10_000,
+    env: publicToolEnvironment(process.env),
+  });
   requireContainerRuntime({
     dockerPath: probe.error === undefined && probe.status === 0 ? runtime : undefined,
   });
   await persistSupabaseOwnership(allocation, options);
-  const code = runCli(allocation, ['start']);
+  const code = await runCli(allocation, ['start']);
   if (code !== 0) {
     throw new Error(`Supabase local start failed with exit ${code}.`);
   }
-  const reset = runCli(allocation, [
+  const reset = await runCli(allocation, [
     'migration',
     'up',
     '--db-url',
@@ -262,7 +314,7 @@ export const startSupabaseLocal = async (
   if (reset !== 0) {
     throw new Error(`Supabase local migration replay failed with exit ${reset}.`);
   }
-  const status = JSON.parse(captureCli(allocation, ['status', '--output', 'json'])) as Record<
+  const status = JSON.parse(await captureCli(allocation, ['status', '--output', 'json'])) as Record<
     string,
     unknown
   >;
@@ -304,10 +356,19 @@ export const stopSupabaseLocal = async (
   owned: SupabaseLocalAllocation,
 ): Promise<void> => {
   assertSupabaseOwnership(allocation, owned);
-  const code = runCli(allocation, ['stop', '--project-id', allocation.projectId, '--no-backup']);
+  const code = await runCli(allocation, [
+    'stop',
+    '--project-id',
+    allocation.projectId,
+    '--no-backup',
+  ]);
   const runtime = process.env.DOCKER_BIN ?? 'docker';
   const runRuntime = (args: string[]) =>
-    spawnSync(runtime, args, { encoding: 'utf8', timeout: 30_000 });
+    spawnSync(runtime, args, {
+      encoding: 'utf8',
+      timeout: 30_000,
+      env: publicToolEnvironment(process.env),
+    });
   const containers = runRuntime([
     'ps',
     '-aq',
@@ -403,7 +464,7 @@ export const resetSupabaseLocal = async (
   owned: SupabaseLocalAllocation,
 ): Promise<void> => {
   assertSupabaseOwnership(allocation, owned);
-  const code = runCli(allocation, ['db', 'reset', '--db-url', allocation.urls.postgres]);
+  const code = await runCli(allocation, ['db', 'reset', '--db-url', allocation.urls.postgres]);
   if (code !== 0) {
     throw new Error(`Owned Supabase local reset failed with exit ${code}.`);
   }

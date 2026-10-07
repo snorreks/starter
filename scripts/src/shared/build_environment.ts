@@ -1,13 +1,5 @@
-const CREDENTIAL_KEYS = new Set([
-  'CLOUDFLARE_API_TOKEN',
-  'CLOUDFLARE_API_KEY',
-  'CLOUDFLARE_EMAIL',
-  'BETTER_AUTH_SECRET',
-  'RESEND_API_KEY',
-  'SOPS_AGE_KEY',
-  'SOPS_AGE_KEY_FILE',
-]);
+import { publicToolEnvironment } from './private_environment.ts';
 
-/** Build tools receive public inputs and PATH, never deploy/runtime credentials. */
+/** Build tools receive public inputs and PATH, never runtime/review credentials. */
 export const buildEnvironment = (env: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv =>
-  Object.fromEntries(Object.entries(env).filter(([key]) => !CREDENTIAL_KEYS.has(key)));
+  publicToolEnvironment(env);

@@ -18,11 +18,12 @@
 //      teardown — asserted on the argv the fake actually received.
 
 import { afterEach, describe, expect, test } from 'bun:test';
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { ExtensionAPI } from '@earendil-works/pi-coding-agent';
 import herdrExtension from '../extensions/herdr.ts';
-import { scratchDir } from './fake_bin.ts';
+import { fakeBin, scratchDir } from './fake_bin.ts';
 import { fakeHerdr, WORKTREE_CREATED, WORKTREE_LIST } from './fake_herdr.ts';
 
 /**
@@ -81,10 +82,20 @@ afterEach(() => {
  * is not hypothetical — two of the failures during development were exactly a
  * previous test's `PATH` leaking into the next.
  */
-const ENV_SNAPSHOT = { PATH: process.env.PATH, HERDR_ENV: process.env.HERDR_ENV };
+const ENV_SNAPSHOT = {
+  PATH: process.env.PATH,
+  HERDR_ENV: process.env.HERDR_ENV,
+  OPENROUTER_API_KEY: process.env.OPENROUTER_API_KEY,
+  SUPABASE_SERVICE_ROLE_KEY: process.env.SUPABASE_SERVICE_ROLE_KEY,
+};
 
 const restoreEnv = (): void => {
-  for (const key of ['PATH', 'HERDR_ENV'] as const) {
+  for (const key of [
+    'PATH',
+    'HERDR_ENV',
+    'OPENROUTER_API_KEY',
+    'SUPABASE_SERVICE_ROLE_KEY',
+  ] as const) {
     const value = ENV_SNAPSHOT[key];
     if (value === undefined) {
       delete process.env[key];
@@ -272,9 +283,42 @@ describe('creating a worktree', () => {
     expect(result.isError).toBeFalsy();
     expect(text(result)).toContain('/tmp/x/.herdr/worktrees/starter/pr-f');
     expect(text(result)).toContain('wPK');
-    // The next step a fresh worktree always needs, so it is stated here rather
-    // than discovered by a module-not-found error later.
-    expect(text(result)).toContain('bun install');
+    // The fixture response names a checkout that does not exist on this host, so
+    // the extension must state the real bootstrap command rather than claim it ran.
+    expect(text(result)).toContain('bun run worktree:bootstrap');
+  }, 30_000);
+
+  test('a real new checkout is bootstrapped by the pinned shell without inheriting review credentials', async () => {
+    const target = mkdtempSync(join(tmpdir(), 'herdr-created-checkout-'));
+    mkdirSync(join(target, '.git'));
+    const source = structuredClone(WORKTREE_CREATED);
+    source.result.workspace.worktree.checkout_path = target;
+    source.result.worktree.path = target;
+    const herdr = fakeHerdr({
+      responses: {
+        [`worktree create --cwd ${REPO} --branch pr-f --base main --no-focus`]:
+          JSON.stringify(source),
+      },
+    });
+    const argsPath = join(target, 'nix-args.txt');
+    const nix = fakeBin(
+      'nix',
+      `test -z "\${OPENROUTER_API_KEY:-}" || exit 91\ntest -z "\${SUPABASE_SERVICE_ROLE_KEY:-}" || exit 92\nprintf '%s\\n' "$@" > "${argsPath}"\nexit 0`,
+    );
+    const { call } = withTool(herdr);
+    process.env.PATH = `${nix.dir}:${process.env.PATH ?? ''}`;
+    process.env.OPENROUTER_API_KEY = 'private-review-fixture';
+    process.env.SUPABASE_SERVICE_ROLE_KEY = 'private-admin-fixture';
+    try {
+      const result = await call({ action: 'worktree_create', params: CREATE_ARGS });
+      expect(result.isError).toBeFalsy();
+      expect(text(result)).toContain('bootstrapped with its pinned runtime');
+      expect(readFileSync(argsPath, 'utf8')).toContain('worktree:bootstrap');
+      expect(readFileSync(argsPath, 'utf8')).not.toContain('private-review-fixture');
+      expect(readFileSync(argsPath, 'utf8')).not.toContain('private-admin-fixture');
+    } finally {
+      rmSync(target, { recursive: true, force: true });
+    }
   }, 30_000);
 
   test('does not steal the user focus', async () => {

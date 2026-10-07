@@ -41,6 +41,7 @@
     "nix:update": "bun run scripts/src/cli.ts update --nix",
     "bun:update": "bun run scripts/src/cli.ts update --bun",
     "setup:doctor": "bun run scripts/src/cli.ts doctor",
+    "worktree:bootstrap": "bun run scripts/src/cli.ts worktree bootstrap",
     "setup:secrets": "bun run scripts/src/cli.ts secrets doctor",
     "logs": "bun run scripts/src/cli.ts logs",
     "native:doctor": "bun run scripts/src/cli.ts native doctor",
