@@ -3,7 +3,16 @@ import { createId } from '@starter/utils';
 import { type ChatService, createChatService } from './chat_service.ts';
 import type { ApplicationServices } from './supabase_context.ts';
 
-export type RequestChatService = ChatService;
+type AdmissionResult =
+  | { outcome: 'in_flight' }
+  | { outcome: 'admitted'; userMessage: Message; assistantMessageId: string }
+  | { outcome: 'completed'; userMessage: Message; assistantMessage: Message };
+
+export type RequestChatService = Omit<ChatService, 'appendUserMessage'> & {
+  appendUserMessage(
+    ...args: Parameters<ChatService['appendUserMessage']>
+  ): Promise<Message | AdmissionResult | null>;
+};
 
 /** Select the complete chat implementation from this request's composition root. */
 export const createRequestChatService = (locals: {
@@ -38,7 +47,7 @@ export const createRequestChatService = (locals: {
     },
     async find(ownerId, id) {
       owner(ownerId);
-      return (await repository.listConversations(ownerId, 0)).find((row) => row.id === id) ?? null;
+      return repository.findConversation(ownerId, id);
     },
     async create(ownerId, input: ConversationCreate): Promise<Conversation> {
       owner(ownerId);
@@ -62,7 +71,22 @@ export const createRequestChatService = (locals: {
         content,
       });
       if (admission.outcome === 'in_flight') {
-        return null;
+        return { outcome: 'in_flight' };
+      }
+      const userMessage = await repository.findMessageByClientId(ownerId, conversationId, clientId);
+      if (userMessage === null) {
+        throw new Error('Supabase chat admission has no stored user message.');
+      }
+      if (admission.outcome === 'completed') {
+        const assistantMessage = await repository.findMessageByClientId(
+          ownerId,
+          conversationId,
+          `assistant:${clientId}`,
+        );
+        if (assistantMessage === null) {
+          throw new Error('Completed Supabase chat admission has no stored reply.');
+        }
+        return { outcome: 'completed', userMessage, assistantMessage };
       }
       admissions.set(clientId, {
         clientId,
@@ -70,13 +94,9 @@ export const createRequestChatService = (locals: {
         assistantMessageId: admission.assistantMessageId,
       });
       return {
-        id: userMessageId,
-        conversationId,
-        authorId: ownerId,
-        role: 'user' as const,
-        content,
-        status: 'complete' as const,
-        createdAt: Date.now(),
+        outcome: 'admitted',
+        userMessage,
+        assistantMessageId: admission.assistantMessageId,
       };
     },
     async appendAssistantMessage(ownerId, conversationId, content, id, createdAt) {

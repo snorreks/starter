@@ -3,8 +3,12 @@ import { createAdminDatabaseClient } from '@starter/database/supabase';
 import { SignInInputSchema, SignUpInputSchema } from '@starter/schemas/auth';
 import { checkSchema } from '@starter/schemas/common';
 import { errorTypeForStatus } from '@starter/utils';
-import { json, jsonError } from '#lib/server/http.ts';
-import { createSupabaseAuthClient } from '#lib/server/supabase_context.ts';
+import * as v from 'valibot';
+import { json, jsonError, readJsonBody } from '#lib/server/http.ts';
+import {
+  applySupabaseResponseHeaders,
+  createSupabaseAuthClient,
+} from '#lib/server/supabase_context.ts';
 import type { RequestHandler } from './$types';
 
 const USER_IDENTITY = (user: {
@@ -22,15 +26,16 @@ const USER_IDENTITY = (user: {
   updatedAt: Date.now(),
 });
 
-const readObject = async (request: Request): Promise<Record<string, unknown> | null> => {
-  try {
-    const value: unknown = await request.json();
-    return typeof value === 'object' && value !== null && !Array.isArray(value)
-      ? (value as Record<string, unknown>)
-      : null;
-  } catch {
-    return null;
-  }
+// Wire field names follow the account client; value validation uses the shared schemas below.
+const BODY_FIELDS: Record<string, readonly string[]> = {
+  'sign-up/email': ['email', 'password', 'name', 'callbackURL'],
+  'sign-in/email': ['email', 'password', 'callbackURL', 'rememberMe'],
+  'sign-out': [],
+  'request-password-reset': ['email', 'redirectTo'],
+  'send-verification-email': ['email', 'callbackURL'],
+  'reset-password': ['newPassword', 'token'],
+  'account/delete': [],
+  'account/email-change': ['email'],
 };
 
 const failure = (error: unknown): Response => {
@@ -70,9 +75,22 @@ const handleSupabase = async (event: Parameters<RequestHandler>[0]): Promise<Res
     allowedCallbacks: ['/verify-email', '/reset-password'],
   });
   const endpoint = event.url.pathname.replace(/^\/api\/auth\//, '');
-  const body = event.request.method === 'GET' ? {} : await readObject(event.request);
-  if (body === null) {
-    return jsonError(400, 'validation', 'A JSON object is required.');
+  let body: Record<string, unknown> = {};
+  if (event.request.method !== 'GET') {
+    const fields = Object.hasOwn(BODY_FIELDS, endpoint) ? (BODY_FIELDS[endpoint] ?? []) : [];
+    const schema = v.pipe(
+      v.unknown(),
+      v.check((value) => typeof value === 'object' && value !== null && !Array.isArray(value)),
+      v.strictObject(Object.fromEntries(fields.map((field) => [field, v.optional(v.unknown())]))),
+    );
+    const parsed = await readJsonBody(event.request, schema, {
+      maxBytes: 16 * 1024,
+      invalidStatus: 400,
+    });
+    if (!parsed.ok) {
+      return parsed.response;
+    }
+    body = parsed.value;
   }
 
   try {
@@ -130,8 +148,11 @@ const handleSupabase = async (event: Parameters<RequestHandler>[0]): Promise<Res
       await accounts.deleteAccount(event.locals.supabaseIdentity);
       result = { success: true };
     } else if (event.request.method === 'POST' && endpoint === 'account/email-change') {
-      if (!event.locals.supabaseIdentity || typeof body.email !== 'string') {
+      if (!event.locals.supabaseIdentity) {
         return jsonError(401, 'unauthorized', 'Sign in to continue.');
+      }
+      if (typeof body.email !== 'string') {
+        return jsonError(422, 'validation', 'The email is invalid.');
       }
       await accounts.changeEmail({ email: body.email });
       result = { success: true };
@@ -144,11 +165,7 @@ const handleSupabase = async (event: Parameters<RequestHandler>[0]): Promise<Res
         path: typeof item.options.path === 'string' ? item.options.path : '/',
       });
     }
-    const response = json(200, result);
-    responseHeaders.forEach((value, name) => {
-      response.headers.set(name, value);
-    });
-    return response;
+    return applySupabaseResponseHeaders(json(200, result), responseHeaders);
   } catch (error) {
     for (const item of cookieWrites) {
       event.cookies.set(item.name, item.value, {
@@ -156,12 +173,15 @@ const handleSupabase = async (event: Parameters<RequestHandler>[0]): Promise<Res
         path: typeof item.options.path === 'string' ? item.options.path : '/',
       });
     }
-    return failure(error);
+    return applySupabaseResponseHeaders(failure(error), responseHeaders);
   }
 };
 
 const handle: RequestHandler = async ({ request, locals, ...event }) => {
   if (locals.container.backendProfile === 'supabase') {
+    if (request.method !== 'GET' && request.method !== 'POST') {
+      return jsonError(405, 'method_not_allowed', 'Use GET or POST.');
+    }
     return await handleSupabase({ request, locals, ...event } as Parameters<RequestHandler>[0]);
   }
   try {

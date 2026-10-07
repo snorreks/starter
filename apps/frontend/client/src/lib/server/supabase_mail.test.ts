@@ -12,7 +12,7 @@ describe('local Supabase mail capture', () => {
           messages: [
             {
               ID: 'one',
-              To: [{ Address: 'a@example.test' }],
+              To: [{ Address: 'A@EXAMPLE.test' }],
               Subject: 'Verify',
               Created: '2026-10-07T00:00:00Z',
             },
@@ -32,7 +32,7 @@ describe('local Supabase mail capture', () => {
     }) as typeof fetch;
     const messages = await readSupabaseCapturedMail(
       'http://127.0.0.1:54324',
-      'a@example.test',
+      'a@Example.TEST',
       fetcher,
     );
     expect(messages).toHaveLength(1);
@@ -46,7 +46,7 @@ describe('local Supabase mail capture', () => {
       if (url.includes('/messages?')) {
         return Response.json({
           messages: [
-            { ID: 'html', To: [{ Address: 'a@example.test' }], Subject: 'Confirm your signup' },
+            { ID: 'html', To: [{ Address: 'A@EXAMPLE.test' }], Subject: 'Confirm your signup' },
           ],
         });
       }
@@ -62,7 +62,7 @@ describe('local Supabase mail capture', () => {
     }) as typeof fetch;
     const messages = await readSupabaseCapturedMail(
       'http://127.0.0.1:54324',
-      'a@example.test',
+      'a@Example.TEST',
       fetcher,
     );
     expect(messages[0]?.text).toContain(

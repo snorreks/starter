@@ -9,6 +9,12 @@ export interface ChatGenerationAdmission {
 }
 export interface ChatRepository {
   createConversation(ownerId: string, title: string): Promise<Conversation>;
+  findConversation(ownerId: string, id: string): Promise<Conversation | null>;
+  findMessageByClientId(
+    ownerId: string,
+    conversationId: string,
+    clientId: string,
+  ): Promise<Message | null>;
   listConversations(ownerId: string, page: number): Promise<Conversation[]>;
   listMessages(ownerId: string, conversationId: string, page: number): Promise<Message[]>;
   admitGeneration(input: {
@@ -51,6 +57,55 @@ export const createSupabaseChatRepository = (
       messageCount: 0,
       createdAt: Date.parse(data.created_at),
       updatedAt: Date.parse(data.updated_at),
+    };
+  },
+  async findConversation(ownerId, id) {
+    const { data, error } = await client
+      .from('conversations')
+      .select('*, messages(count)')
+      .eq('owner_id', ownerId)
+      .eq('id', toDbId(id))
+      .maybeSingle();
+    if (error !== null) {
+      throw new Error(`Supabase chat repository: ${error.message}`);
+    }
+    return data === null
+      ? null
+      : {
+          id: fromDbId(data.id, 'conv'),
+          ownerId: data.owner_id,
+          organizationId: null,
+          title: data.title,
+          messageCount: data.messages?.[0]?.count ?? 0,
+          createdAt: Date.parse(data.created_at),
+          updatedAt: Date.parse(data.updated_at),
+        };
+  },
+  async findMessageByClientId(ownerId, conversationId, clientId) {
+    const { data, error } = await client
+      .from('messages')
+      .select('*, conversations!inner(owner_id)')
+      .eq('conversations.owner_id', ownerId)
+      .eq('conversation_id', toDbId(conversationId))
+      .eq('client_id', clientId)
+      .maybeSingle();
+    if (error !== null) {
+      throw new Error(`Supabase chat repository: ${error.message}`);
+    }
+    if (data === null) {
+      return null;
+    }
+    if (data.role !== 'assistant' && data.role !== 'user') {
+      throw new Error(`Supabase chat repository: invalid message role ${data.role}`);
+    }
+    return {
+      id: fromDbId(data.id, 'msg'),
+      conversationId,
+      authorId: data.author_id,
+      role: data.role,
+      content: data.content,
+      status: 'complete',
+      createdAt: Date.parse(data.created_at),
     };
   },
   async listConversations(ownerId, page) {

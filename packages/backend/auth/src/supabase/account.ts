@@ -24,9 +24,11 @@ export interface SupabaseAccountService {
   deleteAccount(identity: VerifiedIdentity): Promise<void>;
 }
 
-const requireResult = <T>(data: T, error: { message: string } | null): T => {
+const requireResult = <T>(data: T, error: { message: string; status?: number } | null): T => {
   if (error) {
-    throw new Error(`Supabase Auth request failed: ${error.message}`);
+    throw Object.assign(new Error(`Supabase Auth request failed: ${error.message}`), {
+      status: typeof error.status === 'number' ? error.status : 400,
+    });
   }
   return data;
 };

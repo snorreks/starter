@@ -1,4 +1,4 @@
-import { describe, expect, test } from 'bun:test';
+import { beforeEach, describe, expect, test } from 'bun:test';
 import { createSupabaseAccountService } from './account.ts';
 
 const results: string[] = [];
@@ -50,6 +50,9 @@ const makeService = () =>
   });
 
 describe('Supabase account lifecycle', () => {
+  beforeEach(() => {
+    results.length = 0;
+  });
   test('rejects callback URLs outside the configured path allowlist', async () => {
     const service = makeService();
     await expect(
@@ -59,7 +62,6 @@ describe('Supabase account lifecycle', () => {
   });
 
   test('password recovery always uses the same-site callback', async () => {
-    results.length = 0;
     await makeService().requestPasswordReset({
       email: 'a@example.test',
       redirectTo: '/reset-password',
@@ -67,3 +69,14 @@ describe('Supabase account lifecycle', () => {
     expect(results).toEqual(['https://app.example.test/auth/callback?next=%2Freset-password']);
   });
 });
+
+for (const status of [429, 503, undefined]) {
+  test(`preserves provider status ${status ?? 'missing'} with a 400 fallback`, async () => {
+    const client = { auth: { signOut: async () => ({ error: { message: 'refused', status } }) } };
+    const service = createSupabaseAccountService(client as never, admin as never, {
+      origin: 'https://app.example.test',
+      allowedCallbacks: [],
+    });
+    await expect(service.signOut()).rejects.toMatchObject({ status: status ?? 400 });
+  });
+}

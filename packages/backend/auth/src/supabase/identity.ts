@@ -57,7 +57,13 @@ export const createSupabaseIdentityResolver = (
       const { data, error } = bearer
         ? await client.auth.getUser(bearer)
         : await client.auth.getUser();
-      if (error || !data.user) {
+      if (error) {
+        if (error.status !== undefined && error.status >= 400 && error.status < 500) {
+          return null;
+        }
+        throw error;
+      }
+      if (!data.user) {
         return null;
       }
       const { data: sessionData } = bearer

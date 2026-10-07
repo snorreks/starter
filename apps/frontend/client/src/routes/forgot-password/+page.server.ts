@@ -34,10 +34,17 @@ export const actions: Actions = {
     try {
       // Better Auth's own enumeration protection: a request for an unknown
       // address returns success without sending anything.
-      await submitAuthAction(locals.container, request, cookies, 'request-password-reset', {
-        email,
-        redirectTo: '/reset-password',
-      });
+      await submitAuthAction(
+        locals.container,
+        request,
+        cookies,
+        'request-password-reset',
+        {
+          email,
+          redirectTo: '/reset-password',
+        },
+        locals.context?.responseHeaders ?? null,
+      );
     } catch (error) {
       const appError = toAppError(error, 'Could not send that email.');
       // Only a genuine configuration or transport failure is reported. A "no such

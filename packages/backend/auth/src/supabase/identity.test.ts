@@ -45,3 +45,27 @@ describe('Supabase identity is verified for each request', () => {
     );
   });
 });
+
+for (const status of [500, 503]) {
+  test(`propagates Auth HTTP ${status} failures`, async () => {
+    const resolver = createSupabaseIdentityResolver(
+      { url: 'http://127.0.0.1:54321', anonKey: 'anon-test' },
+      async () => Response.json({ message: 'unavailable' }, { status }),
+    );
+    await expect(resolver.getVerifiedIdentity(request('token'), cookies)).rejects.toMatchObject({
+      status,
+    });
+  });
+}
+
+test('propagates network failures instead of treating them as anonymous', async () => {
+  const resolver = createSupabaseIdentityResolver(
+    { url: 'http://127.0.0.1:54321', anonKey: 'anon-test' },
+    async () => {
+      throw new TypeError('connection refused');
+    },
+  );
+  await expect(resolver.getVerifiedIdentity(request('token'), cookies)).rejects.toThrow(
+    'connection refused',
+  );
+});

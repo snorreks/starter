@@ -82,6 +82,7 @@ export const submitAuthAction = async (
   cookies: Cookies,
   path: AuthActionPath,
   body: Record<string, string>,
+  responseHeaders: Headers | null = null,
 ): Promise<number> => {
   if (container.backendProfile === 'supabase') {
     if (container.supabase === null) {
@@ -95,7 +96,10 @@ export const submitAuthAction = async (
     };
     const client = createSupabaseAuthClient(config, {
       getAll: () => cookies.getAll().map(({ name, value }) => ({ name, value })),
-      setAll: (writes) => {
+      setAll: (writes, headers) => {
+        for (const [name, value] of Object.entries(headers)) {
+          responseHeaders?.set(name, value);
+        }
         for (const { name, value, options } of writes) {
           cookies.set(name, value, { ...options, path: options.path ?? '/' });
           applied += 1;

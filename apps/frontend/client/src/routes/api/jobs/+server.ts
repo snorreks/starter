@@ -160,8 +160,14 @@ export const POST: RequestHandler = async ({ locals, request }) => {
     if (outcome.outcome === 'quota_or_active_limit') {
       return budgetExceeded('The job admission limit has been reached.');
     }
-    if (outcome.jobId !== null) {
-      await repository.disableDispatch(outcome.jobId);
+    if (outcome.outcome === 'created' && outcome.jobId !== null) {
+      if (!(await repository.disableDispatch(outcome.jobId))) {
+        return jsonError(
+          503,
+          'job_unavailable',
+          'The admitted job dispatch could not be disabled.',
+        );
+      }
     }
     const job = outcome.jobId === null ? null : await repository.getForOwner(outcome.jobId);
     if (job === null) {

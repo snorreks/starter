@@ -10,12 +10,17 @@ export const GET: RequestHandler = async ({ url, locals, cookies }) => {
     redirect(303, '/login?error=auth_unconfigured');
   }
   const requested = url.searchParams.get('next') ?? '';
-  const next = CALLBACKS.has(requested) ? requested : '/login?error=invalid_callback';
+  if (!CALLBACKS.has(requested)) {
+    redirect(303, '/login?error=invalid_callback');
+  }
   const client = createSupabaseAuthClient(
     { ...config, origin: url.origin, allowedCallbacks: [...CALLBACKS] },
     {
       getAll: () => cookies.getAll().map(({ name, value }) => ({ name, value })),
-      setAll: (writes) => {
+      setAll: (writes, headers) => {
+        for (const [name, value] of Object.entries(headers)) {
+          locals.context.responseHeaders?.set(name, value);
+        }
         for (const { name, value, options } of writes) {
           cookies.set(name, value, { ...options, path: options.path ?? '/' });
         }
@@ -30,5 +35,5 @@ export const GET: RequestHandler = async ({ url, locals, cookies }) => {
   if (error) {
     redirect(303, '/login?error=invalid_callback');
   }
-  redirect(303, next);
+  redirect(303, requested);
 };

@@ -46,7 +46,11 @@ export const readSupabaseCapturedMail = async (
     } else if (typeof message.to === 'string') {
       recipients = [message.to];
     }
-    if (!id || (recipient !== null && !recipients.includes(recipient))) {
+    if (
+      !id ||
+      (recipient !== null &&
+        !recipients.some((address) => address.toLowerCase() === recipient.toLowerCase()))
+    ) {
       continue;
     }
     const detailResponse = await fetcher(

@@ -150,7 +150,15 @@ export const createRequestNotesService = (locals: {
   return {
     async list(ownerId) {
       assertOwner(ownerId);
-      return (await repository.list(ownerId, 0)).notes;
+      const listed: Note[] = [];
+      for (let page = 0; listed.length < MAX_LISTED_NOTES; page += 1) {
+        const result = await repository.list(ownerId, page);
+        listed.push(...result.notes.slice(0, MAX_LISTED_NOTES - listed.length));
+        if (!result.hasMore) {
+          break;
+        }
+      }
+      return listed;
     },
     async create(ownerId, input) {
       assertOwner(ownerId);

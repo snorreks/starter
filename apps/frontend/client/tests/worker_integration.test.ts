@@ -106,7 +106,7 @@ const supabaseSignup = async () => {
   const response = await fetch(`${base()}/api/auth/sign-in/email`, {
     method: 'POST',
     headers: { 'content-type': 'application/json', origin: base(), apikey: anonKey },
-    body: JSON.stringify(account),
+    body: JSON.stringify({ email: account.email, password: account.password }),
   });
   expect(response.status).toBe(200);
   const cookies = response.headers
@@ -318,12 +318,35 @@ if (SUPABASE_PREVIEW) {
       const entries = cookies.split('; ').map((item) => item.split('=', 2) as [string, string]);
       const session = entries.find(([name]) => name.includes('-auth-token'));
       expect(session).toBeDefined();
-      if (!session) throw new Error('Supabase SSR did not emit an auth session cookie.');
-      await sleep(2500);
+      if (!session) {
+        throw new Error('Supabase SSR did not emit an auth session cookie.');
+      }
+      const sessionName = session[0].replace(/\.\d+$/, '');
+      const encoded = entries
+        .filter(([name]) => name === sessionName || name.startsWith(`${sessionName}.`))
+        .sort(([a], [b]) => a.localeCompare(b, undefined, { numeric: true }))
+        .map(([, value]) => value)
+        .join('');
+      const decoded = decodeURIComponent(encoded);
+      const stored = JSON.parse(
+        decoded.startsWith('base64-')
+          ? Buffer.from(decoded.slice(7), 'base64url').toString('utf8')
+          : decoded,
+      ) as { access_token: string };
+      const payload = JSON.parse(
+        Buffer.from(stored.access_token.split('.')[1] ?? '', 'base64url').toString('utf8'),
+      ) as { exp: number };
+      expect(Number.isFinite(payload.exp)).toBe(true);
+      const expiresAt = payload.exp * 1000;
+      while (Date.now() <= expiresAt) {
+        await sleep(Math.min(expiresAt - Date.now() + 1, 1000));
+      }
       const response = await fetch(`${base()}/api/notes`, { headers: { cookie: cookies } });
       expect(response.status).toBe(200);
       expect(response.headers.get('cache-control')).toContain('no-store');
-      expect(response.headers.getSetCookie().some((item) => item.startsWith(`${session[0]}=`))).toBe(true);
+      expect(
+        response.headers.getSetCookie().some((item) => item.startsWith(`${session[0]}=`)),
+      ).toBe(true);
     });
 
     test('job admission and status use owner scoped Postgres and keep dispatch disabled', async () => {
@@ -360,7 +383,13 @@ if (SUPABASE_PREVIEW) {
       for (const email of [account.email, nextEmail]) {
         const captured = await fetch(`${base()}/api/dev/mail?to=${encodeURIComponent(email)}`);
         expect(captured.status).toBe(200);
-        expect(await captured.text()).toMatch(/confirm|change/i);
+        const { messages } = (await captured.json()) as {
+          messages: { subject: string; text: string }[];
+        };
+        expect(messages.length).toBeGreaterThan(0);
+        expect(
+          messages.some((message) => /confirm/i.test(`${message.subject} ${message.text}`)),
+        ).toBe(true);
       }
       const deleted = await fetch(`${base()}/api/auth/account/delete`, {
         method: 'POST',

@@ -104,14 +104,15 @@ const run = async (args: readonly string[]): Promise<number> => {
     );
   }
 
+  const resolvedScope = resolveCacheMode();
   const scope =
     backend === 'supabase'
       ? {
-          ...resolveCacheMode(),
+          ...resolvedScope,
           mode: 'off' as const,
           reason: 'Supabase integration targets are mandatory and uncached.',
         }
-      : resolveCacheMode();
+      : resolvedScope;
 
   // A changed fingerprint means Moon holds entries computed against a tree that no
   // longer exists. `--cache off` for this run does not remove them, so the *next*
@@ -123,7 +124,7 @@ const run = async (args: readonly string[]): Promise<number> => {
   //
   // Keyed on the reason rather than on `mode === 'off'`, because a cold cache is
   // also `off` and there is nothing stored to discard.
-  if (scope.mode === 'off' && scope.reason.includes('changed')) {
+  if (scope.mode === 'off' && resolvedScope.reason.includes('changed')) {
     const { purged } = purgeMoonCache(REPO_ROOT);
     if (purged.length > 0) {
       process.stderr.write(

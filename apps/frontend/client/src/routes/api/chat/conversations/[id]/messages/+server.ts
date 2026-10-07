@@ -113,15 +113,30 @@ export const POST: RequestHandler = async ({ locals, params, request }) => {
   // Before the first frame, so a failure here is still an HTTP status. Idempotent on
   // `clientId`: a retry after a dropped connection returns the same row rather than
   // writing the user's message twice.
-  const userMessage = await service.appendUserMessage(user.id, params.id, content, clientId);
-  if (userMessage === null) {
+  const admission = await service.appendUserMessage(user.id, params.id, content, clientId);
+  if (admission === null) {
     return jsonError(404, 'not_found', 'That conversation does not exist.');
   }
 
   // Announced before the reply exists, and stored under this id afterwards. See
   // `appendAssistantMessage`: a row whose id the client was never told would make the
   // `complete` frame disagree with the `start` frame.
-  const replyId = createId('msg');
+  if ('outcome' in admission && admission.outcome === 'in_flight') {
+    return jsonError(409, 'in_flight', 'A turn is already active for that message.');
+  }
+  if ('outcome' in admission && admission.outcome === 'completed') {
+    const events: ChatStreamEvent[] = [
+      { type: 'user-message', clientId, message: admission.userMessage },
+      { type: 'start', messageId: admission.assistantMessage.id },
+      { type: 'complete', message: admission.assistantMessage },
+    ];
+    return new Response(events.map(encodeSseFrame).join('') + encodeSseDone(), {
+      status: 200,
+      headers: SSE_HEADERS,
+    });
+  }
+  const userMessage = 'outcome' in admission ? admission.userMessage : admission;
+  const replyId = 'outcome' in admission ? admission.assistantMessageId : createId('msg');
 
   return streamTurn({
     model: locals.container.chatModel,
