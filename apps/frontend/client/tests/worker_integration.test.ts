@@ -69,11 +69,53 @@ const RUN_ID = `run-${createId('it', 8)}`;
 
 /** Per-minute sign-in budget for this run. The limit itself stays enabled. */
 const AUTH_RATE_LIMIT_MAX = '500';
+const SUPABASE_PREVIEW = process.env.STARTER_BACKEND_PROFILE === 'supabase';
 
 let server: ChildProcess | undefined;
 let port = 0;
 
 const base = (): string => `http://127.0.0.1:${port}`;
+
+const supabaseSignup = async () => {
+  const account = {
+    email: `supabase-${crypto.randomUUID()}@example.test`,
+    password: 'correct horse battery staple',
+    name: 'Preview User',
+  };
+  const authUrl = process.env.SUPABASE_URL;
+  const anonKey = process.env.SUPABASE_ANON_KEY;
+  const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  if (!authUrl || !anonKey || !serviceRoleKey) {
+    throw new Error('Supabase preview test credentials were not forwarded by the backend harness.');
+  }
+  const created = await fetch(`${authUrl}/auth/v1/admin/users`, {
+    method: 'POST',
+    headers: {
+      apikey: serviceRoleKey,
+      authorization: `Bearer ${serviceRoleKey}`,
+      'content-type': 'application/json',
+    },
+    body: JSON.stringify({
+      email: account.email,
+      password: account.password,
+      email_confirm: true,
+      user_metadata: { display_name: account.name },
+    }),
+  });
+  expect(created.status).toBe(200);
+  const response = await fetch(`${base()}/api/auth/sign-in/email`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', origin: base(), apikey: anonKey },
+    body: JSON.stringify(account),
+  });
+  expect(response.status).toBe(200);
+  const cookies = response.headers
+    .getSetCookie()
+    .map((value) => value.split(';', 1)[0])
+    .join('; ');
+  expect(cookies.length).toBeGreaterThan(0);
+  return { account, cookies };
+};
 
 /** Ask the OS for a free port instead of hard-coding one. */
 const findFreePort = (): Promise<number> =>
@@ -238,6 +280,98 @@ afterAll(() => {
   }
   server = undefined;
 });
+
+if (SUPABASE_PREVIEW) {
+  describe('Supabase preview', () => {
+    test('two concurrent SSR sessions stay owner scoped and return private cache headers', async () => {
+      const [first, second] = await Promise.all([supabaseSignup(), supabaseSignup()]);
+      const headers = (cookies: string) => ({ cookie: cookies, origin: base() });
+      const [firstHtml, secondHtml] = await Promise.all([
+        fetch(`${base()}/notes`, { headers: headers(first.cookies) }),
+        fetch(`${base()}/notes`, { headers: headers(second.cookies) }),
+      ]);
+      expect(firstHtml.status).toBe(200);
+      expect(secondHtml.status).toBe(200);
+      expect(firstHtml.headers.get('cache-control')).toContain('no-store');
+      expect(secondHtml.headers.get('cache-control')).toContain('no-store');
+      const firstNote = await fetch(`${base()}/api/notes`, {
+        method: 'POST',
+        headers: { ...headers(first.cookies), 'content-type': 'application/json' },
+        body: JSON.stringify({ title: 'first owner', body: 'private' }),
+      });
+    expect(firstNote.status).toBe(200);
+      const ownList = await fetch(`${base()}/api/notes`, { headers: headers(first.cookies) });
+      const otherList = await fetch(`${base()}/api/notes`, { headers: headers(second.cookies) });
+      expect(await ownList.text()).toContain('first owner');
+      expect(await otherList.text()).not.toContain('first owner');
+    });
+
+    test('a spoofed bearer token cannot read user data', async () => {
+      const response = await fetch(`${base()}/api/notes`, {
+        headers: { authorization: 'Bearer expired-or-forged-token' },
+      });
+      expect(response.status).toBe(401);
+    });
+
+    test('an expired SSR access token refreshes and propagates replacement cookies', async () => {
+      const { cookies } = await supabaseSignup();
+      const entries = cookies.split('; ').map((item) => item.split('=', 2) as [string, string]);
+      const session = entries.find(([name]) => name.includes('-auth-token'));
+      expect(session).toBeDefined();
+      if (!session) throw new Error('Supabase SSR did not emit an auth session cookie.');
+      await sleep(2500);
+      const response = await fetch(`${base()}/api/notes`, { headers: { cookie: cookies } });
+      expect(response.status).toBe(200);
+      expect(response.headers.get('cache-control')).toContain('no-store');
+      expect(response.headers.getSetCookie().some((item) => item.startsWith(`${session[0]}=`))).toBe(true);
+    });
+
+    test('job admission and status use owner scoped Postgres and keep dispatch disabled', async () => {
+      const [owner, other] = await Promise.all([supabaseSignup(), supabaseSignup()]);
+      const create = () => fetch(`${base()}/api/jobs`, {
+        method: 'POST',
+        headers: { cookie: owner.cookies, origin: base(), 'content-type': 'application/json', 'idempotency-key': 'preview-job-01' },
+        body: JSON.stringify({ fixture: 'sample-v1', preset: 'demo-180p-v1' }),
+      });
+      const created = await create();
+      expect(created.status).toBe(202);
+      const job = await created.json() as { id: string; status: string; outputAvailable: boolean };
+      expect(job).toMatchObject({ status: 'pending', outputAvailable: false });
+      const replay = await create();
+      expect(replay.status).toBe(202);
+      expect(await replay.json()).toMatchObject({ id: job.id });
+      const status = await fetch(`${base()}/api/jobs/${job.id}`, { headers: { cookie: owner.cookies } });
+      expect(await status.json()).toMatchObject({ id: job.id, status: 'pending' });
+      const otherStatus = await fetch(`${base()}/api/jobs/${job.id}`, { headers: { cookie: other.cookies } });
+      expect(otherStatus.status).toBe(404);
+    });
+
+    test('email changes wait for both local confirmations and deletion removes the Auth identity', async () => {
+      const { account, cookies } = await supabaseSignup();
+      const nextEmail = `changed-${crypto.randomUUID()}@example.test`;
+      const changed = await fetch(`${base()}/api/auth/account/email-change`, {
+        method: 'POST',
+        headers: { cookie: cookies, origin: base(), 'content-type': 'application/json' },
+        body: JSON.stringify({ email: nextEmail }),
+      });
+      expect(changed.status).toBe(200);
+      const current = await fetch(`${base()}/api/auth/get-session`, { headers: { cookie: cookies } });
+      expect(await current.text()).toContain(account.email);
+      for (const email of [account.email, nextEmail]) {
+        const captured = await fetch(`${base()}/api/dev/mail?to=${encodeURIComponent(email)}`);
+        expect(captured.status).toBe(200);
+        expect(await captured.text()).toMatch(/confirm|change/i);
+      }
+      const deleted = await fetch(`${base()}/api/auth/account/delete`, {
+        method: 'POST',
+        headers: { cookie: cookies, origin: base(), 'content-type': 'application/json' },
+        body: '{}',
+      });
+      expect(deleted.status).toBe(200);
+      expect((await fetch(`${base()}/api/notes`, { headers: { cookie: cookies } })).status).toBe(401);
+    });
+  });
+}
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 

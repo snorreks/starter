@@ -37,8 +37,8 @@ import {
   SSE_CONTENT_TYPE,
 } from '@starter/schemas/chat';
 import { createId } from '@starter/utils';
+import { createRequestChatService } from '#lib/server/application_chat.ts';
 import type { ChatModel } from '#lib/server/chat_model.ts';
-import { createChatService } from '#lib/server/chat_service.ts';
 import { json, jsonError, readJsonBody, unauthorized } from '#lib/server/http.ts';
 import type { RequestHandler } from './$types';
 
@@ -73,7 +73,7 @@ export const GET: RequestHandler = async ({ locals, params }) => {
     return unauthorized();
   }
 
-  const service = createChatService(locals.container.db);
+  const service = createRequestChatService(locals);
   const conversation = await service.find(user.id, params.id);
   if (conversation === null) {
     // 404 rather than 403, deliberately: a 403 would confirm the conversation
@@ -95,7 +95,7 @@ export const POST: RequestHandler = async ({ locals, params, request }) => {
     return unauthorized();
   }
 
-  const service = createChatService(locals.container.db);
+  const service = createRequestChatService(locals);
   const conversation = await service.find(user.id, params.id);
   if (conversation === null) {
     return jsonError(404, 'not_found', 'That conversation does not exist.');

@@ -12,7 +12,7 @@
 // front of the same data.
 
 import { redirect } from '@sveltejs/kit';
-import { createChatService } from '#lib/server/chat_service.ts';
+import { createRequestChatService } from '#lib/server/application_chat.ts';
 import type { PageServerLoad } from './$types';
 
 export const load: PageServerLoad = async ({ locals }) => {
@@ -24,7 +24,7 @@ export const load: PageServerLoad = async ({ locals }) => {
   }
 
   return {
-    conversations: await createChatService(locals.container.db).list(user.id),
+    conversations: await createRequestChatService(locals).list(user.id),
     serverTime: Date.now(),
   };
 };

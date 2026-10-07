@@ -53,7 +53,9 @@ const verificationLink = async (page: Page, email: string): Promise<string> => {
   const body = (await response.json()) as {
     messages: Array<{ subject: string; text: string }>;
   };
-  const message = body.messages.find((entry) => entry.subject.includes('Verify'));
+  const message = body.messages.find((entry) =>
+    /verify|confirm|sign.?up/i.test(`${entry.subject} ${entry.text}`),
+  );
   if (message === undefined) {
     throw new Error(`No verification mail captured for ${email}`);
   }

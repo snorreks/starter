@@ -15,20 +15,68 @@
 // `--cache off` and every task re-runs.
 
 import { spawnSync } from 'node:child_process';
+import { existsSync, mkdirSync, rmdirSync, unlinkSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { purgeMoonCache, resolveCacheMode, writeStamp } from '../ci/cache_scope.ts';
+import {
+  allocateSupabaseLocal,
+  hasSupabaseOwnership,
+  readSupabaseOwnership,
+  startSupabaseLocal,
+  stopSupabaseLocal,
+} from '../db/supabase_local.ts';
 import type { Command } from '../shared/command.ts';
 import { EXIT, fail, wantsHelp } from '../shared/command.ts';
 import { REPO_ROOT } from '../shared/paths.ts';
 import { resolveWorkspaceBin } from '../shared/tools.ts';
 
-const USAGE = `cached [--] <moon targets...>
+const USAGE = `cached [--backend legacy|supabase] [--] <moon targets...>
 
 Runs Moon over the given targets with a cache mode chosen from the files Moon
-cannot see. Any argument after -- is passed to Moon unchanged.
+cannot see. --backend supabase owns a local Auth/Postgres stack for the mandatory
+Worker or E2E preview lane. Backend options are consumed here and never reach Moon.
 
   bun run scripts/src/cli.ts cached -- :test
   bun run scripts/src/cli.ts cached -- client:test-browser
   bun run scripts/src/cli.ts cached -- --affected :typecheck`;
+
+export interface CachedArguments {
+  backend: 'legacy' | 'supabase';
+  targets: string[];
+}
+
+export const parseCachedArguments = (args: readonly string[]): CachedArguments => {
+  const remaining = [...args];
+  let backend: CachedArguments['backend'] = 'legacy';
+  let seen = false;
+  for (let index = 0; index < remaining.length; index += 1) {
+    if (remaining[index] !== '--backend') {
+      continue;
+    }
+    const value = remaining[index + 1];
+    if (seen || (value !== 'legacy' && value !== 'supabase')) {
+      throw new Error('--backend must appear once and be legacy or supabase.');
+    }
+    backend = value;
+    seen = true;
+    remaining.splice(index, 2);
+    index -= 1;
+  }
+  const separator = remaining.indexOf('--');
+  const targets = (separator === -1 ? remaining : remaining.slice(separator + 1)).filter(Boolean);
+  if (remaining.some((arg) => arg === '--backend')) {
+    throw new Error('--backend requires legacy or supabase.');
+  }
+  if (
+    backend === 'supabase' &&
+    !targets.some((target) => target === 'client:test-worker' || target === 'e2e:e2e')
+  ) {
+    throw new Error(
+      '--backend supabase requires client:test-worker or e2e:e2e; the preview integration is mandatory.',
+    );
+  }
+  return { backend, targets };
+};
 
 const run = async (args: readonly string[]): Promise<number> => {
   if (wantsHelp(args)) {
@@ -36,10 +84,13 @@ const run = async (args: readonly string[]): Promise<number> => {
     return EXIT.ok;
   }
 
-  const separator = args.indexOf('--');
-  const targets = (separator === -1 ? [...args] : args.slice(separator + 1)).filter(
-    (arg) => arg !== '',
-  );
+  let parsed: CachedArguments;
+  try {
+    parsed = parseCachedArguments(args);
+  } catch (error) {
+    return fail(`${String(error)}\n\n${USAGE}`, EXIT.usage);
+  }
+  const { targets, backend } = parsed;
   if (targets.length === 0) {
     return fail(USAGE, EXIT.usage);
   }
@@ -53,7 +104,14 @@ const run = async (args: readonly string[]): Promise<number> => {
     );
   }
 
-  const scope = resolveCacheMode();
+  const scope =
+    backend === 'supabase'
+      ? {
+          ...resolveCacheMode(),
+          mode: 'off' as const,
+          reason: 'Supabase integration targets are mandatory and uncached.',
+        }
+      : resolveCacheMode();
 
   // A changed fingerprint means Moon holds entries computed against a tree that no
   // longer exists. `--cache off` for this run does not remove them, so the *next*
@@ -92,19 +150,90 @@ const run = async (args: readonly string[]): Promise<number> => {
   // `stdio: 'inherit'` so the lane's own output and its exit status are the
   // command's. A wrapper that captured and reformatted output would swallow the
   // exit status, which is the one thing the caller needs.
-  const result = spawnSync(moon, ['run', '--cache', scope.mode, ...targets], {
-    cwd: process.cwd(),
-    env: process.env,
-    stdio: 'inherit',
-  });
-
-  if (result.error !== undefined) {
-    return fail(`could not run moon: ${result.error.message}`, EXIT.unavailable);
+  const invoke = (env: NodeJS.ProcessEnv): number => {
+    const result = spawnSync(moon, ['run', '--cache', scope.mode, ...targets], {
+      cwd: process.cwd(),
+      env,
+      stdio: 'inherit',
+    });
+    if (result.error !== undefined) {
+      return fail(`could not run moon: ${result.error.message}`, EXIT.unavailable);
+    }
+    return result.status ?? EXIT.failed;
+  };
+  if (backend === 'legacy') {
+    return invoke(process.env);
   }
 
-  // A signalled process reports `status: null`; `0` would certify a lane that was
-  // killed.
-  return result.status ?? EXIT.failed;
+  const allocation = allocateSupabaseLocal(
+    REPO_ROOT,
+    `web_${process.pid}_${crypto.randomUUID().slice(0, 8)}`,
+  );
+  let exitCode: number = EXIT.failed;
+  const devVars = join(REPO_ROOT, 'apps/frontend/client/.dev.vars');
+  const lockDir = join(REPO_ROOT, 'apps/frontend/client/.dev.vars.supabase-lock');
+  let wroteDevVars = false;
+  let ownsLock = false;
+  try {
+    const lockDeadline = Date.now() + 300_000;
+    while (!ownsLock && Date.now() < lockDeadline) {
+      try {
+        mkdirSync(lockDir, { mode: 0o700 });
+        ownsLock = true;
+      } catch (error) {
+        if (!(error instanceof Error) || !('code' in error) || error.code !== 'EEXIST') {
+          throw error;
+        }
+        await new Promise((resolve) => setTimeout(resolve, 250));
+      }
+    }
+    if (!ownsLock) {
+      throw new Error('Timed out waiting for the other isolated Supabase preview lane to finish.');
+    }
+    if (existsSync(devVars)) {
+      throw new Error(
+        'apps/frontend/client/.dev.vars already exists; refusing to replace local credentials.',
+      );
+    }
+    const supabaseEnv = await startSupabaseLocal(allocation, {
+      emailConfirmations: targets.includes('e2e:e2e'),
+      jwtExpirySeconds: targets.includes('client:test-worker') ? 2 : 3600,
+    });
+    const workerVars = { ...supabaseEnv, STARTER_BACKEND_PROFILE: 'supabase' };
+    writeFileSync(
+      devVars,
+      `${Object.entries(workerVars)
+        .map(([key, value]) => `${key}=${JSON.stringify(value)}`)
+        .join('\n')}\n`,
+      { mode: 0o600, flag: 'wx' },
+    );
+    wroteDevVars = true;
+    exitCode = invoke({ ...process.env, ...workerVars, STARTER_BACKEND_PROFILE: 'supabase' });
+  } catch (error) {
+    return fail(
+      `Supabase preview setup failed: ${error instanceof Error ? error.message : String(error)}`,
+      EXIT.unavailable,
+    );
+  } finally {
+    if (wroteDevVars) {
+      unlinkSync(devVars);
+    }
+    if (ownsLock) {
+      rmdirSync(lockDir);
+    }
+    try {
+      if (await hasSupabaseOwnership(allocation)) {
+        const owned = await readSupabaseOwnership(allocation);
+        await stopSupabaseLocal(allocation, owned);
+      }
+    } catch (error) {
+      process.stderr.write(
+        `Owned Supabase preview teardown failed: ${error instanceof Error ? error.message : String(error)}\n`,
+      );
+      exitCode = EXIT.failed;
+    }
+  }
+  return exitCode;
 };
 
 export const cachedCommand: Command = {

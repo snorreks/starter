@@ -124,3 +124,45 @@ export const createNotesService = (db: NotesDatabase): NotesService => ({
     return rows.length > 0;
   },
 });
+
+/** Resolve the request's complete backend once; Supabase ids are never sent to D1. */
+export const createRequestNotesService = (locals: {
+  context: {
+    backendProfile: 'legacy' | 'supabase';
+    user: { id: string } | null;
+    services: import('./supabase_context.ts').ApplicationServices | null;
+  };
+  container: { db: NotesDatabase };
+}): NotesService => {
+  if (locals.context.backendProfile === 'legacy') {
+    return createNotesService(locals.container.db);
+  }
+  const identity = locals.context.services?.identity;
+  const repository = locals.context.services?.notes;
+  if (!identity || !repository || identity.user.id !== locals.context.user?.id) {
+    throw new Error("Supabase notes service requires this request's verified Supabase identity.");
+  }
+  const assertOwner = (ownerId: string) => {
+    if (ownerId !== identity.user.id) {
+      throw new Error('Supabase notes owner does not match the verified identity.');
+    }
+  };
+  return {
+    async list(ownerId) {
+      assertOwner(ownerId);
+      return (await repository.list(ownerId, 0)).notes;
+    },
+    async create(ownerId, input) {
+      assertOwner(ownerId);
+      return repository.create(ownerId, input);
+    },
+    async update(ownerId, id, input) {
+      assertOwner(ownerId);
+      return repository.update(ownerId, id, input);
+    },
+    async remove(ownerId, id) {
+      assertOwner(ownerId);
+      return repository.remove(ownerId, id);
+    },
+  };
+};

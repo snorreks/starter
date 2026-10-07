@@ -39,6 +39,20 @@ export const GET: RequestHandler = async ({ locals, params, request }) => {
     return unauthorized();
   }
 
+  if (locals.context?.backendProfile === 'supabase') {
+    const repository = locals.applicationServices?.jobs;
+    if (!repository || locals.applicationServices?.identity.user.id !== user.id) {
+      return unauthorized();
+    }
+    const job = await repository.getForOwner(params.id);
+    if (job === null) {
+      return jsonError(404, 'not_found', 'That job does not exist.');
+    }
+    return job.outputAvailable
+      ? jsonError(503, 'output_unavailable', 'Preview dispatch is disabled pending Prompt 06.')
+      : jsonError(409, 'output_not_ready', 'Preview dispatch is disabled pending Prompt 06.');
+  }
+
   if (locals.container.jobsProfile !== 'encode') {
     return jsonError(
       503,

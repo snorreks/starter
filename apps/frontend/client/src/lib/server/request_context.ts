@@ -12,6 +12,7 @@
 // request ends. A route that needs a trace id reads `locals.context`, which the
 // hook already built — it does not resolve the session a second time.
 
+import type { VerifiedIdentity } from '@starter/auth/supabase';
 import { users } from '@starter/database';
 import {
   type ConsoleLogger,
@@ -26,6 +27,7 @@ import { createId } from '@starter/utils';
 import { eq } from 'drizzle-orm';
 import type { Container } from './container.ts';
 import { unauthorized } from './http.ts';
+import type { ApplicationServices } from './supabase_context.ts';
 
 /**
  * The verified caller, as page data.
@@ -78,6 +80,10 @@ export interface RequestContext {
   /** The single structured destination this request's records are written to. */
   emitter: StructuredEmitter;
   container: Container;
+  backendProfile: 'legacy' | 'supabase';
+  identity: VerifiedIdentity | null;
+  services: ApplicationServices | null;
+  responseHeaders: Headers | null;
 }
 
 /**
@@ -275,7 +281,12 @@ const emulatorUserFor = async (
 export const buildRequestContext = async (
   container: Container,
   request: Request,
-  options: { runtime?: LogRuntime } = {},
+  options: {
+    runtime?: LogRuntime;
+    identity?: VerifiedIdentity | null;
+    services?: ApplicationServices | null;
+    responseHeaders?: Headers | null;
+  } = {},
 ): Promise<RequestContext> => {
   const context = resolveLogContext(container);
   const traceId = createId('tr', 16);
@@ -285,17 +296,37 @@ export const buildRequestContext = async (
   const { logger, emitter } = createServerRecordLogger(context, options.runtime, { traceId });
 
   const runtime = options.runtime ?? detectLogRuntime();
+  const user = await resolveRequestUser(container, request, runtime, options);
   return {
-    user:
-      (await emulatorUserFor(container, runtime)) ??
-      (await resolveUser(container, request.headers)),
+    user,
     traceId,
     requestId: boundCorrelationLabel(request.headers.get('cf-ray')),
     clientTraceId: boundCorrelationLabel(request.headers.get('x-trace-id')),
     container,
+    backendProfile: container.backendProfile,
+    identity: options.identity ?? null,
+    services: options.services ?? null,
+    responseHeaders: options.responseHeaders ?? null,
     logger,
     emitter,
   };
+};
+
+const resolveRequestUser = async (
+  container: Container,
+  request: Request,
+  runtime: LogRuntime,
+  options: { identity?: VerifiedIdentity | null },
+): Promise<RequestContext['user']> => {
+  if (Object.hasOwn(options, 'identity')) {
+    if (options.identity) {
+      return { ...options.identity.user, provider: 'email' };
+    }
+    return null;
+  }
+  return (
+    (await emulatorUserFor(container, runtime)) ?? (await resolveUser(container, request.headers))
+  );
 };
 
 export { unauthorized };

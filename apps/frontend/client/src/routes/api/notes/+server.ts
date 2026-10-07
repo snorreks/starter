@@ -14,7 +14,7 @@
 
 import { NoteCreateSchema, type NoteList } from '@starter/schemas/notes';
 import { json, jsonError, readJsonBody, unauthorized } from '#lib/server/http.ts';
-import { createNotesService } from '#lib/server/notes_service.ts';
+import { createRequestNotesService } from '#lib/server/notes_service.ts';
 import type { RequestHandler } from './$types';
 
 /**
@@ -36,7 +36,7 @@ export const GET: RequestHandler = async ({ locals }) => {
   // root already published `locals.context` for this request. The read path does not
   // log per event — the write path does, because a write is the event worth
   // correlating.
-  const notes = await createNotesService(locals.container.db).list(user.id);
+  const notes = await createRequestNotesService(locals).list(user.id);
   const body: NoteList = { notes, serverTime: Date.now() };
   return json(200, body);
 };
@@ -55,7 +55,7 @@ export const POST: RequestHandler = async ({ locals, request }) => {
     return parsed.response;
   }
 
-  const service = createNotesService(locals.container.db);
+  const service = createRequestNotesService(locals);
   const note = await service.create(user.id, parsed.value as { title: string; body: string });
 
   context.logger.write({

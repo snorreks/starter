@@ -112,4 +112,26 @@ describe('request scoped Supabase clients', () => {
       'Bearer local-only-service-role',
     ]);
   });
+
+  test('job status and list use owner-scoped RPCs and reject malformed DTO data', async () => {
+    const status = {
+      id: 'job_preview_1',
+      kind: 'encode',
+      status: 'pending',
+      createdAt: 1,
+      updatedAt: 2,
+      outputAvailable: false,
+      errorCode: null,
+    } as const;
+    const headers = captureRequests([status, [status], true]);
+    const repository = createSupabaseJobRepository(userClient(), adminClient());
+    expect(await repository.getForOwner(status.id)).toEqual(status);
+    expect(await repository.listForOwner()).toEqual([status]);
+    expect(await repository.disableDispatch(status.id)).toBe(true);
+    expect(headers.map((request) => request.get('Authorization'))).toEqual([
+      'Bearer user-token',
+      'Bearer user-token',
+      'Bearer local-only-service-role',
+    ]);
+  });
 });

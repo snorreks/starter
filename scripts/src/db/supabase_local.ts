@@ -84,6 +84,7 @@ const identityPath = (allocation: SupabaseLocalAllocation): string =>
 
 export const persistSupabaseOwnership = async (
   allocation: SupabaseLocalAllocation,
+  options: { emailConfirmations?: boolean; jwtExpirySeconds?: number } = {},
 ): Promise<void> => {
   await mkdir(projectDir(allocation), { recursive: true });
   await writeFile(identityPath(allocation), `${JSON.stringify(allocation, null, 2)}\n`, {
@@ -98,7 +99,12 @@ export const persistSupabaseOwnership = async (
     .replace(/^port = 54324$/m, `port = ${allocation.ports.mail}`)
     .replace(/^smtp_port = 54325$/m, `smtp_port = ${allocation.ports.smtp}`)
     .replace(/^pop3_port = 54326$/m, `pop3_port = ${allocation.ports.pop3}`)
-    .replace('api_url = "http://127.0.0.1:54321"', `api_url = "${allocation.urls.api}"`);
+    .replace('api_url = "http://127.0.0.1:54321"', `api_url = "${allocation.urls.api}"`)
+    .replace(
+      'enable_confirmations = false',
+      `enable_confirmations = ${options.emailConfirmations === true}`,
+    )
+    .replace('jwt_expiry = 3600', `jwt_expiry = ${options.jwtExpirySeconds ?? 3600}`);
   const supabaseDir = join(projectDir(allocation), 'supabase');
   await mkdir(join(supabaseDir, 'snippets'), { recursive: true });
   await mkdir(join(supabaseDir, 'functions'), { recursive: true });
@@ -235,13 +241,14 @@ export const runDatabaseTypeCommand = async (
 
 export const startSupabaseLocal = async (
   allocation: SupabaseLocalAllocation,
+  options: { emailConfirmations?: boolean; jwtExpirySeconds?: number } = {},
 ): Promise<Record<string, string>> => {
   const runtime = process.env.DOCKER_BIN ?? 'docker';
   const probe = spawnSync(runtime, ['info'], { stdio: 'ignore', timeout: 10_000 });
   requireContainerRuntime({
     dockerPath: probe.error === undefined && probe.status === 0 ? runtime : undefined,
   });
-  await persistSupabaseOwnership(allocation);
+  await persistSupabaseOwnership(allocation, options);
   const code = runCli(allocation, ['start']);
   if (code !== 0) {
     throw new Error(`Supabase local start failed with exit ${code}.`);

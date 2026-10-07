@@ -25,9 +25,10 @@
 // a token is a bearer credential, and this route hands it out on request.
 
 import { json, jsonError } from '#lib/server/http.ts';
+import { readSupabaseCapturedMail } from '#lib/server/supabase_mail.ts';
 import type { RequestHandler } from './$types';
 
-export const GET: RequestHandler = ({ locals, url }) => {
+export const GET: RequestHandler = async ({ locals, url }) => {
   const { container } = locals;
 
   if (!container.isLocal) {
@@ -40,6 +41,29 @@ export const GET: RequestHandler = ({ locals, url }) => {
       'The mail capture inbox is a local-only capability. Deployed environments deliver ' +
         'through Resend and have no inbox to read.',
     );
+  }
+
+  if (container.backendProfile === 'supabase') {
+    if (container.supabase?.mailUrl === undefined) {
+      return jsonError(503, 'mail_unavailable', 'Local Supabase mail capture is not configured.');
+    }
+    try {
+      const messages = await readSupabaseCapturedMail(
+        container.supabase.mailUrl,
+        url.searchParams.get('to'),
+      );
+      return json(200, {
+        mode: 'capture',
+        inbox: container.env.TEST_RUN_ID ?? 'supabase-local',
+        messages,
+      });
+    } catch {
+      return jsonError(
+        503,
+        'mail_unavailable',
+        'Could not read the local Supabase mail capture service.',
+      );
+    }
   }
 
   const capture = container.mailCapture;

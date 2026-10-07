@@ -4,7 +4,7 @@
 //
 // `locals.user` was resolved by the composition root in `hooks.server.ts`.
 
-import { createChatService } from '#lib/server/chat_service.ts';
+import { createRequestChatService } from '#lib/server/application_chat.ts';
 import { json, jsonError, unauthorized } from '#lib/server/http.ts';
 import type { RequestHandler } from './$types';
 
@@ -14,7 +14,7 @@ export const GET: RequestHandler = async ({ locals, params }) => {
     return unauthorized();
   }
 
-  const conversation = await createChatService(locals.container.db).find(user.id, params.id);
+  const conversation = await createRequestChatService(locals).find(user.id, params.id);
   if (conversation === null) {
     return jsonError(404, 'not_found', 'That conversation does not exist.');
   }

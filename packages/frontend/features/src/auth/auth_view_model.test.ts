@@ -54,6 +54,8 @@ const accountStub = (
   sendVerificationEmail: overrides.sendVerificationEmail ?? (() => Promise.resolve()),
   requestPasswordReset: () => Promise.resolve(),
   resetPassword: () => Promise.resolve(),
+  changeEmail: () => Promise.resolve(),
+  deleteAccount: () => Promise.resolve(),
 });
 
 const build = (

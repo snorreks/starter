@@ -24,10 +24,11 @@
     "test:unit:run": "bun test --isolate --path-ignore-patterns='src/browser_tests/**' --path-ignore-patterns='tests/worker_integration.test.ts' --preload ./src/lib/test_setup.ts --tsconfig-override=tsconfig.test.json src/lib tests scripts",
     "test:browser": "vitest run --config vitest.config.ts",
     "test:worker": "bun run test:integration",
-    "test:integration": "bun run build && bun test tests/worker_integration.test.ts"
+    "test:integration": "bun run build && bun run scripts/run_integration.ts"
   },
   "dependencies": {
     "@opentelemetry/api": "1.9.1",
+    "@standard-schema/spec": "1.1.0",
     "@starter/auth": "workspace:*",
     "@starter/database": "workspace:*",
     "@starter/features": "workspace:*",
@@ -37,9 +38,9 @@
     "@starter/schemas": "workspace:*",
     "@starter/ui": "workspace:*",
     "@starter/utils": "workspace:*",
+    "@supabase/ssr": "0.12.7",
     "better-auth": "1.7.7",
     "drizzle-orm": "0.45.3",
-    "@standard-schema/spec": "1.1.0",
     "valibot": "1.5.0"
   },
   "devDependencies": {

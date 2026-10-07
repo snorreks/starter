@@ -29,6 +29,7 @@ import {
   IDEMPOTENCY_KEY_HEADER,
   IdempotencyKeySchema,
 } from '@starter/schemas/jobs';
+import { createId } from '@starter/utils';
 import { json, jsonError, readJsonBody, unauthorized } from '#lib/server/http.ts';
 import type { RequestHandler } from './$types';
 
@@ -79,6 +80,14 @@ export const GET: RequestHandler = async ({ locals, url }) => {
   if (user === null) {
     return unauthorized();
   }
+  if (locals.context?.backendProfile === 'supabase') {
+    const repository = locals.applicationServices?.jobs;
+    if (!repository || locals.applicationServices?.identity.user.id !== user.id) {
+      return unauthorized();
+    }
+    const jobs = await repository.listForOwner();
+    return json(200, { jobs, nextCursor: null, serverTime: Date.now() });
+  }
 
   // The list answers with the capability too. An empty list from a deployment that
   // cannot show jobs reads as "you have none", which is a different and wrong
@@ -112,6 +121,53 @@ export const POST: RequestHandler = async ({ locals, request }) => {
   const user = context.user;
   if (user === null) {
     return unauthorized();
+  }
+  if (context?.backendProfile === 'supabase') {
+    if (!user.emailVerified) {
+      return emailNotVerified();
+    }
+    const idempotencyKey = request.headers.get(IDEMPOTENCY_KEY_HEADER);
+    if (idempotencyKey === null || !checkSchema(IdempotencyKeySchema, idempotencyKey)) {
+      return invalidKey();
+    }
+    const parsed = await readJsonBody(request, CreateEncodeJobSchema, {
+      maxBytes: MAX_BODY_BYTES,
+      invalidStatus: 400,
+    });
+    if (!parsed.ok) {
+      return parsed.response;
+    }
+    const repository = locals.applicationServices?.jobs;
+    if (!repository || locals.applicationServices?.identity.user.id !== user.id) {
+      return unauthorized();
+    }
+    const id = createId('job');
+    const bytes = new TextEncoder().encode(JSON.stringify(parsed.value));
+    const digest = await crypto.subtle.digest('SHA-256', bytes);
+    const outcome = await repository.admit({
+      id,
+      fixture: parsed.value.fixture,
+      preset: parsed.value.preset,
+      idempotencyKey,
+      fingerprint: [...new Uint8Array(digest)]
+        .map((byte) => byte.toString(16).padStart(2, '0'))
+        .join(''),
+      workflowId: `preview-disabled:${id}`,
+    });
+    if (outcome.outcome === 'idempotency_conflict') {
+      return conflict('That idempotency key was used for a different request.');
+    }
+    if (outcome.outcome === 'quota_or_active_limit') {
+      return budgetExceeded('The job admission limit has been reached.');
+    }
+    if (outcome.jobId !== null) {
+      await repository.disableDispatch(outcome.jobId);
+    }
+    const job = outcome.jobId === null ? null : await repository.getForOwner(outcome.jobId);
+    if (job === null) {
+      return jsonError(503, 'job_unavailable', 'The admitted job status could not be read.');
+    }
+    return json(202, job);
   }
 
   // The capability check comes before the body check. A deployment that cannot run
