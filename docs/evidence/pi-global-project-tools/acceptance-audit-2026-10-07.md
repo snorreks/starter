@@ -33,6 +33,7 @@ included. PRs remain drafts; merge and publication are pending.
 | Command | Result at the Starter source revision above |
 | --- | --- |
 | `bun run --cwd .pi test` | PASS, 239 tests / 20 files / 1,197 assertions. |
+| `bun run test` | PASS, 917 tests / 60 files / 39,636 assertions; 15 tasks completed (1 executed, 14 cache hits). |
 | `bun test tests/jobs.test.ts` from `.pi` | PASS, 23 tests / 70 assertions, including timeout, cancellation and token-verified stop boundaries. |
 | `bun run typecheck` | PASS; `pi:typecheck` executed against the changed supervisor, other unchanged Moon tasks were cache hits. |
 | `bun run --cwd .pi loader:smoke` | PASS, 4 tests / 10 assertions. |
@@ -56,10 +57,11 @@ authority and lifecycle contract without support from the agreed one-shot design
 
 ## CI and PR status
 
-- Starter PR [#44](https://github.com/snorreks/starter/pull/44), base `main`, draft.
+- Starter pull request #44, base `main`, draft.
 - Portable package PR [#1](https://github.com/snorreks/.pi/pull/1), base `master`, draft.
-- `gh pr checks` at audit time reported only CodeRabbit “Review skipped: draft pull request” on each. No CI check is attached to either current head. The latest listed Starter CI failures were for older SHAs (`cb92b31…`, `bc069df…`, `081db9f…`), not the PR head. The portable repository had no branch run listed.
-- To request CI after the acceptance fixes: push updated heads, then mark each PR ready for review (this changes draft state and is intentionally pending). Recheck with `gh pr checks 44 --repo snorreks/starter` and `gh pr checks 1 --repo snorreks/.pi`. Do not merge or publish as part of this audit.
+- Portable package head `3b6edfcb4fab4ebd80b1c23e66bef385bd9e991b` has no CI run because that repository has no Actions workflows configured (`gh workflow list --repo snorreks/.pi` returned no workflows). Local commands in the validation table are the remaining available checks there.
+- A manual Starter CI run, [37680587080](https://github.com/snorreks/starter/actions/runs/37680587080), ran against predecessor head `62466bbf1349a9f6f9cc6a5d83bf39fbe1f8df27`: Compute integration and Worker integration passed. Static and unit lanes failed on the stale visual-manifest link, the stale report link, the report's exact repository/CI references, and the built-doctor test's assumption that Chromium was already installed. This working revision points the manifest at the committed audit, explicitly allowlists that dated provenance file, and injects a deterministic existing-path fixture into the doctor test. E2E had not reached tests; its GitHub-hosted runner remained in “Install Playwright's Chromium” for more than ten minutes. Required prerequisite is the Playwright Chromium download from the runner; exact command is `bun run --cwd apps/e2e browsers:install` (from the workflow). The manual run remains in progress while awaiting that step.
+- The current corrections must still receive a CI run on the final Starter head. Dispatch it without changing either PR's draft state with `gh workflow run 371335128 --repo snorreks/starter --ref feat/pi-global-project-tools`; inspect using `gh run list --repo snorreks/starter --branch feat/pi-global-project-tools` and `gh run watch <run-id> --repo snorreks/starter`. No merge or publication is part of this audit.
 
 ## Reruns
 
@@ -71,7 +73,7 @@ bun run test:composition-live
 bun run test:qa-live
 
 # Docker-backed full compute
-cd /home/sonny/Development/Projects/passion/starter/.worktrees/pi-global-project-tools
+cd <Starter worktree>
 bun run agent -- compute full --json
 
 # Remaining acceptance work: complete the direct account/notes, two-parent,

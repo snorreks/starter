@@ -42,28 +42,38 @@ describe('agent JSON facade', () => {
   });
 
   test('built doctor reports browser prerequisites without starting a runtime', async () => {
+    const originalChromiumPath = process.env.CHROMIUM_PATH;
+    // The doctor reports whether an explicit browser path resolves; this command
+    // does not launch Chromium. Inject an existing executable path so unit tests
+    // do not depend on the browser-install step that follows them in CI.
+    process.env.CHROMIUM_PATH = process.execPath;
     process.stdout.write = ((chunk: string | Uint8Array) => {
       output += String(chunk);
       return true;
     }) as typeof process.stdout.write;
-    expect(await main(['agent', 'doctor', '--profile', 'built', '--json'])).toBe(0);
-    const result = JSON.parse(output.trim());
-    expect(result).toMatchObject({
-      schemaVersion: 1,
-      operation: 'doctor',
-      profile: 'built',
-      status: 'passed',
-    });
-    expect(result.rerun).toContain(
-      'bun run agent -- runtime start --profile built --run <run-id> --json',
-    );
-    expect(result.summary).toContain('No runtime was started');
-    expect(result.capabilities.find((item: { id: string }) => item.id === 'browser')).toMatchObject(
-      {
+    try {
+      expect(await main(['agent', 'doctor', '--profile', 'built', '--json'])).toBe(0);
+      const result = JSON.parse(output.trim());
+      expect(result).toMatchObject({
+        schemaVersion: 1,
+        operation: 'doctor',
+        profile: 'built',
         status: 'passed',
-        remedy: null,
-      },
-    );
+      });
+      expect(result.rerun).toContain(
+        'bun run agent -- runtime start --profile built --run <run-id> --json',
+      );
+      expect(result.summary).toContain('No runtime was started');
+      expect(
+        result.capabilities.find((item: { id: string }) => item.id === 'browser'),
+      ).toMatchObject({ status: 'passed', remedy: null });
+    } finally {
+      if (originalChromiumPath === undefined) {
+        delete process.env.CHROMIUM_PATH;
+      } else {
+        process.env.CHROMIUM_PATH = originalChromiumPath;
+      }
+    }
   });
 
   test('review emits one JSON failure for a missing scoped capture without starting services', async () => {
