@@ -73,3 +73,21 @@ test('a live health response must match run identity and the declared web origin
     ),
   ).rejects.toThrow(/origin mismatch/);
 });
+
+test('an oversized streamed health response is cancelled at the identity limit', async () => {
+  const identity = descriptor();
+  let cancelled = false;
+  const response = new Response(
+    new ReadableStream<Uint8Array>({
+      pull(controller) {
+        controller.enqueue(new Uint8Array(16 * 1024));
+      },
+      cancel() {
+        cancelled = true;
+      },
+    }),
+  );
+
+  await expect(verifyRuntimeIdentity(identity, async () => response)).rejects.toThrow(/16 KiB/);
+  expect(cancelled).toBe(true);
+});

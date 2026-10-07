@@ -192,10 +192,7 @@ export const verifyRuntimeIdentity = async (
   if (!response.ok) {
     throw new Error(`Runtime identity probe returned HTTP ${response.status}.`);
   }
-  const text = await response.text();
-  if (Buffer.byteLength(text) > 16 * 1024) {
-    throw new Error('Runtime identity response exceeded 16 KiB.');
-  }
+  const text = await readBoundedResponseText(response, 16 * 1024);
   let body: unknown;
   try {
     body = JSON.parse(text);
@@ -215,4 +212,41 @@ export const verifyRuntimeIdentity = async (
     );
   }
   return { verified: true, runId: verifiedDescriptor.runId, origin, service: 'web' };
+};
+
+const readBoundedResponseText = async (response: Response, limit: number): Promise<string> => {
+  const declaredLength = Number(response.headers.get('content-length'));
+  if (Number.isFinite(declaredLength) && declaredLength > limit) {
+    await response.body?.cancel();
+    throw new Error(`Runtime identity response exceeded ${limit / 1024} KiB.`);
+  }
+  if (!response.body) {
+    return '';
+  }
+  const reader = response.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let size = 0;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) {
+        break;
+      }
+      size += value.byteLength;
+      if (size > limit) {
+        await reader.cancel();
+        throw new Error(`Runtime identity response exceeded ${limit / 1024} KiB.`);
+      }
+      chunks.push(value);
+    }
+  } finally {
+    reader.releaseLock();
+  }
+  const bytes = new Uint8Array(size);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return new TextDecoder().decode(bytes);
 };
