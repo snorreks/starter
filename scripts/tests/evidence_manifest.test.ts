@@ -315,12 +315,13 @@ describe('a stale matrix is caught, with the line that differs', () => {
     expect(after).toContain('no account one credential');
   });
 
-  test('an artifact path is escaped like every other cell', () => {
+  test('an artifact path stays visible without linking checkout-local output', () => {
     const rendered = renderCurrentMatrix({
       revision: 'f2374d1',
       rows: [row({ artifact: 'docs/evidence/run|1.json' })],
     });
     expect(rendered).toContain('run\\|1.json');
+    expect(rendered).not.toContain('[docs/evidence/run');
   });
 
   test('the rendered block excludes historical rows', () => {

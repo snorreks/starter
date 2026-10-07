@@ -259,8 +259,10 @@ export const renderCurrentMatrix = (manifest: EvidenceManifest): string => {
     .map((row) => {
       const result =
         row.kind === 'not-run' ? `NOT RUN — ${row.reason ?? 'no reason recorded'}` : row.result;
-      const link = cell(row.artifact);
-      const artifact = row.artifact === null ? '—' : `[${link}](${link})`;
+      // Artifacts often live in ignored, run-owned directories. Keep their exact
+      // locations in the evidence table without making checkout-local outputs
+      // look like durable repository links.
+      const artifact = row.artifact === null ? '—' : `\`${cell(row.artifact)}\``;
       // Leading and trailing pipes as explicit cells, so an unaffected row renders
       // byte-identically to before the escaping was added and the diff of this change
       // is the escaping, not a reformatting of every row.
