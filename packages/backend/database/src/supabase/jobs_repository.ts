@@ -28,9 +28,12 @@ export interface JobRepository {
     durationMs: number;
   }): Promise<boolean>;
 }
-export const createSupabaseJobRepository = (client: SupabaseClient<Database>): JobRepository => ({
+export const createSupabaseJobRepository = (
+  userClient: SupabaseClient<Database>,
+  serviceClient: SupabaseClient<Database>,
+): JobRepository => ({
   async admit(input) {
-    const { data, error } = await client.rpc('admit_encode_job', {
+    const { data, error } = await userClient.rpc('admit_encode_job', {
       p_job_id: input.id,
       p_fixture: input.fixture,
       p_preset: input.preset,
@@ -54,7 +57,7 @@ export const createSupabaseJobRepository = (client: SupabaseClient<Database>): J
     return { outcome, jobId: row.job_id };
   },
   async claim(jobId, attemptId, leaseSeconds = 300) {
-    const { data, error } = await client.rpc('claim_encode_job', {
+    const { data, error } = await serviceClient.rpc('claim_encode_job', {
       p_job_id: jobId,
       p_attempt_id: attemptId,
       p_lease_seconds: leaseSeconds,
@@ -65,7 +68,7 @@ export const createSupabaseJobRepository = (client: SupabaseClient<Database>): J
     return data === true;
   },
   async complete(input) {
-    const { data, error } = await client.rpc('finish_encode_job', {
+    const { data, error } = await serviceClient.rpc('finish_encode_job', {
       p_job_id: input.jobId,
       p_attempt_id: input.attemptId,
       p_output_key: input.outputKey,

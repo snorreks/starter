@@ -107,16 +107,25 @@ export const persistSupabaseOwnership = async (
     rendered.replace(/^shadow_port = 54320$/m, `shadow_port = ${allocation.ports.postgres + 6}`),
     { mode: 0o600 },
   );
-  await symlink(join(REPO_ROOT, 'supabase', 'migrations'), join(supabaseDir, 'migrations'));
-  await symlink(join(REPO_ROOT, 'supabase', 'tests'), join(supabaseDir, 'tests'));
-  await symlink(join(REPO_ROOT, 'supabase', 'seed.sql'), join(supabaseDir, 'seed.sql'));
+  for (const name of ['migrations', 'tests', 'seed.sql']) {
+    const link = join(supabaseDir, name);
+    await rm(link, { force: true });
+    await symlink(join(REPO_ROOT, 'supabase', name), link);
+  }
 };
+
+// Leave time for integration checks and teardown within the 25-minute CI job.
+const CLI_TIMEOUT_MS = 3 * 60 * 1000;
 
 const runCli = (allocation: SupabaseLocalAllocation, args: string[]): number => {
   const result = spawnSync(
     'bun',
     ['run', '--cwd', DATABASE_DIR, 'supabase', '--', '--workdir', projectDir(allocation), ...args],
-    { encoding: 'utf8', env: { ...process.env, SUPABASE_WORKDIR: projectDir(allocation) } },
+    {
+      encoding: 'utf8',
+      env: { ...process.env, SUPABASE_WORKDIR: projectDir(allocation) },
+      timeout: CLI_TIMEOUT_MS,
+    },
   );
   if (result.error !== undefined) {
     throw result.error;
@@ -141,6 +150,7 @@ const captureCli = (allocation: SupabaseLocalAllocation, args: string[]): string
     {
       encoding: 'utf8',
       env: { ...process.env, SUPABASE_WORKDIR: projectDir(allocation) },
+      timeout: CLI_TIMEOUT_MS,
     },
   );
   if (result.error !== undefined) {
@@ -232,9 +242,6 @@ export const startSupabaseLocal = async (
     dockerPath: probe.error === undefined && probe.status === 0 ? runtime : undefined,
   });
   await persistSupabaseOwnership(allocation);
-  const migrationLink = join(projectDir(allocation), 'supabase', 'migrations');
-  await rm(migrationLink, { recursive: true, force: true });
-  await symlink(join(REPO_ROOT, 'supabase', 'migrations'), migrationLink);
   const code = runCli(allocation, ['start']);
   if (code !== 0) {
     throw new Error(`Supabase local start failed with exit ${code}.`);
@@ -270,7 +277,9 @@ export const startSupabaseLocal = async (
       `Supabase readiness identity mismatch for ${allocation.projectId}; refusing to run tests against another stack.`,
     );
   }
-  const health = await fetch(`${allocation.urls.api}/auth/v1/health`);
+  const health = await fetch(`${allocation.urls.api}/auth/v1/health`, {
+    signal: AbortSignal.timeout(10_000),
+  });
   if (!health.ok) {
     throw new Error(
       `Supabase Auth readiness failed for ${allocation.projectId}: HTTP ${health.status}.`,

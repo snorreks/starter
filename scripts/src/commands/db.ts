@@ -43,10 +43,19 @@ export const dbCommand: Command = {
       case 'seed':
         return seedMain(rest);
       case 'test:database':
+        if (rest.length > 0) {
+          return fail(`Unexpected arguments for db ${subcommand}.\n${USAGE}`, EXIT.usage);
+        }
         return runDatabaseIntegration();
       case 'types':
+        if (rest.length > 0) {
+          return fail(`Unexpected arguments for db ${subcommand}.\n${USAGE}`, EXIT.usage);
+        }
         return runDatabaseTypeCommand('db:types');
       case 'types:check':
+        if (rest.length > 0) {
+          return fail(`Unexpected arguments for db ${subcommand}.\n${USAGE}`, EXIT.usage);
+        }
         return runDatabaseTypeCommand('db:types:check');
       default:
         return fail(`Unknown db subcommand "${subcommand}".\n${USAGE}`, EXIT.usage);

@@ -138,11 +138,25 @@ describe('transactional admission and attempt fencing in Postgres', () => {
     const userMessageId = crypto.randomUUID();
     const args = {
       p_conversation_id: conversation.id,
-      p_client_id: 'turn-same-key',
+      p_client_id: 'x'.repeat(118),
       p_request_fingerprint: fingerprint,
       p_user_message_id: userMessageId,
       p_content: 'hello',
     };
+    for (const clientId of ['', 'x'.repeat(119), 'assistant:reserved']) {
+      const admission = await userA.client.rpc('admit_chat_generation', {
+        ...args,
+        p_client_id: clientId,
+      });
+      expect(admission.error?.code).toBe('22023');
+      const completion = await admin.rpc('complete_chat_generation', {
+        p_conversation_id: conversation.id,
+        p_client_id: clientId,
+        p_attempt: 1,
+        p_content: 'answer',
+      });
+      expect(completion.error?.code).toBe('22023');
+    }
     const contenders = await Promise.all(
       Array.from({ length: 8 }, () => userA.client.rpc('admit_chat_generation', args)),
     );
@@ -196,6 +210,14 @@ describe('transactional admission and attempt fencing in Postgres', () => {
     });
     expect(completed.error).toBeNull();
     expect(completed.data).toBe(admittedRow.assistant_message_id);
+    const assistant = await admin
+      .from('messages')
+      .select('client_id')
+      .eq('id', admittedRow.assistant_message_id)
+      .single();
+    expect(assistant.error).toBeNull();
+    expect(assistant.data?.client_id).toBe(`assistant:${args.p_client_id}`);
+    expect(assistant.data?.client_id).toHaveLength(128);
 
     const distinct = await Promise.all(
       Array.from({ length: 7 }, async (_, i) =>

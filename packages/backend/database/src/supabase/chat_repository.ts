@@ -30,7 +30,7 @@ const toDbId = (value: string): string => value.slice(value.indexOf('_') + 1);
 
 export const createSupabaseChatRepository = (
   client: SupabaseClient<Database>,
-  adminClient: SupabaseClient<Database> = client,
+  adminClient?: SupabaseClient<Database>,
 ): ChatRepository => ({
   async createConversation(ownerId, title) {
     const { data, error } = await client
@@ -134,6 +134,9 @@ export const createSupabaseChatRepository = (
     };
   },
   async completeGeneration(input) {
+    if (adminClient === undefined) {
+      throw new Error('Supabase chat completion requires an explicit admin client.');
+    }
     const { data, error } = await adminClient.rpc('complete_chat_generation', {
       p_conversation_id: toDbId(input.conversationId),
       p_client_id: input.clientId,

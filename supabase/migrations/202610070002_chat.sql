@@ -62,6 +62,6 @@ create policy conversations_delete_owner on public.conversations for delete to a
 create policy messages_select_owner on public.messages for select to authenticated using (
   exists (select 1 from public.conversations c where c.id = conversation_id and c.owner_id = (select auth.uid()))
 );
-revoke all on public.conversations, public.messages from anon;
+revoke all on public.conversations, public.messages from anon, authenticated;
 grant select, insert, update, delete on public.conversations to authenticated;
 grant select on public.messages to authenticated;

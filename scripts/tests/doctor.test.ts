@@ -112,3 +112,11 @@ if (process.platform !== 'win32') {
     expect(existsSync(marker)).toBe(true);
   });
 }
+
+test('the database profile requires Docker without depending on the media crate', () => {
+  const checks = profileCheckNames('database');
+  expect(checks).toContain('docker');
+  expect(checks).toContain('docker-engine');
+  expect(checks).not.toContain('cargo-media');
+  expect(profileCheckNames('compute')).toContain('cargo-media');
+});

@@ -62,8 +62,10 @@ Import the additive adapters from `@starter/database/supabase`:
 - `createSupabaseChatRepository(userClient, adminClient?)` implements
   `createConversation(ownerId, title)`, `listConversations(ownerId, page)`,
   `listMessages(ownerId, conversationId, page)`, `admitGeneration(input)` and
-  `completeGeneration(input)`. Keep the admin client server only.
-- `createSupabaseJobRepository(serviceClient)` implements `admit(input)`,
+  `completeGeneration(input)`. Completion requires an explicit admin client;
+  it throws a configuration error if omitted. Keep the admin client server only.
+- `createSupabaseJobRepository(userClient, serviceClient)` uses the authenticated
+  caller client for `admit(input)` and the server only service-role client for
   `claim(jobId, attemptId, leaseSeconds?)` and `complete(input)`. The database
   RPC remains the authority for quotas, leases, attempt fencing and completion.
 

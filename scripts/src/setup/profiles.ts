@@ -268,7 +268,9 @@ export const profileChecks = (profile: Profile, runProbe = probe): Check[] => {
           }
         : {}),
     });
+  }
 
+  if (profile === 'compute') {
     // From `REPO_ROOT`, not the working directory.
     //
     // `join('apps', 'backend', 'media', 'Cargo.toml')` is relative to wherever the

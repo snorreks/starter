@@ -8,7 +8,7 @@ as $$
 declare v_owner uuid := auth.uid(); v_row private.chat_generations%rowtype; v_bucket timestamptz := date_trunc('hour', now()); v_created boolean;
 begin
   if v_owner is null then raise exception using errcode = '42501', message = 'authenticated identity required'; end if;
-  if length(p_client_id) not between 1 and 128 or p_request_fingerprint !~ '^[a-f0-9]{64}$' or length(p_content) not between 1 and 8000 then
+  if p_client_id is null or length(p_client_id) not between 1 and 118 or p_client_id like 'assistant:%' or p_request_fingerprint !~ '^[a-f0-9]{64}$' or length(p_content) not between 1 and 8000 then
     raise exception using errcode = '22023', message = 'invalid chat generation input';
   end if;
   if not exists(select 1 from public.conversations c where c.id = p_conversation_id and c.owner_id = v_owner) then
@@ -53,6 +53,9 @@ as $$
 declare v_owner uuid; v_id uuid;
 begin
   if auth.role() <> 'service_role' then raise exception using errcode='42501', message='service role required'; end if;
+  if p_client_id is null or length(p_client_id) not between 1 and 118 or p_client_id like 'assistant:%' then
+    raise exception using errcode='22023', message='invalid chat generation input';
+  end if;
   select owner_id,assistant_message_id into v_owner,v_id from private.chat_generations
     where conversation_id=p_conversation_id and client_id=p_client_id for update;
   if v_owner is null then raise exception using errcode='P0002', message='chat generation not found'; end if;

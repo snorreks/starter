@@ -18,6 +18,7 @@ import { join } from 'node:path';
 import { ciCommand } from '../src/commands/ci.ts';
 import { configureCommand } from '../src/commands/configure.ts';
 import { contractCommand } from '../src/commands/contracts.ts';
+import { dbCommand } from '../src/commands/db.ts';
 import { guardCommand } from '../src/commands/guard.ts';
 import { secretsCommand } from '../src/commands/secrets.ts';
 import { setupCommand } from '../src/commands/setup.ts';
@@ -325,4 +326,12 @@ describe('setup command', () => {
     expect(printed).toContain('Profile: ios');
     expect(existsSync(join(REPO_ROOT, '.env'))).toBe(before);
   }, 60_000);
+});
+
+describe('database commands reject extra arguments before launching local services', () => {
+  for (const subcommand of ['test:database', 'types', 'types:check']) {
+    test(`${subcommand} rejects unexpected arguments`, async () => {
+      expect(await quiet(() => dbCommand.run([subcommand, '--unexpected']))).toBe(EXIT.usage);
+    });
+  }
 });

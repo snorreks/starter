@@ -532,7 +532,7 @@
       "count": null,
       "recordedAt": "2026-10-07T02:14:06.000Z",
       "artifact": null,
-      "reason": "The dedicated compute suite was not run; the integrated e2e:full lane did run a real browser-to-Workflow-to-FFmpeg encode."
+      "reason": "The dedicated compute suite was not run."
     },
     {
       "capability": "Build and bundle boundary check",
