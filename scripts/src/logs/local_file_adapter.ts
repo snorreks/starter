@@ -76,7 +76,11 @@ export const localLogPath = (
 export const parseNdjson = (contents: string): LogEvent[] => {
   const events: LogEvent[] = [];
   for (const line of contents.split('\n')) {
-    const trimmed = line.trim();
+    const raw = line.trim();
+    // Wrangler prefixes platform-console JSON with its stream name while
+    // `dev-app` captures the child output verbatim. Remove only that known
+    // envelope; banners and malformed records remain ignored below.
+    const trimmed = raw.startsWith('stdout: ') ? raw.slice('stdout: '.length) : raw;
     if (!trimmed.startsWith('{')) {
       continue;
     }

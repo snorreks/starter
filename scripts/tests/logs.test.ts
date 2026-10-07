@@ -409,6 +409,11 @@ describe('parseNdjson', () => {
     expect(parseNdjson(ndjson)).toHaveLength(FIXTURES.length);
   });
 
+  test('reads structured Worker records prefixed by wrangler stdout labels', () => {
+    const fixture = JSON.stringify(FIXTURES[0]);
+    expect(parseNdjson(`stdout: ${fixture}\n[wrangler:info] GET / 200 OK`)).toEqual([FIXTURES[0]]);
+  });
+
   test('every fixture validates against the canonical schema', () => {
     for (const fixture of FIXTURES) {
       expect(Value.Check(LogEventSchema, fixture)).toBe(true);

@@ -232,8 +232,12 @@ ls -la .wrangler/logs/
 `bun run dev` writes the same stream from both modes. Under Node there is no
 platform console capture, so the server writes NDJSON itself; under workerd the
 platform captures console output and wrangler prints it as JSON. Either way the
-reader skips anything that is not a complete JSON object — so a file of banners
-means the capture failed, not that there are no events.
+reader skips anything that is not a complete JSON object. It strips Wrangler's
+`stdout: ` label before parsing structured workerd records. For an owned `dev` or
+`built` run, pass `--run <run-id>` to read only that run's log file; browser network
+entries and matching Worker request records can then be compared by route and time.
+A file of banners with no records means capture failed, not that there were no
+events.
 
 ## In CI
 
