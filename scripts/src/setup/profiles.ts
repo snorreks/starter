@@ -34,24 +34,14 @@ export type Profile = (typeof PROFILES)[number];
  */
 const CORE_PROFILE_CHECKS: Record<Profile, readonly string[]> = {
   // The credential-free core. No Docker, no Xcode, no Android SDK, no cloud key.
-  web: ['bun', 'pins', 'proto', 'node', 'wrangler', 'config', 'playwright', 'chromium', 'sops'],
+  web: ['bun', 'pins', 'node', 'wrangler', 'config', 'playwright', 'chromium', 'sops'],
   // Desktop shell: Rust toolchain and, on Linux, the webview development files.
-  native: ['bun', 'pins', 'proto', 'node', 'wrangler', 'config', 'rust', 'webview', 'cargo-native'],
-  android: ['bun', 'pins', 'proto', 'node', 'rust', 'android-sdk', 'android-jdk', 'cargo-native'],
-  ios: ['bun', 'pins', 'proto', 'node', 'rust', 'xcode', 'apple-toolchain'],
+  native: ['bun', 'pins', 'node', 'wrangler', 'config', 'rust', 'webview', 'cargo-native'],
+  android: ['bun', 'pins', 'node', 'rust', 'android-sdk', 'android-jdk', 'cargo-native'],
+  ios: ['bun', 'pins', 'node', 'rust', 'xcode', 'apple-toolchain'],
   // Real containers, locally: a Docker-compatible engine is the only prerequisite.
-  compute: [
-    'bun',
-    'pins',
-    'proto',
-    'node',
-    'wrangler',
-    'config',
-    'docker',
-    'docker-engine',
-    'cargo-media',
-  ],
-  database: ['bun', 'pins', 'proto', 'docker', 'docker-engine'],
+  compute: ['bun', 'pins', 'node', 'wrangler', 'config', 'docker', 'docker-engine', 'cargo-media'],
+  database: ['bun', 'pins', 'docker', 'docker-engine'],
 };
 
 export const isProfile = (value: unknown): value is Profile =>

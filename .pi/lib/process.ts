@@ -34,6 +34,8 @@ export interface BoundedRunOptions {
   signal?: AbortSignal;
   /** Where to spill overflow. Defaults under `.pi/artifacts/`. */
   artifactRoot?: string;
+  /** Explicitly reduced child environment when a command needs no caller secrets. */
+  env?: NodeJS.ProcessEnv;
 }
 
 export interface BoundedRunResult {
@@ -188,6 +190,7 @@ export const runBounded = (
   return new Promise<BoundedRunResult>((resolve, reject) => {
     const child = spawn(command, [...args], {
       cwd: options.cwd,
+      env: options.env,
       stdio: ['ignore', 'pipe', 'pipe'],
       // Its own process group, so a kill reaches the whole tree.
       //

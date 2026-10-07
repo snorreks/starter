@@ -36,6 +36,7 @@ const COMMANDS: Record<string, CommandLoader> = {
   setup: async () => (await import('./commands/setup.ts')).setupCommand,
   smoke: async () => (await import('./commands/smoke.ts')).smokeCommand,
   workflows: async () => (await import('./commands/workflows.ts')).workflowsCommand,
+  worktree: async () => (await import('./commands/worktree.ts')).worktreeCommand,
   update: async () => (await import('./commands/update.ts')).updateCommand,
   evidence: async () => (await import('./commands/evidence.ts')).evidenceCommand,
   e2e: async () => (await import('./commands/e2e.ts')).e2eCommand,
