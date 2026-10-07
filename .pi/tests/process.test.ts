@@ -44,6 +44,33 @@ afterEach(() => {
 });
 
 describe('runBounded', () => {
+  test('writes a bounded JSON payload to child stdin without placing it in argv', async () => {
+    const result = await runBounded('sh', ['-c', 'cat'], {
+      cwd: process.cwd(),
+      timeoutMs: 5_000,
+      maxBytes: 1024,
+      input: '{"url":"http://127.0.0.1/private?token=redacted"}',
+    });
+    expect(result.code).toBe(0);
+    expect(result.stdout).toBe('{"url":"http://127.0.0.1/private?token=redacted"}');
+  });
+
+  test('refuses an oversized stdin payload before starting the child', async () => {
+    let message = '';
+    try {
+      await runBounded('definitely-not-a-real-binary', [], {
+        cwd: process.cwd(),
+        timeoutMs: 500,
+        maxBytes: 1024,
+        input: 'x'.repeat(129),
+        maxInputBytes: 128,
+      });
+    } catch (error) {
+      message = (error as Error).message;
+    }
+    expect(message).toContain('stdin exceeded its 128 byte limit');
+  });
+
   test('captures stdout and the exit status', async () => {
     const root = artifactRoot();
     cleanups.push(root);

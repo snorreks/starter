@@ -67,15 +67,21 @@ const validate = (value: unknown, operation: string): AgentResponse => {
 /** Invoke a project authority through argv and preserve its real exit/status contract. */
 export async function invokeStarterAgent(
   args: readonly string[],
-  options: { operation: string; timeoutMs?: number; signal?: AbortSignal },
+  options: { operation: string; timeoutMs?: number; signal?: AbortSignal; input?: string },
 ): Promise<{ response: AgentResponse; exitCode: number }> {
-  if (!OPERATION.test(options.operation) || args.length === 0 || args.length > 16) {
+  if (
+    !OPERATION.test(options.operation) ||
+    args.length === 0 ||
+    args.length > 16 ||
+    (options.input !== undefined && Buffer.byteLength(options.input) > 32 * 1024)
+  ) {
     throw new Error('Invalid Starter agent operation request.');
   }
   const child = await runBounded('bun', ['run', 'agent', '--', ...args], {
     cwd: REPO_ROOT,
     timeoutMs: options.timeoutMs ?? 30_000,
     maxBytes: 512 * 1024,
+    ...(options.input === undefined ? {} : { input: options.input, maxInputBytes: 32 * 1024 }),
     signal: options.signal,
   });
   if (child.timedOut || child.cancelled) {

@@ -31,6 +31,14 @@ describe('agent JSON facade', () => {
     ).toMatchObject({ status: 'not-run', remedy: expect.stringContaining('owned runtime') });
     expect(result.rerun).toContain('bun run agent -- describe --json');
     expect(result.rerun).toContain('bun run agent -- visual review --run <run-id> --json');
+    expect(
+      result.capabilities.find(
+        (capability: { id: string }) => capability.id === 'interactive-capture-import',
+      ),
+    ).toMatchObject({
+      status: 'passed',
+      owner: expect.stringContaining('import_interactive_capture'),
+    });
   });
 
   test('built doctor reports the unavailable owned runtime and exits nonzero', async () => {

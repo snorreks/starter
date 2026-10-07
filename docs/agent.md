@@ -65,9 +65,14 @@ unavailable and exits 3 until the owned runtime lifecycle exists.
 the verified run ID, manifest and screenshot hashes. Review remains a separate,
 explicit call: `bun run agent -- visual review --run <id> --json`. It uses the same
 manifest reviewer as `bun run e2e:visual:review -- --run <id>` and never runs
-automatically after capture. The Pi `repo_task` namespace exposes these as
-`visual_capture` and `visual_review` actions. Review output preserves the grade,
-provider/model, cache provenance, report hashes and exact rerun command.
+automatically after capture. The `agent visual import --input-json --json` boundary
+also imports a current browser screenshot after checking its original SHA-256,
+URL, viewport/theme and optional normalized crop. It labels the record `interactive`,
+keeps it outside declared scenario coverage and baselines, and still requires an
+explicit review call. The Pi `repo_task` namespace exposes these as
+`visual_capture`, `visual_import` and `visual_review` actions. Review output
+preserves the grade, provider/model, cache provenance, capture kind/crop metadata,
+report hashes and exact rerun command.
 
 The visual review config takes `E2E_VISION_API_KEY` as an optional per-project
 override, then reads `OPENROUTER_API_KEY` from the process environment. Keep that
@@ -165,6 +170,7 @@ matters more than it sounds.
 repo_task { action: "list", params: { query: "test" } }
 repo_task { action: "run",  params: { task: "pi:test" } }
 repo_task { action: "visual_capture", params: {} }
+repo_task { action: "visual_import", params: { runId: "interactive_…", file: "/private/path/capture.png", sha256: "<sha256>", url: "http://127.0.0.1:4173/notes", heading: "Notes", requirements: ["The saved note is visible."], viewport: "desktop", theme: "light" } }
 repo_task { action: "visual_review", params: { runId: "agent_visual_…" } }
 repo_task { action: "compute_full", params: {} }
 ```
@@ -184,7 +190,11 @@ Visual capture runs the existing Playwright matrix through `agent visual capture
 and verifies every referenced image against its manifest hash. It does not review
 screenshots. `visual_review` is a separate operation that may contact the
 configured provider; a failed grade remains failed and a review requiring human
-attention remains `needs-human-review`.
+attention remains `needs-human-review`. `visual_import` copies the browser's PNG
+only after verifying the supplied original hash. It strips query and fragment data
+from the recorded URL, preserves optional crop coordinates as metadata without
+changing the screenshot bytes, and marks the capture exploratory. It does not prove
+runtime identity, interaction behavior, scenario coverage, or baseline approval.
 The `compute_full` action runs the real Docker-backed browser-to-FFmpeg scenario,
 stores the encoded output and probe report under its owned run, and verifies the
 output bytes against the recorded SHA-256 before it reports success. It requires a

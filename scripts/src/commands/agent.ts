@@ -5,11 +5,17 @@ import { type Command, EXIT, fail, wantsHelp } from '../shared/command.ts';
 import { REPO_ROOT } from '../shared/paths.ts';
 import { runBounded } from '../shared/run_bounded.ts';
 import { runScope } from '../shared/run_scope.ts';
+import {
+  importInteractiveCapture,
+  type CaptureCrop,
+  type InteractiveCaptureOptions,
+} from '../visual/import_interactive_capture.ts';
 import { reviewCaptureManifest } from '../visual/review.ts';
 
 const USAGE = `agent describe --json
 agent doctor --profile built --json
 agent visual capture --json
+agent visual import --run <id> --file <png> --sha256 <hex> --url <url> --heading <text> --requirement <text> --viewport desktop|mobile --theme light|dark --json
 agent visual review --run <id> --json [--no-cache] [--gate]
 agent compute full --json
 
@@ -32,7 +38,7 @@ const describe = {
   limitations: [
     'Runtime profiles are unavailable until the reusable owned runtime authority is implemented.',
     'Interactive browser actions are available only from the portable workflow package and have no project runtime identity.',
-    'Visual capture/review use the existing E2E matrix and manifest reviewer; interactive browser captures cannot yet be imported.',
+    'Interactive captures can be imported for explicitly labeled review, but do not count as declared scenario coverage or baselines.',
     'Persistent runtime start/status/stop profiles remain unavailable; the one-shot full compute journey uses the real Docker-backed E2E authority.',
   ],
   rerun: [
@@ -77,10 +83,9 @@ const describe = {
     },
     {
       id: 'interactive-capture-import',
-      status: 'not-run',
-      owner: null,
-      remedy:
-        'Add hash-validated interactive capture import after project-owned browser identity is available.',
+      status: 'passed',
+      owner: 'scripts/src/visual/import_interactive_capture.ts',
+      remedy: null,
     },
     {
       id: 'compute:full',
@@ -122,6 +127,199 @@ const doctorBuilt = {
     },
   ],
 } as const;
+
+type InteractiveImportParse =
+  | { options: Parameters<typeof importInteractiveCapture>[0] }
+  | { error: string };
+
+const parseInteractiveImport = (argv: string[]): InteractiveImportParse => {
+  const single = new Map<string, string>();
+  const repeated = new Map<string, string[]>([
+    ['--requirement', []],
+    ['--control', []],
+    ['--content', []],
+  ]);
+  let jsonCount = 0;
+  const known = new Set([
+    '--run',
+    '--file',
+    '--sha256',
+    '--url',
+    '--heading',
+    '--requirement',
+    '--control',
+    '--content',
+    '--viewport',
+    '--theme',
+    '--crop',
+    '--json',
+  ]);
+  for (let index = 0; index < argv.length; index += 1) {
+    const flag = argv[index];
+    if (flag === '--json') {
+      jsonCount += 1;
+      continue;
+    }
+    if (flag === undefined || !known.has(flag)) {
+      return { error: `Unsupported interactive import argument ${JSON.stringify(flag)}.` };
+    }
+    const value = argv[index + 1];
+    if (value === undefined || value.startsWith('--')) {
+      return { error: `Interactive import argument ${flag} needs a value.` };
+    }
+    const list = repeated.get(flag);
+    if (list !== undefined) {
+      list.push(value);
+      index += 1;
+      continue;
+    }
+    if (single.has(flag)) {
+      return { error: `Interactive import argument ${flag} may appear only once.` };
+    }
+    single.set(flag, value);
+    index += 1;
+  }
+  const required = ['--run', '--file', '--sha256', '--url', '--heading', '--viewport', '--theme'];
+  const missing = required.filter((flag) => !single.has(flag));
+  if (missing.length > 0 || jsonCount !== 1 || repeated.get('--requirement')?.length === 0) {
+    return {
+      error: `Interactive import requires ${[...missing, ...(jsonCount !== 1 ? ['--json once'] : []), ...(repeated.get('--requirement')?.length === 0 ? ['at least one --requirement'] : [])].join(', ')}.`,
+    };
+  }
+  const viewport = single.get('--viewport');
+  const theme = single.get('--theme');
+  if (viewport !== 'desktop' && viewport !== 'mobile') {
+    return { error: '--viewport must be desktop or mobile.' };
+  }
+  if (theme !== 'light' && theme !== 'dark') {
+    return { error: '--theme must be light or dark.' };
+  }
+  let crop: CaptureCrop | undefined;
+  const cropValue = single.get('--crop');
+  if (cropValue !== undefined) {
+    const values = cropValue.split(',').map(Number);
+    if (values.length !== 4 || values.some((value) => !Number.isFinite(value))) {
+      return { error: '--crop must be four comma-separated normalized numbers: x,y,width,height.' };
+    }
+    crop = {
+      x: values[0] as number,
+      y: values[1] as number,
+      width: values[2] as number,
+      height: values[3] as number,
+    };
+  }
+  return {
+    options: {
+      runId: single.get('--run') as string,
+      file: single.get('--file') as string,
+      sha256: single.get('--sha256') as string,
+      url: single.get('--url') as string,
+      heading: single.get('--heading') as string,
+      requirements: repeated.get('--requirement') as string[],
+      controls: repeated.get('--control') ?? [],
+      content: repeated.get('--content') ?? [],
+      viewport,
+      theme,
+      ...(crop === undefined ? {} : { crop }),
+    },
+  };
+};
+
+const readBoundedStdin = async (maximumBytes: number): Promise<string> => {
+  const reader = Bun.stdin.stream().getReader();
+  const chunks: Uint8Array[] = [];
+  let bytes = 0;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      bytes += value.byteLength;
+      if (bytes > maximumBytes) {
+        throw new Error(`Interactive import stdin exceeds its ${maximumBytes} byte limit.`);
+      }
+      chunks.push(value);
+    }
+  } finally {
+    reader.releaseLock();
+  }
+  return new TextDecoder('utf-8', { fatal: true }).decode(Buffer.concat(chunks, bytes));
+};
+
+const parseInteractiveImportJson = (value: unknown): InteractiveImportParse => {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    return { error: 'Interactive import JSON must be an object.' };
+  }
+  const data = value as Record<string, unknown>;
+  const allowed = new Set([
+    'runId',
+    'file',
+    'sha256',
+    'url',
+    'heading',
+    'requirements',
+    'controls',
+    'content',
+    'viewport',
+    'theme',
+    'crop',
+  ]);
+  const unknown = Object.keys(data).filter((key) => !allowed.has(key));
+  if (unknown.length > 0) {
+    return { error: `Interactive import JSON contains unknown keys: ${unknown.join(', ')}.` };
+  }
+  const strings = ['runId', 'file', 'sha256', 'url', 'heading'];
+  const missing = strings.filter((key) => typeof data[key] !== 'string');
+  if (
+    missing.length > 0 ||
+    !Array.isArray(data.requirements) ||
+    !data.requirements.every((item) => typeof item === 'string') ||
+    (data.controls !== undefined &&
+      (!Array.isArray(data.controls) ||
+        !data.controls.every((item) => typeof item === 'string'))) ||
+    (data.content !== undefined &&
+      (!Array.isArray(data.content) || !data.content.every((item) => typeof item === 'string'))) ||
+    (data.viewport !== 'desktop' && data.viewport !== 'mobile') ||
+    (data.theme !== 'light' && data.theme !== 'dark')
+  ) {
+    return {
+      error: `Interactive import JSON has invalid or missing fields: ${missing.join(', ')}.`,
+    };
+  }
+  let crop: CaptureCrop | undefined;
+  if (data.crop !== undefined) {
+    if (typeof data.crop !== 'object' || data.crop === null || Array.isArray(data.crop)) {
+      return { error: 'Interactive import JSON crop must be an object.' };
+    }
+    const source = data.crop as Record<string, unknown>;
+    if (
+      Object.keys(source).some((key) => !['x', 'y', 'width', 'height'].includes(key)) ||
+      !['x', 'y', 'width', 'height'].every((key) => typeof source[key] === 'number')
+    ) {
+      return { error: 'Interactive import JSON crop needs only numeric x, y, width and height.' };
+    }
+    crop = {
+      x: source.x as number,
+      y: source.y as number,
+      width: source.width as number,
+      height: source.height as number,
+    };
+  }
+  return {
+    options: {
+      runId: data.runId as string,
+      file: data.file as string,
+      sha256: data.sha256 as string,
+      url: data.url as string,
+      heading: data.heading as string,
+      requirements: data.requirements as string[],
+      controls: (data.controls ?? []) as string[],
+      content: (data.content ?? []) as string[],
+      viewport: data.viewport,
+      theme: data.theme,
+      ...(crop === undefined ? {} : { crop }),
+    } as InteractiveCaptureOptions,
+  };
+};
 
 export const agentCommand: Command = {
   name: 'agent',
@@ -258,6 +456,88 @@ export const agentCommand: Command = {
               'A successful browser process without a verified run manifest is not a pass.',
             ],
             rerun: [`bun run agent -- visual capture --json`],
+          })}\n`,
+        );
+        return EXIT.failed;
+      }
+    }
+    if (argv[0] === 'visual' && argv[1] === 'import') {
+      let parsed: InteractiveImportParse;
+      if (argv.includes('--input-json')) {
+        if (argv.length !== 4 || argv[2] !== '--input-json' || argv[3] !== '--json') {
+          return fail(
+            `Use --input-json --json with one JSON object on stdin.\n\n${USAGE}`,
+            EXIT.usage,
+          );
+        }
+        try {
+          parsed = parseInteractiveImportJson(JSON.parse(await readBoundedStdin(32 * 1024)));
+        } catch (error) {
+          return fail(`Invalid interactive import JSON: ${(error as Error).message}`, EXIT.usage);
+        }
+      } else {
+        parsed = parseInteractiveImport(argv.slice(2));
+      }
+      if ('error' in parsed) {
+        return fail(`${parsed.error}\n\n${USAGE}`, EXIT.usage);
+      }
+      const options = parsed.options;
+      if (options === undefined) {
+        return fail(`Invalid interactive capture import.\n\n${USAGE}`, EXIT.usage);
+      }
+      const rerun = [`bun run agent -- visual review --run ${options.runId} --json`];
+      try {
+        const imported = await importInteractiveCapture(options);
+        const manifest = await readFile(imported.manifestPath);
+        process.stdout.write(
+          `${JSON.stringify({
+            schemaVersion: 1,
+            operation: 'visual-import',
+            status: 'passed',
+            runId: imported.runId,
+            checkout: REPO_ROOT,
+            summary: `Imported one ${imported.dimensions.width}x${imported.dimensions.height} interactive screenshot; declared scenario coverage and baselines are unchanged.`,
+            artifacts: [
+              {
+                kind: 'interactive-screenshot',
+                path: imported.relativeCapturePath,
+                sha256: imported.sha256,
+                bytes: imported.bytes,
+              },
+              {
+                kind: 'interactive-manifest',
+                path: relative(REPO_ROOT, imported.manifestPath),
+                sha256: createHash('sha256').update(manifest).digest('hex'),
+                bytes: manifest.byteLength,
+              },
+            ],
+            limitations: [
+              'Interactive screenshots are exploratory review inputs, not declared scenario coverage, runtime identity proof, or baseline approval.',
+              'Visual review requires E2E_VISION_MODEL and a configured E2E_VISION_API_KEY or OPENROUTER_API_KEY.',
+            ],
+            rerun,
+            capture: {
+              url: imported.url,
+              dimensions: imported.dimensions,
+              crop: imported.crop,
+              originalSha256: imported.sha256,
+              captureKind: 'interactive',
+            },
+          })}\n`,
+        );
+        return EXIT.ok;
+      } catch (error) {
+        process.stdout.write(
+          `${JSON.stringify({
+            schemaVersion: 1,
+            operation: 'visual-import',
+            status: 'error',
+            runId: options.runId,
+            checkout: REPO_ROOT,
+            summary: (error as Error).message,
+            artifacts: [],
+            limitations: ['No manifest or review result was accepted.'],
+            rerun: ['bun run agent -- visual import --run <new-run-id> ... --json'],
           })}\n`,
         );
         return EXIT.failed;
@@ -463,6 +743,8 @@ export const agentCommand: Command = {
         }
         const provenance = report.results.map((item) => ({
           scenarioId: item.scenarioId,
+          captureKind: item.captureKind,
+          crop: item.crop,
           project: item.project,
           originalSha256: item.originalSha256,
           provider: item.provider,

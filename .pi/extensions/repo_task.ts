@@ -240,6 +240,68 @@ export default function repoTaskExtension(pi: ExtensionAPI): void {
       }),
 
       defineAction({
+        action: 'visual_import',
+        summary:
+          'Import a hash-verified exploratory browser screenshot for explicit visual review; it does not count as scenario coverage or a baseline.',
+        parameters: Type.Object(
+          {
+            runId: Type.String({
+              minLength: 1,
+              maxLength: 64,
+              pattern: '^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$',
+            }),
+            file: Type.String({ minLength: 1, maxLength: 2048 }),
+            sha256: Type.String({ pattern: '^[a-f0-9]{64}$' }),
+            url: Type.String({ minLength: 1, maxLength: 2048 }),
+            heading: Type.String({ minLength: 1, maxLength: 200 }),
+            requirements: Type.Array(Type.String({ minLength: 1, maxLength: 300 }), {
+              minItems: 1,
+              maxItems: 10,
+            }),
+            controls: Type.Optional(
+              Type.Array(Type.String({ minLength: 1, maxLength: 300 }), { maxItems: 20 }),
+            ),
+            content: Type.Optional(
+              Type.Array(Type.String({ minLength: 1, maxLength: 300 }), { maxItems: 20 }),
+            ),
+            viewport: Type.Union([Type.Literal('desktop'), Type.Literal('mobile')]),
+            theme: Type.Union([Type.Literal('light'), Type.Literal('dark')]),
+            crop: Type.Optional(
+              Type.Object(
+                {
+                  x: Type.Number({ minimum: 0, maximum: 1 }),
+                  y: Type.Number({ minimum: 0, maximum: 1 }),
+                  width: Type.Number({ exclusiveMinimum: 0, maximum: 1 }),
+                  height: Type.Number({ exclusiveMinimum: 0, maximum: 1 }),
+                },
+                { additionalProperties: false },
+              ),
+            ),
+          },
+          { additionalProperties: false },
+        ),
+        async execute(_toolCallId, params, signal) {
+          try {
+            const { response, exitCode } = await invokeStarterAgent(
+              ['visual', 'import', '--input-json', '--json'],
+              {
+                operation: 'visual-import',
+                timeoutMs: 30_000,
+                input: JSON.stringify(params),
+                signal,
+              },
+            );
+            return responseToolResult(response, exitCode);
+          } catch (error) {
+            return fail(`Interactive capture import failed: ${(error as Error).message}`, {
+              operation: 'visual-import',
+              runId: params.runId,
+            });
+          }
+        },
+      }),
+
+      defineAction({
         action: 'visual_review',
         summary: 'Explicitly review one stored visual run through the configured provider.',
         parameters: Type.Object({

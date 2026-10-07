@@ -33,5 +33,5 @@
     }
   },
   "profiles": {},
-  "capabilities": ["repo_task", "dev_process", "read_logs", "agent:describe", "agent:doctor", "agent:visual-capture", "agent:review", "agent:compute-full"]
+  "capabilities": ["repo_task", "dev_process", "read_logs", "agent:describe", "agent:doctor", "agent:visual-capture", "agent:visual-import", "agent:review", "agent:compute-full"]
 }
