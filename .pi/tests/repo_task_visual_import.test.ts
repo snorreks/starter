@@ -3,14 +3,16 @@ import { createHash, randomUUID } from 'node:crypto';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import type { ExtensionAPI } from '@earendil-works/pi-coding-agent';
 import { fileURLToPath } from 'node:url';
+import type { ExtensionAPI } from '@earendil-works/pi-coding-agent';
 import repoTaskExtension from '../extensions/repo_task.ts';
 
 const REPO_ROOT = fileURLToPath(new URL('../../', import.meta.url)).replace(/\/$/, '');
 const scratch: string[] = [];
 afterEach(async () => {
-  for (const path of scratch.splice(0)) await rm(path, { recursive: true, force: true });
+  for (const path of scratch.splice(0)) {
+    await rm(path, { recursive: true, force: true });
+  }
 });
 
 test('repo_task imports a verified interactive browser capture through the project CLI', async () => {

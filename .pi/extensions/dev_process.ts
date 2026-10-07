@@ -20,11 +20,13 @@
 // It shells out rather than importing: a tool that links the CLI's internals and
 // a tool that runs the CLI drift apart the first time the CLI gains an option.
 
+import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import type { AgentToolResult, ExtensionAPI } from '@earendil-works/pi-coding-agent';
 import { Type } from 'typebox';
 import { sessionContext } from '../lib/herdr_cli.ts';
 import { type JobSnapshot, listJobs, readJob, startJob, stopJob, tailJobLog } from '../lib/jobs.ts';
+import { runBounded } from '../lib/process.ts';
 import { defineAction, registerNamespace } from '../lib/tool_namespace.ts';
 
 const REPO_ROOT = fileURLToPath(new URL('../../', import.meta.url));
@@ -89,6 +91,26 @@ const renderSnapshot = (job: JobSnapshot): string => {
 const tailHint = (id: string): string =>
   `.pi/background-tasks/${id}.log (read it with action "logs")`;
 
+const parseRuntimeStartResult = (jobId: string): Record<string, unknown> | undefined => {
+  const tail = tailJobLog(REPO_ROOT, jobId, LIMITS.maxBytes) ?? '';
+  for (const line of tail.split('\n').reverse()) {
+    try {
+      const value: unknown = JSON.parse(line);
+      if (
+        typeof value === 'object' &&
+        value !== null &&
+        'operation' in value &&
+        value.operation === 'runtime-start'
+      ) {
+        return value as Record<string, unknown>;
+      }
+    } catch {
+      // Startup banners are not protocol results; the JSON operation line is authoritative.
+    }
+  }
+  return undefined;
+};
+
 export default function devProcessExtension(pi: ExtensionAPI): void {
   registerNamespace(pi, {
     name: 'dev_process',
@@ -105,6 +127,188 @@ export default function devProcessExtension(pi: ExtensionAPI): void {
       'cannot kill an unrelated process that inherited a recycled pid.',
 
     actions: [
+      defineAction({
+        action: 'start_profile',
+        summary:
+          'Start an owned dev or built runtime, wait for its matching health identity, and retain a stop handle.',
+        parameters: Type.Object({
+          profile: Type.Union([Type.Literal('dev'), Type.Literal('built')]),
+        }),
+        async execute(_toolCallId, params, signal) {
+          const runId = `agent_runtime_${randomUUID().replaceAll('-', '')}`;
+          const args = [
+            '--no-env-file',
+            'run',
+            'scripts/src/cli.ts',
+            'agent',
+            'runtime',
+            'start',
+            '--profile',
+            params.profile,
+            '--run',
+            runId,
+            '--json',
+          ];
+          let started: ReturnType<typeof startJob>;
+          try {
+            started = startJob('bun', args, {
+              cwd: REPO_ROOT,
+              timeoutMs: LIMITS.maxTimeoutMs,
+              maxBytes: LIMITS.maxBytes,
+              killGraceMs: LIMITS.stopGraceMs,
+              signal,
+              environment: 'starter-runtime',
+            });
+          } catch (error) {
+            return fail(
+              `Could not start the owned ${params.profile} runtime: ${(error as Error).message}`,
+              {
+                profile: params.profile,
+                runId,
+              },
+            );
+          }
+
+          const readinessMs = params.profile === 'built' ? 8 * 60_000 : 2 * 60_000;
+          const deadline = Date.now() + readinessMs;
+          while (Date.now() < deadline) {
+            const result = parseRuntimeStartResult(started.snapshot.id);
+            if (result !== undefined) {
+              if (result.status !== 'passed' || result.runId !== runId) {
+                await started.handle.stop();
+                return fail(
+                  `Owned runtime start was not accepted: ${String(result.summary ?? result.status)}`,
+                  { jobId: started.snapshot.id, runId, result },
+                );
+              }
+              return {
+                content: [
+                  {
+                    type: 'text',
+                    text: `${String(result.summary)}\n  run: ${runId}\n  job: ${started.snapshot.id}\n  Stop only through dev_process stop_profile with this run id.`,
+                  },
+                ],
+                details: {
+                  jobId: started.snapshot.id,
+                  runId,
+                  profile: params.profile,
+                  descriptor: result.descriptor,
+                  artifacts: result.artifacts,
+                },
+              };
+            }
+            const job = readJob(REPO_ROOT, started.snapshot.id);
+            if (job?.state !== 'running') {
+              return fail(
+                `Owned ${params.profile} runtime exited before identity verification (state ${job?.state ?? 'missing'}, exit ${job?.exitCode ?? 'unknown'}). Read ${tailHint(started.snapshot.id)} for startup evidence.`,
+                { jobId: started.snapshot.id, runId, state: job?.state, exitCode: job?.exitCode },
+              );
+            }
+            if (signal?.aborted) {
+              return fail(
+                'Runtime startup was cancelled; its owned process received the stop signal.',
+                {
+                  jobId: started.snapshot.id,
+                  runId,
+                  cancelled: true,
+                },
+              );
+            }
+            await new Promise((resolveWait) => setTimeout(resolveWait, 200));
+          }
+          await started.handle.stop();
+          return fail(
+            `Owned ${params.profile} runtime did not produce a matching identity result within ${Math.round(readinessMs / 1000)} seconds. Startup evidence: ${tailHint(started.snapshot.id)}.`,
+            { jobId: started.snapshot.id, runId, timedOut: true },
+          );
+        },
+      }),
+
+      defineAction({
+        action: 'runtime_status',
+        summary: 'Revalidate one persisted runtime descriptor against its live health identity.',
+        parameters: Type.Object({
+          runId: Type.String({ pattern: '^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$' }),
+        }),
+        async execute(_toolCallId, params, signal) {
+          const result = await runBounded(
+            'bun',
+            [
+              '--no-env-file',
+              'run',
+              'scripts/src/cli.ts',
+              'agent',
+              'runtime',
+              'status',
+              '--run',
+              params.runId,
+              '--json',
+            ],
+            {
+              cwd: REPO_ROOT,
+              timeoutMs: 10_000,
+              maxBytes: LIMITS.maxBytes,
+              signal,
+            },
+          );
+          try {
+            const value = JSON.parse(result.stdout) as Record<string, unknown>;
+            if (result.code !== 0 || value.status !== 'passed' || value.runId !== params.runId) {
+              return fail(
+                `Runtime status did not verify: ${String(value.summary ?? result.stderr)}`,
+                value,
+              );
+            }
+            return {
+              content: [{ type: 'text', text: String(value.summary) }],
+              details: value,
+            };
+          } catch (error) {
+            return fail(
+              `Runtime status returned an invalid JSON result (exit ${result.code}): ${(error as Error).message}`,
+              { runId: params.runId, exitCode: result.code, stderr: result.stderr.slice(-2000) },
+            );
+          }
+        },
+      }),
+
+      defineAction({
+        action: 'stop_profile',
+        summary:
+          'Stop only the owned runtime job matching its persisted run id and verified job token.',
+        parameters: Type.Object({
+          runId: Type.String({ pattern: '^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$' }),
+        }),
+        async execute(_toolCallId, params) {
+          const job = listJobs(REPO_ROOT).find(
+            (candidate) =>
+              candidate.command === 'bun' &&
+              candidate.args.includes('runtime') &&
+              candidate.args.includes('start') &&
+              candidate.args.includes(params.runId),
+          );
+          if (job === undefined) {
+            return fail(`No owned runtime job records run ${params.runId}.`, {
+              runId: params.runId,
+              stopped: false,
+            });
+          }
+          const outcome = await stopJob(REPO_ROOT, job.id, LIMITS.stopGraceMs);
+          if (!outcome.stopped) {
+            return fail(outcome.reason, { runId: params.runId, jobId: job.id, stopped: false });
+          }
+          return {
+            content: [
+              {
+                type: 'text',
+                text: `Stopped runtime ${params.runId} through owned job ${job.id}.`,
+              },
+            ],
+            details: { runId: params.runId, jobId: job.id, stopped: true },
+          };
+        },
+      }),
+
       defineAction({
         action: 'start',
         summary: `Start a long-running process. Returns a handle immediately. Common: "${LONG_RUNNING.dev}".`,

@@ -12,7 +12,9 @@ let output = '';
 afterEach(async () => {
   process.stdout.write = originalWrite;
   output = '';
-  for (const path of temporary.splice(0)) await rm(path, { recursive: true, force: true });
+  for (const path of temporary.splice(0)) {
+    await rm(path, { recursive: true, force: true });
+  }
 });
 
 const png = Buffer.from(
@@ -59,7 +61,9 @@ const runImport = async (extra: string[] = []) => {
   if (hashOverride >= 0) {
     const originalHash = args.indexOf('--sha256');
     const appendedHash = args.lastIndexOf('--sha256');
-    if (appendedHash !== originalHash) args.splice(appendedHash, 2);
+    if (appendedHash !== originalHash) {
+      args.splice(appendedHash, 2);
+    }
     args[originalHash + 1] = extra[hashOverride + 1] as string;
   }
   const code = await main(args);
@@ -192,8 +196,11 @@ describe('interactive visual capture import', () => {
       server.stop(true);
       for (const name of names) {
         const value = previous.get(name);
-        if (value === undefined) delete process.env[name];
-        else process.env[name] = value;
+        if (value === undefined) {
+          delete process.env[name];
+        } else {
+          process.env[name] = value;
+        }
       }
     }
   });

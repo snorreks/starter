@@ -28,7 +28,7 @@ describe('agent JSON facade', () => {
     expect(result).toMatchObject({ schemaVersion: 1, operation: 'describe', status: 'passed' });
     expect(
       result.capabilities.find((capability: { id: string }) => capability.id === 'runtime:built'),
-    ).toMatchObject({ status: 'not-run', remedy: expect.stringContaining('owned runtime') });
+    ).toMatchObject({ status: 'passed', owner: expect.stringContaining('agent.ts') });
     expect(result.rerun).toContain('bun run agent -- describe --json');
     expect(result.rerun).toContain('bun run agent -- visual review --run <run-id> --json');
     expect(
@@ -41,23 +41,29 @@ describe('agent JSON facade', () => {
     });
   });
 
-  test('built doctor reports the unavailable owned runtime and exits nonzero', async () => {
+  test('built doctor reports browser prerequisites without starting a runtime', async () => {
     process.stdout.write = ((chunk: string | Uint8Array) => {
       output += String(chunk);
       return true;
     }) as typeof process.stdout.write;
-    expect(await main(['agent', 'doctor', '--profile', 'built', '--json'])).toBe(3);
+    expect(await main(['agent', 'doctor', '--profile', 'built', '--json'])).toBe(0);
     const result = JSON.parse(output.trim());
     expect(result).toMatchObject({
       schemaVersion: 1,
       operation: 'doctor',
       profile: 'built',
-      status: 'not-run',
+      status: 'passed',
     });
-    expect(result.rerun).toContain('bun run agent -- doctor --profile built --json');
-    expect(
-      result.capabilities.find((item: { id: string }) => item.id === 'browser').remedy,
-    ).toContain('runtime descriptor');
+    expect(result.rerun).toContain(
+      'bun run agent -- runtime start --profile built --run <run-id> --json',
+    );
+    expect(result.summary).toContain('No runtime was started');
+    expect(result.capabilities.find((item: { id: string }) => item.id === 'browser')).toMatchObject(
+      {
+        status: 'passed',
+        remedy: null,
+      },
+    );
   });
 
   test('review emits one JSON failure for a missing scoped capture without starting services', async () => {
@@ -196,6 +202,48 @@ describe('agent JSON facade', () => {
 });
 
 describe('agent CLI JSON boundary', () => {
+  test('runtime start rejects the unsupported full profile before building or launching', async () => {
+    process.stdout.write = ((chunk: string | Uint8Array) => {
+      output += String(chunk);
+      return true;
+    }) as typeof process.stdout.write;
+    expect(
+      await main([
+        'agent',
+        'runtime',
+        'start',
+        '--profile',
+        'full',
+        '--run',
+        'agent_cli_full_refused',
+        '--json',
+      ]),
+    ).toBe(1);
+    expect(JSON.parse(output.trim())).toMatchObject({
+      operation: 'runtime-start',
+      status: 'error',
+      runId: 'agent_cli_full_refused',
+    });
+  });
+
+  test('missing runtime status is explicit not-run JSON with the start remedy', async () => {
+    process.stdout.write = ((chunk: string | Uint8Array) => {
+      output += String(chunk);
+      return true;
+    }) as typeof process.stdout.write;
+    expect(await main(['agent', 'runtime', 'status', '--run', 'agent_cli_missing', '--json'])).toBe(
+      3,
+    );
+    expect(JSON.parse(output.trim())).toMatchObject({
+      operation: 'runtime-status',
+      status: 'not-run',
+      runId: 'agent_cli_missing',
+      rerun: expect.arrayContaining([
+        'bun run agent -- runtime start --profile built --run agent_cli_missing --json',
+      ]),
+    });
+  });
+
   test('visual capture requires explicit JSON mode before it can start a browser', async () => {
     expect(await main(['agent', 'visual', 'capture'])).toBe(2);
     expect(output).toBe('');

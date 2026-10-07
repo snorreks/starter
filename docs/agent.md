@@ -19,10 +19,13 @@ That prompt is not ceremony. A project extension is arbitrary code executing wit
 your permissions, and a template that trains you to accept it teaches the wrong
 habit. `defaultProjectTrust` is `ask`, not `always`, for that reason.
 
-The portable workflow package provides one deferred Playwright browser namespace for
-exploratory browsing. It has no project runtime identity and cannot certify a Starter
-run. Keep it as the single default local browser driver; enable Bladebro only as an
-explicit alternative, not alongside it.
+The portable workflow package provides one deferred Playwright browser namespace.
+Use it for exploratory browsing, or supply a Starter runtime's run ID to its
+`browser.open` action to require the same local `/api/health` identity before
+Chromium launches. Captures retain that run ID for correlation, but remain
+exploratory and do not count as declared visual scenario coverage. Keep it as the
+single default local browser driver; enable Bladebro only as an explicit alternative,
+not alongside it.
 
 ## What is here
 
@@ -59,8 +62,24 @@ explicit alternative, not alongside it.
 The trusted project profile `.pi/workflow.json` declares only commands that are
 implemented by this checkout. Run `bun run agent -- describe --json` to see actual
 capability owners and unavailable operations with their dependencies.
-`bun run agent -- doctor --profile built --json` reports the built runtime as
-unavailable and exits 3 until the owned runtime lifecycle exists.
+`bun run agent -- doctor --profile built --json` checks whether the locked Chromium
+browser is available. It does not build or start a Worker. The `dev_process`
+namespace owns persistent runtime jobs and their stop handles:
+
+```ts
+dev_process { action: "start_profile", params: { profile: "dev" | "built" } }
+dev_process { action: "runtime_status", params: { runId: "agent_runtime_…" } }
+dev_process { action: "stop_profile", params: { runId: "agent_runtime_…" } }
+```
+
+`dev` runs the Node development server with emulated bindings; `built` builds and
+runs the compiled Worker in workerd with run-scoped local D1. Both profiles require
+a matching `/api/health` run identity before writing `.wrangler/runs/<id>/runtime.json`.
+The descriptor records the resolved Chromium binary, origin, artifact/log roots,
+and (for `built`) the Worker SHA-256. A descriptor is evidence of runtime identity,
+not a process stop token: stop only by the run ID returned from `start_profile`,
+which resolves to the existing token-verified job supervisor. The persistent full
+compute journey remains the explicit Docker-backed `agent compute full` operation.
 `bun run agent -- visual capture --json` runs the declared visual matrix and returns
 the verified run ID, manifest and screenshot hashes. Review remains a separate,
 explicit call: `bun run agent -- visual review --run <id> --json`. It uses the same
@@ -77,6 +96,10 @@ report hashes and exact rerun command.
 The visual review config takes `E2E_VISION_API_KEY` as an optional per-project
 override, then reads `OPENROUTER_API_KEY` from the process environment. Keep that
 shared credential in your global environment rather than a project mode file.
+The runtime job environment keeps host paths and browser locations while removing
+provider/deploy credentials. The dev profile writes a private run-scoped env file
+containing only its test identity because Vite's Cloudflare platform proxy reads
+Wrangler env files rather than inheriting the launcher process environment.
 Task, development runtime, and log operations continue through their local tools.
 
 ## `.pi/extensions` is executable input, not a source folder

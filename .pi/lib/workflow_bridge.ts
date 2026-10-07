@@ -1,5 +1,5 @@
-import type { AgentToolResult } from '@earendil-works/pi-coding-agent';
 import { fileURLToPath } from 'node:url';
+import type { AgentToolResult } from '@earendil-works/pi-coding-agent';
 import { runBounded } from './process.ts';
 
 const REPO_ROOT = fileURLToPath(new URL('../../', import.meta.url)).replace(/\/$/, '');

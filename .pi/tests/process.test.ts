@@ -13,6 +13,7 @@ import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
+import { startJob } from '../lib/jobs.ts';
 import { runBounded } from '../lib/process.ts';
 
 const artifactRoot = (): string => mkdtempSync(join(tmpdir(), 'pi-process-'));
@@ -279,5 +280,35 @@ describe('runBounded', () => {
         artifactRoot: root,
       }),
     ).rejects.toThrow();
+  });
+
+  test('the owned runtime environment keeps host prerequisites but strips unrelated secrets', async () => {
+    const root = artifactRoot();
+    cleanups.push(root);
+    const previous = process.env.PI_TEST_RUNTIME_SECRET;
+    process.env.PI_TEST_RUNTIME_SECRET = 'sentinel-not-for-runtime';
+    try {
+      const { handle } = startJob(
+        'sh',
+        ['-c', 'printf "%s|%s" "$PATH" "$PI_TEST_RUNTIME_SECRET"'],
+        {
+          cwd: root,
+          timeoutMs: 5_000,
+          maxBytes: 1024,
+          environment: 'starter-runtime',
+        },
+      );
+      const finished = await handle.wait();
+      expect(finished.state).toBe('exited');
+      const [path, secret] = handle.tail().split('|');
+      expect(path).toBeTruthy();
+      expect(secret).toBe('');
+    } finally {
+      if (previous === undefined) {
+        delete process.env.PI_TEST_RUNTIME_SECRET;
+      } else {
+        process.env.PI_TEST_RUNTIME_SECRET = previous;
+      }
+    }
   });
 });

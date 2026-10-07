@@ -75,7 +75,44 @@ export interface StartJobOptions {
   /** Extra grace between SIGTERM and SIGKILL. */
   killGraceMs?: number;
   signal?: AbortSignal;
+  /** Keep only host/runtime paths needed by Starter; remove provider/deploy credentials. */
+  environment?: 'inherit' | 'starter-runtime';
 }
+
+const RUNTIME_ENVIRONMENT_KEYS = [
+  'PATH',
+  'HOME',
+  'USER',
+  'LOGNAME',
+  'TMPDIR',
+  'TEMP',
+  'TMP',
+  'LANG',
+  'LC_ALL',
+  'TZ',
+  'SSL_CERT_FILE',
+  'SSL_CERT_DIR',
+  'NODE_EXTRA_CA_CERTS',
+  'BUN_INSTALL',
+  'NIX_PROFILES',
+  'PLAYWRIGHT_BROWSERS_PATH',
+  'CHROMIUM_PATH',
+  'XDG_CACHE_HOME',
+  'XDG_CONFIG_HOME',
+  'SYSTEMROOT',
+  'WINDIR',
+  'COMSPEC',
+  'PATHEXT',
+  'APPDATA',
+  'LOCALAPPDATA',
+] as const;
+
+const runtimeEnvironment = (): NodeJS.ProcessEnv =>
+  Object.fromEntries(
+    RUNTIME_ENVIRONMENT_KEYS.flatMap((key) =>
+      process.env[key] === undefined ? [] : [[key, process.env[key] as string]],
+    ),
+  );
 
 export interface JobHandle {
   snapshot(): JobSnapshot;
@@ -254,7 +291,11 @@ export const startJob = (
       cwd: root,
       detached: true,
       stdio: ['ignore', 'ignore', 'ignore', 'ipc'],
-      env: { ...process.env, [JOB_TOKEN_ENV]: token, GIT_TERMINAL_PROMPT: '0' },
+      env: {
+        ...(options.environment === 'starter-runtime' ? runtimeEnvironment() : process.env),
+        [JOB_TOKEN_ENV]: token,
+        GIT_TERMINAL_PROMPT: '0',
+      },
     },
   );
 

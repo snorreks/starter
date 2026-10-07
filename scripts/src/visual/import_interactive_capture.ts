@@ -70,7 +70,9 @@ const validateStrings = (values: string[], label: string, maximum: number): stri
 };
 
 const validateCrop = (crop: CaptureCrop | undefined): CaptureCrop | null => {
-  if (crop === undefined) return null;
+  if (crop === undefined) {
+    return null;
+  }
   const values = [crop.x, crop.y, crop.width, crop.height];
   if (
     !values.every(Number.isFinite) ||

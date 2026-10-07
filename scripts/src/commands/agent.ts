@@ -1,19 +1,30 @@
 import { createHash } from 'node:crypto';
-import { readFile } from 'node:fs/promises';
+import { existsSync } from 'node:fs';
+import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { join, relative, resolve } from 'node:path';
+import {
+  type RuntimeProfile,
+  readRuntimeDescriptor,
+  verifyRuntimeIdentity,
+  writeRuntimeDescriptor,
+} from '../agent/runtime_descriptor.ts';
+import { resolveBrowser } from '../shared/browser_path.ts';
 import { type Command, EXIT, fail, wantsHelp } from '../shared/command.ts';
+import { resolveE2EPort } from '../shared/e2e_port.ts';
 import { REPO_ROOT } from '../shared/paths.ts';
 import { runBounded } from '../shared/run_bounded.ts';
 import { runScope } from '../shared/run_scope.ts';
 import {
-  importInteractiveCapture,
   type CaptureCrop,
   type InteractiveCaptureOptions,
+  importInteractiveCapture,
 } from '../visual/import_interactive_capture.ts';
 import { reviewCaptureManifest } from '../visual/review.ts';
 
 const USAGE = `agent describe --json
 agent doctor --profile built --json
+agent runtime start --profile dev|built --run <id> --json
+agent runtime status --run <id> --json
 agent visual capture --json
 agent visual import --run <id> --file <png> --sha256 <hex> --url <url> --heading <text> --requirement <text> --viewport desktop|mobile --theme light|dark --json
 agent visual review --run <id> --json [--no-cache] [--gate]
@@ -36,10 +47,10 @@ const describe = {
   summary: 'Starter capability inventory; runtime/browser handles are not started by describe.',
   artifacts: [],
   limitations: [
-    'Runtime profiles are unavailable until the reusable owned runtime authority is implemented.',
-    'Interactive browser actions are available only from the portable workflow package and have no project runtime identity.',
+    'The built profile is available; the full Docker-backed profile is not exposed through the persistent runtime lifecycle.',
+    'The portable browser namespace is exploratory; its captures do not certify a project runtime or declared visual scenario.',
     'Interactive captures can be imported for explicitly labeled review, but do not count as declared scenario coverage or baselines.',
-    'Persistent runtime start/status/stop profiles remain unavailable; the one-shot full compute journey uses the real Docker-backed E2E authority.',
+    'Persistent stop ownership is held by dev_process job handles; the one-shot full compute journey uses the real Docker-backed E2E authority.',
   ],
   rerun: [
     'bun run agent -- describe --json',
@@ -52,22 +63,22 @@ const describe = {
     { id: 'logs', status: 'passed', owner: '.pi/extensions/logs.ts', remedy: null },
     {
       id: 'runtime:built',
-      status: 'not-run',
-      owner: null,
-      remedy: 'Implement the reusable owned runtime authority from the E2E visual plan.',
+      status: 'passed',
+      owner: 'scripts/src/commands/agent.ts + .pi/extensions/dev_process.ts',
+      remedy: null,
     },
     {
       id: 'runtime:full',
       status: 'not-run',
       owner: null,
-      remedy: 'Implement the owned full runtime and run it with a Docker-compatible engine.',
+      remedy: 'Use bun run agent -- compute full --json with a Docker-compatible engine.',
     },
     {
       id: 'browser',
       status: 'not-run',
       owner: '@sonny/pi-workflow-helpers (exploratory only)',
       remedy:
-        'Set CHROMIUM_PATH for exploratory browsing; project-identified QA requires the missing owned runtime descriptor and browser bridge.',
+        'Start a dev or built profile with dev_process.start_profile, then pass its origin and run id to browser.open.runtimeRunId for health verification.',
     },
     {
       id: 'visual-review',
@@ -96,37 +107,42 @@ const describe = {
   ],
 } as const;
 
-const doctorBuilt = {
-  schemaVersion: 1,
-  operation: 'doctor',
-  profile: 'built',
-  status: 'not-run',
-  runId: null,
-  checkout: REPO_ROOT,
-  summary:
-    'Built-profile diagnosis cannot run because no owned built-runtime profile is configured.',
-  artifacts: [],
-  limitations: [
-    'The built runtime lifecycle and identity descriptor are not implemented.',
-    'This command did not start a Worker, browser, or remote provider.',
-  ],
-  rerun: ['bun run agent -- doctor --profile built --json'],
-  capabilities: [
-    {
-      id: 'runtime:built',
-      status: 'not-run',
-      owner: null,
-      remedy: 'Implement the owned runtime profile authority.',
-    },
-    {
-      id: 'browser',
-      status: 'not-run',
-      owner: '@sonny/pi-workflow-helpers (exploratory only)',
-      remedy:
-        'Configure CHROMIUM_PATH for exploratory browsing; project-owned browser verification requires the missing runtime descriptor.',
-    },
-  ],
-} as const;
+const doctorBuilt = () => {
+  const browser = resolveBrowser();
+  const ready = browser.executable !== null;
+  return {
+    schemaVersion: 1,
+    operation: 'doctor',
+    profile: 'built',
+    status: ready ? 'passed' : 'not-run',
+    runId: null,
+    checkout: REPO_ROOT,
+    summary: ready
+      ? `Built runtime prerequisites are available; Chromium resolved to ${browser.executable}. No runtime was started.`
+      : `Built runtime prerequisites are incomplete. ${browser.reason}`,
+    artifacts: [],
+    limitations: ['This diagnostic does not build or start a Worker, browser, or remote provider.'],
+    rerun: [
+      ...(ready
+        ? ['bun run agent -- runtime start --profile built --run <run-id> --json']
+        : ['bun run setup']),
+    ],
+    capabilities: [
+      {
+        id: 'runtime:built',
+        status: 'passed',
+        owner: 'scripts/src/commands/agent.ts',
+        remedy: null,
+      },
+      {
+        id: 'browser',
+        status: ready ? 'passed' : 'not-run',
+        owner: 'scripts/src/shared/browser_path.ts',
+        remedy: ready ? null : 'Install the locked Playwright browser with bun run setup.',
+      },
+    ],
+  };
+};
 
 type InteractiveImportParse =
   | { options: Parameters<typeof importInteractiveCapture>[0] }
@@ -232,7 +248,9 @@ const readBoundedStdin = async (maximumBytes: number): Promise<string> => {
   try {
     while (true) {
       const { done, value } = await reader.read();
-      if (done) break;
+      if (done) {
+        break;
+      }
       bytes += value.byteLength;
       if (bytes > maximumBytes) {
         throw new Error(`Interactive import stdin exceeds its ${maximumBytes} byte limit.`);
@@ -321,6 +339,382 @@ const parseInteractiveImportJson = (value: unknown): InteractiveImportParse => {
   };
 };
 
+const parseRuntimeFlags = (argv: string[]): { values: Map<string, string>; error?: string } => {
+  const allowed = new Set(['--profile', '--run', '--json']);
+  const values = new Map<string, string>();
+  let jsonCount = 0;
+  for (let index = 0; index < argv.length; index += 1) {
+    const flag = argv[index];
+    if (flag === '--json') {
+      jsonCount += 1;
+      continue;
+    }
+    if (flag === undefined || !allowed.has(flag)) {
+      return { values, error: `Unsupported runtime argument ${JSON.stringify(flag)}.` };
+    }
+    const value = argv[index + 1];
+    if (value === undefined || value.startsWith('--')) {
+      return { values, error: `${flag} requires a value.` };
+    }
+    if (values.has(flag)) {
+      return { values, error: `${flag} may appear only once.` };
+    }
+    values.set(flag, value);
+    index += 1;
+  }
+  if (jsonCount !== 1) {
+    return { values, error: 'Runtime operation requires --json exactly once.' };
+  }
+  return { values };
+};
+
+const runtimeError = (options: {
+  operation: string;
+  runId: string | null;
+  status: 'error' | 'not-run';
+  summary: string;
+  rerun: string[];
+}): number => {
+  process.stdout.write(
+    `${JSON.stringify({
+      schemaVersion: 1,
+      operation: options.operation,
+      status: options.status,
+      runId: options.runId,
+      checkout: REPO_ROOT,
+      summary: options.summary,
+      artifacts: [],
+      limitations: [],
+      rerun: options.rerun,
+    })}\n`,
+  );
+  return options.status === 'not-run' ? EXIT.unavailable : EXIT.failed;
+};
+
+const waitForRuntimeIdentity = async (
+  descriptor: Parameters<typeof verifyRuntimeIdentity>[0],
+  serverExit: () => number | undefined,
+): Promise<Awaited<ReturnType<typeof verifyRuntimeIdentity>>> => {
+  const deadline = Date.now() + 60_000;
+  let lastError = 'no response';
+  while (Date.now() < deadline) {
+    const earlyExit = serverExit();
+    if (earlyExit !== undefined) {
+      throw new Error(`Owned runtime exited with code ${earlyExit} before identity was verified.`);
+    }
+    try {
+      return await verifyRuntimeIdentity(descriptor);
+    } catch (error) {
+      lastError = (error as Error).message;
+      if (/identity mismatch|origin mismatch/.test(lastError)) {
+        throw error;
+      }
+    }
+    await Bun.sleep(250);
+  }
+  throw new Error(`Owned runtime was not identity-ready within 60 seconds: ${lastError}`);
+};
+
+const startRuntime = async (argv: string[]): Promise<number> => {
+  const parsed = parseRuntimeFlags(argv);
+  const profile = parsed.values.get('--profile');
+  const runId = parsed.values.get('--run') ?? '';
+  if (parsed.error !== undefined || (profile !== 'dev' && profile !== 'built') || runId === '') {
+    return runtimeError({
+      operation: 'runtime-start',
+      runId: runId || null,
+      status: 'error',
+      summary:
+        parsed.error ?? 'runtime start requires --profile dev|built and an explicit --run id.',
+      rerun: ['bun run agent -- runtime start --profile built --run <run-id> --json'],
+    });
+  }
+  let scope: ReturnType<typeof runScope>;
+  try {
+    scope = runScope(runId, REPO_ROOT);
+  } catch (error) {
+    return runtimeError({
+      operation: 'runtime-start',
+      runId,
+      status: 'error',
+      summary: (error as Error).message,
+      rerun: ['bun run agent -- runtime start --profile built --run <valid-run-id> --json'],
+    });
+  }
+
+  const browser = resolveBrowser();
+  if (browser.executable === null) {
+    return runtimeError({
+      operation: 'runtime-start',
+      runId,
+      status: 'not-run',
+      summary: `The ${profile} runtime needs Chromium for its browser descriptor. ${browser.reason}`,
+      rerun: [
+        'bun run setup',
+        `CHROMIUM_PATH=<installed-chromium> bun run agent -- runtime start --profile ${profile} --run ${runId} --json`,
+      ],
+    });
+  }
+
+  let buildIdentity: string | null = null;
+  if (profile === 'built') {
+    const build = await runBounded({
+      command: process.execPath,
+      args: ['run', 'build'],
+      cwd: REPO_ROOT,
+      timeoutMs: 5 * 60_000,
+      maxBytes: 2 * 1024 * 1024,
+      onOutput: (_stream, chunk) => process.stderr.write(chunk),
+    });
+    if (build.code !== 0) {
+      return runtimeError({
+        operation: 'runtime-start',
+        runId,
+        status: 'error',
+        summary: `The built profile could not produce the Worker artifact (exit ${build.code}): ${build.stderr.slice(-1500)}`,
+        rerun: [
+          'bun run build',
+          `bun run agent -- runtime start --profile built --run ${runId} --json`,
+        ],
+      });
+    }
+    const workerPath = join(REPO_ROOT, 'apps/frontend/client/.svelte-kit/cloudflare/_worker.js');
+    if (!existsSync(workerPath)) {
+      return runtimeError({
+        operation: 'runtime-start',
+        runId,
+        status: 'error',
+        summary: 'The build exited successfully without producing the expected built Worker.',
+        rerun: [
+          'bun run build',
+          `bun run agent -- runtime start --profile built --run ${runId} --json`,
+        ],
+      });
+    }
+    buildIdentity = createHash('sha256')
+      .update(await readFile(workerPath))
+      .digest('hex');
+  }
+
+  let port: number;
+  try {
+    port = await resolveE2EPort(runId, undefined, REPO_ROOT);
+  } catch (error) {
+    return runtimeError({
+      operation: 'runtime-start',
+      runId,
+      status: 'error',
+      summary: (error as Error).message,
+      rerun: [`bun run agent -- runtime start --profile ${profile} --run ${runId} --json`],
+    });
+  }
+  const origin = `http://127.0.0.1:${port}`;
+  const runtimeEnvPath = join(scope.dir, 'runtime.env');
+  const descriptor = {
+    schemaVersion: 1 as const,
+    runId,
+    checkout: REPO_ROOT,
+    profile: profile as RuntimeProfile,
+    origins: { web: origin },
+    browserExecutable: browser.executable,
+    buildIdentity,
+    identityVerified: true,
+    artifactRoot: scope.artifactDir,
+    logRoot: scope.logDir,
+  };
+
+  // The runtime launcher reads this identity while its module initializes its
+  // per-run state. Importing it first would bake the process defaults into paths.
+  process.env.E2E_RUN_ID = runId;
+  process.env.E2E_APP_PORT = String(port);
+  process.env.TEST_RUN_ID = runId;
+  process.env.PORT = String(port);
+  process.env.DEV_HOST = '127.0.0.1';
+  process.env.BETTER_AUTH_URL = origin;
+  process.env.TRUSTED_ORIGINS = origin;
+  if (profile === 'dev') {
+    await mkdir(scope.dir, { recursive: true, mode: 0o700 });
+    await writeFile(runtimeEnvPath, `TEST_RUN_ID=${runId}\n`, { mode: 0o600, flag: 'wx' });
+    // The adapter's getPlatformProxy reads Wrangler env files rather than
+    // inheriting process.env. Keep this file scoped to the run and identity only.
+    process.env.STARTER_RUNTIME_ENV_FILE = relative(
+      join(REPO_ROOT, 'apps/frontend/client'),
+      runtimeEnvPath,
+    );
+  }
+  const { main: devAppMain } = await import('../dev-app.ts');
+  let exited: number | undefined;
+  const server = devAppMain(profile === 'dev' ? 'app' : 'built').then((code) => {
+    exited = code;
+    return code;
+  });
+
+  let identity: Awaited<ReturnType<typeof verifyRuntimeIdentity>>;
+  try {
+    identity = await waitForRuntimeIdentity(descriptor, () => exited);
+  } catch (error) {
+    const summary = (error as Error).message;
+    if (profile === 'dev') {
+      await rm(runtimeEnvPath, { force: true });
+      delete process.env.STARTER_RUNTIME_ENV_FILE;
+    }
+    process.stdout.write(
+      `${JSON.stringify({
+        schemaVersion: 1,
+        operation: 'runtime-start',
+        status: 'error',
+        runId,
+        checkout: REPO_ROOT,
+        summary,
+        artifacts: [],
+        limitations: ['No runtime descriptor was accepted.'],
+        rerun: [`bun run agent -- runtime start --profile ${profile} --run ${runId} --json`],
+      })}\n`,
+    );
+    // dev-app registers an exit hook that stops only the child process it owns.
+    process.exit(EXIT.failed);
+  }
+
+  const descriptorPath = join(scope.dir, 'runtime.json');
+  try {
+    await writeRuntimeDescriptor(descriptorPath, descriptor);
+  } catch (error) {
+    if (profile === 'dev') {
+      await rm(runtimeEnvPath, { force: true });
+      delete process.env.STARTER_RUNTIME_ENV_FILE;
+    }
+    process.stdout.write(
+      `${JSON.stringify({
+        schemaVersion: 1,
+        operation: 'runtime-start',
+        status: 'error',
+        runId,
+        checkout: REPO_ROOT,
+        summary: `Runtime identity passed but its descriptor could not be persisted: ${(error as Error).message}`,
+        artifacts: [],
+        limitations: ['The runtime has no recoverable ownership descriptor.'],
+        rerun: [`bun run agent -- runtime status --run ${runId} --json`],
+      })}\n`,
+    );
+    process.exit(EXIT.failed);
+  }
+  const descriptorBytes = await readFile(descriptorPath);
+  process.stdout.write(
+    `${JSON.stringify({
+      schemaVersion: 1,
+      operation: 'runtime-start',
+      status: 'passed',
+      runId,
+      checkout: REPO_ROOT,
+      summary: `Owned ${profile} runtime is ready at ${identity.origin}; run identity ${identity.runId} was verified.`,
+      artifacts: [
+        {
+          kind: 'runtime-descriptor',
+          path: relative(REPO_ROOT, descriptorPath),
+          sha256: createHash('sha256').update(descriptorBytes).digest('hex'),
+          bytes: descriptorBytes.byteLength,
+        },
+      ],
+      limitations: [
+        ...(profile === 'dev'
+          ? ['The dev profile uses Node and emulated bindings; it is not built-workerd evidence.']
+          : []),
+        'Stop this runtime with its returned dev_process job handle; a descriptor is not a stop token.',
+      ],
+      rerun: [
+        `bun run agent -- runtime status --run ${runId} --json`,
+        `bun run agent -- visual capture --json`,
+      ],
+      descriptor,
+    })}\n`,
+  );
+  try {
+    return await server;
+  } finally {
+    if (profile === 'dev') {
+      await rm(runtimeEnvPath, { force: true });
+      delete process.env.STARTER_RUNTIME_ENV_FILE;
+    }
+  }
+};
+
+const runtimeStatus = async (argv: string[]): Promise<number> => {
+  const parsed = parseRuntimeFlags(argv);
+  const runId = parsed.values.get('--run') ?? '';
+  if (parsed.error !== undefined || runId === '') {
+    return runtimeError({
+      operation: 'runtime-status',
+      runId: runId || null,
+      status: 'error',
+      summary: parsed.error ?? 'runtime status requires --run <id> and --json.',
+      rerun: ['bun run agent -- runtime status --run <run-id> --json'],
+    });
+  }
+  let descriptorPath: string;
+  try {
+    descriptorPath = join(runScope(runId, REPO_ROOT).dir, 'runtime.json');
+  } catch (error) {
+    return runtimeError({
+      operation: 'runtime-status',
+      runId,
+      status: 'error',
+      summary: (error as Error).message,
+      rerun: ['bun run agent -- runtime status --run <valid-run-id> --json'],
+    });
+  }
+  if (!existsSync(descriptorPath)) {
+    return runtimeError({
+      operation: 'runtime-status',
+      runId,
+      status: 'not-run',
+      summary: `No runtime descriptor exists for run ${runId}.`,
+      rerun: [
+        `bun run agent -- runtime start --profile built --run ${runId} --json`,
+        `bun run agent -- runtime status --run ${runId} --json`,
+      ],
+    });
+  }
+  try {
+    const descriptor = await readRuntimeDescriptor(descriptorPath);
+    const identity = await verifyRuntimeIdentity(descriptor);
+    process.stdout.write(
+      `${JSON.stringify({
+        schemaVersion: 1,
+        operation: 'runtime-status',
+        status: 'passed',
+        runId,
+        checkout: REPO_ROOT,
+        summary: `Owned ${descriptor.profile} runtime is responding at ${identity.origin} with the recorded run identity.`,
+        artifacts: [
+          {
+            kind: 'runtime-descriptor',
+            path: relative(REPO_ROOT, descriptorPath),
+            sha256: createHash('sha256')
+              .update(await readFile(descriptorPath))
+              .digest('hex'),
+            bytes: (await readFile(descriptorPath)).byteLength,
+          },
+        ],
+        limitations: [],
+        rerun: [`bun run agent -- runtime status --run ${runId} --json`],
+        descriptor,
+      })}\n`,
+    );
+    return EXIT.ok;
+  } catch (error) {
+    return runtimeError({
+      operation: 'runtime-status',
+      runId,
+      status: (error as NodeJS.ErrnoException).code === 'ENOENT' ? 'not-run' : 'error',
+      summary: (error as Error).message,
+      rerun: [
+        `bun run agent -- runtime start --profile built --run ${runId} --json`,
+        `bun run agent -- runtime status --run ${runId} --json`,
+      ],
+    });
+  }
+};
+
 export const agentCommand: Command = {
   name: 'agent',
   summary: 'describe project-owned agent capabilities as JSON',
@@ -341,8 +735,15 @@ export const agentCommand: Command = {
       argv[2] === 'built' &&
       argv[3] === '--json'
     ) {
-      process.stdout.write(`${JSON.stringify(doctorBuilt)}\n`);
-      return EXIT.unavailable;
+      const result = doctorBuilt();
+      process.stdout.write(`${JSON.stringify(result)}\n`);
+      return result.status === 'passed' ? EXIT.ok : EXIT.unavailable;
+    }
+    if (argv[0] === 'runtime' && argv[1] === 'start') {
+      return startRuntime(argv.slice(2));
+    }
+    if (argv[0] === 'runtime' && argv[1] === 'status') {
+      return runtimeStatus(argv.slice(2));
     }
     if (argv[0] === 'visual' && argv[1] === 'capture') {
       if (argv.length !== 3 || argv[2] !== '--json') {
