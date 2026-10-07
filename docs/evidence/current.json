@@ -1,6 +1,6 @@
 {
-  "revision": "6ebc813",
-  "note": "Current observations were run against this repair revision. Historical rows retain their original revisions and timestamps; the live visual provider review remains explicitly not-run.",
+  "revision": "9b0c6df",
+  "note": "Current observations are recorded against the merged Prompt 06 tree. Historical rows retain their original revisions and timestamps; NOT RUN rows state current boundaries.",
   "platform": "linux-x64 (NixOS 26.11; Bun 1.4.2; Node v22.23.3; Chromium 154.0.8037.97; Docker API 5.8.7)",
   "rows": [
     {
@@ -355,7 +355,7 @@
     {
       "capability": "Browser lane (real Svelte, real Chromium)",
       "kind": "observed",
-      "revision": "6ebc813",
+      "revision": "9b0c6df",
       "command": "bun run test:browser",
       "platform": "Linux x86_64 (NixOS 26.11; Bun 1.4.2; Node v22.23.3; Chromium 154.0.8037.97; local Podman 5.8.7)",
       "result": "29 passed across 3 files.",
@@ -367,7 +367,7 @@
     {
       "capability": "Worker lane (built bundle in real workerd, real local D1)",
       "kind": "observed",
-      "revision": "6ebc813",
+      "revision": "9b0c6df",
       "command": "bun run test:worker",
       "platform": "Linux x86_64 (NixOS 26.11; Bun 1.4.2; Node v22.23.3; Chromium 154.0.8037.97; local Podman 5.8.7)",
       "result": "88 passed, 0 failed.",
@@ -379,7 +379,7 @@
     {
       "capability": "End to end (built client and built Worker, one origin)",
       "kind": "observed",
-      "revision": "6ebc813",
+      "revision": "9b0c6df",
       "command": "bun run e2e",
       "platform": "Linux x86_64 (NixOS 26.11; Bun 1.4.2; Node v22.23.3; Chromium 154.0.8037.97; local Podman 5.8.7)",
       "result": "33 passed, 0 failed in real Chromium.",
@@ -391,7 +391,7 @@
     {
       "capability": "Unit tests, every project",
       "kind": "observed",
-      "revision": "6ebc813",
+      "revision": "9b0c6df",
       "command": "bun run test",
       "platform": "Linux x86_64 (NixOS 26.11; Bun 1.4.2; Node v22.23.3; Chromium 154.0.8037.97; local Podman 5.8.7)",
       "result": "2079 passed, 0 failed across 13 project targets; scripts 912, Pi 229.",
@@ -403,7 +403,7 @@
     {
       "capability": "Typecheck, every project",
       "kind": "observed",
-      "revision": "6ebc813",
+      "revision": "9b0c6df",
       "command": "bun run typecheck",
       "platform": "Linux x86_64 (NixOS 26.11; Bun 1.4.2; Node v22.23.3; Chromium 154.0.8037.97; local Podman 5.8.7)",
       "result": "16 tasks completed; Svelte diagnostics reported zero errors or warnings.",
@@ -415,7 +415,7 @@
     {
       "capability": "Lint (Biome, verified not applied)",
       "kind": "observed",
-      "revision": "6ebc813",
+      "revision": "9b0c6df",
       "command": "bun run lint",
       "platform": "Linux x86_64 (NixOS 26.11; Bun 1.4.2; Node v22.23.3; Chromium 154.0.8037.97; local Podman 5.8.7)",
       "result": "16 project tasks completed; no fixes applied.",
@@ -427,7 +427,7 @@
     {
       "capability": "Format (Biome, verified not applied)",
       "kind": "observed",
-      "revision": "6ebc813",
+      "revision": "9b0c6df",
       "command": "bun run format",
       "platform": "Linux x86_64 (NixOS 26.11; Bun 1.4.2; Node v22.23.3; Chromium 154.0.8037.97; local Podman 5.8.7)",
       "result": "16 project tasks completed; no formatting changes.",
@@ -439,7 +439,7 @@
     {
       "capability": "Whole-repository guards",
       "kind": "observed",
-      "revision": "6ebc813",
+      "revision": "9b0c6df",
       "command": "bun run guard:whole-repo",
       "platform": "Linux x86_64 (NixOS 26.11; Bun 1.4.2; Node v22.23.3; Chromium 154.0.8037.97; local Podman 5.8.7)",
       "result": "8 of 8 guards passed.",
@@ -518,7 +518,7 @@
     {
       "capability": "Setup and setup doctor",
       "kind": "observed",
-      "revision": "6ebc813",
+      "revision": "9b0c6df",
       "command": "bun run setup && bun run setup:doctor",
       "platform": "Linux x86_64 (NixOS 26.11; Bun 1.4.2; Node v22.23.3; Chromium 154.0.8037.97; local Podman 5.8.7)",
       "result": "Both exited 0; pinned Bun/Node/Wrangler/Playwright and Chromium launch verified; existing local defaults preserved.",
@@ -542,7 +542,7 @@
     {
       "capability": "Build and bundle boundary check",
       "kind": "observed",
-      "revision": "6ebc813",
+      "revision": "9b0c6df",
       "command": "bun run build && bun run check:bundle",
       "platform": "Linux x86_64 (NixOS 26.11; Bun 1.4.2; Node v22.23.3; Chromium 154.0.8037.97; local Podman 5.8.7)",
       "result": "Build succeeded; standalone Worker artifact passed bundle checks across 69 files.",
@@ -566,7 +566,7 @@
     {
       "capability": "Fresh-template rehearsal",
       "kind": "observed",
-      "revision": "6ebc813",
+      "revision": "9b0c6df",
       "command": "bun run smoke",
       "platform": "Linux x86_64 (NixOS 26.11; Bun 1.4.2; Node v22.23.3; Chromium 154.0.8037.97; local Podman 5.8.7)",
       "result": "10 of 10 steps passed in a fresh copy.",
@@ -638,7 +638,7 @@
     {
       "capability": "Supabase preview Worker identity, account and application services",
       "kind": "observed",
-      "revision": "6ebc813",
+      "revision": "9b0c6df",
       "command": "bun run test:worker -- --backend supabase",
       "platform": "Linux x86_64 (NixOS 26.11; Bun 1.4.2; Node v22.23.3; Chromium 154.0.8037.97; local Podman 5.8.7)",
       "result": "5 passed, 0 failed against isolated local Auth/Postgres/Mailpit; jobs dispatch remained disabled.",
@@ -650,7 +650,7 @@
     {
       "capability": "Supabase preview browser auth and notes E2E",
       "kind": "observed",
-      "revision": "6ebc813",
+      "revision": "9b0c6df",
       "command": "bun run e2e -- --backend supabase",
       "platform": "Linux x86_64 (NixOS 26.11; Bun 1.4.2; Node v22.23.3; Chromium 154.0.8037.97; local Podman 5.8.7)",
       "result": "6 passed, 0 failed; local email confirmation was redeemed in Node request context, then the browser followed the application callback and received its session.",
@@ -662,7 +662,7 @@
     {
       "capability": "Local Supabase Auth, Postgres and RLS integration",
       "kind": "observed",
-      "revision": "6ebc813",
+      "revision": "9b0c6df",
       "command": "bun run test:database",
       "platform": "Linux x86_64 (NixOS 26.11; Bun 1.4.2; Node v22.23.3; Chromium 154.0.8037.97; local Podman 5.8.7)",
       "result": "4 integration tests (57 assertions) and 19 SQL tests passed.",
@@ -674,7 +674,7 @@
     {
       "capability": "E2E lane doctor",
       "kind": "observed",
-      "revision": "6ebc813",
+      "revision": "9b0c6df",
       "command": "bun run e2e:doctor",
       "platform": "Linux x86_64 (NixOS 26.11; Bun 1.4.2; Node v22.23.3; Chromium 154.0.8037.97; local Podman 5.8.7)",
       "result": "Node, Chromium launch/page probe and Docker-compatible engine passed.",
@@ -686,7 +686,7 @@
     {
       "capability": "E2E visual matrix (browser, axe and snapshots)",
       "kind": "observed",
-      "revision": "6ebc813",
+      "revision": "9b0c6df",
       "command": "bun run e2e:visual",
       "platform": "Linux x86_64 (NixOS 26.11; Bun 1.4.2; Node v22.23.3; Chromium 154.0.8037.97; local Podman 5.8.7)",
       "result": "88 passed; 76/76 expected state/project captures; snapshot comparisons passed without updating baselines; AI review not part of capture.",
@@ -698,7 +698,7 @@
     {
       "capability": "Evidence manifest and generated matrix consistency",
       "kind": "observed",
-      "revision": "6ebc813",
+      "revision": "9b0c6df",
       "command": "bun run evidence",
       "platform": "Linux x86_64 (NixOS 26.11; Bun 1.4.2; Node v22.23.3; Chromium 154.0.8037.97; local Podman 5.8.7)",
       "result": "Manifest schema and revision ancestry passed; all 64 rows matched the generated matrix.",
@@ -710,8 +710,8 @@
     {
       "capability": "Concurrent real Herdr worktree bootstrap, dev isolation and cleanup",
       "kind": "observed",
-      "revision": "6ebc813",
-      "command": "herdr worktree create ×2; bun run worktree:bootstrap ×2; nix develop --command bun run dev ×2",
+      "revision": "9b0c6df",
+      "command": "herdr worktree create \u00d72; bun run worktree:bootstrap \u00d72; nix develop --command bun run dev \u00d72",
       "platform": "Linux x86_64 (NixOS 26.11; Bun 1.4.2; Node v22.23.3; Chromium 154.0.8037.97; local Podman 5.8.7)",
       "result": "Two fresh Herdr worktrees bootstrapped concurrently. Dev listeners used distinct ports 5234 and 5216; both /health/ready probes returned 200. SIGINT stopped A while B remained 200; stopping B removed its own process tree. Both owned worktrees were then removed by workspace id.",
       "count": 2,
@@ -722,7 +722,7 @@
     {
       "capability": "Occupied local Supabase port block handling",
       "kind": "observed",
-      "revision": "6ebc813",
+      "revision": "9b0c6df",
       "command": "bun run --cwd scripts test -- tests/supabase_local.test.ts",
       "platform": "Linux x86_64 (NixOS 26.11; Bun 1.4.2; Node v22.23.3; Chromium 154.0.8037.97; local Podman 5.8.7)",
       "result": "6 passed, 0 failed. A real bound listener on one allocated port caused the allocator to select the next free six-port block before startup.",
@@ -734,7 +734,7 @@
     {
       "capability": "Supabase preview isolation from ordinary .dev.vars",
       "kind": "observed",
-      "revision": "6ebc813",
+      "revision": "9b0c6df",
       "command": "bun run test:worker -- --backend supabase (with a preexisting conflicting .dev.vars fixture)",
       "platform": "Linux x86_64 (NixOS 26.11; Bun 1.4.2; Node v22.23.3; local Podman 5.8.7)",
       "result": "5 passed, 0 failed. Run-owned preview settings took precedence over conflicting local backend/URL values; .dev.vars remained byte-for-byte unchanged and the fixture owner removed it after the run.",
@@ -742,6 +742,41 @@
       "recordedAt": "2026-10-07T14:38:25.000Z",
       "artifact": null,
       "reason": null
+    },
+    {
+      "capability": "Cloud Run local finite runner with real Rust/FFmpeg encode",
+      "kind": "observed",
+      "revision": "9b0c6df",
+      "command": "bun run test:compute -- --backend supabase --processor cloud-run-local",
+      "platform": "Linux x86_64 (Bun 1.4.2; Docker-compatible local engine)",
+      "result": "2 runner boundary tests passed; Docker built and ran the non-root Rust processor with FFmpeg, producing and hash-checking a 112717-byte artifact through the local metadata/grant/API fixture. The artifact sink is an HTTP fixture; combined Supabase/R2 runner execution was not exercised.",
+      "count": 2,
+      "recordedAt": "2026-10-07T15:06:30.000Z",
+      "artifact": null
+    },
+    {
+      "capability": "Hosted Google Cloud Run dispatch and metadata IAM",
+      "kind": "not-run",
+      "revision": "f7c0a776ed1583c2629a86427f4f5f90efacf7df",
+      "command": "Hosted Cloud Run dispatch, platform metadata identity and IAM grants",
+      "platform": "Not run",
+      "result": "No hosted Google API calls, IAM changes, image upload or execution were performed.",
+      "count": null,
+      "recordedAt": "2026-10-07T15:06:30.000Z",
+      "artifact": null,
+      "reason": "Hosted cloud validation is outside the local fixture lane."
+    },
+    {
+      "capability": "Combined local Supabase and R2 runner journey",
+      "kind": "not-run",
+      "revision": "f7c0a776ed1583c2629a86427f4f5f90efacf7df",
+      "command": "Run the Docker runner against local Supabase and R2 emulation",
+      "platform": "Linux x86_64 (Bun 1.4.2; Docker-compatible local engine)",
+      "result": "The database integration and Docker runner lanes passed separately; no end-to-end runner callback against local Supabase and R2 emulation was run.",
+      "count": null,
+      "recordedAt": "2026-10-07T15:06:30.000Z",
+      "artifact": null,
+      "reason": "The Cloud Run local lane uses authenticated HTTP fixtures and an in-memory output sink."
     }
   ]
 }

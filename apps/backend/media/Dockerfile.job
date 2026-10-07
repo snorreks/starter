@@ -1,0 +1,33 @@
+# syntax=docker/dockerfile:1
+ARG RUST_IMAGE=docker.io/library/rust@sha256:dacc9e51f252243eb59d2fb4cb4ad8b0d3f607b6a82c398cf8a321e59ff778a7
+ARG RUNTIME_IMAGE=docker.io/library/debian@sha256:3783cc01769c7b2b1b83a5c5ad96c815348e28ed7da68e2e3687004faa906251
+
+FROM ${RUST_IMAGE} AS build
+WORKDIR /src
+COPY Cargo.toml Cargo.lock rust-toolchain.toml ./
+RUN mkdir -p src && printf 'fn main() {}\n' > src/main.rs && printf '\n' > src/lib.rs \
+    && cargo build --release --locked && rm -rf src
+COPY src ./src
+ARG BUILD_GIT_REVISION=""
+ENV BUILD_GIT_REVISION=${BUILD_GIT_REVISION}
+RUN touch src/*.rs && cargo build --release --locked --offline \
+    && cp target/release/starter-media /usr/local/bin/starter-media \
+    && strip /usr/local/bin/starter-media \
+    && test -n "$(/usr/local/bin/starter-media --version)"
+
+FROM ${RUNTIME_IMAGE}
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      ffmpeg=7:5.1.9-0+deb12u1 nodejs=18.20.4+dfsg-1~deb12u3 ca-certificates \
+    && rm -rf /var/lib/apt/lists/* \
+    && groupadd --system --gid 10001 runner \
+    && useradd --system --uid 10001 --gid runner --home-dir /nonexistent --shell /usr/sbin/nologin runner \
+    && mkdir -p /var/tmp/media && chown runner:runner /var/tmp/media
+COPY --from=build /usr/local/bin/starter-media /usr/local/bin/starter-media
+COPY runner/runner.mjs /opt/starter/runner.mjs
+RUN test -n "$(/usr/local/bin/starter-media --version)" \
+    && test "$(node --version)" = "v18.20.4" \
+    && test -s /opt/starter/runner.mjs
+ENV MEDIA_TMPDIR=/var/tmp/media MEDIA_FFMPEG_PATH=/usr/bin/ffmpeg MEDIA_FFPROBE_PATH=/usr/bin/ffprobe
+USER runner:runner
+WORKDIR /var/tmp/media
+ENTRYPOINT ["node", "/opt/starter/runner.mjs"]

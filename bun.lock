@@ -26,10 +26,12 @@
       "name": "@starter/jobs-worker",
       "version": "0.1.0",
       "dependencies": {
+        "@starter/database": "workspace:*",
         "@starter/jobs": "workspace:*",
         "@starter/logger": "workspace:*",
         "@starter/schemas": "workspace:*",
         "@starter/utils": "workspace:*",
+        "jose": "6.2.12",
       },
       "devDependencies": {
         "@cloudflare/workers-types": "5.20261006.1",
@@ -72,6 +74,7 @@
         "@supabase/ssr": "0.12.7",
         "better-auth": "1.7.7",
         "drizzle-orm": "0.45.3",
+        "jose": "6.2.12",
         "valibot": "1.5.0",
       },
       "devDependencies": {
@@ -147,6 +150,7 @@
       "version": "0.1.0",
       "dependencies": {
         "@starter/schemas": "workspace:*",
+        "jose": "6.2.12",
       },
       "devDependencies": {
         "@types/bun": "1.4.2",

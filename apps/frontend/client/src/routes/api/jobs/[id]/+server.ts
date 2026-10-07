@@ -13,6 +13,7 @@
 // users' jobs.
 
 import { json, jsonError, unauthorized } from '#lib/server/http.ts';
+import { publicSupabaseJob } from '#lib/server/supabase_context.ts';
 import type { RequestHandler } from './$types';
 
 export const GET: RequestHandler = async ({ locals, params }) => {
@@ -30,7 +31,7 @@ export const GET: RequestHandler = async ({ locals, params }) => {
     if (job === null) {
       return jsonError(404, 'not_found', 'That job does not exist.');
     }
-    return json(200, job);
+    return json(200, publicSupabaseJob(job));
   }
 
   if (locals.container.jobsProfile !== 'encode') {

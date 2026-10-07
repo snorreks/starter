@@ -13,6 +13,7 @@ Start here. Nothing below is required reading before running a command — the
 | write or run tests | [testing.md](testing.md) |
 | run local Supabase or review its SQL/RLS boundary | [supabase-local.md](supabase-local.md) |
 | review the Supabase web identity and request services | [supabase-web-backend.md](supabase-web-backend.md) |
+| configure and verify the Supabase/Cloud Run compute preview | [supabase-cloud-run-compute.md](supabase-cloud-run-compute.md) |
 | bootstrap a Herdr checkout and scope local settings | [worktrees.md](worktrees.md) |
 | understand a past decision | [first-round-review.md](first-round-review.md) |
 | review the current DX/security repairs and remaining limits | [optimization-review.md](optimization-review.md) |

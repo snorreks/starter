@@ -45,6 +45,7 @@ import {
   systemClock,
   type WorkflowInstanceBinding,
 } from '@starter/jobs';
+import { runSupabaseArtifactRetention } from '../cloud_run/maintenance.ts';
 import {
   type JobsEnv,
   requireJobsBindings,
@@ -112,6 +113,16 @@ export class MaintenanceWorkflow extends WorkflowEntrypoint<JobsEnv, Maintenance
     // checkable.
     requireJobsBindings(this.env);
     requireJobsDeploymentEnvironment(this.env);
+    if (this.env.STARTER_BACKEND_PROFILE === 'supabase') {
+      const retirement = await step.do('supabase-r2-artifact-retention', async () =>
+        runSupabaseArtifactRetention(this.env),
+      );
+      return {
+        outcome: 'supabase_artifact_retention',
+        ...retirement,
+        historyRetention: 'supabase_cron',
+      };
+    }
     const request = this.requestFor(event);
     const runs = createMaintenanceRunRepository(this.env.DB, systemClock);
     const repository = createJobRepository(this.env.DB, systemClock);

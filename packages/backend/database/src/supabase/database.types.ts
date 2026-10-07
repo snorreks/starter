@@ -83,11 +83,21 @@ isOneToOne: false
               "job_id": string,"outcome": string
             }[]
                            },
+"authorize_job_runner":
+{ Args: { "p_attempt_id": string,"p_execution_name": string,"p_job_id": string }; Returns: {
+              "attempt_id": string,"expires_at": string,"fixture": string,"job_id": string,"output_key": string,"preset": string
+            }[]
+                           },
 "begin_maintenance_run":
 { Args: { "p_run_key": string,"p_scheduled_time"?: string,"p_slot"?: string,"p_trigger": string }; Returns: boolean
                            },
 "claim_encode_job":
 { Args: { "p_attempt_id": string,"p_job_id": string,"p_lease_seconds"?: number }; Returns: boolean
+                           },
+"cloud_run_attempt_failure":
+{ Args: { "p_attempt_id": string,"p_job_id": string }; Returns: {
+              "error_code": string,"job_status": string
+            }[]
                            },
 "complete_chat_generation":
 { Args: { "p_attempt": number,"p_client_id": string,"p_content": string,"p_conversation_id": string }; Returns: string
@@ -107,10 +117,16 @@ isOneToOne: false
 "list_encode_jobs":
 { Args: Record<PropertyKey, never>; Returns: Json
                            },
+"prune_maintenance_history":
+{ Args: Record<PropertyKey, never>; Returns: number
+                           },
 "queue_expired_job_artifacts":
 { Args: { "p_cutoff": string,"p_limit"?: number }; Returns: {
               "job_id": string,"output_key": string
             }[]
+                           },
+"record_cloud_run_execution":
+{ Args: { "p_attempt_id": string,"p_execution_name": string,"p_job_id": string }; Returns: boolean
                            },
 "record_job_dispatch":
 { Args: { "p_dispatch_state": string,"p_error_code"?: string,"p_job_id": string }; Returns: boolean
