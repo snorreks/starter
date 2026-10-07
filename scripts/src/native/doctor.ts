@@ -171,8 +171,7 @@ const crateCheck = (): Check => {
   };
 };
 
-const supabaseAuthProfileCheck = (): Check => {
-  const profile = process.env.VITE_NATIVE_AUTH_PROFILE;
+export const inspectNativeAuthProfile = (profile: string | undefined): Check => {
   if (profile === undefined || profile === '' || profile === 'legacy') {
     return {
       name: 'native auth profile',
@@ -216,7 +215,7 @@ const supabaseAuthProfileCheck = (): Check => {
 };
 
 const CHECKS = [
-  supabaseAuthProfileCheck,
+  () => inspectNativeAuthProfile(process.env.VITE_NATIVE_AUTH_PROFILE),
   crateCheck,
   tauriCheck,
   cargoCheck,
