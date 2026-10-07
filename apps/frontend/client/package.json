@@ -28,7 +28,6 @@
   },
   "dependencies": {
     "@opentelemetry/api": "1.9.1",
-    "typebox": "1.3.36",
     "@starter/auth": "workspace:*",
     "@starter/database": "workspace:*",
     "@starter/features": "workspace:*",
@@ -39,7 +38,9 @@
     "@starter/ui": "workspace:*",
     "@starter/utils": "workspace:*",
     "better-auth": "1.7.7",
-    "drizzle-orm": "0.45.3"
+    "drizzle-orm": "0.45.3",
+    "@standard-schema/spec": "1.1.0",
+    "valibot": "1.5.0"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "5.20261006.1",

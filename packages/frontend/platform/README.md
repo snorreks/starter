@@ -18,7 +18,7 @@ interface a host fulfils or a piece of mechanism more than one host needs:
 |---|---|
 | `ApiTransport` | `request<T>(path, options)` — the seam between a service and the network |
 | `HttpTransport` | The reusable implementation: base URL, headers, uniform `AppError` mapping |
-| `parseDto` | Runtime assertion of a response body against a TypeBox schema |
+| `parseDto` | Runtime validation of a response body against a Standard Schema contract |
 | `Navigation` | `go(path)` — move the host to an application path |
 | `ExternalBrowser` | `open(url)` — hand a URL to the user's own browser |
 | `SessionStore`, `MemorySessionStore`, `SessionScope` | Where a credential lives between launches |
@@ -58,7 +58,7 @@ artifact is produced; this package compiles into its consumers.
 
 ## Boundaries
 
-May import `@starter/schemas`, `@starter/utils` and TypeBox. May **not** import:
+May import `@starter/schemas`, `@starter/utils` and `@standard-schema/spec`. May **not** import:
 
 - `@sveltejs/kit`, `$app/*` — the host's router is injected as `Navigation`
 - `@tauri-apps/*` — that belongs to a native composition root's bridge role

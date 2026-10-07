@@ -11,7 +11,7 @@
 // a network problem.
 
 import { describe, expect, test } from 'bun:test';
-import { Value } from 'typebox/value';
+import { checkSchema } from '../validation.ts';
 import {
   type ChatStreamEvent,
   isChatStreamEvent,
@@ -170,8 +170,7 @@ describe('which frames end a turn', () => {
 
 describe('a message submitted to start a turn', () => {
   test('accepts content and the caller own id', () => {
-    expect(MessageCreateSchema.properties).toHaveProperty('clientId');
-    expect(MessageCreateSchema.properties).toHaveProperty('content');
+    expect(checkSchema(MessageCreateSchema, { content: 'hi', clientId: 'c1' })).toBe(true);
   });
 
   test('refuses a role, so a caller cannot author an assistant turn', () => {
@@ -179,7 +178,7 @@ describe('a message submitted to start a turn', () => {
     // send `role: "assistant"` could write the one message in the table a human is
     // not supposed to write.
     expect(
-      Value.Check(MessageCreateSchema, {
+      checkSchema(MessageCreateSchema, {
         content: 'hi',
         clientId: 'c1',
         role: 'assistant',
@@ -189,7 +188,7 @@ describe('a message submitted to start a turn', () => {
 
   test('refuses a conversationId, so a caller cannot post into another conversation', () => {
     expect(
-      Value.Check(MessageCreateSchema, {
+      checkSchema(MessageCreateSchema, {
         content: 'hi',
         clientId: 'c1',
         conversationId: 'cnv_other',
@@ -199,9 +198,9 @@ describe('a message submitted to start a turn', () => {
 
   test('the role schema accepts exactly the two declared roles', () => {
     for (const role of MESSAGE_ROLES) {
-      expect(Value.Check(MessageRoleSchema, role)).toBe(true);
+      expect(checkSchema(MessageRoleSchema, role)).toBe(true);
     }
-    expect(Value.Check(MessageRoleSchema, 'system')).toBe(false);
+    expect(checkSchema(MessageRoleSchema, 'system')).toBe(false);
   });
 });
 
@@ -227,7 +226,7 @@ describe('the composer agrees with the schema', () => {
     const at = 'x'.repeat(MESSAGE_CONTENT_MAX_LENGTH);
 
     expect(validateMessageInput({ content: at })).toEqual({});
-    expect(Value.Check(MessageCreateSchema, { content: at, clientId: 'c1' })).toBe(true);
+    expect(checkSchema(MessageCreateSchema, { content: at, clientId: 'c1' })).toBe(true);
   });
 
   test('an ordinary message is accepted', () => {

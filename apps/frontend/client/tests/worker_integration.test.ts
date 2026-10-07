@@ -1081,7 +1081,7 @@ describe('notes CRUD', () => {
       method: 'POST',
       body: JSON.stringify({ title: '', body: 'x' }),
     });
-    // 422 from the TypeBox validation in `readJsonBody`, not 500.
+    // 422 from the shared schema validation in `readJsonBody`, not 500.
     expect(response.status).toBe(422);
   });
 
@@ -1497,7 +1497,7 @@ describe('telemetry', () => {
       headers: { 'content-type': 'application/json', ...originHeaders() },
       body: JSON.stringify({ not: 'a log event' }),
     });
-    // 422: the body is validated against the TypeBox schema, so a malformed record
+    // 422: the body is validated against the shared schema, so a malformed record
     // is refused as a bad request rather than silently accepted and dropped.
     expect(rejected.status).toBe(422);
   });

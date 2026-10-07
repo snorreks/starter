@@ -9,13 +9,12 @@
 // longer knows what the original request was.
 //
 // The refusal tests matter most: `additionalProperties: false` is what makes
-// `Value.Check` a refusal mechanism rather than a coercion mechanism. A schema
+// schema validation a refusal mechanism rather than a coercion mechanism. A schema
 // that silently drops an unknown field makes the client believe a write
 // succeeded.
 
 import { describe, expect, test } from 'bun:test';
-import type { TSchema } from 'typebox';
-import { Value } from 'typebox/value';
+import { checkSchema } from '../validation.ts';
 import {
   NOTE_BODY_MAX_LENGTH,
   NOTE_TITLE_MAX_LENGTH,
@@ -35,13 +34,7 @@ const validNote = () => ({
   updatedAt: 1_700_000_000_000,
 });
 
-/**
- * `TSchema` rather than `Parameters<typeof Value.Check>[0]`: TypeBox 1.x gives
- * `Value.Check` a second overload whose first parameter is a *context* of
- * properties, and `Parameters` reads that one, so the derived type rejects
- * every schema object. The parameter is a schema either way.
- */
-const accepts = (schema: TSchema, value: unknown): boolean => Value.Check(schema, value);
+const accepts = checkSchema;
 
 describe('NoteSchema', () => {
   test('accepts a well-formed note', () => {
@@ -212,6 +205,9 @@ describe('validateNoteInput', () => {
     const cases: { title: string; body: string }[] = [
       { title: 'a', body: 'b' },
       { title: '', body: 'b' },
+      { title: ' \t\n ', body: 'b' },
+      { title: ' a ', body: 'b' },
+      { title: ` ${'a'.repeat(NOTE_TITLE_MAX_LENGTH)}`, body: 'b' },
       { title: 'a'.repeat(NOTE_TITLE_MAX_LENGTH), body: 'b' },
       { title: 'a'.repeat(NOTE_TITLE_MAX_LENGTH + 1), body: 'b' },
       { title: 'a', body: 'b'.repeat(NOTE_BODY_MAX_LENGTH + 1) },

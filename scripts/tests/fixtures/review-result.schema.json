@@ -1,0 +1,591 @@
+{
+  "type": "object",
+  "properties": {
+    "schemaVersion": {
+      "const": 1
+    },
+    "summary": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 1000
+    },
+    "dimensions": {
+      "type": "object",
+      "properties": {
+        "layout": {
+          "anyOf": [
+            {
+              "type": "object",
+              "properties": {
+                "score": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 4
+                },
+                "evidence": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 600
+                },
+                "uncertainty": {
+                  "anyOf": [
+                    {
+                      "const": "low"
+                    },
+                    {
+                      "const": "medium"
+                    },
+                    {
+                      "const": "high"
+                    }
+                  ]
+                }
+              },
+              "required": ["score", "evidence", "uncertainty"],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "unassessable": {
+                  "const": true
+                },
+                "evidence": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 600
+                },
+                "uncertainty": {
+                  "anyOf": [
+                    {
+                      "const": "medium"
+                    },
+                    {
+                      "const": "high"
+                    }
+                  ]
+                }
+              },
+              "required": ["unassessable", "evidence", "uncertainty"],
+              "additionalProperties": false
+            }
+          ]
+        },
+        "typography": {
+          "anyOf": [
+            {
+              "type": "object",
+              "properties": {
+                "score": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 4
+                },
+                "evidence": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 600
+                },
+                "uncertainty": {
+                  "anyOf": [
+                    {
+                      "const": "low"
+                    },
+                    {
+                      "const": "medium"
+                    },
+                    {
+                      "const": "high"
+                    }
+                  ]
+                }
+              },
+              "required": ["score", "evidence", "uncertainty"],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "unassessable": {
+                  "const": true
+                },
+                "evidence": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 600
+                },
+                "uncertainty": {
+                  "anyOf": [
+                    {
+                      "const": "medium"
+                    },
+                    {
+                      "const": "high"
+                    }
+                  ]
+                }
+              },
+              "required": ["unassessable", "evidence", "uncertainty"],
+              "additionalProperties": false
+            }
+          ]
+        },
+        "hierarchy": {
+          "anyOf": [
+            {
+              "type": "object",
+              "properties": {
+                "score": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 4
+                },
+                "evidence": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 600
+                },
+                "uncertainty": {
+                  "anyOf": [
+                    {
+                      "const": "low"
+                    },
+                    {
+                      "const": "medium"
+                    },
+                    {
+                      "const": "high"
+                    }
+                  ]
+                }
+              },
+              "required": ["score", "evidence", "uncertainty"],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "unassessable": {
+                  "const": true
+                },
+                "evidence": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 600
+                },
+                "uncertainty": {
+                  "anyOf": [
+                    {
+                      "const": "medium"
+                    },
+                    {
+                      "const": "high"
+                    }
+                  ]
+                }
+              },
+              "required": ["unassessable", "evidence", "uncertainty"],
+              "additionalProperties": false
+            }
+          ]
+        },
+        "consistency": {
+          "anyOf": [
+            {
+              "type": "object",
+              "properties": {
+                "score": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 4
+                },
+                "evidence": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 600
+                },
+                "uncertainty": {
+                  "anyOf": [
+                    {
+                      "const": "low"
+                    },
+                    {
+                      "const": "medium"
+                    },
+                    {
+                      "const": "high"
+                    }
+                  ]
+                }
+              },
+              "required": ["score", "evidence", "uncertainty"],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "unassessable": {
+                  "const": true
+                },
+                "evidence": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 600
+                },
+                "uncertainty": {
+                  "anyOf": [
+                    {
+                      "const": "medium"
+                    },
+                    {
+                      "const": "high"
+                    }
+                  ]
+                }
+              },
+              "required": ["unassessable", "evidence", "uncertainty"],
+              "additionalProperties": false
+            }
+          ]
+        },
+        "responsiveFit": {
+          "anyOf": [
+            {
+              "type": "object",
+              "properties": {
+                "score": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 4
+                },
+                "evidence": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 600
+                },
+                "uncertainty": {
+                  "anyOf": [
+                    {
+                      "const": "low"
+                    },
+                    {
+                      "const": "medium"
+                    },
+                    {
+                      "const": "high"
+                    }
+                  ]
+                }
+              },
+              "required": ["score", "evidence", "uncertainty"],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "unassessable": {
+                  "const": true
+                },
+                "evidence": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 600
+                },
+                "uncertainty": {
+                  "anyOf": [
+                    {
+                      "const": "medium"
+                    },
+                    {
+                      "const": "high"
+                    }
+                  ]
+                }
+              },
+              "required": ["unassessable", "evidence", "uncertainty"],
+              "additionalProperties": false
+            }
+          ]
+        },
+        "stateClarity": {
+          "anyOf": [
+            {
+              "type": "object",
+              "properties": {
+                "score": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 4
+                },
+                "evidence": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 600
+                },
+                "uncertainty": {
+                  "anyOf": [
+                    {
+                      "const": "low"
+                    },
+                    {
+                      "const": "medium"
+                    },
+                    {
+                      "const": "high"
+                    }
+                  ]
+                }
+              },
+              "required": ["score", "evidence", "uncertainty"],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "unassessable": {
+                  "const": true
+                },
+                "evidence": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 600
+                },
+                "uncertainty": {
+                  "anyOf": [
+                    {
+                      "const": "medium"
+                    },
+                    {
+                      "const": "high"
+                    }
+                  ]
+                }
+              },
+              "required": ["unassessable", "evidence", "uncertainty"],
+              "additionalProperties": false
+            }
+          ]
+        }
+      },
+      "required": [
+        "layout",
+        "typography",
+        "hierarchy",
+        "consistency",
+        "responsiveFit",
+        "stateClarity"
+      ],
+      "additionalProperties": false
+    },
+    "requirements": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 80
+          },
+          "status": {
+            "anyOf": [
+              {
+                "const": "met"
+              },
+              {
+                "const": "violated"
+              },
+              {
+                "const": "unclear"
+              }
+            ]
+          },
+          "evidence": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 600
+          }
+        },
+        "required": ["id", "status", "evidence"],
+        "additionalProperties": false
+      },
+      "maxItems": 40
+    },
+    "issues": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "dimension": {
+            "anyOf": [
+              {
+                "const": "layout"
+              },
+              {
+                "const": "typography"
+              },
+              {
+                "const": "hierarchy"
+              },
+              {
+                "const": "consistency"
+              },
+              {
+                "const": "responsiveFit"
+              },
+              {
+                "const": "stateClarity"
+              }
+            ]
+          },
+          "requirementId": {
+            "anyOf": [
+              {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 80
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "category": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 80
+          },
+          "severity": {
+            "anyOf": [
+              {
+                "const": "minor"
+              },
+              {
+                "const": "major"
+              },
+              {
+                "const": "blocker"
+              }
+            ]
+          },
+          "observation": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 600
+          },
+          "region": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 160
+          },
+          "box": {
+            "anyOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "x": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 1
+                  },
+                  "y": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 1
+                  },
+                  "width": {
+                    "type": "number",
+                    "maximum": 1,
+                    "exclusiveMinimum": 0
+                  },
+                  "height": {
+                    "type": "number",
+                    "maximum": 1,
+                    "exclusiveMinimum": 0
+                  }
+                },
+                "required": ["x", "y", "width", "height"],
+                "additionalProperties": false
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "impact": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 400
+          },
+          "correction": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 400
+          },
+          "uncertainty": {
+            "anyOf": [
+              {
+                "const": "low"
+              },
+              {
+                "const": "medium"
+              },
+              {
+                "const": "high"
+              }
+            ]
+          }
+        },
+        "required": [
+          "dimension",
+          "requirementId",
+          "category",
+          "severity",
+          "observation",
+          "region",
+          "box",
+          "impact",
+          "correction",
+          "uncertainty"
+        ],
+        "additionalProperties": false
+      },
+      "maxItems": 40
+    },
+    "reference": {
+      "anyOf": [
+        {
+          "type": "object",
+          "properties": {
+            "score": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 4
+            },
+            "evidence": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 600
+            },
+            "allowedDifferences": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 200
+              },
+              "maxItems": 20
+            }
+          },
+          "required": ["score", "evidence", "allowedDifferences"],
+          "additionalProperties": false
+        },
+        {
+          "type": "null"
+        }
+      ]
+    }
+  },
+  "required": ["schemaVersion", "summary", "dimensions", "requirements", "issues", "reference"],
+  "additionalProperties": false
+}

@@ -55,7 +55,7 @@ Adding a table:
 1. Add it to `src/lib/schema.ts`.
 2. `bun run db:generate` (commits the SQL and the snapshot).
 3. `bun run db:migrate` to apply locally.
-4. Add the matching TypeBox schema to `@starter/schemas` if it crosses the wire.
+4. Add the matching Valibot contract to `@starter/schemas` if it crosses the wire.
 
 ## Tests and artifacts
 

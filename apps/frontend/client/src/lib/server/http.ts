@@ -9,11 +9,10 @@
 // is visible in review, whereas a route that forgets a validation option was
 // invisible.
 //
-// TypeBox is still the validator, and still the same schema the browser
-// validates against, so there is no second hand-written validation to drift.
+// Valibot implements Standard Schema, so request validation consumes the shared
+// contracts without a validator-specific adapter.
 
-import type { TSchema } from 'typebox';
-import { Value } from 'typebox/value';
+import type { StandardSchemaV1 } from '@standard-schema/spec';
 
 /** The one error shape every API route returns. */
 export interface ApiErrorBody {
@@ -64,7 +63,7 @@ export const notConfigured = (message: string, isApi: boolean): Response =>
         headers: { 'content-type': 'text/plain; charset=utf-8' },
       });
 
-export type ReadBodyResult = { ok: true; value: unknown } | { ok: false; response: Response };
+export type ReadBodyResult<T> = { ok: true; value: T } | { ok: false; response: Response };
 
 /**
  * Read a JSON body, bounded in bytes, and validate it against `schema`.
@@ -75,15 +74,15 @@ export type ReadBodyResult = { ok: true; value: unknown } | { ok: false; respons
  * abandoned the moment it passes the limit, so an oversized body is never held in
  * memory in full.
  *
- * Validation is `Value.Check` against the caller's TypeBox schema, which means an
+ * Validation uses the caller's Standard Schema, which means an
  * unknown field is a refusal rather than a silently dropped value — every schema
  * in `@starter/schemas` sets `additionalProperties: false` for exactly that.
  */
-export const readJsonBody = async (
+export const readJsonBody = async <S extends StandardSchemaV1>(
   request: Request,
-  schema: TSchema,
+  schema: S,
   options: { maxBytes: number; invalidStatus?: number },
-): Promise<ReadBodyResult> => {
+): Promise<ReadBodyResult<StandardSchemaV1.InferOutput<S>>> => {
   const declared = request.headers.get('content-length');
   if (declared !== null && Number(declared) > options.maxBytes) {
     return {
@@ -111,11 +110,12 @@ export const readJsonBody = async (
     return { ok: false, response: invalidBody('The request body is not valid JSON.', options) };
   }
 
-  if (!Value.Check(schema, parsed)) {
+  const validated = schema['~standard'].validate(parsed);
+  if (validated instanceof Promise || validated.issues) {
     return { ok: false, response: invalidBody('The request body is not valid.', options) };
   }
 
-  return { ok: true, value: parsed };
+  return { ok: true, value: validated.value };
 };
 
 /**

@@ -3,7 +3,7 @@
 // `/api/notes` — the collection. A thin adapter over the notes server service.
 //
 // Thin is a specific claim, not a compliment: this file resolves who the caller
-// is, validates the request body against the shared TypeBox schema, and maps a
+// is, validates the request body against the shared schema, and maps a
 // service result to a status code. It contains no SQL, no ownership rule and no
 // domain logic, because those live in `#lib/server/notes_service.ts` where they
 // can be reached from the SSR load as well as from here.

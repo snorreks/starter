@@ -13,3 +13,5 @@ export * from './jobs/index.ts';
 export * from './logging/index.ts';
 export * from './notes/index.ts';
 export * from './registry/index.ts';
+
+export { checkSchema, parseSchema } from './validation.ts';

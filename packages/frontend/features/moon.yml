@@ -10,6 +10,9 @@ layer: 'library'
 fileGroups:
   sources:
     - 'src/**/*'
+  workspaceSources:
+    - '/packages/frontend/platform/src/**/*'
+    - '/packages/shared/schemas/src/**/*'
   configs:
     - 'package.json'
     - 'tsconfig*.json'
@@ -40,6 +43,7 @@ tasks:
       - '@group(sources)'
       - '@group(tests)'
       - '@group(configs)'
+      - '@group(workspaceSources)'
   lint:
     command: 'bun'
     args: ['run', 'lint']
@@ -47,6 +51,7 @@ tasks:
       - '@group(sources)'
       - '@group(tests)'
       - '@group(configs)'
+      - '@group(workspaceSources)'
   format:
     command: 'bun'
     args: ['run', 'format']
@@ -54,6 +59,7 @@ tasks:
       - '@group(sources)'
       - '@group(tests)'
       - '@group(configs)'
+      - '@group(workspaceSources)'
   fix:
     command: 'bun'
     args: ['run', 'fix']
@@ -61,6 +67,7 @@ tasks:
       - '@group(sources)'
       - '@group(tests)'
       - '@group(configs)'
+      - '@group(workspaceSources)'
   test:
     command: 'bun'
     args: ['run', 'test']
@@ -68,6 +75,7 @@ tasks:
       - '@group(sources)'
       - '@group(tests)'
       - '@group(configs)'
+      - '@group(workspaceSources)'
   validate:
     deps:
       - '~:lint'

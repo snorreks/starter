@@ -33,11 +33,10 @@ import {
   MESSAGE_CONTENT_MAX_LENGTH,
   type Message,
   MessageCreateSchema,
-  type MessageListSchema,
+  type MessageList,
   SSE_CONTENT_TYPE,
 } from '@starter/schemas/chat';
 import { createId } from '@starter/utils';
-import type { Static } from 'typebox';
 import type { ChatModel } from '#lib/server/chat_model.ts';
 import { createChatService } from '#lib/server/chat_service.ts';
 import { json, jsonError, readJsonBody, unauthorized } from '#lib/server/http.ts';
@@ -82,7 +81,7 @@ export const GET: RequestHandler = async ({ locals, params }) => {
     return jsonError(404, 'not_found', 'That conversation does not exist.');
   }
 
-  const body: Static<typeof MessageListSchema> = {
+  const body: MessageList = {
     messages: await service.messages(user.id, params.id),
     serverTime: Date.now(),
   };
@@ -109,7 +108,7 @@ export const POST: RequestHandler = async ({ locals, params, request }) => {
     return body.response;
   }
 
-  const { content, clientId } = body.value as { content: string; clientId: string };
+  const { content, clientId } = body.value;
 
   // Before the first frame, so a failure here is still an HTTP status. Idempotent on
   // `clientId`: a retry after a dropped connection returns the same row rather than

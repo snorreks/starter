@@ -9,7 +9,7 @@
 // closed, and projected.
 
 import { describe, expect, test } from 'bun:test';
-import { Value } from 'typebox/value';
+import { checkSchema } from '../validation.ts';
 import { SessionUserWireSchema, toSessionUser } from './session.ts';
 
 /** The row Better Auth returns: every field on the `users` table, serialized. */
@@ -26,8 +26,8 @@ const wire = (overrides: Record<string, unknown> = {}) => ({
 
 describe('the provider user is accepted as it is sent', () => {
   test('a null image is accepted, because the column is nullable', () => {
-    expect(Value.Check(SessionUserWireSchema, wire())).toBe(true);
-    expect(Value.Check(SessionUserWireSchema, wire({ image: 'https://cdn.test/a.png' }))).toBe(
+    expect(checkSchema(SessionUserWireSchema, wire())).toBe(true);
+    expect(checkSchema(SessionUserWireSchema, wire({ image: 'https://cdn.test/a.png' }))).toBe(
       true,
     );
   });
@@ -36,11 +36,11 @@ describe('the provider user is accepted as it is sent', () => {
     // A closed wire schema on purpose: a Better Auth upgrade that adds a field
     // becomes a visible refusal at the boundary rather than a silently different
     // identity shape reaching a screen.
-    expect(Value.Check(SessionUserWireSchema, wire({ role: 'admin' }))).toBe(false);
+    expect(checkSchema(SessionUserWireSchema, wire({ role: 'admin' }))).toBe(false);
   });
 
   test('a body that is not a user at all is refused', () => {
-    expect(Value.Check(SessionUserWireSchema, { code: 'EMAIL_NOT_VERIFIED' })).toBe(false);
+    expect(checkSchema(SessionUserWireSchema, { code: 'EMAIL_NOT_VERIFIED' })).toBe(false);
   });
 });
 

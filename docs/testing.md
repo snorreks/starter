@@ -377,7 +377,7 @@ sends it, and the E2E suite is asserting the same thing a browser would do.
 
 ### Visual capture, review and performance
 
-The visual suite uses a TypeBox-validated manifest, dynamically discovers every
+The visual suite uses a Standard Schema-validated manifest, dynamically discovers every
 web and native `+page.svelte` route, prepares real synthetic accounts through
 signup and captured verification mail, and captures the declared state matrix at
 desktop/mobile and light/dark. It verifies expected headings, controls and content,
