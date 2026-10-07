@@ -19,6 +19,11 @@ That prompt is not ceremony. A project extension is arbitrary code executing wit
 your permissions, and a template that trains you to accept it teaches the wrong
 habit. `defaultProjectTrust` is `ask`, not `always`, for that reason.
 
+The portable workflow package provides one deferred Playwright browser namespace for
+exploratory browsing. It has no project runtime identity and cannot certify a Starter
+run. Keep it as the single default local browser driver; enable Bladebro only as an
+explicit alternative, not alongside it.
+
 ## What is here
 
 | | |
