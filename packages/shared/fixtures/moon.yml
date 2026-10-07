@@ -33,6 +33,13 @@ tasks:
     inputs:
       - '@group(sources)'
       - '@group(configs)'
+  test:
+    command: 'bun'
+    args: ['run', 'test']
+    inputs:
+      - '@group(sources)'
+      - 'tests/**/*'
+      - '@group(configs)'
   fix:
     command: 'bun'
     args: ['run', 'fix']

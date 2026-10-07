@@ -1,14 +1,10 @@
 $schema: 'https://moonrepo.dev/schemas/v2/project.json'
 
 # The end-to-end project: Playwright specs, the harness that starts the server,
-# and the visual-capture command.
+# visual capture, serialized Lighthouse and the explicit Docker media journey.
 #
-# This project has no `src/` directory. Every file that matters is a top-level
-# TypeScript module (the harness, the config, the preflight) or lives in `tests/`.
-# The previous `sources` group was `src/**/*`, which matched nothing at all — so
-# `e2e:test` hashed to an empty input set, was reported "cached", and its command
-# was an `echo`. A file group that matches nothing is a cache key that never
-# changes; see docs/testing.md.
+# The harness, validated scenario data, references and reviewed browser baselines
+# are all explicit Moon inputs. Runtime observations stay uncached.
 # `automation` is Moon's layer for "an automated testing suite, like E2E,
 # integration, or visual tests". It matters because `tool` may not depend on
 # `application`, and this project genuinely drives the application.
@@ -17,11 +13,22 @@ layer: 'automation'
 fileGroups:
   sources:
     - '*.ts'
+    - 'src/**/*'
+  scenarios:
+    - 'src/scenarios/**/*'
+  references:
+    - 'references/**/*'
+  baselines:
+    - 'tests/visual/**/*-snapshots/**/*'
+    - 'baselines/**/*'
   configs:
     - 'package.json'
     - 'tsconfig*.json'
     - 'moon.yml'
     - 'playwright.config.ts'
+    - 'playwright.visual.config.ts'
+    - 'playwright.full.config.ts'
+    - 'playwright.audit.config.ts'
   tests:
     # One name for one thing. `specs` and `tests` were both `tests/**/*`, and
     # every task referenced `specs` while `tests` was left declared and
@@ -37,6 +44,7 @@ dependsOn:
   - client
   - database
   - schemas
+  - fixtures
 
 tasks:
   typecheck:
@@ -44,6 +52,9 @@ tasks:
     args: ['run', 'typecheck']
     inputs:
       - '@group(sources)'
+      - '@group(scenarios)'
+      - '@group(references)'
+      - '@group(baselines)'
       - '@group(tests)'
       - '@group(configs)'
   lint:
@@ -51,6 +62,9 @@ tasks:
     args: ['run', 'lint']
     inputs:
       - '@group(sources)'
+      - '@group(scenarios)'
+      - '@group(references)'
+      - '@group(baselines)'
       - '@group(tests)'
       - '@group(configs)'
   format:
@@ -58,6 +72,9 @@ tasks:
     args: ['run', 'format']
     inputs:
       - '@group(sources)'
+      - '@group(scenarios)'
+      - '@group(references)'
+      - '@group(baselines)'
       - '@group(tests)'
       - '@group(configs)'
   fix:
@@ -65,6 +82,9 @@ tasks:
     args: ['run', 'fix']
     inputs:
       - '@group(sources)'
+      - '@group(scenarios)'
+      - '@group(references)'
+      - '@group(baselines)'
       - '@group(tests)'
       - '@group(configs)'
 
@@ -81,9 +101,38 @@ tasks:
     options:
       cache: false
 
+  test-tooling:
+    command: 'bun'
+    args: ['run', 'test:tooling']
+    inputs:
+      - '@group(sources)'
+      - '@group(scenarios)'
+      - '@group(tests)'
+      - '@group(configs)'
+      - '/apps/frontend/client/src/routes/**/*'
+      - '/apps/frontend/native/src/routes/**/*'
+
   capture-evidence:
     command: 'bun'
     args: ['run', 'capture-evidence']
+    options:
+      cache: false
+
+  visual:
+    command: 'bun'
+    args: ['run', 'test:visual']
+    options:
+      cache: false
+
+  audit:
+    command: 'bun'
+    args: ['run', 'test:audit']
+    options:
+      cache: false
+
+  full:
+    command: 'bun'
+    args: ['run', 'test:full']
     options:
       cache: false
 

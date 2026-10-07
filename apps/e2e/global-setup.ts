@@ -7,16 +7,19 @@
 // just as readily as a correct one, and a readiness probe that only checks for a 200
 // will run a whole suite against the wrong process — passing, and proving nothing.
 //
-// The run id is generated in `playwright.config.ts`, not here. Playwright loads the
-// config file *before* running global setup, so a value set in `process.env` here is
-// already too late for the `webServer[].env` block that has to forward it to the
-// Worker. Importing it keeps the two halves agreeing by construction.
+// The run id and port come from the parent config through the environment. Test
+// workers import this helper independently, so it must never regenerate either.
 //
 // If preflight fails, this throws: a failed setup aborts the run rather than
 // letting tests execute against an unverified server.
 
-import { TEST_RUN_ID } from './playwright.config.ts';
-import { APP_PORT, appBaseUrl, recordIdentity, verifyAppIdentity } from './preflight.ts';
+import {
+  APP_PORT,
+  appBaseUrl,
+  recordIdentity,
+  TEST_RUN_ID,
+  verifyAppIdentity,
+} from './preflight.ts';
 
 export default async function globalSetup(): Promise<void> {
   process.stdout.write(`e2e run id: ${TEST_RUN_ID}\n`);

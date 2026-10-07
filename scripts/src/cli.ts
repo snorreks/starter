@@ -37,6 +37,8 @@ const COMMANDS: Record<string, CommandLoader> = {
   workflows: async () => (await import('./commands/workflows.ts')).workflowsCommand,
   update: async () => (await import('./commands/update.ts')).updateCommand,
   evidence: async () => (await import('./commands/evidence.ts')).evidenceCommand,
+  e2e: async () => (await import('./commands/e2e.ts')).e2eCommand,
+  visual: async () => (await import('./commands/visual.ts')).visualCommand,
 };
 
 const names = (): string[] => Object.keys(COMMANDS).sort();

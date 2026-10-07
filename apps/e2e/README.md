@@ -1,89 +1,88 @@
 # apps/e2e
 
-The Playwright suite, and the harness that starts the server it drives.
+## Purpose
 
-## Purpose and runtime
-
-Node, driven by Playwright. This project contains no application code: every file
-is either a spec under `tests/` or part of the harness (`playwright.config.ts`,
-`global-setup.ts`, `preflight.ts`, `capture_evidence.ts`). The guard classifies the
-whole directory as role `test` for the same reason.
-
-The lane exists because the cheaper lanes cannot see it. Ten E2E specs once failed
-on `assets.not_found_handling: "404-page"` answering a browser *navigation* with
-404 while the same URL answered 200 from `curl` — one header's difference. No unit
-test and no API test noticed.
-
-## Setup and configuration
-
-```bash
-bun run --cwd apps/e2e browsers:install   # the pinned Chromium, with its libraries
-```
-
-Through the workspace script rather than `bunx playwright`, which does not resolve
-the pinned copy and installs whatever the registry serves — a version mismatch
-against the `@playwright/test` these specs run under.
-
-The harness allocates its own port from this checkout's range and stamps a run id
-into the served origin, so a leftover listener from an earlier run fails loudly
-instead of being mistaken for this run's server. Both come from
-`@starter/scripts`' `run_scope.ts` and `browser_path.ts`.
+Playwright browser checks for the built SvelteKit Worker and the browser-rendered
+native host. The project contains no product code; it owns test fixtures, route
+coverage, runtime lifecycle, screenshot evidence and Lighthouse measurements.
 
 ## Commands
 
 From the repository root:
 
 ```bash
-bun run e2e            # the whole lane: build, start the built Worker, drive a browser
-bun run e2e:visual     # capture the evidence screenshots
+bun run e2e                         # existing built Worker functional lane
+bun run e2e:visual                  # full visual matrix; no model calls
+bun run e2e:visual -- --update-snapshots  # explicit local baseline update
+bun run e2e:visual:review -- --run <run-id> # optional structured vision review
+bun run e2e:visual:review -- --capture     # capture and review using .env.e2e
+bun run e2e:audit                   # three Lighthouse samples per public target/viewport
+bun run e2e:full                    # real browser-to-Worker-to-FFmpeg encode
+bun run e2e:doctor                  # Chromium, Node/Lighthouse and Docker checks
 ```
 
-From `apps/e2e`:
+The visual command covers every discovered Svelte page route plus declared UI
+states, at 1440x900 and 390x844 with light/dark themes. It writes a versioned
+`run.json`, a local HTML index, original screenshots, traces on failure and
+baseline snapshots under the ignored `.wrangler/runs/<run-id>/artifacts/` tree.
+The manifest lists each deliberate coverage gap: the root error boundary has no
+deterministic trigger; valid reset and device codes are secret-bearing; create and
+delete are exercised in functional flows but not captured separately; chat
+transport failure needs a deterministic fault fixture; enabled job states are
+covered by the Docker lane rather than the visual matrix; and native captures use
+the browser host. Mobile captures are responsive
+Chromium evidence, not iOS or Safari evidence. Native captures run the supported
+Vite browser host, not a packaged Tauri application.
 
-```bash
-bun run test:e2e       # Playwright with this project's config
-bun run test:headed    # the same specs, visible
-bun run browsers:install
-bun run capture-evidence
-bun run typecheck
-bun run lint
-```
+Visual review is optional. Copy `.env.e2e.example` to the gitignored `.env.e2e`, set
+an explicit image-capable model and key, then pass a complete capture run to the
+review command. The adapter sends image bytes with strict structured output and
+validates the response locally. Without credentials, the live provider check is
+not run; the HTTP adapter is covered with a local fixture. Review output and its
+content-addressed cache remain local. System One scoring and design-reference
+comparison are not implemented yet.
 
-## Tests and artifacts
+`e2e:full` builds the web and jobs Workers, derives their bindings from committed
+Wrangler configuration, creates one isolated Miniflare D1/R2/Workflow/DO graph,
+and starts a source-fingerprinted Docker-compatible media image. The real browser
+signs up, verifies email, starts the encode from the Jobs UI, checks idempotent
+replay and persisted completion, fetches and hashes the output, probes it with
+FFprobe inside the owned container, checks a bounded Range read, and verifies
+owner and signed-out denials. Docker is required; the command names the remedy if
+no engine is available. Local Miniflare does not prove Cloudflare's managed
+container lifecycle or cron delivery.
 
-Assertions on the runner's own output, not on its exit code: a renamed spec
-directory makes Playwright report zero tests and exit 0, which is a green job that
-ran nothing. CI greps the teed log for a nonzero passing count and fails when the
-match finds nothing.
+Lighthouse runs only public durable routes represented in the scenario manifest
+(`web-landing` and `web-login` currently), on desktop and mobile, with three
+serialized navigations per target. It records all four category scores, LCP, CLS,
+TBT, transfer bytes and request count, plus raw reports and median summaries. These
+local measurements are not field Core Web Vitals. Their provisional thresholds are
+recorded in each report and fail this local audit when exceeded; they are not yet
+CI quality gates. Authenticated scenarios are omitted rather than audited after a
+login redirect. The optional Unlighthouse public-route exploration command is not
+implemented; the declarative scenario manifest remains the route-coverage
+authority.
 
-Artifacts, on failure only — traces and screenshots land in
-`apps/e2e/test-results/` and `apps/e2e/playwright-report/`, and CI uploads them
-with `if-no-files-found: ignore` so an unreleased UI never reaches artifact storage
-unnecessarily.
+## Setup and artifacts
 
-`capture_evidence.ts` produces screenshots. Vision inspection of them reports as
-**SKIPPED** with a reason, never as a pass.
+The harness selects the same Chromium as the browser lane and allocates per-run
+ports, state and artifacts. It refuses a stale server whose health response does
+not echo the invocation's run ID. `bun run e2e:doctor` proves the browser can
+launch and checks the additional Node and Docker prerequisites.
 
-The captured screens are `landing`, `login`, `login-error`, `notes-empty`,
-`notes-populated` and `jobs-disabled`. Each is a state this deployment actually
-reaches: `jobs-disabled` is the jobs screen as signed-in user sees it with the
-template's shipped profile, which is **off**, so that is the honest screenshot
-rather than a fabricated "Encoded" row. A fixture that only signs in would
-photograph `/notes` under another screen's name — the capture harness navigates
-first and prepares afterwards, so the fixture has to land where it says it does.
+From this package, `bun run test:e2e`, `bun run test:visual`, `bun run test:audit`,
+`bun run test:full`, `bun run test:tooling`, `bun run typecheck`, `bun run lint` and
+`bun run format` run the respective lanes directly. The shared scenario manifest
+is TypeBox-validated and compared to dynamically discovered `+page.svelte` routes;
+an added route without a declared scenario fails tooling tests.
 
-It needs a running server on the port `playwright.config.ts` chose for this
-checkout, and says so by name when there is not one.
+## Boundaries
 
-## Boundaries and documentation
+E2E may import shared packages and the repository's bounded tooling helpers. Shared
+fixtures contain only serializable synthetic content. Real account fixtures use
+the public signup, captured local verification mail and browser sign-in flows; no
+emulator-only identity override is available in the built Worker.
 
-May import `@starter/*` packages. It reaches `scripts/src/shared/*` by relative
-path, which is the one declared exemption in
-`CROSS_WORKSPACE_RELATIVE_EXEMPTIONS`: the harness and the tooling it configures
-are one Bun process, and importing the module is what makes the harness exercise
-the real path resolution and port allocation. That exemption is checked for
-staleness — if the last import using it goes away, the guard reports the row.
-
-- [docs/testing.md](../../docs/testing.md) — the four lanes and what each proves
-- [docs/capability-matrix.md](../../docs/capability-matrix.md) — what is verified, fixture-verified, or not run
-- [docs/architecture.md](../../docs/architecture.md) — why one origin, and why a browser rather than `curl`
+See [docs/testing.md](../../docs/testing.md),
+[docs/capability-matrix.md](../../docs/capability-matrix.md), and
+[docs/compute.md](../../docs/compute.md).

@@ -61,6 +61,7 @@ import { runWrangler } from './cloudflare/wrangler.ts';
 import { SEED_STATEMENTS } from './db/seed.ts';
 import { EXIT, fail } from './shared/command.ts';
 import { CLIENT_DIR, REPO_ROOT } from './shared/paths.ts';
+import { runScope } from './shared/run_scope.ts';
 import { viteBin, wranglerBin } from './shared/tools.ts';
 
 /**
@@ -70,9 +71,13 @@ import { viteBin, wranglerBin } from './shared/tools.ts';
 const BUILT_WORKER = join(CLIENT_DIR, '.svelte-kit/cloudflare/_worker.js');
 const WRANGLER_CONFIG = join(CLIENT_DIR, 'wrangler.jsonc');
 
-/** Inside the checkout, so a worktree's state is its own. Gitignored. */
-const STATE_DIR = join(REPO_ROOT, '.wrangler', 'local');
-const LOG_DIR = process.env.STARTER_LOG_DIR ?? join(REPO_ROOT, '.wrangler', 'logs');
+/** E2E gets a fresh Wrangler store and process record for each invocation. */
+const E2E_SCOPE = process.env.E2E_RUN_ID ? runScope(process.env.E2E_RUN_ID) : undefined;
+
+/** Ordinary local development keeps its stable store; E2E never touches it. */
+const STATE_DIR = E2E_SCOPE?.stateDir ?? join(REPO_ROOT, '.wrangler', 'local');
+const LOG_DIR =
+  process.env.STARTER_LOG_DIR ?? E2E_SCOPE?.logDir ?? join(REPO_ROOT, '.wrangler', 'logs');
 const LOG_FILE = join(LOG_DIR, 'app.ndjson');
 const PIDFILE = join(STATE_DIR, 'dev.pid');
 
@@ -169,7 +174,8 @@ const varFlags = (): string[] => {
   const args: string[] = [];
 
   for (const name of FORWARDED_VARS) {
-    const value = process.env[name];
+    const value =
+      name === 'TEST_RUN_ID' ? (process.env.TEST_RUN_ID ?? E2E_SCOPE?.runId) : process.env[name];
     if (value !== undefined && value.length > 0) {
       args.push('--var', `${name}:${value}`);
     }
@@ -184,6 +190,9 @@ const varFlags = (): string[] => {
 
   return args;
 };
+
+const persistenceFlags = (): string[] =>
+  E2E_SCOPE === undefined ? [] : ['--persist-to', E2E_SCOPE.stateDir];
 
 /**
  * The launcher surface these tests read.
@@ -231,6 +240,7 @@ export const buildTarget = (mode: DevMode): Target => {
         HOST,
         '--config',
         WRANGLER_CONFIG,
+        ...persistenceFlags(),
         ...varFlags(),
       ],
       cwd: CLIENT_DIR,
@@ -259,14 +269,16 @@ export const buildTarget = (mode: DevMode): Target => {
  * `await`s this knows nothing of the server's is left running.
  */
 export const main = (mode: DevMode = 'app'): Promise<number> => {
-  if (mode === 'app') {
-    const configArgs = ['--config', WRANGLER_CONFIG];
+  if (mode === 'app' || E2E_SCOPE !== undefined) {
+    const configArgs = ['--config', WRANGLER_CONFIG, ...persistenceFlags()];
     const migrated = runWrangler(['d1', 'migrations', 'apply', 'DB', '--local', ...configArgs]);
     if (migrated !== 0) {
-      return Promise.resolve(
-        fail('Could not prepare the emulator database (local D1 migrations failed).'),
-      );
+      return Promise.resolve(fail('Could not prepare the local D1 database (migrations failed).'));
     }
+  }
+
+  if (mode === 'app') {
+    const configArgs = ['--config', WRANGLER_CONFIG, ...persistenceFlags()];
     const seeded = runWrangler([
       'd1',
       'execute',
