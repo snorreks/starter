@@ -22,10 +22,19 @@ const storedAssistant: Message = {
   role: 'assistant',
   content: 'saved reply',
 };
-const chatFixture = (outcome: 'admitted' | 'completed' | 'in_flight', missing = false) => {
+const chatFixture = (
+  outcome: 'admitted' | 'completed' | 'in_flight' | 'running' | 'conflict',
+  missing = false,
+) => {
   const chat = {
     findConversation: mock(async () => (missing ? null : { id: conversationId })),
     listConversations: mock(async () => []),
+    listMessages: mock(async () => ({
+      items: [],
+      nextCursor: null,
+      hasMore: false,
+      serverTime: 1,
+    })),
     findMessageByClientId: mock(async (_owner: string, _conversation: string, id: string) =>
       id.startsWith('assistant:') ? storedAssistant : storedUser,
     ),
@@ -35,6 +44,7 @@ const chatFixture = (outcome: 'admitted' | 'completed' | 'in_flight', missing = 
       attempt: 3,
     })),
     completeGeneration: mock(async () => storedAssistant.id),
+    failGeneration: mock(async () => {}),
   };
   const generate = mock(async function* () {
     yield { text: 'new reply' };
@@ -88,18 +98,44 @@ test('a completed retry replays stored messages without regenerating or completi
   expect(chat.completeGeneration).not.toHaveBeenCalled();
 });
 
-test('an active turn returns 409 while a missing conversation remains 404', async () => {
+test('provider completion followed by a persistence failure records a failed attempt and emits a terminal error', async () => {
+  const { chat, event } = chatFixture('admitted');
+  chat.completeGeneration = mock(async () => {
+    throw new Error('database unavailable');
+  });
+  const response = await postChat(event);
+  const frames = decodeChatStream(await response.text());
+  expect(frames.at(-1)).toMatchObject({ type: 'error', code: 'persistence_failed' });
+  expect(chat.failGeneration).toHaveBeenCalledWith({
+    conversationId,
+    clientId: 'turn',
+    attempt: 3,
+    state: 'failed',
+  });
+});
+
+test('a running turn returns a recoverable 409 while a missing conversation remains 404', async () => {
   for (const missing of [false, true]) {
-    const { chat, generate, event } = chatFixture('in_flight', missing);
+    const { chat, generate, event } = chatFixture(missing ? 'running' : 'running', missing);
     const response = await postChat(event);
     expect(response.status).toBe(missing ? 404 : 409);
-    expect(await response.json()).toMatchObject({ error: missing ? 'not_found' : 'in_flight' });
+    expect(await response.json()).toMatchObject(
+      missing ? { error: 'not_found' } : { code: 'running', recoverable: true },
+    );
     expect(generate).not.toHaveBeenCalled();
     expect(chat.findMessageByClientId).not.toHaveBeenCalled();
     if (missing) {
       expect(chat.admitGeneration).not.toHaveBeenCalled();
     }
   }
+});
+
+test('a reused idempotency key with changed content returns conflict without provider work', async () => {
+  const { generate, event } = chatFixture('conflict');
+  const response = await postChat(event);
+  expect(response.status).toBe(409);
+  expect(await response.json()).toMatchObject({ error: 'conflict' });
+  expect(generate).not.toHaveBeenCalled();
 });
 
 test('notes follow pages until the last page or the 200-note limit', async () => {
@@ -112,10 +148,18 @@ test('notes follow pages until the last page or the 200-note limit', async () =>
       createdAt: 1,
       updatedAt: 1,
     }));
-    const list = mock(async (_owner: string, page: number) => ({
-      notes: notes.slice(page * 50, (page + 1) * 50),
-      hasMore: (page + 1) * 50 < total,
-    }));
+    const calls: (string | null)[] = [];
+    const list = mock(async (_owner: string, cursor: string | null) => {
+      calls.push(cursor);
+      const page = cursor === null ? 0 : Number(atob(cursor));
+      const hasMore = (page + 1) * 50 < total;
+      return {
+        notes: notes.slice(page * 50, (page + 1) * 50),
+        hasMore,
+        serverTime: 1,
+        nextCursor: hasMore ? btoa(String(page + 1)) : null,
+      };
+    });
     const service = createRequestNotesService({
       context: {
         backendProfile: 'supabase',
@@ -124,8 +168,10 @@ test('notes follow pages until the last page or the 200-note limit', async () =>
       },
     } as unknown as Parameters<typeof createRequestNotesService>[0]);
     expect(await service.list(user.id)).toEqual(notes.slice(0, 200));
-    expect(list.mock.calls).toEqual(
-      Array.from({ length: Math.ceil(Math.min(total, 200) / 50) }, (_, page) => ['owner', page]),
+    expect(calls).toEqual(
+      Array.from({ length: Math.ceil(Math.min(total, 200) / 50) }, (_, page) =>
+        page === 0 ? null : btoa(String(page)),
+      ),
     );
     await expect(service.list('other')).rejects.toThrow(/owner/);
   }

@@ -84,7 +84,7 @@ export const createNotesService = (db: NotesDatabase): NotesService => ({
       .select()
       .from(notes)
       .where(eq(notes.ownerId, ownerId))
-      .orderBy(desc(notes.updatedAt))
+      .orderBy(desc(notes.updatedAt), desc(notes.id))
       .limit(MAX_LISTED_NOTES);
     return rows.map(toWireNote);
   },
@@ -151,12 +151,14 @@ export const createRequestNotesService = (locals: {
     async list(ownerId) {
       assertOwner(ownerId);
       const listed: Note[] = [];
-      for (let page = 0; listed.length < MAX_LISTED_NOTES; page += 1) {
-        const result = await repository.list(ownerId, page);
+      let cursor: string | null = null;
+      while (listed.length < MAX_LISTED_NOTES) {
+        const result = await repository.list(ownerId, cursor);
         listed.push(...result.notes.slice(0, MAX_LISTED_NOTES - listed.length));
-        if (!result.hasMore) {
+        if (!result.hasMore || result.nextCursor === null) {
           break;
         }
+        cursor = result.nextCursor;
       }
       return listed;
     },

@@ -30,6 +30,7 @@ import {
   isChatStreamEvent,
   type Message,
   MessageListSchema,
+  MessagePageSchema,
 } from '@starter/schemas/chat';
 import { AppError } from '@starter/utils';
 import { readChatFrames } from './chat_stream.ts';
@@ -97,6 +98,15 @@ export class ChatService {
       { method: 'GET', ...(signal === undefined ? {} : { signal }) },
     );
     return parseDto(MessageListSchema, body, 'a message list').messages;
+  }
+
+  async listMessagesPage(conversationId: string, cursor: string | null, signal?: AbortSignal) {
+    const query = cursor === null ? '' : `?cursor=${encodeURIComponent(cursor)}`;
+    const body = await this.#transport.request<unknown>(
+      `/api/chat/conversations/${encodeURIComponent(conversationId)}/messages/page${query}`,
+      { method: 'GET', ...(signal === undefined ? {} : { signal }) },
+    );
+    return parseDto(MessagePageSchema, body, 'a message page');
   }
 
   /**

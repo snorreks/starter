@@ -142,6 +142,8 @@ test.describe('notes, end to end', () => {
     // applied the server's response rather than optimistically guessing.
     const card = page.getByTestId('note-card').filter({ hasText: 'Shopping list' });
     await expect(card).toBeVisible();
+    await page.getByTestId('notes-refresh').click();
+    await expect(card).toBeVisible();
 
     // And it was actually persisted: a reload reads from the server again.
     await page.reload();

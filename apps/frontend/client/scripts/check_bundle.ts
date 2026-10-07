@@ -81,6 +81,10 @@ const SERVER_MARKERS = [
   // Configuration secret names from `src/lib/server/env.ts`.
   'BETTER_AUTH_SECRET',
   'BETTER_AUTH_URL',
+  'SUPABASE_SERVICE_ROLE_KEY',
+  'private.chat_generations',
+  'complete_chat_generation',
+  'service_role required',
   // The Workers bindings module. Resolved to a stub in dev, so it never appears in
   // a client chunk even when the import is there.
   'cloudflare:workers',

@@ -34,9 +34,13 @@ import {
   ScreenScope,
 } from '@starter/ui/screen';
 import { OptimisticUpdate, toAppError } from '@starter/utils';
-import type { NotesService } from './notes_service.ts';
 
-type NotesScreenService = Pick<NotesService, 'list' | 'create' | 'update' | 'remove'>;
+export interface NotesScreenService {
+  list(signal?: AbortSignal): Promise<Note[]>;
+  create(input: NoteCreate, signal?: AbortSignal): Promise<Note>;
+  update(id: string, input: NoteUpdate, signal?: AbortSignal): Promise<Note>;
+  remove(id: string, signal?: AbortSignal): Promise<void>;
+}
 
 export type NotesStatus =
   | { kind: 'loading' }

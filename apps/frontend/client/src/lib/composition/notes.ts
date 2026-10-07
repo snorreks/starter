@@ -12,12 +12,15 @@
 // service from a module registry could not be constructed with a fake, which would
 // make every test of this screen a test of the network.
 
+import type { NotesScreenService } from '@starter/features/notes';
 import { NotesService, NotesViewModel } from '@starter/features/notes';
 import type { Note } from '@starter/schemas/notes';
+import { createRemoteNotesFeatureService } from './notes_remote_adapter.ts';
 import { webTransport } from './transport.ts';
 
 export interface NotesComposition {
-  notes?: NotesService;
+  notes?: NotesScreenService;
+  remote?: boolean;
   /** The list the SSR load already produced, so the first paint is not empty. */
   initialNotes?: readonly Note[];
 }
@@ -31,9 +34,10 @@ export interface NotesComposition {
  * not know which host it is running in.
  */
 const notesService = new NotesService({ transport: webTransport, className: 'NotesService' });
+const remoteNotesService = createRemoteNotesFeatureService();
 
 export const getNotesViewModel = (options: NotesComposition = {}): NotesViewModel =>
   new NotesViewModel({
-    notes: options.notes ?? notesService,
+    notes: options.notes ?? (options.remote ? remoteNotesService : notesService),
     ...(options.initialNotes === undefined ? {} : { initialNotes: options.initialNotes }),
   });

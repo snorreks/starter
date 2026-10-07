@@ -111,6 +111,10 @@ describe('checkBundle', () => {
       'account_id',
       'provider_id',
       'email_verified',
+      'SUPABASE_SERVICE_ROLE_KEY',
+      'private.chat_generations',
+      'complete_chat_generation',
+      'service_role required',
     ]) {
       const dir = fixture({
         'clean.js': 'export const b = 2;\n',

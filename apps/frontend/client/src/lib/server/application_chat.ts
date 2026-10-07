@@ -4,7 +4,8 @@ import { type ChatService, createChatService } from './chat_service.ts';
 import type { ApplicationServices } from './supabase_context.ts';
 
 type AdmissionResult =
-  | { outcome: 'in_flight' }
+  | { outcome: 'running'; assistantMessageId: string }
+  | { outcome: 'conflict' }
   | { outcome: 'admitted'; userMessage: Message; assistantMessageId: string }
   | { outcome: 'completed'; userMessage: Message; assistantMessage: Message };
 
@@ -12,6 +13,12 @@ export type RequestChatService = Omit<ChatService, 'appendUserMessage'> & {
   appendUserMessage(
     ...args: Parameters<ChatService['appendUserMessage']>
   ): Promise<Message | AdmissionResult | null>;
+  failGeneration(
+    ownerId: string,
+    conversationId: string,
+    clientId: string,
+    state: 'failed' | 'cancelled',
+  ): Promise<void>;
 };
 
 /** Select the complete chat implementation from this request's composition root. */
@@ -24,7 +31,9 @@ export const createRequestChatService = (locals: {
   container: { db: Parameters<typeof createChatService>[0] };
 }): RequestChatService => {
   if (locals.context?.backendProfile !== 'supabase') {
-    return createChatService(locals.container.db);
+    return Object.assign(createChatService(locals.container.db), {
+      failGeneration: async () => {},
+    });
   }
   const identity = locals.context.services?.identity;
   const repository = locals.context.services?.chat;
@@ -55,7 +64,11 @@ export const createRequestChatService = (locals: {
     },
     async messages(ownerId, conversationId): Promise<Message[]> {
       owner(ownerId);
-      return repository.listMessages(ownerId, conversationId, 0);
+      return (await repository.listMessages(ownerId, conversationId, null)).items;
+    },
+    async messagePage(ownerId, conversationId, cursor) {
+      owner(ownerId);
+      return repository.listMessages(ownerId, conversationId, cursor);
     },
     async appendUserMessage(ownerId, conversationId, content, clientId) {
       owner(ownerId);
@@ -70,8 +83,11 @@ export const createRequestChatService = (locals: {
         userMessageId,
         content,
       });
-      if (admission.outcome === 'in_flight') {
-        return { outcome: 'in_flight' };
+      if (admission.outcome === 'conflict') {
+        return { outcome: 'conflict' };
+      }
+      if (admission.outcome === 'running') {
+        return { outcome: 'running', assistantMessageId: admission.assistantMessageId };
       }
       const userMessage = await repository.findMessageByClientId(ownerId, conversationId, clientId);
       if (userMessage === null) {
@@ -121,6 +137,20 @@ export const createRequestChatService = (locals: {
         status: 'complete',
         createdAt,
       };
+    },
+    async failGeneration(ownerId, conversationId, clientId, state) {
+      owner(ownerId);
+      const admission = admissions.get(clientId);
+      if (admission === undefined) {
+        return;
+      }
+      await repository.failGeneration({
+        conversationId,
+        clientId,
+        attempt: admission.attempt,
+        state,
+      });
+      admissions.delete(clientId);
     },
   };
 };

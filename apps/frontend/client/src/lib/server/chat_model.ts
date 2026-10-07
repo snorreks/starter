@@ -66,7 +66,11 @@ export type ChatModelProfile = (typeof CHAT_MODEL_PROFILES)[number];
 export interface WorkersAiBinding {
   run(
     model: string,
-    input: { messages: { role: 'user' | 'assistant' | 'system'; content: string }[] },
+    input: {
+      messages: { role: 'user' | 'assistant' | 'system'; content: string }[];
+      stream?: boolean;
+      max_tokens?: number;
+    },
     options?: Record<string, unknown>,
   ): Promise<unknown>;
 }
@@ -75,7 +79,12 @@ export const CHAT_MODEL_PROFILE_ENV = 'CHAT_MODEL_PROFILE';
 export const CHAT_MODEL_BINDING = 'AI';
 
 /** The model a `workers-ai` profile runs. Named, so it is one edit. */
-export const WORKERS_AI_MODEL = '@cf/meta/llama-3.1-8b-instruct';
+export const WORKERS_AI_MODEL = '@cf/meta/llama-3.1-8b-instruct-fp8';
+export const WORKERS_AI_CONTEXT_TOKENS = 32_000;
+export const CHAT_OUTPUT_MAX_TOKENS = 768;
+export const CHAT_OUTPUT_MAX_BYTES = 12_288;
+export const CHAT_PROMPT_MAX_BYTES = 24_576;
+export const CHAT_GENERATION_DEADLINE_MS = 45_000;
 
 /**
  * How many characters the echo model speaks per chunk.
@@ -175,33 +184,89 @@ export const createWorkersAiChatModel = (options: {
         return;
       }
 
-      const answer = await options.binding.run(model, {
-        messages: [{ role: 'user', content: prompt }],
-      });
+      if (new TextEncoder().encode(prompt).byteLength > CHAT_PROMPT_MAX_BYTES) {
+        throw new Error(`Chat history exceeds the ${CHAT_PROMPT_MAX_BYTES}-byte prompt budget.`);
+      }
+      const answer = await options.binding.run(
+        model,
+        {
+          messages: [{ role: 'user', content: prompt }],
+          stream: true,
+          max_tokens: CHAT_OUTPUT_MAX_TOKENS,
+        },
+        { signal },
+      );
 
       // The binding's response shape is provider-owned, so it is narrowed rather than
       // asserted: a response this adapter cannot read is a refusal naming the model,
       // not a stream of `undefined`.
-      if (!isWorkersAiResponse(answer)) {
-        throw new Error(
-          `The Workers AI model ${model} returned a response this adapter cannot read.`,
-        );
+      if (answer instanceof ReadableStream) {
+        yield* readWorkersAiStream(answer, signal);
+        return;
       }
-
-      // One chunk, because the binding returns the whole completion rather than a
-      // stream. Said in a comment because it is a real difference a caller could
-      // otherwise assume away: with this profile a reply arrives in a single delta.
-      yield { text: answer.response };
+      throw new Error(`The Workers AI model ${model} did not return the requested stream.`);
     },
   };
 };
 
-/** The narrowed shape of a Workers AI text response. */
-const isWorkersAiResponse = (value: unknown): value is { readonly response: string } =>
-  typeof value === 'object' &&
-  value !== null &&
-  'response' in value &&
-  typeof (value as { response: unknown }).response === 'string';
+/** Decode the provider's SSE stream incrementally and stop consuming after abort. */
+const readWorkersAiStream = async function* (
+  stream: ReadableStream<Uint8Array>,
+  signal: AbortSignal,
+): AsyncGenerator<ChatModelChunk> {
+  const reader = stream.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+  const cancel = () => {
+    void reader.cancel(signal.reason).catch(() => undefined);
+  };
+  signal.addEventListener('abort', cancel, { once: true });
+  try {
+    while (!signal.aborted) {
+      const next = await reader.read();
+      if (next.done) {
+        break;
+      }
+      buffer += decoder.decode(next.value, { stream: true });
+      const frames = buffer.split('\n\n');
+      buffer = frames.pop() ?? '';
+      for (const frame of frames) {
+        for (const line of frame.split('\n')) {
+          if (!line.startsWith('data:')) {
+            continue;
+          }
+          const data = line.slice(5).trim();
+          if (data === '[DONE]') {
+            return;
+          }
+          let value: unknown;
+          try {
+            value = JSON.parse(data);
+          } catch {
+            throw new Error('Workers AI returned malformed streaming JSON.');
+          }
+          if (
+            typeof value !== 'object' ||
+            value === null ||
+            !('response' in value) ||
+            typeof value.response !== 'string'
+          ) {
+            continue;
+          }
+          if (value.response.length > 0) {
+            yield { text: value.response };
+          }
+        }
+      }
+    }
+  } finally {
+    signal.removeEventListener('abort', cancel);
+    if (signal.aborted) {
+      await reader.cancel('client aborted').catch(() => undefined);
+    }
+    reader.releaseLock();
+  }
+};
 
 /**
  * Sleep, or return early when the signal fires.
