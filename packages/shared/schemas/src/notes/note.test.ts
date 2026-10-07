@@ -205,6 +205,9 @@ describe('validateNoteInput', () => {
     const cases: { title: string; body: string }[] = [
       { title: 'a', body: 'b' },
       { title: '', body: 'b' },
+      { title: ' \t\n ', body: 'b' },
+      { title: ' a ', body: 'b' },
+      { title: ` ${'a'.repeat(NOTE_TITLE_MAX_LENGTH)}`, body: 'b' },
       { title: 'a'.repeat(NOTE_TITLE_MAX_LENGTH), body: 'b' },
       { title: 'a'.repeat(NOTE_TITLE_MAX_LENGTH + 1), body: 'b' },
       { title: 'a', body: 'b'.repeat(NOTE_BODY_MAX_LENGTH + 1) },

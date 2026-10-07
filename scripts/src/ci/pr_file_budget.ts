@@ -41,7 +41,10 @@ export const checkPrFileBudget = (options: {
   const committed = paths(
     git(cwd, ['diff', '--no-renames', '--name-only', '-z', `${resolvedBase}...${head}`]),
   );
-  const pending = paths(git(cwd, ['diff', '--no-renames', '--name-only', '-z', resolvedBase]));
+  const pending = [
+    ...paths(git(cwd, ['diff', '--cached', '--no-renames', '--name-only', '-z', 'HEAD'])),
+    ...paths(git(cwd, ['diff', '--no-renames', '--name-only', '-z'])),
+  ];
   const untracked = paths(git(cwd, ['ls-files', '--others', '--exclude-standard', '-z']));
   const changed = [...new Set([...committed, ...pending, ...untracked])].sort();
   return {

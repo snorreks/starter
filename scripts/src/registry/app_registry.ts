@@ -522,6 +522,7 @@ export type JobsProfile = (typeof JOBS_PROFILES)[number];
  * can never reach `resolveTarget` as an `undefined`.
  */
 export const EnvironmentTargetsSchema = v.strictObject({
+  d1DatabaseId: v.optional(v.union([v.pipe(v.string(), v.minLength(1)), v.null()])),
   workerName: v.optional(v.union([v.pipe(v.string(), v.minLength(1)), v.null()])),
   jobsWorkerName: v.optional(v.union([v.pipe(v.string(), v.minLength(1)), v.null()])),
   mediaBucketName: v.optional(v.union([v.pipe(v.string(), v.minLength(1)), v.null()])),

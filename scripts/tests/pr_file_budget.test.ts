@@ -63,9 +63,9 @@ describe('PR changed path budget', () => {
     writeFileSync(join(root, 'tracked-generated.ts'), 'generated');
     git(root, 'add', 'tracked-generated.ts');
     git(root, 'commit', '-qm', 'generated source');
-    writeFileSync(join(root, 'base.txt'), 'changed');
-    expect(checkPrFileBudget({ cwd: root, base, maxFiles: 2 }).count).toBe(2);
-    git(root, 'rm', 'tracked-generated.ts');
+    writeFileSync(join(root, 'tracked-generated.ts'), 'changed');
+    expect(checkPrFileBudget({ cwd: root, base, maxFiles: 2 }).count).toBe(1);
+    expect(git(root, 'rm', 'base.txt').exitCode).toBe(0);
     expect(checkPrFileBudget({ cwd: root, base, maxFiles: 2 }).count).toBe(2);
   });
   test('includes staged, unstaged, and checkout-owned untracked paths', () => {
@@ -75,6 +75,33 @@ describe('PR changed path budget', () => {
     writeFileSync(join(root, 'base.txt'), 'unstaged change');
     writeFileSync(join(root, 'untracked.ts'), 'x');
     expect(checkPrFileBudget({ cwd: root, base, maxFiles: 3 }).count).toBe(3);
+  });
+  test('excludes upstream-only changes after the branches diverge', () => {
+    const { root, base } = repo();
+    writeFileSync(join(root, 'upstream.txt'), 'upstream');
+    expect(git(root, 'add', '.').exitCode).toBe(0);
+    expect(git(root, 'commit', '-qm', 'upstream change').exitCode).toBe(0);
+    const upstream = git(root, 'rev-parse', 'HEAD').stdout.toString().trim();
+    expect(git(root, 'checkout', '--detach', base).exitCode).toBe(0);
+    writeFileSync(join(root, 'feature.txt'), 'feature');
+    expect(git(root, 'add', '.').exitCode).toBe(0);
+    expect(git(root, 'commit', '-qm', 'feature change').exitCode).toBe(0);
+    expect(checkPrFileBudget({ cwd: root, base: upstream, maxFiles: 1 })).toMatchObject({
+      ok: true,
+      count: 1,
+      paths: ['feature.txt'],
+    });
+  });
+  test('counts a staged path once when its working tree content is reverted to HEAD', () => {
+    const { root, base } = repo();
+    writeFileSync(join(root, 'base.txt'), 'staged change');
+    expect(git(root, 'add', 'base.txt').exitCode).toBe(0);
+    writeFileSync(join(root, 'base.txt'), 'base');
+    expect(checkPrFileBudget({ cwd: root, base, maxFiles: 1 })).toMatchObject({
+      ok: true,
+      count: 1,
+      paths: ['base.txt'],
+    });
   });
   test('rejects missing and invalid bases instead of choosing one', () => {
     const { root } = repo();

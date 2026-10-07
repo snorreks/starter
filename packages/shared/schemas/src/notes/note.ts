@@ -13,7 +13,11 @@ export const NoteSchema = v.strictObject({
 });
 export type Note = v.InferOutput<typeof NoteSchema>;
 export const NoteCreateSchema = v.strictObject({
-  title: v.pipe(v.string(), v.minLength(1), v.maxLength(NOTE_TITLE_MAX_LENGTH)),
+  title: v.pipe(
+    v.string(),
+    v.check((value) => value.trim().length > 0, 'A title is required.'),
+    v.maxLength(NOTE_TITLE_MAX_LENGTH),
+  ),
   body: v.pipe(v.string(), v.maxLength(NOTE_BODY_MAX_LENGTH)),
 });
 export type NoteCreate = v.InferOutput<typeof NoteCreateSchema>;

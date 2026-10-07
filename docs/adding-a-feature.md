@@ -44,7 +44,7 @@ export const ThingUpdateSchema = v.pipe(
 never from the body — a body carrying one is a request to write into another
 account's list.
 
-`minProperties: 1` on the update schema refuses an empty PATCH, which otherwise
+The `v.check` rule in `ThingUpdateSchema` refuses an empty PATCH, which otherwise
 costs a round trip and a row write to change nothing.
 
 Add a `validateThingInput` alongside when the client should show a message without
