@@ -701,7 +701,7 @@
       "revision": "6ebc813",
       "command": "bun run evidence",
       "platform": "Linux x86_64 (NixOS 26.11; Bun 1.4.2; Node v22.23.3; Chromium 154.0.8037.97; local Podman 5.8.7)",
-      "result": "Manifest schema and revision ancestry passed; all 63 rows matched the generated matrix.",
+      "result": "Manifest schema and revision ancestry passed; all 64 rows matched the generated matrix.",
       "count": 66,
       "recordedAt": "2026-10-07T14:34:15.000Z",
       "artifact": null,
@@ -728,6 +728,18 @@
       "result": "6 passed, 0 failed. A real bound listener on one allocated port caused the allocator to select the next free six-port block before startup.",
       "count": 6,
       "recordedAt": "2026-10-07T14:34:15.000Z",
+      "artifact": null,
+      "reason": null
+    },
+    {
+      "capability": "Supabase preview isolation from ordinary .dev.vars",
+      "kind": "observed",
+      "revision": "6ebc813",
+      "command": "bun run test:worker -- --backend supabase (with a preexisting conflicting .dev.vars fixture)",
+      "platform": "Linux x86_64 (NixOS 26.11; Bun 1.4.2; Node v22.23.3; local Podman 5.8.7)",
+      "result": "5 passed, 0 failed. Run-owned preview settings took precedence over conflicting local backend/URL values; .dev.vars remained byte-for-byte unchanged and the fixture owner removed it after the run.",
+      "count": 5,
+      "recordedAt": "2026-10-07T14:38:25.000Z",
       "artifact": null,
       "reason": null
     }

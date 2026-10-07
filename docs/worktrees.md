@@ -64,7 +64,8 @@ dev listener is refused rather than reused; Supabase probes its complete local
 port block and selects the next free block before startup. Supabase preview runs create
 `.wrangler/runs/<run-id>/supabase.dev.vars` privately; a user `.dev.vars` is
 neither read nor changed, and cleanup removes only the unchanged file created by
-that run. The local project identity and all exposed service ports are unique per
+that run. The live Supabase Worker lane also passes with a conflicting `.dev.vars`
+fixture present, then verifies its bytes are unchanged. The local project identity and all exposed service ports are unique per
 worktree and run. Startup errors, cancellation and teardown errors remain failures
 with ownership evidence preserved for diagnosis.
 
