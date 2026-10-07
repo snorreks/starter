@@ -30,6 +30,7 @@ describe('agent JSON facade', () => {
       result.capabilities.find((capability: { id: string }) => capability.id === 'runtime:built'),
     ).toMatchObject({ status: 'not-run', remedy: expect.stringContaining('owned runtime') });
     expect(result.rerun).toContain('bun run agent -- describe --json');
+    expect(result.rerun).toContain('bun run agent -- visual review --run <run-id> --json');
   });
 
   test('built doctor reports the unavailable owned runtime and exits nonzero', async () => {
@@ -46,6 +47,9 @@ describe('agent JSON facade', () => {
       status: 'not-run',
     });
     expect(result.rerun).toContain('bun run agent -- doctor --profile built --json');
+    expect(
+      result.capabilities.find((item: { id: string }) => item.id === 'browser').remedy,
+    ).toContain('runtime descriptor');
   });
 
   test('review emits one JSON failure for a missing scoped capture without starting services', async () => {

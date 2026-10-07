@@ -35,7 +35,11 @@ const describe = {
     'Visual capture/review use the existing E2E matrix and manifest reviewer; interactive browser captures cannot yet be imported.',
     'Persistent runtime start/status/stop profiles remain unavailable; the one-shot full compute journey uses the real Docker-backed E2E authority.',
   ],
-  rerun: ['bun run agent -- describe --json', 'bun run e2e:visual:review -- --run <run-id>'],
+  rerun: [
+    'bun run agent -- describe --json',
+    'bun run agent -- visual capture --json',
+    'bun run agent -- visual review --run <run-id> --json',
+  ],
   capabilities: [
     { id: 'task', status: 'passed', owner: '.pi/extensions/repo_task.ts', remedy: null },
     { id: 'runtime:dev', status: 'passed', owner: '.pi/extensions/dev_process.ts', remedy: null },
@@ -57,7 +61,7 @@ const describe = {
       status: 'not-run',
       owner: '@sonny/pi-workflow-helpers (exploratory only)',
       remedy:
-        'Set CHROMIUM_PATH for exploratory browsing; project-identified QA requires the owned runtime/browser bridge.',
+        'Set CHROMIUM_PATH for exploratory browsing; project-identified QA requires the missing owned runtime descriptor and browser bridge.',
     },
     {
       id: 'visual-review',
@@ -113,7 +117,8 @@ const doctorBuilt = {
       id: 'browser',
       status: 'not-run',
       owner: '@sonny/pi-workflow-helpers (exploratory only)',
-      remedy: 'Configure CHROMIUM_PATH; project-owned browser verification is not available.',
+      remedy:
+        'Configure CHROMIUM_PATH for exploratory browsing; project-owned browser verification requires the missing runtime descriptor.',
     },
   ],
 } as const;
