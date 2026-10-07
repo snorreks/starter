@@ -294,6 +294,50 @@ describe('transactional admission and attempt fencing in Postgres', () => {
     expect(distinct.filter((result) => result.error !== null).length).toBe(7 - accepted);
   });
 
+  test('failed retries consume the same five-per-hour admission quota', async () => {
+    const { data: conversation, error } = await userB.client
+      .from('conversations')
+      .insert({ owner_id: userB.id, title: 'Retry quota fixture' })
+      .select('id')
+      .single();
+    if (error || !conversation) {
+      throw new Error(`Retry quota conversation fixture failed: ${error?.message}`);
+    }
+    const args = {
+      p_conversation_id: conversation.id,
+      p_client_id: 'quota-retry-key',
+      p_request_fingerprint: await digest('same retry content'),
+      p_user_message_id: crypto.randomUUID(),
+      p_content: 'retry',
+    };
+    const first = await userB.client.rpc('admit_chat_generation', args);
+    expect(first.data?.[0]?.outcome).toBe('admitted');
+    let attempt = first.data?.[0]?.attempt ?? 0;
+    for (let retry = 0; retry < 3; retry += 1) {
+      const failed = await admin.rpc('fail_chat_generation', {
+        p_conversation_id: conversation.id,
+        p_client_id: args.p_client_id,
+        p_attempt: attempt,
+        p_state: 'failed',
+      });
+      expect(failed.data).toBe(true);
+      const admitted = await userB.client.rpc('admit_chat_generation', args);
+      expect(admitted.data?.[0]?.outcome).toBe('admitted');
+      attempt = admitted.data?.[0]?.attempt ?? 0;
+    }
+    await admin.rpc('fail_chat_generation', {
+      p_conversation_id: conversation.id,
+      p_client_id: args.p_client_id,
+      p_attempt: attempt,
+      p_state: 'failed',
+    });
+    const overQuota = await userB.client.rpc('admit_chat_generation', args);
+    expect(overQuota.error?.message).toContain('chat admission limit reached');
+    const counter =
+      await sql`select admitted from private.admission_counters where owner_id=${userB.id}`;
+    expect(Number(counter[0]?.admitted)).toBe(5);
+  });
+
   test('only one service lease wins and stale completion cannot overwrite the reclaimed attempt', async () => {
     const jobId = `job_${crypto.randomUUID()}`;
     const admitted = await userB.client.rpc('admit_encode_job', {
