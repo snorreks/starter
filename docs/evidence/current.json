@@ -702,7 +702,7 @@
       "command": "bun run evidence",
       "platform": "Linux x86_64 (NixOS 26.11; Bun 1.4.2; Node v22.23.3; Chromium 154.0.8037.97; local Podman 5.8.7)",
       "result": "Manifest schema and revision ancestry passed; all 64 rows matched the generated matrix.",
-      "count": 66,
+      "count": 64,
       "recordedAt": "2026-10-07T14:34:15.000Z",
       "artifact": null,
       "reason": null

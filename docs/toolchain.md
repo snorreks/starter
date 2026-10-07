@@ -19,8 +19,8 @@ silently rolling back unrelated work. Browser/Worker/E2E remain separate checks.
 | File | Read by | Should it be edited? |
 |---|---|---|
 | `config/toolchain.json` | Nix, doctor, update command | Authority; update through the CLI |
-| `.bun-version` | `oven-sh/setup-bun` in CI; checked locally by setup doctor and `version-mirrors` | Generated mirror |
-| `.github/workflows/ci.yml` → `BUN_VERSION` | CI | Only in step with `.bun-version` |
+| `.bun-version` | Local tooling; checked by setup doctor and `version-mirrors` | Generated mirror |
+| `.github/workflows/*.yml` → `BUN_VERSION` | CI via `oven-sh/setup-bun` | Literal mirror checked by `version-mirrors` |
 | `.moon/toolchains.yml` | Moon | **No.** The `version` key is deliberately absent; see below |
 
 ```bash
@@ -37,10 +37,12 @@ already on `PATH`. We verified `moon run scripts:test` with `HOME` and
 started the task and discovered the test suite. This repository neither reads
 `PROTO_HOME` nor relies on Proto for Moon tasks.
 
-`.bun-version` remains authoritative: CI reads it, `nix develop` supplies that
-version, and setup doctor plus `bun run guard` check the runtime and mirrors. Do
-not remove the pin to change Moon resolution; use the supported shell or install
-the version named by `config/toolchain.json`.
+`.bun-version` remains a mirror of `config/toolchain.json`. CI uses a separate
+`BUN_VERSION` literal in its workflows, as documented in `config/toolchain.json`
+and checked by `version-mirrors`. `nix develop` supplies the configured version,
+and setup doctor plus `bun run guard` check the runtime and mirrors. Do not remove
+the pin to change Moon resolution; use the supported shell or install the version
+named by `config/toolchain.json`.
 
 ## The TypeScript compiler: `tsc`, not `tsgo`
 

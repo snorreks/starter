@@ -19,7 +19,7 @@ const readEnvFile = (filePath?: string): Record<string, string> => {
   if (!existsSync(path)) {
     return {};
   }
-  return parseDotenv(readFileSync(path, 'utf8'), '.env.e2e');
+  return parseDotenv(readFileSync(path, 'utf8'), path);
 };
 
 export const loadVisionConfig = (
