@@ -9,6 +9,7 @@ import type { ResolvedTarget } from '../src/deploy/target.ts';
 
 const roots: string[] = [];
 const target = (enabled = false, containerImage = '../media/Dockerfile'): ResolvedTarget => ({
+  deploymentProfile: 'legacy',
   environment: 'staging',
   project: 'starter',
   accountId: 'a'.repeat(32),
@@ -17,6 +18,7 @@ const target = (enabled = false, containerImage = '../media/Dockerfile'): Resolv
   origin: 'https://exact-web-staging.example.workers.dev',
   mailFrom: 'no-reply@example.test',
   nativeApiOrigin: null,
+  supabase: null,
   wranglerConfig: 'apps/frontend/client/wrangler.jsonc',
   jobsWranglerConfig: 'apps/backend/jobs/wrangler.jsonc',
   requiredSecretNames: ['BETTER_AUTH_SECRET', 'RESEND_API_KEY'],
@@ -108,6 +110,60 @@ test('web-only plans cannot publish template compute bindings or stale database 
   const migration = migrationStep(target(), root);
   expect(migration.ok).toBe(true);
   expect(existsSync(join(root, '.starter'))).toBe(false);
+});
+
+test('Supabase configs consume the discovered immutable runner subject on both Worker roles', () => {
+  const root = fixture();
+  const legacy = target(
+    true,
+    `europe-north1-docker.pkg.dev/starter-staging/media/runner@sha256:${'a'.repeat(64)}`,
+  );
+  const supabase: ResolvedTarget = {
+    ...legacy,
+    deploymentProfile: 'supabase',
+    d1DatabaseId: '',
+    requiredSecretNames: [
+      'SUPABASE_SERVICE_ROLE_KEY',
+      'RESEND_API_KEY',
+      'GOOGLE_DISPATCHER_CREDENTIAL',
+    ],
+    supabase: {
+      projectRef: 'stageprojectref00001',
+      url: 'https://stageprojectref00001.supabase.co',
+      authUrl: 'https://stageprojectref00001.supabase.co',
+      publishableKey: 'sb_publishable_public',
+      nativeRedirectAllowlist: [
+        'https://exact-web-staging.example.workers.dev/auth/callback',
+        'com.example.starter://auth/callback',
+      ],
+      googleProjectId: 'starter-staging',
+      googleRegion: 'europe-north1',
+      jobName: 'starter-media-staging',
+      image:
+        'https://europe-north1-docker.pkg.dev/starter-staging/media/runner@sha256:' +
+        'a'.repeat(64),
+      runnerServiceAccount: 'runner@starter-staging.iam.gserviceaccount.com',
+      dispatcherServiceAccount: 'dispatch@starter-staging.iam.gserviceaccount.com',
+      protocol: 'sample-v1',
+      cpu: '2',
+      memory: '2Gi',
+      timeoutSeconds: 600,
+    },
+  };
+  expect(() => renderRemoteConfig({ target: supabase, root })).toThrow('uniqueId');
+  const web = renderRemoteConfig({ target: supabase, root, runnerSubject: '12345678901234567890' });
+  const jobs = renderRemoteConfig({
+    target: supabase,
+    root,
+    kind: 'jobs',
+    runnerSubject: '12345678901234567890',
+  });
+  expect((web.vars as Record<string, unknown>).GOOGLE_RUNNER_SUBJECT).toBe('12345678901234567890');
+  expect((jobs.vars as Record<string, unknown>).GOOGLE_RUNNER_SUBJECT).toBe('12345678901234567890');
+  expect((web.vars as Record<string, unknown>).SUPABASE_ANON_KEY).toBe('sb_publishable_public');
+  expect(jobs.containers).toBeUndefined();
+  expect(jobs.durable_objects).toBeUndefined();
+  expect(JSON.stringify({ web, jobs })).not.toContain('SUPABASE_SERVICE_ROLE_KEY');
 });
 
 test('derived config generation never rewrites the committed template', () => {

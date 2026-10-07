@@ -42,6 +42,7 @@ const cleanup = (): void => {
 afterEach(cleanup);
 
 const target = (overrides: Partial<ResolvedTarget> = {}): ResolvedTarget => ({
+  deploymentProfile: 'legacy',
   environment: 'staging',
   project: 'starter',
   accountId: 'a'.repeat(32),
@@ -63,9 +64,50 @@ const target = (overrides: Partial<ResolvedTarget> = {}): ResolvedTarget => ({
   },
   mailFrom: 'noreply@staging.example',
   nativeApiOrigin: null,
+  supabase: null,
   requiredSecretNames: ['BETTER_AUTH_SECRET', 'RESEND_API_KEY'],
   requiredVarNames: ['DEPLOYMENT_ENV', 'BETTER_AUTH_URL', 'MAIL_FROM', 'RELEASE'],
   ...overrides,
+});
+
+const supabaseTarget = (): ResolvedTarget => ({
+  ...target({
+    deploymentProfile: 'supabase',
+    d1DatabaseId: '',
+    compute: {
+      enabled: true,
+      profile: 'encode',
+      jobsWorkerName: 'starter-jobs-staging',
+      mediaBucketName: 'starter-media-staging',
+      encodeWorkflowName: 'encode-staging',
+      maintenanceWorkflowName: 'maintenance-staging',
+      containerImage: 'image@sha256:abc',
+      imageProtocol: 'sample-v1',
+      containerProfile: 'basic',
+    },
+    requiredSecretNames: [
+      'SUPABASE_SERVICE_ROLE_KEY',
+      'RESEND_API_KEY',
+      'GOOGLE_DISPATCHER_CREDENTIAL',
+    ],
+  }),
+  supabase: {
+    projectRef: 'stageprojectref00001',
+    url: 'https://stageprojectref00001.supabase.co',
+    authUrl: 'https://stageprojectref00001.supabase.co',
+    publishableKey: 'public-key',
+    nativeRedirectAllowlist: ['com.example.starter://auth/callback'],
+    googleProjectId: 'starter-staging',
+    googleRegion: 'europe-north1',
+    jobName: 'starter-media-staging',
+    image: 'image@sha256:abc',
+    runnerServiceAccount: 'runner@starter-staging.iam.gserviceaccount.com',
+    dispatcherServiceAccount: 'dispatch@starter-staging.iam.gserviceaccount.com',
+    protocol: 'sample-v1',
+    cpu: '2',
+    memory: '2Gi',
+    timeoutSeconds: 600,
+  },
 });
 
 const encodeTarget = target({
@@ -121,6 +163,31 @@ describe('a secret never reaches argv', () => {
       expect(Object.keys(entry).sort()).toEqual(['argv', 'envVar', 'name', 'source', 'workerName']);
       expect(JSON.stringify(entry)).not.toContain('hunter2');
     }
+  });
+
+  test('Supabase secrets are routed to the exact Workers and missing prerequisites stop before spawn', () => {
+    const supabase = supabaseTarget();
+    const plan = secretPlan(supabase, 'env');
+    expect(plan.map(({ name, workerName }) => [name, workerName])).toEqual([
+      ['SUPABASE_SERVICE_ROLE_KEY', 'starter-staging'],
+      ['SUPABASE_SERVICE_ROLE_KEY', 'starter-jobs-staging'],
+      ['RESEND_API_KEY', 'starter-staging'],
+      ['GOOGLE_DISPATCHER_CREDENTIAL', 'starter-jobs-staging'],
+    ]);
+    const calls: string[][] = [];
+    const result = provision(supabase, {
+      root: tree(true),
+      mode: 'secrets',
+      installSecrets: true,
+      env: { RESEND_API_KEY: 'mail-key', GOOGLE_DISPATCHER_CREDENTIAL: 'dispatcher-key' },
+      run: (args) => {
+        calls.push([...args]);
+        return { ok: true, detail: 'unexpected' };
+      },
+    });
+    expect(result.ok).toBe(false);
+    expect(result.stoppedAt).toBe('secret:SUPABASE_SERVICE_ROLE_KEY');
+    expect(calls).toHaveLength(0);
   });
 
   test('the secret plan targets the config of the root it was resolved against', () => {

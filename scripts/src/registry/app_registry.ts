@@ -208,6 +208,12 @@ export const DEPLOYMENT_CONFIG: DeploymentConfig = {
  * or a release record.
  */
 export const REQUIRED_REMOTE_SECRET_NAMES = ['BETTER_AUTH_SECRET', 'RESEND_API_KEY'] as const;
+/** Secrets required by the explicit Supabase/Cloud Run deployment profile. */
+export const SUPABASE_REMOTE_SECRET_NAMES = [
+  'SUPABASE_SERVICE_ROLE_KEY',
+  'RESEND_API_KEY',
+  'GOOGLE_DISPATCHER_CREDENTIAL',
+] as const;
 
 /**
  * Secrets that belong to a Worker rather than to the deployment credential.
@@ -440,6 +446,25 @@ export interface EnvironmentTargets {
    * workflow.
    */
   nativeApiOrigin: string | null;
+  /** Supabase project identity and public endpoint; publishable configuration. */
+  supabaseProjectRef: string | null;
+  supabaseUrl: string | null;
+  supabaseAuthUrl: string | null;
+  /** Publishable Supabase key; safe for Worker/native public configuration. */
+  supabasePublishableKey: string | null;
+  /** Comma-delimited exact URI allowlist consumed by native and Supabase Auth. */
+  nativeRedirectAllowlist: string | null;
+  googleProjectId: string | null;
+  googleRegion: string | null;
+  cloudRunJobName: string | null;
+  /** Immutable Artifact Registry image URI, including @sha256 digest. */
+  artifactImage: string | null;
+  runnerServiceAccount: string | null;
+  dispatcherServiceAccount: string | null;
+  processorProtocol: string | null;
+  processorCpu: string | null;
+  processorMemory: string | null;
+  processorTimeoutSeconds: string | null;
 }
 
 /**
@@ -461,6 +486,21 @@ export const ENVIRONMENT_TARGET_FIELDS = [
   'origin',
   'mailFrom',
   'nativeApiOrigin',
+  'supabaseProjectRef',
+  'supabaseUrl',
+  'supabaseAuthUrl',
+  'supabasePublishableKey',
+  'nativeRedirectAllowlist',
+  'googleProjectId',
+  'googleRegion',
+  'cloudRunJobName',
+  'artifactImage',
+  'runnerServiceAccount',
+  'dispatcherServiceAccount',
+  'processorProtocol',
+  'processorCpu',
+  'processorMemory',
+  'processorTimeoutSeconds',
 ] as const satisfies readonly (keyof EnvironmentTargets)[];
 
 export type EnvironmentTargetField = (typeof ENVIRONMENT_TARGET_FIELDS)[number];
@@ -535,6 +575,21 @@ export const EnvironmentTargetsSchema = v.strictObject({
   origin: v.optional(v.union([v.pipe(v.string(), v.minLength(1)), v.null()])),
   mailFrom: v.optional(v.union([v.pipe(v.string(), v.minLength(1)), v.null()])),
   nativeApiOrigin: v.optional(v.union([v.pipe(v.string(), v.minLength(1)), v.null()])),
+  supabaseProjectRef: v.optional(v.union([v.pipe(v.string(), v.minLength(1)), v.null()])),
+  supabaseUrl: v.optional(v.union([v.pipe(v.string(), v.minLength(1)), v.null()])),
+  supabaseAuthUrl: v.optional(v.union([v.pipe(v.string(), v.minLength(1)), v.null()])),
+  supabasePublishableKey: v.optional(v.union([v.pipe(v.string(), v.minLength(1)), v.null()])),
+  nativeRedirectAllowlist: v.optional(v.union([v.pipe(v.string(), v.minLength(1)), v.null()])),
+  googleProjectId: v.optional(v.union([v.pipe(v.string(), v.minLength(1)), v.null()])),
+  googleRegion: v.optional(v.union([v.pipe(v.string(), v.minLength(1)), v.null()])),
+  cloudRunJobName: v.optional(v.union([v.pipe(v.string(), v.minLength(1)), v.null()])),
+  artifactImage: v.optional(v.union([v.pipe(v.string(), v.minLength(1)), v.null()])),
+  runnerServiceAccount: v.optional(v.union([v.pipe(v.string(), v.minLength(1)), v.null()])),
+  dispatcherServiceAccount: v.optional(v.union([v.pipe(v.string(), v.minLength(1)), v.null()])),
+  processorProtocol: v.optional(v.union([v.pipe(v.string(), v.minLength(1)), v.null()])),
+  processorCpu: v.optional(v.union([v.pipe(v.string(), v.minLength(1)), v.null()])),
+  processorMemory: v.optional(v.union([v.pipe(v.string(), v.minLength(1)), v.null()])),
+  processorTimeoutSeconds: v.optional(v.union([v.pipe(v.string(), v.minLength(1)), v.null()])),
 });
 
 export type EnvironmentTargetsInput = v.InferOutput<typeof EnvironmentTargetsSchema>;

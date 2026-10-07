@@ -56,6 +56,7 @@ const ACCOUNT = 'abcdef0123456789abcdef0123456789';
 const OTHER_ACCOUNT = '99999999999999999999999999999999';
 
 const target = (overrides: Partial<ResolvedTarget> = {}): ResolvedTarget => ({
+  deploymentProfile: 'legacy',
   environment: 'staging',
   project: 'starter',
   accountId: ACCOUNT,
@@ -77,6 +78,7 @@ const target = (overrides: Partial<ResolvedTarget> = {}): ResolvedTarget => ({
   },
   mailFrom: 'noreply@starter.example',
   nativeApiOrigin: null,
+  supabase: null,
   requiredSecretNames: ['BETTER_AUTH_SECRET', 'RESEND_API_KEY'],
   requiredVarNames: ['DEPLOYMENT_ENV', 'BETTER_AUTH_URL', 'MAIL_FROM', 'RELEASE'],
   ...overrides,
@@ -586,7 +588,7 @@ const INSTALLED_SECRETS = JSON.stringify([
 ]);
 
 const remedyOf = (finding: PreflightFinding | undefined): string =>
-  finding !== undefined && !finding.ok ? finding.remedy : '';
+  finding !== undefined && !finding.ok ? (finding.remedy ?? '') : '';
 
 describe('preflight is read-only and refuses a mismatched destination', () => {
   const whoami = (account: string) => (args: readonly string[]) => {

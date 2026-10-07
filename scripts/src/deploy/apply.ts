@@ -33,6 +33,17 @@ import { randomUUID } from 'node:crypto';
 import { join } from 'node:path';
 import { IDEMPOTENCY_KEY_HEADER } from '@starter/schemas/jobs';
 import { captureWrangler, runWrangler } from '../cloudflare/wrangler.ts';
+import {
+  applyDispatcherGrant,
+  applyGoogleJob,
+  getGoogleRunnerSubject,
+  verifyGoogleArtifactImage,
+} from './providers/google.ts';
+import {
+  applySupabaseAuthConfig,
+  runSupabaseMigration,
+  supabaseMigrationArgs,
+} from './providers/supabase.ts';
 import { CLIENT_DIR, REPO_ROOT } from '../shared/paths.ts';
 import { imageProtocolProblem } from './compatibility.ts';
 import { parseDeploymentIdentity } from './deployment_identity.ts';
@@ -45,6 +56,7 @@ import {
   readReleaseRecord,
   type SmokeResult,
   sourceRevision,
+  supabaseSchemaRevision,
   writeReleaseRecord,
 } from './release.ts';
 import { remoteConfigPath, renderRemoteConfig, writeRemoteConfig } from './remote_config.ts';
@@ -160,6 +172,12 @@ export interface ApplyOptions {
   inspect?: () => ArtifactCheck;
   /** Run a wrangler subcommand, returning its exit code. */
   run?: (command: string, args: readonly string[], options: { cwd: string }) => number;
+  /** Injected provider boundary for exact Supabase migration identity and argv fixtures. */
+  migrateSupabase?: (target: ResolvedTarget) => number;
+  configureSupabaseAuth?: (target: ResolvedTarget) => Promise<unknown>;
+  configureGoogleJob?: (target: ResolvedTarget) => Promise<unknown>;
+  configureGoogleGrant?: (target: ResolvedTarget) => Promise<void>;
+  verifyGoogleImage?: (target: ResolvedTarget) => Promise<{ image: string; digest: string }>;
   /** Fetch the release for verification. Injected so failures are reachable. */
   fetch?: typeof globalThis.fetch;
   /** Read-only wrangler capture, for the provider's deployment identity. */
@@ -214,6 +232,20 @@ export const migrationStep = (
   target: ResolvedTarget,
   root: string = REPO_ROOT,
 ): { ok: true; args: string[]; description: string } | { ok: false; detail: string } => {
+  if (target.deploymentProfile === 'supabase') {
+    try {
+      return {
+        ok: true,
+        args: supabaseMigrationArgs(target, 'push'),
+        description: `Apply reviewed Supabase migrations to project ${target.supabase?.projectRef}`,
+      };
+    } catch (error) {
+      return {
+        ok: false,
+        detail: error instanceof Error ? error.message : 'Invalid Supabase target.',
+      };
+    }
+  }
   if (target.d1DatabaseId.trim() === '') {
     return { ok: false, detail: 'No D1 database id in the resolved target; refusing to migrate.' };
   }
@@ -622,9 +654,17 @@ export const apply = async (options: ApplyOptions): Promise<ApplyResult> => {
 
   const revision = sourceRevision(options.root);
   try {
-    writeRemoteConfig({ target, root: options.root });
+    const googleToken =
+      target.deploymentProfile === 'supabase' ? process.env.GOOGLE_ACCESS_TOKEN : undefined;
+    if (target.deploymentProfile === 'supabase' && !googleToken) {
+      throw new Error('GOOGLE_ACCESS_TOKEN is required to resolve the runner identity.');
+    }
+    const runnerSubject = googleToken
+      ? await getGoogleRunnerSubject({ target, accessToken: googleToken })
+      : undefined;
+    writeRemoteConfig({ target, root: options.root, runnerSubject });
     if (target.compute.enabled) {
-      writeRemoteConfig({ target, root: options.root, kind: 'jobs' });
+      writeRemoteConfig({ target, root: options.root, kind: 'jobs', runnerSubject });
     }
   } catch (error) {
     const detail = `Cannot generate remote configuration: ${error instanceof Error ? error.message : 'invalid configuration'}`;
@@ -675,7 +715,13 @@ export const apply = async (options: ApplyOptions): Promise<ApplyResult> => {
       outcomes.push(bad('schema', migrated.detail));
       return stop('schema', migrated.detail);
     }
-    const code = run('wrangler', argv[argv.length - 1] as string[], { cwd: CLIENT_DIR });
+    const code =
+      target.deploymentProfile === 'supabase'
+        ? (
+            options.migrateSupabase ??
+            ((resolvedTarget) => runSupabaseMigration(resolvedTarget, 'push').code)
+          )(target)
+        : run('wrangler', argv[argv.length - 1] as string[], { cwd: CLIENT_DIR });
     if (code !== 0) {
       const detail =
         `Migration failed with exit code ${code}. The schema may be partly applied; ` +
@@ -684,7 +730,14 @@ export const apply = async (options: ApplyOptions): Promise<ApplyResult> => {
       outcomes.push(bad('schema', detail));
       return stop('schema', detail);
     }
-    components.push({ phase: 'schema', identity: target.d1DatabaseId, source: revision.sha });
+    components.push({
+      phase: 'schema',
+      identity:
+        target.deploymentProfile === 'supabase'
+          ? (target.supabase?.projectRef ?? 'unknown')
+          : target.d1DatabaseId,
+      source: revision.sha,
+    });
     outcomes.push(ok('schema', migrated.detail));
   }
 
@@ -738,19 +791,48 @@ export const apply = async (options: ApplyOptions): Promise<ApplyResult> => {
       outcomes.push(bad('image', `${incompatible.reason}\n  ${incompatible.remedy}`));
       return stop('image', incompatible.reason);
     }
-    components.push({
-      phase: 'image',
-      identity: target.compute.containerImage ?? 'unconfigured',
-      source: revision.sha,
-      protocol: target.compute.imageProtocol,
-    });
-    outcomes.push(
-      ok(
-        'image',
-        `${target.compute.containerImage} must speak ${target.compute.imageProtocol ?? 'an unstated protocol'} ` +
-          `on profile ${target.compute.containerProfile ?? 'unstated'}`,
-      ),
-    );
+    if (target.deploymentProfile === 'supabase') {
+      const accessToken = process.env.GOOGLE_ACCESS_TOKEN;
+      if (!accessToken) {
+        const detail =
+          'GOOGLE_ACCESS_TOKEN is required to verify the immutable Cloud Run image digest.';
+        outcomes.push(bad('image', detail));
+        return stop('image', detail);
+      }
+      try {
+        const image = await (
+          options.verifyGoogleImage ??
+          ((resolvedTarget) => verifyGoogleArtifactImage({ target: resolvedTarget, accessToken }))
+        )(target);
+        components.push({
+          phase: 'image',
+          identity: image.image,
+          source: revision.sha,
+          protocol: target.supabase?.protocol,
+        });
+        outcomes.push(
+          ok('image', `Artifact Registry confirmed ${image.digest} for ${image.image}`),
+        );
+      } catch (error) {
+        const detail = error instanceof Error ? error.message : 'Google image verification failed.';
+        outcomes.push(bad('image', detail));
+        return stop('image', detail);
+      }
+    } else {
+      components.push({
+        phase: 'image',
+        identity: target.compute.containerImage ?? 'unconfigured',
+        source: revision.sha,
+        protocol: target.compute.imageProtocol,
+      });
+      outcomes.push(
+        ok(
+          'image',
+          `${target.compute.containerImage} must speak ${target.compute.imageProtocol ?? 'an unstated protocol'} ` +
+            `on profile ${target.compute.containerProfile ?? 'unstated'}`,
+        ),
+      );
+    }
   } else {
     outcomes.push(ok('image', 'no compute profile: this release builds no image'));
   }
@@ -761,6 +843,55 @@ export const apply = async (options: ApplyOptions): Promise<ApplyResult> => {
   if (!wants('jobs')) {
     outcomes.push(skipped('jobs'));
   } else {
+    if (target.deploymentProfile === 'supabase' && target.supabase !== null) {
+      const supabaseToken = process.env.SUPABASE_ACCESS_TOKEN;
+      const googleToken = process.env.GOOGLE_ACCESS_TOKEN;
+      if (!supabaseToken || !googleToken) {
+        const detail =
+          'SUPABASE_ACCESS_TOKEN and GOOGLE_ACCESS_TOKEN are required to configure the Supabase Auth callbacks and Cloud Run Job.';
+        outcomes.push(bad('jobs', detail));
+        return stop('jobs', detail);
+      }
+      try {
+        await (
+          options.configureSupabaseAuth ??
+          ((resolvedTarget) =>
+            applySupabaseAuthConfig({ target: resolvedTarget, accessToken: supabaseToken }))
+        )(target);
+        components.push({
+          phase: 'jobs',
+          identity: `${target.supabase.projectRef}:auth-callbacks`,
+          source: revision.sha,
+        });
+        await (
+          options.configureGoogleJob ??
+          ((resolvedTarget) => applyGoogleJob({ target: resolvedTarget, accessToken: googleToken }))
+        )(target);
+        components.push({
+          phase: 'jobs',
+          identity: `${target.supabase.googleProjectId}/${target.supabase.googleRegion}/${target.supabase.jobName}`,
+          source: revision.sha,
+          protocol: target.supabase.protocol,
+        });
+        await (
+          options.configureGoogleGrant ??
+          ((resolvedTarget) =>
+            applyDispatcherGrant({ target: resolvedTarget, accessToken: googleToken }))
+        )(target);
+        components.push({
+          phase: 'jobs',
+          identity: `${target.supabase.dispatcherServiceAccount}:roles/run.invoker`,
+          source: revision.sha,
+        });
+      } catch (error) {
+        const detail =
+          error instanceof Error
+            ? error.message
+            : 'Provider configuration failed; later stages were stopped.';
+        outcomes.push(bad('jobs', detail));
+        return stop('jobs', detail);
+      }
+    }
     const step = jobsDeployStep(target, revision.sha, root);
     if (step === null) {
       outcomes.push(ok('jobs', 'no compute profile: this release has no jobs Worker'));
@@ -1135,6 +1266,23 @@ const buildRecord = (
         }
       : null,
     nativeApiOrigin: target.nativeApiOrigin,
+    schemaRevision:
+      target.deploymentProfile === 'supabase' ? supabaseSchemaRevision(options.root) : null,
+    verificationStatus: smokeResult.ok ? 'verified' : 'failed',
+    ...(target.deploymentProfile === 'supabase' && target.supabase !== null
+      ? {
+          providerTargets: {
+            supabaseProjectRef: target.supabase.projectRef,
+            googleProjectId: target.supabase.googleProjectId,
+            googleRegion: target.supabase.googleRegion,
+            cloudRunJobName: target.supabase.jobName,
+            image: target.supabase.image,
+            protocol: target.supabase.protocol,
+            r2Bucket: target.compute.mediaBucketName,
+            nativeApiOrigin: target.nativeApiOrigin,
+          },
+        }
+      : {}),
   };
 };
 

@@ -64,7 +64,7 @@ import {
   renderApply,
 } from './apply.ts';
 import { hasApiToken, secretInArgvProblem } from './credentials.ts';
-import { preflight, renderPreflight } from './preflight.ts';
+import { preflight, preflightSupabaseProviders, renderPreflight } from './preflight.ts';
 import { describeTokenScopes, provision, renderProvision } from './provision.ts';
 import {
   type ReleaseRecord,
@@ -73,6 +73,7 @@ import {
   sourceRevision,
 } from './release.ts';
 import { writeRemoteConfig } from './remote_config.ts';
+import { getGoogleRunnerSubject, provisionGoogleTarget } from './providers/google.ts';
 import {
   DEPLOYABLE_ENVIRONMENTS,
   environmentIsolationProblem,
@@ -421,7 +422,7 @@ export const planDeploy = (
   const steps: Step[] = [
     {
       description: migration.description,
-      command: 'wrangler',
+      command: target.deploymentProfile === 'supabase' ? 'supabase' : 'wrangler',
       args: migration.args,
       cwd: CLIENT_DIR,
       remote: true,
@@ -493,10 +494,22 @@ export const planDeploy = (
     );
   }
 
+  if (target.deploymentProfile === 'supabase' && target.supabase !== null) {
+    notices.push(
+      `Supabase project ${target.supabase.projectRef} at ${target.supabase.url}; native API ${target.nativeApiOrigin}; callbacks ${target.supabase.nativeRedirectAllowlist.join(', ')}.`,
+    );
+    notices.push(
+      `Google Cloud ${target.supabase.googleProjectId}/${target.supabase.googleRegion}, Cloud Run Job ${target.supabase.jobName}, image ${target.supabase.image}, protocol ${target.supabase.protocol}; runner and dispatcher identities are separate.`,
+    );
+    notices.push(
+      'Google API discovery and Cloud Run configuration are authenticated phases. The offline plan reads no credentials and performs no provider requests. Supabase project creation is a separate, potentially billable operator action.',
+    );
+  }
+
   notices.push(
     `CLOUDFLARE_API_TOKEN is the deployment credential and is NOT a runtime secret. The Worker needs\n  ` +
       `${target.requiredSecretNames.join(', ')}, installed by value and never in argv:\n    bun run deploy:secrets --env ` +
-      `${environment} --yes --install\n  Scopes the token needs:\n${describeTokenScopes()}`,
+      `${environment} --yes --install\n  Scopes the token needs:\n${describeTokenScopes(target)}`,
   );
   if (target.environment === 'production') {
     notices.push('A production apply changes live traffic.');
@@ -738,7 +751,15 @@ export const main = async (argv: readonly string[]): Promise<number> => {
       return fail('wrangler is not available. Run `bun install` first.', EXIT.unavailable);
     }
 
-    const report = preflight(resolved.target, { allowMissingWorker: parsed.allowNewWorker });
+    let report = preflight(resolved.target, { allowMissingWorker: parsed.allowNewWorker });
+    if (resolved.target.deploymentProfile === 'supabase' && report.ok) {
+      const providers = await preflightSupabaseProviders(resolved.target);
+      report = {
+        ok: report.ok && providers.ok,
+        commands: [...report.commands, ...providers.commands],
+        findings: [...report.findings, ...providers.findings],
+      };
+    }
 
     if (parsed.json) {
       process.stdout.write(`${JSON.stringify(report, null, 2)}\n`);
@@ -788,7 +809,52 @@ export const main = async (argv: readonly string[]): Promise<number> => {
       provisionMode = parsed.install ? 'both' : 'resources';
     }
 
-    writeRemoteConfig({ target: resolved.target });
+    if (parsed.install) {
+      const missing = resolved.target.requiredSecretNames.filter(
+        (name) => !process.env[name]?.trim(),
+      );
+      if (missing.length > 0) {
+        return fail(
+          `Runtime secret values are missing before provisioning: ${missing.join(', ')}.`,
+          EXIT.failed,
+        );
+      }
+    }
+    let runnerSubject: string | undefined;
+    if (resolved.target.deploymentProfile === 'supabase') {
+      const token = process.env.GOOGLE_ACCESS_TOKEN;
+      if (!token) {
+        return fail(
+          'GOOGLE_ACCESS_TOKEN is required to resolve/provision the Cloud Run target.',
+          EXIT.failed,
+        );
+      }
+      if (phase === 'provision') {
+        const provider = await provisionGoogleTarget({
+          target: resolved.target,
+          accessToken: token,
+        });
+        for (const operation of provider.completed) {
+          process.stdout.write(`  completed  ${operation}\n`);
+        }
+        if (provider.error !== null) {
+          return fail(
+            `Google provisioning stopped after completed operations above: ${provider.error}`,
+            EXIT.failed,
+          );
+        }
+        runnerSubject = provider.runnerSubject ?? undefined;
+      } else {
+        runnerSubject = await getGoogleRunnerSubject({
+          target: resolved.target,
+          accessToken: token,
+        });
+      }
+    }
+    writeRemoteConfig({ target: resolved.target, runnerSubject });
+    if (resolved.target.compute.enabled) {
+      writeRemoteConfig({ target: resolved.target, kind: 'jobs', runnerSubject });
+    }
     const result = provision(resolved.target, {
       capture: captureWrangler,
       env: process.env,

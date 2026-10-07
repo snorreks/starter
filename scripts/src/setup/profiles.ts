@@ -23,7 +23,15 @@ import { join } from 'node:path';
 import { NATIVE_DIR, REPO_ROOT } from '../shared/paths.ts';
 import type { Check } from './doctor.ts';
 
-export const PROFILES = ['web', 'native', 'android', 'ios', 'compute', 'database'] as const;
+export const PROFILES = [
+  'web',
+  'native',
+  'android',
+  'ios',
+  'compute',
+  'database',
+  'deployment',
+] as const;
 export type Profile = (typeof PROFILES)[number];
 
 /**
@@ -42,6 +50,17 @@ const CORE_PROFILE_CHECKS: Record<Profile, readonly string[]> = {
   // Real containers, locally: a Docker-compatible engine is the only prerequisite.
   compute: ['bun', 'pins', 'node', 'wrangler', 'config', 'docker', 'docker-engine', 'cargo-media'],
   database: ['bun', 'pins', 'docker', 'docker-engine'],
+  // Hosted provider checks are separate from web/compute local build prerequisites.
+  deployment: [
+    'bun',
+    'pins',
+    'node',
+    'wrangler',
+    'config',
+    'supabase-cli',
+    'supabase-access-token',
+    'google-access-token',
+  ],
 };
 
 export const isProfile = (value: unknown): value is Profile =>
@@ -81,6 +100,46 @@ const ANDROID_ENV_HINTS = [
  */
 export const profileChecks = (profile: Profile, runProbe = probe): Check[] => {
   const out: Check[] = [];
+
+  if (profile === 'deployment') {
+    const supabase = runProbe('bun', [
+      'run',
+      '--cwd',
+      'packages/backend/database',
+      'supabase',
+      '--version',
+    ]);
+    out.push({
+      name: 'supabase-cli',
+      severity: 'required',
+      ok: supabase !== null,
+      detail: supabase ?? 'pinned package CLI unavailable',
+      ...(supabase === null
+        ? { remedy: 'Run `bun install`; the Supabase CLI is pinned by packages/backend/database.' }
+        : {}),
+    });
+    for (const [name, variable] of [
+      ['supabase-access-token', 'SUPABASE_ACCESS_TOKEN'],
+      ['google-access-token', 'GOOGLE_ACCESS_TOKEN'],
+    ] as const) {
+      const present =
+        typeof process.env[variable] === 'string' && process.env[variable]?.trim() !== '';
+      out.push({
+        name,
+        severity: 'required',
+        ok: present,
+        detail: present
+          ? `${variable} is present; its value is not read or printed.`
+          : `${variable} is not set.`,
+        ...(!present
+          ? {
+              remedy:
+                'Set a short-lived environment-scoped credential only when running authenticated preflight/provision/apply.',
+            }
+          : {}),
+      });
+    }
+  }
 
   if (profile === 'native' || profile === 'android' || profile === 'ios') {
     const rustc = runProbe('rustc', ['--version']);

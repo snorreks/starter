@@ -121,23 +121,26 @@ export interface ProvisionDefinition {
 }
 
 export const provisionSteps = (target: ResolvedTarget): ProvisionDefinition[] => {
-  const steps: ProvisionDefinition[] = [
-    {
-      name: 'database',
-      description: `D1 database ${target.d1DatabaseId}`,
-      // A *list*, not `d1 info <id>`.
-      //
-      // `d1 info` reports a database that does not exist by exiting nonzero — the
-      // same signal it gives for a revoked token or the wrong account. An exit code
-      // cannot separate those, so "absent" could not be told from "cannot tell", and
-      // the second one creates a duplicate. Listing makes presence a question about
-      // the *data*, and a nonzero exit unambiguously means "could not tell".
-      exists: ['d1', 'list', '--json'],
-      present: (stdout) => databaseExists(stdout, target.d1DatabaseId),
-      create: null,
-      cwd: REPO_ROOT,
-    },
-  ];
+  const steps: ProvisionDefinition[] =
+    target.deploymentProfile === 'legacy'
+      ? [
+          {
+            name: 'database',
+            description: `D1 database ${target.d1DatabaseId}`,
+            // A *list*, not `d1 info <id>`.
+            //
+            // `d1 info` reports a database that does not exist by exiting nonzero — the
+            // same signal it gives for a revoked token or the wrong account. An exit code
+            // cannot separate those, so "absent" could not be told from "cannot tell", and
+            // the second one creates a duplicate. Listing makes presence a question about
+            // the *data*, and a nonzero exit unambiguously means "could not tell".
+            exists: ['d1', 'list', '--json'],
+            present: (stdout) => databaseExists(stdout, target.d1DatabaseId),
+            create: null,
+            cwd: REPO_ROOT,
+          },
+        ]
+      : [];
 
   const bucket = target.compute.mediaBucketName;
   if (target.compute.enabled && bucket !== null) {
@@ -274,31 +277,50 @@ export const secretPlan = (
   source: SecretSource,
   root?: string,
 ): { name: string; workerName: string; envVar: string; source: SecretSource; argv: string[] }[] =>
-  RUNTIME_SECRET_NAMES.map((name) => ({
-    name,
-    workerName: target.workerName,
-    envVar: name,
-    source,
-    argv: [
-      'secret',
-      'put',
+  target.requiredSecretNames.flatMap((name) => {
+    let workers: string[];
+    if (target.deploymentProfile !== 'supabase') {
+      workers = [target.workerName];
+    } else if (name === 'SUPABASE_SERVICE_ROLE_KEY') {
+      workers = [target.workerName, target.compute.jobsWorkerName].filter(
+        (value): value is string => value !== null,
+      );
+    } else {
+      const worker =
+        name === 'GOOGLE_DISPATCHER_CREDENTIAL' ? target.compute.jobsWorkerName : target.workerName;
+      workers = worker === null ? [] : [worker];
+    }
+    return workers.map((workerName) => ({
       name,
-      '--name',
-      target.workerName,
-      // The config this plan points at has to be the one the rest of the
-      // provisioner will have written. Left at the repository default, a run
-      // resolved against another root would install secrets against a config that
-      // does not exist — and would do so after every other step succeeded.
-      '--config',
-      remoteConfigPath({ target, root }),
-    ],
-  }));
+      workerName,
+      envVar: name,
+      source,
+      argv: [
+        'secret',
+        'put',
+        name,
+        '--name',
+        workerName,
+        // The config this plan points at has to be the one the rest of the
+        // provisioner will have written. Left at the repository default, a run
+        // resolved against another root would install secrets against a config that
+        // does not exist — and would do so after every other step succeeded.
+        '--config',
+        remoteConfigPath({
+          target,
+          root,
+          kind: workerName === target.compute.jobsWorkerName ? 'jobs' : 'web',
+        }),
+      ],
+    }));
+  });
 
 /** The runtime secrets present in the environment, by name. Values never read. */
-export const availableSecrets = (env: NodeJS.ProcessEnv = process.env): string[] =>
-  RUNTIME_SECRET_NAMES.filter(
-    (name) => typeof env[name] === 'string' && (env[name] as string).trim() !== '',
-  );
+export const availableSecrets = (
+  env: NodeJS.ProcessEnv = process.env,
+  names: readonly string[] = RUNTIME_SECRET_NAMES,
+): string[] =>
+  names.filter((name) => typeof env[name] === 'string' && (env[name] as string).trim() !== '');
 
 /**
  * Run provisioning, stopping at the first failure.
@@ -485,7 +507,7 @@ export const provision = (
     // says so, so the report cannot be read as "this release can sign someone in".
     steps.push({
       name: 'secrets',
-      description: `install ${RUNTIME_SECRET_NAMES.join(', ')} on ${target.workerName}`,
+      description: `install ${target.requiredSecretNames.join(', ')} on the resolved Worker targets`,
       outcome: 'skipped',
       detail:
         'not installed by this command. `deploy provision` creates resources; it does not\n' +
@@ -500,7 +522,7 @@ export const provision = (
   if (options.secretSource === 'sops') {
     steps.push({
       name: 'secrets',
-      description: `install ${RUNTIME_SECRET_NAMES.join(', ')} from SOPS`,
+      description: `install ${target.requiredSecretNames.join(', ')} from SOPS`,
       outcome: 'failed',
       detail:
         'SOPS decryption is deliberately not done here.\n' +
@@ -636,5 +658,9 @@ export const renderProvision = (result: ProvisionResult): string => {
  * requirement from the tool that needs it rather than from documentation that may
  * have drifted from the code.
  */
-export const describeTokenScopes = (): string =>
-  REQUIRED_TOKEN_SCOPES.map((scope) => `  ${scope.permission} — ${scope.neededBy}`).join('\n');
+export const describeTokenScopes = (target?: ResolvedTarget): string =>
+  REQUIRED_TOKEN_SCOPES.filter(
+    (scope) => !(target?.deploymentProfile === 'supabase' && scope.permission === 'D1: Edit'),
+  )
+    .map((scope) => `  ${scope.permission} — ${scope.neededBy}`)
+    .join('\n');

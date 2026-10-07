@@ -70,6 +70,14 @@ on:
         options:
           - staging
           - production
+      backend_profile:
+        description: 'Complete runtime profile to deploy'
+        required: true
+        default: legacy
+        type: choice
+        options:
+          - legacy
+          - supabase
       migrate:
         description: 'Apply reviewed migrations before deploying.'
         required: true
@@ -101,6 +109,7 @@ permissions:
 
 env:
   BUN_VERSION: '1.4.2'
+  STARTER_BACKEND_PROFILE: ${{ inputs.backend_profile || 'legacy' }}
   # ── repository-scoped, nonsecret ────────────────────────────────────────────
   #
   # This is the whole nonsecret configuration a plan needs, and it is
@@ -224,6 +233,7 @@ jobs:
     environment: ${{ inputs.environment || github.ref_name }}
     permissions:
       contents: read
+      id-token: write
 
     # Keyed on the destination, not the ref. Two dispatches to staging queue behind
     # each other; a staging apply and a production apply do not block each other,
@@ -262,16 +272,46 @@ jobs:
       - name: Install
         run: bun install --frozen-lockfile
 
+      - name: Resolve target for workload identity
+        id: target
+        if: ${{ inputs.backend_profile == 'supabase' }}
+        env:
+          DEPLOY_ENVIRONMENT: ${{ env.DEPLOY_ENVIRONMENT }}
+          TARGET_FILE: ${{ runner.temp }}/resolved-target.json
+        run: |
+          bun run deploy:check --env "$DEPLOY_ENVIRONMENT" --json > "$TARGET_FILE"
+          node -e 'const fs = require("node:fs"); const report = JSON.parse(fs.readFileSync(process.env.TARGET_FILE, "utf8")); if (report.phase !== "plan" || report.target?.deploymentProfile !== "supabase" || !report.target.supabase?.googleProjectId) process.exit(1); fs.appendFileSync(process.env.GITHUB_OUTPUT, "google_project_id=" + report.target.supabase.googleProjectId + "\n");'
+
+      - name: Authenticate to the target Google project with workload identity
+        id: google-auth
+        if: ${{ inputs.backend_profile == 'supabase' }}
+        uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3.0.0
+        with:
+          project_id: ${{ steps.target.outputs.google_project_id }}
+          workload_identity_provider: ${{ vars.GOOGLE_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ vars.GOOGLE_DEPLOYER_SERVICE_ACCOUNT }}
+          token_format: access_token
+          access_token_lifetime: 600s
+          create_credentials_file: false
+
       # In the environment, never in a step's `run:` line. A token echoed in a
       # command lands in the run log; this assignment never prints.
       - name: Credential
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          STARTER_BACKEND_PROFILE: ${{ env.STARTER_BACKEND_PROFILE }}
+          SUPABASE_ACCESS_TOKEN: ${{ inputs.backend_profile == 'supabase' && secrets.SUPABASE_ACCESS_TOKEN || '' }}
+          GOOGLE_ACCESS_TOKEN: ${{ steps.google-auth.outputs.access_token }}
           DEPLOY_ENVIRONMENT: ${{ env.DEPLOY_ENVIRONMENT }}
           FIRST_DEPLOY: ${{ inputs.first_deploy && 'yes' || 'no' }}
+          INSTALL_SECRETS: ${{ inputs.install_secrets && 'yes' || 'no' }}
         run: |
           if [ -z "$CLOUDFLARE_API_TOKEN" ]; then
             echo "::error::CLOUDFLARE_API_TOKEN is not set on this environment."
+            exit 3
+          fi
+          if [ "$STARTER_BACKEND_PROFILE" = supabase ] && [ "$FIRST_DEPLOY" = yes ] && [ "$INSTALL_SECRETS" != yes ]; then
+            echo '::error::A Supabase first deploy requires install_secrets=true so no Worker is published without its runtime credentials.'
             exit 3
           fi
           # Confirm the token resolves to the account this project is configured
@@ -317,6 +357,10 @@ jobs:
           # noticed which source won.
           BETTER_AUTH_SECRET: ${{ inputs.install_secrets && inputs.secrets_source == 'github' && secrets.BETTER_AUTH_SECRET || '' }}
           RESEND_API_KEY: ${{ inputs.install_secrets && inputs.secrets_source == 'github' && secrets.RESEND_API_KEY || '' }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ inputs.install_secrets && inputs.backend_profile == 'supabase' && secrets.SUPABASE_SERVICE_ROLE_KEY || '' }}
+          GOOGLE_DISPATCHER_CREDENTIAL: ${{ inputs.install_secrets && inputs.backend_profile == 'supabase' && secrets.GOOGLE_DISPATCHER_CREDENTIAL || '' }}
+          SUPABASE_ACCESS_TOKEN: ${{ inputs.backend_profile == 'supabase' && secrets.SUPABASE_ACCESS_TOKEN || '' }}
+          GOOGLE_ACCESS_TOKEN: ${{ steps.google-auth.outputs.access_token }}
           SECRETS_SOURCE: ${{ inputs.secrets_source }}
           # Read only for the sops source, and only when secrets are actually being
           # installed: a first deploy with `install_secrets` false has nothing to
@@ -337,7 +381,11 @@ jobs:
               echo "::error::runner image, or run the deploy locally with secrets_source=github."
               exit 3
             }
-            file="secrets/$DEPLOY_ENVIRONMENT.enc.env"
+            if [ "$STARTER_BACKEND_PROFILE" = supabase ]; then
+              file="secrets/$DEPLOY_ENVIRONMENT.supabase.enc.env"
+            else
+              file="secrets/$DEPLOY_ENVIRONMENT.enc.env"
+            fi
             [ -f "$file" ] || {
               echo "::error::$file is not in this revision. See secrets/README.md."
               exit 3
@@ -361,6 +409,9 @@ jobs:
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           DEPLOY_ENVIRONMENT: ${{ env.DEPLOY_ENVIRONMENT }}
+          STARTER_BACKEND_PROFILE: ${{ env.STARTER_BACKEND_PROFILE }}
+          SUPABASE_ACCESS_TOKEN: ${{ inputs.backend_profile == 'supabase' && secrets.SUPABASE_ACCESS_TOKEN || '' }}
+          GOOGLE_ACCESS_TOKEN: ${{ steps.google-auth.outputs.access_token }}
           APPLY_MIGRATIONS: ${{ inputs.migrate && 'yes' || 'no' }}
         run: |
           apply_args=()
