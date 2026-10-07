@@ -2,17 +2,18 @@
 
 This is the final evidence audit for the acceptance journeys in the original
 implementation plan. `PASS` means the specified behavior was observed at the
-revision listed; `FAIL` is reserved for an observed current check failure;
-`NOT RUN` means the check was not completed. Earlier failed attempts are retained
-as diagnosis evidence and do not replace a later passing rerun. Credentials,
+revision listed; `FAIL` means an attempted check produced an observed failing
+result at that revision; `NOT RUN` means the check was not completed. Earlier
+failed attempts are retained as diagnosis evidence and do not replace a later
+passing rerun. Credentials,
 passwords, verification URLs/tokens, cookies and raw model output are excluded.
-Both pull requests remain drafts; merge and publication are pending.
+Both PRs are ready for review; merge and publication remain pending.
 
 ## Revisions and environment
 
 | Work | Revision tested |
 | --- | --- |
-| Starter adapter and harness | Original implementation evidence at `1e4d65af5caee3c664a5200bb266bc1e3156dbfe`; final persistence/process fixes are listed below and CI is reported against the committed final head. |
+| Starter adapter, process boundary and audit | `2dc03a652af92999fd4184135b3fea9e8f431f9e` (final source revision; CI run is linked below) |
 | Portable workflow package | `d646766c2f2ff9634eac4a4843682132903011e7` (final review fixes; focused and live checks run against the same tree) |
 | Model journey | Pi 1.0.2, `google/gemini-2.5-flash`, built Starter profile, run `agent_runtime_feec967469bc4b0795c3d7802b0e9dd8`, job `job-1791408092603-0c1a41`; process exit 0 |
 | Browser/test runtime | Bun 1.4.2; package's locked Playwright and Chromium; Docker available for compute |
@@ -94,15 +95,15 @@ project-QA contracts, but that paid-provider journey was not repeated at `d64676
 | `bun run test:parent-recovery-live` | PASS, actual Pi restart fixture, stale browser-handle rejection, artifact hash and runtime identity revalidation / 7 assertions; automatic Starter runtime-handle recovery remains NOT RUN. |
 | `bun run test:generic-browser-live` | PASS, real generic project fallback/browser and correlated error fixture / 12 assertions. |
 
-Starter at `1e4d65af5caee3c664a5200bb266bc1e3156dbfe`:
+Starter final source at `2dc03a652af92999fd4184135b3fea9e8f431f9e`:
 
 | Command | Result |
 | --- | --- |
-| `bun run --cwd .pi test` | PASS, 239 tests / 20 files / 1,197 assertions. |
+| Pi unit lane within `bun run test` | PASS, 240 tests / 20 files / 1,233 assertions. |
 | `bun run test` | PASS, 917 tests / 60 files / 39,636 assertions. |
 | `bun test tests/jobs.test.ts` from `.pi` | PASS, 23 tests / 70 assertions. |
 | `bun run --cwd .pi loader:smoke` | PASS, 4 tests / 10 assertions. |
-| `bun run typecheck`, `bun run lint`, `bun run format`, `bun run guard`, `bun run workflows`, `bun run evidence` | PASS at the recorded source verification revision. |
+| `bun run typecheck`, `bun run lint`, `bun run format`, `bun run guard`, `bun run workflows`, `bun run evidence` | PASS at `2dc03a6` (cached checks were invalidated for edited projects; full source suite completed). |
 | `bun run e2e:visual` | PASS, 88 tests; 76/76 captures in `visual_36b4515f-c9cc-44f4-a890-400d678f7c7e`; manifest SHA-256 `f7fcd379b12b32b16d51442d8805df78569e39fea7e03c75a89f96a33b53dff5`. |
 | `bun run --cwd .pi test:compute-facade` | PASS; see full-compute row above. |
 
@@ -115,9 +116,9 @@ migration's scope; conflicting wording in the earlier report is corrected here.
 
 ## CI and pull requests
 
-- Starter PR [#44](https://github.com/snorreks/starter/pull/44) targets `main` and remains draft.
-- Portable package PR [#1](https://github.com/snorreks/.pi/pull/1) targets `master` and remains draft.
-- Starter CI passed all five configured lanes on implementation/evidence head `0b7ca5f655ff4c65e2569037230ecccada93cc8f` in [run 37696862490](https://github.com/snorreks/starter/actions/runs/37696862490): static/typecheck/lint/guards, unit/browser, Worker, compute and E2E. E2E timing was 1m29s on the previous run and 376968 also completed successfully. This audit reconciliation changes documentation only; a final CI run is being triggered on its commit. The workflow contains no database job (the Docker database lane is separate), so database CI was not run.
+- Starter PR [#44](https://github.com/snorreks/starter/pull/44) targets `main` and is ready for review.
+- Portable package PR [#1](https://github.com/snorreks/.pi/pull/1) targets `master` and is ready for review.
+- Final Starter CI passed all five configured lanes on source head `2dc03a652af92999fd4184135b3fea9e8f431f9e` in [run 37698625915](https://github.com/snorreks/starter/actions/runs/37698625915): static/typecheck/lint/guards, unit/browser, Worker, compute and E2E. The workflow has no database job (the Docker database lane is separate), so database CI was not run. Earlier complete run 37696862490 passed at `0b7ca5f` before the final fixes.
 - Previous evidence heads passed too: `3260aa32bc8fda960bdc0678022b44f1185b468a` in [run 37694835817](https://github.com/snorreks/starter/actions/runs/37694835817), `459aae6cfb81b057be933e54b02a00318c1edd0d` in [run 37695449153](https://github.com/snorreks/starter/actions/runs/37695449153), and `382326c9bcdc3effa8793da316cbd112776c2dd2` in [run 37695733877](https://github.com/snorreks/starter/actions/runs/37695733877).
 - Earlier final-code CI at `1e4d65af5caee3c664a5200bb266bc1e3156dbfe` also passed all five lanes in [run 37685202765](https://github.com/snorreks/starter/actions/runs/37685202765).
 - `gh workflow list --repo snorreks/.pi` returns no configured workflows, so the portable PR has no CI runs. Its local frozen install, unit/type, real Pi, browser, parent captain and recovery checks above are the available verification.
