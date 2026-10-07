@@ -51,10 +51,13 @@ The trusted project profile `.pi/workflow.json` declares only the `describe` com
 Run `bun run agent -- describe --json` to see actual project capability owners and
 unavailable operations with their dependencies. `bun run agent -- doctor --profile
 built --json` reports the built runtime as unavailable and exits 3 until the owned
-runtime lifecycle exists. Neither command starts a runtime or claims visual
-verification. Task, development runtime, and log operations continue through their
-local tools; visual review continues through the existing
-`bun run e2e:visual:review` CLI.
+runtime lifecycle exists. `bun run agent -- review --run <id> --json` reviews an
+existing complete capture manifest through the same reviewer as
+`bun run e2e:visual:review -- --run <id>`; it does not start capture services. The
+visual review config takes `E2E_VISION_API_KEY` as an optional per-project override,
+then reads `OPENROUTER_API_KEY` from the process environment. Keep that shared
+credential in your global environment rather than a project mode file. Task,
+development runtime, and log operations continue through their local tools.
 
 ## `.pi/extensions` is executable input, not a source folder
 
