@@ -18,6 +18,8 @@ export async function* readChatFrames(body: ReadableStream<Uint8Array>): AsyncGe
   const reader = body.getReader();
   const decoder = new TextDecoder('utf-8');
   let buffer = '';
+  const frameDelimiter = /\r?\n\r?\n/g;
+  let scanOffset = 0;
   let ended = false;
 
   try {
@@ -33,16 +35,20 @@ export async function* readChatFrames(body: ReadableStream<Uint8Array>): AsyncGe
       // terminates it. A trailing partial frame stays in the buffer for the next
       // chunk, which is what makes a frame split across two reads still parse.
       for (;;) {
-        const delimiter = /\r?\n\r?\n/.exec(buffer);
+        frameDelimiter.lastIndex = scanOffset;
+        const delimiter = frameDelimiter.exec(buffer);
         const boundary = delimiter?.index ?? -1;
         if ((boundary === -1 ? buffer.length : boundary) > 1_048_576) {
           throw new AppError('server', 'The stream frame is too large.');
         }
         if (boundary === -1) {
+          // A CRLF delimiter can begin in the last three characters of this chunk.
+          scanOffset = Math.max(0, buffer.length - 3);
           break;
         }
         const raw = buffer.slice(0, boundary);
         buffer = buffer.slice(boundary + (delimiter?.[0].length ?? 2));
+        scanOffset = 0;
         const parsed = parseOneFrame(raw);
         if (parsed !== undefined) {
           yield parsed;

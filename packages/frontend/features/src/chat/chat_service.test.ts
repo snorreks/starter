@@ -444,7 +444,9 @@ test('an oversized unfinished frame is refused and its reader cancelled', async 
 });
 
 test('CRLF delimiters split across chunks preserve complete frames', async () => {
-  const bytes = new TextEncoder().encode('data: {"type":"delta","text":"hi"}\r\n\r\n');
+  const bytes = new TextEncoder().encode(
+    'data: {"type":"delta","text":"hi"}\r\n\r\ndata: {"type":"delta","text":"again"}\n\n',
+  );
   let offset = 0;
   const body = new ReadableStream<Uint8Array>({
     pull(controller) {
@@ -459,5 +461,8 @@ test('CRLF delimiters split across chunks preserve complete frames', async () =>
   for await (const frame of readChatFrames(body)) {
     frames.push(frame);
   }
-  expect(frames).toEqual([{ type: 'delta', text: 'hi' }]);
+  expect(frames).toEqual([
+    { type: 'delta', text: 'hi' },
+    { type: 'delta', text: 'again' },
+  ]);
 });

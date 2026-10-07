@@ -24,7 +24,6 @@ flowchart TD
   Client --> Transport[Host HTTP transport]
   Transport --> API[Web Worker API]
   API --> Domain
-  Client -. current streaming bypass .-> API
 ```
 
 The four files you named are four distinct responsibilities:
@@ -33,8 +32,8 @@ The four files you named are four distinct responsibilities:
 |---|---|---|
 | `routes/chat/+page.svelte` | Bridge SvelteKit data and navigation into the feature | Appropriate; explicit snapshot reconciliation needs improvement |
 | `chat_list_view.svelte` | Markup, accessibility, rendering state and raising intents | Appropriate; navigation should generally use links |
-| `chat_list_view_model.svelte.ts` | Draft, list state, load/create orchestration and navigation intent | Appropriate; concurrency and result semantics need tightening |
-| `chat_service.ts` | API paths, response validation and chat stream protocol | Appropriate responsibility; streaming currently escapes its transport |
+| `chat_list_view_model.svelte.ts` | Draft, list state, load/create orchestration and navigation intent | Appropriate; creation now enforces single-flight and distinguishes navigation failure |
+| `chat_service.ts` | API paths, response validation and chat stream protocol | Appropriate responsibility; streaming now uses the transport’s `openStream` capability |
 
 The client and server chat services are different adapters. One speaks HTTP and stream frames; the other executes authorized application operations against storage. Sharing DTO schemas is useful. Trying to merge those services across the runtime boundary would be harmful.
 
@@ -74,15 +73,11 @@ Svelte explicitly supports reactive class fields. Classes are a suitable view mo
 
 ## Findings to address before reorganizing
 
-### 1. Chat streaming violates the transport boundary — high priority
+### 1. Chat streaming violated the transport boundary — pre-change finding, resolved
 
-[`ChatService.streamTurn`](../packages/frontend/features/src/chat/chat_service.ts) calls its own fetch with a relative URL and `credentials: 'include'`. It attempts to retrieve authorization by casting the transport to a shape with a public `headers` property.
+Before the runtime changes, [`ChatService.streamTurn`](../packages/frontend/features/src/chat/chat_service.ts) called a separate fetch with a relative URL and cookie credentials, and tried to obtain authorization from an undeclared public transport property. That bypassed the configured origin and native bearer policy.
 
-`ApiTransport` has no such property. `HttpTransport` stores headers privately, and the native bearer decorator exposes only `request` and `fetchBytes`. Streaming consequently ignores the configured API origin and cannot obtain the native session token through the supplied transport.
-
-This is a code-visible portability defect. Native chat is not currently composed in the native application, so this is not a claim that an existing native chat screen was observed failing. A nonempty web API base URL is also ignored on this path.
-
-**Recommendation:** add a streaming transport capability that opens an authenticated response through the same URL, credentials, error and cancellation policies as JSON and bytes. The chat service should parse the chat protocol. It should never inspect credentials or call a second host fetch.
+**Resolution:** `streamTurn` now calls the injected transport's `openStream` capability. `HttpTransport` opens the response through its shared URL, credentials, error and cancellation policies; the native bearer decorator also implements `openStream`. The chat service parses frames without inspecting credentials or issuing a separate fetch. This resolves the source-visible boundary defect; it does not establish that native chat has been composed or exercised end to end.
 
 ### 2. Notes mutation state is not reactive — high priority
 
@@ -92,21 +87,17 @@ Direct unit assertions can correctly observe the getter changing while DOM bindi
 
 **Recommendation:** keep the framework-free cancellation primitive, and add a Svelte-aware operation object with a reactive pending count and error/result state. Use that object consistently. Verify the rendered disabled state during a deferred request, not only a getter after calling a method.
 
-### 3. Unmount delays cancellation until initialization settles — high priority
+### 3. Unmount delayed cancellation until initialization settled — pre-change finding, resolved
 
-[`ScreenContainer`](../packages/frontend/ui/src/screen_container.svelte) waits for `initialize()` to settle before calling `dispose()`. Disposal is also what cancels loads and mutations. If initialization hangs, unmount cannot stop it and the container retains ownership until it settles.
+Before the runtime changes, [`ScreenContainer`](../packages/frontend/ui/src/screen_container.svelte) waited for `initialize()` to settle before disposing, so a hanging initialization could delay cancellation indefinitely.
 
-The comment calls immediate disposal a use-after-free, but there is no general JavaScript rule that requires this delay. The real issue is coordinating cancellation with resources acquired late in initialization.
+**Resolution:** the effect cleanup now calls `disposeOnce()` immediately, clears `mounted`, and invokes `dispose()` without waiting for initialization. The screen owner remains responsible for cancelling work and handling resources acquired after closure. The component's introductory comment still describes the old delayed behavior and should be aligned with the implementation; it is not evidence of the current lifecycle.
 
-**Recommendation:** stop accepting work and abort immediately on unmount. Register cleanup in a scope that immediately releases resources registered after closure. Await final shutdown separately if necessary. Specify whether instances are single-use; the current permanently disposed mutation guard conflicts with any expectation of remounting the same instance.
+### 4. Conversation creation lacked an internal concurrency rule — pre-change finding, resolved
 
-### 4. Conversation creation does not enforce its UI concurrency rule
+Before the runtime changes, [`ChatListViewModel.create`](../packages/frontend/features/src/chat/chat_list_view_model.svelte.ts) allowed overlapping creates and returned a boolean that conflated a failed write with failed navigation after a successful write.
 
-[`ChatListViewModel.create`](../packages/frontend/features/src/chat/chat_list_view_model.svelte.ts) checks empty title and disposal, but not `isCreating`. `MutationGuard.begin()` permits overlapping mutations. The disabled button is the only single-submit control.
-
-Two direct calls can issue two creates. In addition, `create()` catches both creation and navigation failures together. A successful create followed by failed navigation returns `false` and may receive the “Could not create” fallback, despite the row existing. Its comment promises a distinction the result type does not express.
-
-**Recommendation:** enforce single-flight behavior inside the operation, and return a tagged result such as `created`, `created-navigation-failed`, `rejected` or `unknown-outcome`. Preserve the created row and offer an explicit open action. If safe retry after a lost response is required, use a server-backed idempotency key for creation.
+**Resolution:** `create()` now checks `isCreating` and runs creation with `{ singleFlight: true }`. Its tagged results distinguish `created`, `created-navigation-failed`, `rejected` and `unknown-outcome`. The created conversation is retained in the list before navigation, and navigation failure supplies an explicit message to open it from the list. Safe retry after a lost creation response still requires a server-backed idempotency policy; the distinct unknown-outcome result does not itself provide one.
 
 ### 5. New server snapshots do not supersede pending list reads
 
