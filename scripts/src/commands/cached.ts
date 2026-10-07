@@ -44,6 +44,7 @@ Worker or E2E preview lane. Backend options are consumed here and never reach Mo
 export interface CachedArguments {
   backend: 'legacy' | 'supabase';
   targets: string[];
+  supabaseCompute: boolean;
 }
 
 export const parseCachedArguments = (args: readonly string[]): CachedArguments => {
@@ -68,15 +69,29 @@ export const parseCachedArguments = (args: readonly string[]): CachedArguments =
   if (remaining.some((arg) => arg === '--backend')) {
     throw new Error('--backend requires legacy or supabase.');
   }
-  if (
-    backend === 'supabase' &&
-    !targets.some((target) => target === 'client:test-worker' || target === 'e2e:e2e')
-  ) {
+  const computeTarget = targets[0] === 'jobs-worker:test-compute';
+  const previewIntegrationTarget = targets.some(
+    (target) => target === 'client:test-worker' || target === 'e2e:e2e',
+  );
+  if (backend === 'supabase' && !previewIntegrationTarget && !computeTarget) {
     throw new Error(
       '--backend supabase requires client:test-worker or e2e:e2e; the preview integration is mandatory.',
     );
   }
-  return { backend, targets };
+  if (computeTarget && backend === 'supabase') {
+    const processorArgs = targets.slice(1);
+    if (processorArgs.join(' ') !== '--processor cloud-run-local') {
+      throw new Error(
+        'Supabase compute requires `--processor cloud-run-local` and accepts no other lane options.',
+      );
+    }
+    return {
+      backend,
+      targets: ['jobs-worker:test-compute', '--', '--backend', 'supabase', ...processorArgs],
+      supabaseCompute: true,
+    };
+  }
+  return { backend, targets, supabaseCompute: false };
 };
 
 const run = async (args: readonly string[]): Promise<number> => {
@@ -91,7 +106,7 @@ const run = async (args: readonly string[]): Promise<number> => {
   } catch (error) {
     return fail(`${String(error)}\n\n${USAGE}`, EXIT.usage);
   }
-  const { targets, backend } = parsed;
+  const { targets, backend, supabaseCompute } = parsed;
   if (targets.length === 0) {
     return fail(USAGE, EXIT.usage);
   }
@@ -107,7 +122,7 @@ const run = async (args: readonly string[]): Promise<number> => {
 
   const resolvedScope = resolveCacheMode();
   const scope =
-    backend === 'supabase'
+    backend === 'supabase' && !supabaseCompute
       ? {
           ...resolvedScope,
           mode: 'off' as const,
@@ -165,6 +180,12 @@ const run = async (args: readonly string[]): Promise<number> => {
     return result.code;
   };
   if (backend === 'legacy') {
+    return invoke(publicToolEnvironment(process.env));
+  }
+
+  // The Cloud Run local lane uses its own authenticated metadata/grant fixtures;
+  // it deliberately does not start a second local Supabase stack.
+  if (supabaseCompute) {
     return invoke(publicToolEnvironment(process.env));
   }
 
