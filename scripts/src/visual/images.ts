@@ -155,7 +155,7 @@ export const prepareReviewImage = async (
   const originalDimensions = (await identify(path)) ?? (await dimensionsWithFfprobe(path));
   if (originalDimensions === null) {
     throw new Error(
-      `Over-limit review image could not be decoded: ${path}. Install ImageMagick or FFmpeg and verify the screenshot is a valid PNG, JPEG or WebP.`,
+      `Review image exceeds ${maxBytes} bytes and could not be decoded for a derivative: ${path}. Install ImageMagick or FFmpeg and verify the screenshot is a valid PNG, JPEG or WebP.`,
     );
   }
   const outputDirectory = join(REPO_ROOT, '.wrangler', 'visual-prepared');

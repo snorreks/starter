@@ -112,11 +112,22 @@ export const reviewCaptureManifest = async (options: {
       throw new Error(`Capture hash mismatch: ${imagePath}`);
     }
     const image = await prepareReviewImage(imagePath);
+    const prompt = reviewPrompt({
+      scenarioId: record.scenarioId,
+      app: record.app,
+      state: record.state,
+      viewportTheme: record.project,
+      heading: record.heading,
+      controls: record.expected.controls,
+      requirements: record.requirements,
+      content: record.expected.content,
+    });
     const key = reviewCacheKey({
-      sha256: image.sha256,
+      sha256: image.originalSha256,
       sentSha256: image.sha256,
       referenceSha256: null,
       prompt: REVIEW_PROMPT_VERSION,
+      promptSha256: createHash('sha256').update(prompt).digest('hex'),
       schema: 1,
       requirements: record.requirements,
       provider: config.provider,
@@ -137,16 +148,6 @@ export const reviewCaptureManifest = async (options: {
       if (usedCalls >= config.maxCalls) {
         throw new Error(`Visual review reached E2E_VISION_MAX_CALLS=${config.maxCalls}.`);
       }
-      const prompt = reviewPrompt({
-        scenarioId: record.scenarioId,
-        app: record.app,
-        state: record.state,
-        viewportTheme: record.project,
-        heading: record.heading,
-        controls: record.expected.controls,
-        requirements: record.requirements,
-        content: record.expected.content,
-      });
       const response = await requestStructuredVision({
         config,
         image,

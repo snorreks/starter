@@ -109,6 +109,8 @@ tasks:
       - '@group(scenarios)'
       - '@group(tests)'
       - '@group(configs)'
+      - '/apps/frontend/client/src/routes/**/*'
+      - '/apps/frontend/native/src/routes/**/*'
 
   capture-evidence:
     command: 'bun'

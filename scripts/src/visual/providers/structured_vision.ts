@@ -96,13 +96,16 @@ export const requestStructuredVision = async (options: {
         body = await readBounded(response, 1024 * 1024);
         break;
       }
-      const detail = await readBounded(response, 4096);
+      const detail = await readBounded(response, 4096).catch(
+        () => 'Response body unavailable or exceeds 4096 bytes.',
+      );
       if (![429, 500, 502, 503, 504].includes(response.status) || transportAttempt === 2) {
         throw new Error(
           `Vision provider returned HTTP ${response.status}: ${detail.slice(0, 400)}`,
         );
       }
-      const retryAfter = Number(response.headers.get('retry-after'));
+      const retryAfterHeader = response.headers.get('retry-after');
+      const retryAfter = retryAfterHeader === null ? Number.NaN : Number(retryAfterHeader);
       const delay = Number.isFinite(retryAfter)
         ? Math.min(2000, Math.max(100, retryAfter * 1000))
         : 250 * (transportAttempt + 1);
@@ -123,15 +126,17 @@ export const requestStructuredVision = async (options: {
     }
     const envelope = decoded as {
       choices?: Array<{
-        message?: { content?: unknown; refusal?: unknown; finish_reason?: unknown };
+        message?: { content?: unknown; refusal?: unknown };
+        finish_reason?: unknown;
       }>;
       usage?: { prompt_tokens?: unknown; completion_tokens?: unknown };
     };
-    const message = envelope.choices?.[0]?.message;
+    const choice = envelope.choices?.[0];
+    const message = choice?.message;
     if (message?.refusal !== undefined && message.refusal !== null) {
       throw new Error('Vision provider refused the review request.');
     }
-    if (message?.finish_reason === 'length') {
+    if (choice?.finish_reason === 'length') {
       throw new Error(
         'Vision provider output was truncated; increase E2E_VISION_MAX_OUTPUT_TOKENS.',
       );

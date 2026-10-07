@@ -14,6 +14,7 @@ describe('E2E scenario coverage', () => {
     const result = checkRouteCoverage({ web: webRoutes, native: nativeRoutes }, manifest);
 
     expect(result.missing).toEqual([]);
+    expect(result.unmatched).toEqual([]);
     expect(manifest.scenarios.some((scenario) => scenario.kind === 'not-found')).toBe(true);
     expect(manifest.scenarios.some((scenario) => scenario.kind === 'error')).toBe(true);
   });
@@ -44,7 +45,20 @@ describe('E2E scenario coverage', () => {
     ).toThrow(/duplicate scenario id/i);
   });
 
-  test('an uncaptured state needs a reason and cannot be a baseline', () => {
+  test.each([
+    {
+      name: 'needs a reason',
+      captureReason: null,
+      baseline: false,
+      error: /uncaptured scenario needs a reason/i,
+    },
+    {
+      name: 'cannot be a baseline',
+      captureReason: 'Not captured by this lane.',
+      baseline: true,
+      error: /baseline requires capture/,
+    },
+  ])('an uncaptured state $name', ({ captureReason, baseline, error }) => {
     const manifest = readScenarioManifest();
     const errorState = manifest.scenarios.find((scenario) => scenario.id === 'web-error');
     if (errorState === undefined) {
@@ -56,9 +70,9 @@ describe('E2E scenario coverage', () => {
         ...manifest,
         scenarios: [
           ...manifest.scenarios.filter((scenario) => scenario.id !== errorState.id),
-          { ...errorState, captureReason: null, baseline: true },
+          { ...errorState, captureReason, baseline },
         ],
       }),
-    ).toThrow(/uncaptured scenario needs a reason|baseline requires capture/i);
+    ).toThrow(error);
   });
 });

@@ -16,7 +16,7 @@ bun run e2e                # built client + real Worker + real D1 + real browser
 bun run test:all           # all four, in that order, no duplicates
 bun run workflows          # CI workflow policy: pins, permissions, bounds, secrets
 bun run smoke              # fresh checkout of this template, no credentials
-bun run e2e:visual         # 72 screenshots: routes/states x desktop/mobile x light/dark
+bun run e2e:visual         # 76 screenshots: routes/states x desktop/mobile x light/dark
 bun run e2e:visual -- --update-snapshots # explicit local baseline update
 bun run e2e:visual:review -- --run <run-id> # optional structured vision review
 bun run e2e:audit          # serialized three-sample Lighthouse measurements

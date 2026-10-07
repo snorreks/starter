@@ -1,4 +1,5 @@
 import { expect, test } from '@playwright/test';
+import { createVerifiedAccount } from '../../src/fixtures/accounts.ts';
 
 test('keyboard focus, reduced motion, enlarged text and narrow portrait/landscape layouts remain usable', async ({
   page,
@@ -7,9 +8,6 @@ test('keyboard focus, reduced motion, enlarged text and narrow portrait/landscap
   await page.emulateMedia({ reducedMotion: 'reduce' });
   await page.goto('/login');
   await expect(page.getByRole('heading', { name: /sign in/i })).toBeVisible();
-  expect(await page.evaluate(() => matchMedia('(prefers-reduced-motion: reduce)').matches)).toBe(
-    true,
-  );
 
   await page.keyboard.press('Tab');
   const focused = page.locator(':focus');
@@ -33,4 +31,25 @@ test('keyboard focus, reduced motion, enlarged text and narrow portrait/landscap
     () => document.documentElement.scrollWidth - document.documentElement.clientWidth,
   );
   expect(landscapeOverflow).toBeLessThanOrEqual(1);
+
+  await createVerifiedAccount(page);
+  const refresh = page.getByTestId('notes-refresh');
+  await expect(refresh).toBeEnabled();
+  const pending = Promise.withResolvers<void>();
+  await page.route('**/api/notes', async (route) => {
+    await pending.promise;
+    await route.abort();
+  });
+  try {
+    await refresh.click();
+    const spinner = page.locator('.ui-spinner__ring');
+    await expect(spinner).toBeVisible();
+    // The shared spinner slows its cycle from 700ms to 2400ms for reduced motion.
+    await expect(spinner).toHaveCSS('animation-duration', '2.4s');
+    await page.emulateMedia({ reducedMotion: 'no-preference' });
+    await expect(spinner).toHaveCSS('animation-duration', '0.7s');
+  } finally {
+    pending.resolve();
+    await page.unrouteAll({ behavior: 'wait' });
+  }
 });

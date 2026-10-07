@@ -94,7 +94,8 @@ export const captureScenario = async (
   const deviceScaleFactor = await page.evaluate(() => window.devicePixelRatio);
   const file = join(output, 'captures', runId, `${scenario.id}--${project}.png`);
   await mkdir(dirname(file), { recursive: true });
-  await writeFile(file, bytes, { flag: 'wx' });
+  const flag = testInfo.retry === 0 ? 'wx' : 'w';
+  await writeFile(file, bytes, { flag });
   const record = {
     schemaVersion: 1,
     runId,
@@ -120,6 +121,6 @@ export const captureScenario = async (
     ai: 'not-run',
     provenance: 'fresh',
   };
-  await writeFile(`${file}.json`, `${JSON.stringify(record, null, 2)}\n`, { flag: 'wx' });
+  await writeFile(`${file}.json`, `${JSON.stringify(record, null, 2)}\n`, { flag });
   await testInfo.attach(`${scenario.id}-${project}`, { body: bytes, contentType: 'image/png' });
 };

@@ -4,7 +4,7 @@ import { join, relative } from 'node:path';
 import { convertV4MiniflareOptions, Miniflare } from 'miniflare';
 import { REPO_ROOT } from '../../../../scripts/src/shared/paths.ts';
 import { runBounded } from '../../../../scripts/src/shared/run_bounded.ts';
-import { allocatePort } from '../../../../scripts/src/shared/run_scope.ts';
+import { allocatePort, runScope } from '../../../../scripts/src/shared/run_scope.ts';
 import { buildWorkerGraph, parseWranglerJsonc } from './worker_graph.ts';
 
 const CLIENT_ROOT = join(REPO_ROOT, 'apps/frontend/client');
@@ -27,6 +27,8 @@ if (runId === undefined || !Number.isInteger(appPort) || appPort < 1 || appPort 
     'The full E2E runtime requires the Playwright-owned E2E_RUN_ID and E2E_APP_PORT.',
   );
 }
+
+runScope(runId);
 
 const command = async (
   name: string,

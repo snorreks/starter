@@ -50,7 +50,7 @@ export default class VisualReporter implements Reporter {
     }
   }
 
-  async onEnd(result: FullResult): Promise<void> {
+  async onEnd(result: FullResult): Promise<{ status: 'failed' } | undefined> {
     const captureRoot = join(this.output, 'captures', this.runId);
     const records = await readRecords(captureRoot);
     const manifest = readScenarioManifest();
@@ -89,11 +89,9 @@ export default class VisualReporter implements Reporter {
       join(output, 'index.html'),
       `<!doctype html><html lang="en"><meta charset="utf-8"><title>Visual E2E ${escapeHtml(this.runId)}</title><main><h1>Visual E2E ${escapeHtml(this.runId)}</h1><p>Status: ${run.status}. Captures: ${records.length}/${keys.length}. AI review: NOT RUN.</p><h2>Declared gaps</h2><ul>${manifest.coverageGaps.map((gap) => `<li>${escapeHtml(gap)}</li>`).join('\n')}</ul><h2>Captures</h2><ul>${rows}</ul></main></html>\n`,
     );
-    if (!complete) {
-      process.exitCode = 1;
-    }
     process.stdout.write(
       `Visual capture manifest: ${join(output, 'run.json')} (${records.length}/${keys.length}, AI NOT RUN)\n`,
     );
+    return complete ? undefined : { status: 'failed' };
   }
 }

@@ -6,7 +6,13 @@ import { REPO_ROOT } from '../../scripts/src/shared/paths.ts';
 import { runScope } from '../../scripts/src/shared/run_scope.ts';
 
 const runId = process.env.E2E_RUN_ID ?? `visual_${crypto.randomUUID()}`;
-if (process.env.CI && process.argv.includes('--update-snapshots')) {
+if (
+  process.env.CI &&
+  process.argv.some(
+    (arg) =>
+      arg.startsWith('-u') || arg === '--update-snapshots' || arg.startsWith('--update-snapshots='),
+  )
+) {
   throw new Error(
     'Visual snapshot updates are refused in CI. Run e2e:visual -- --update-snapshots locally and review the diff.',
   );

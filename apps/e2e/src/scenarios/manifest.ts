@@ -23,6 +23,7 @@ const ScenarioSchema = Type.Object(
     app: AppSchema,
     route: Type.String({ minLength: 1 }),
     url: Type.String({ minLength: 1 }),
+    finalUrl: Type.Optional(Type.String({ minLength: 1 })),
     kind: KindSchema,
     state: Type.String({ minLength: 1 }),
     fixture: Type.Union([Type.String(), Type.Null()]),

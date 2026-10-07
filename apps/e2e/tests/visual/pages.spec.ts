@@ -35,12 +35,15 @@ for (const scenario of scenarios) {
       target = (await prepareScenarioContent(page, scenario.setup)) ?? target;
     }
 
-    const finalUrl = `${appOrigin ?? ''}${target}`;
+    const navigationUrl = `${appOrigin ?? ''}${target}`;
     if (!interactiveSetup) {
-      await page.goto(finalUrl);
+      await page.goto(navigationUrl);
     }
     const actualUrl = new URL(page.url());
-    const expectedUrl = new URL(target, `${appOrigin ?? testInfo.project.use.baseURL}`);
+    const expectedUrl = new URL(
+      scenario.finalUrl ?? target,
+      `${appOrigin ?? testInfo.project.use.baseURL}`,
+    );
     expect(actualUrl.origin).toBe(expectedUrl.origin);
     expect(actualUrl.pathname).toBe(expectedUrl.pathname);
     expect(actualUrl.search).toBe(expectedUrl.search);

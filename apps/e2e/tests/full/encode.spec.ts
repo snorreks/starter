@@ -7,8 +7,6 @@ import { runBounded } from '../../../../scripts/src/shared/run_bounded.ts';
 import { appBaseUrl } from '../../preflight.ts';
 import { createVerifiedAccount } from '../../src/fixtures/accounts.ts';
 
-const _PASSWORD = 'correct horse battery staple';
-
 test('a verified owner encodes real fixture bytes and can replay, range-read and download the output', async ({
   page,
   browser,
