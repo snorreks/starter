@@ -2,7 +2,11 @@ import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { readFile } from 'node:fs/promises';
 import { createClient } from '@supabase/supabase-js';
 import postgres from 'postgres';
-import { createSupabaseNotesRepository, type Database } from '../src/supabase/index.ts';
+import {
+  createSupabaseJobRepository,
+  createSupabaseNotesRepository,
+  type Database,
+} from '../src/supabase/index.ts';
 
 const url = process.env.SUPABASE_URL;
 const anonKey = process.env.SUPABASE_ANON_KEY;
@@ -349,4 +353,46 @@ describe('transactional admission and attempt fencing in Postgres', () => {
       }[];
     expect(retainedJob).toEqual([{ status: 'succeeded', output_key: null }]);
   });
+});
+
+test('retention attempts are durable and fresh rows outrank unchanged refusals', async () => {
+  const cutoff = new Date(Date.now() - 10 * 86_400_000).toISOString();
+  const insertExpired = async (id: string) => {
+    await sql`insert into private.jobs
+      (id, owner_id, status, fixture, preset, idempotency_key, request_fingerprint,
+       workflow_id, output_key, output_expires_at)
+      values (${id}, ${userB.id}, 'succeeded', 'sample-v1', 'demo-180p-v1', ${id},
+        ${'a'.repeat(64)}, ${`encode-${id}`}, ${`media/v1/jobs/${id}/attempts/a.mp4`},
+        now()-interval '20 days')`;
+  };
+  const queue = async () => {
+    const result = await admin.rpc('queue_expired_job_artifacts', { p_cutoff: cutoff, p_limit: 1 });
+    expect(result.error).toBeNull();
+    return result.data;
+  };
+  await insertExpired('job_retention_refused');
+  expect((await queue())?.map((row) => row.job_id)).toEqual(['job_retention_refused']);
+  // Validation/R2 refusals leave this row unchanged; its issued attempt is durable.
+  expect(
+    await sql`select runs from private.job_artifact_retirements where job_id='job_retention_refused'`,
+  ).toMatchObject([{ runs: 1 }]);
+  await insertExpired('job_retention_fresh');
+  expect((await queue())?.map((row) => row.job_id)).toEqual(['job_retention_fresh']);
+  expect((await queue())?.map((row) => row.job_id)).toEqual(['job_retention_refused']);
+  expect(
+    await sql`select runs from private.job_artifact_retirements where job_id='job_retention_refused'`,
+  ).toMatchObject([{ runs: 2 }]);
+  const repository = createSupabaseJobRepository(userB.client, admin);
+  expect((await repository.getForOwner('job_retention_fresh'))?.dispatchState).toBe('pending');
+  await sql`update private.jobs set dispatch_state='dispatch_failed' where id='job_retention_fresh'`;
+  expect(
+    (await repository.listForOwner()).find((job) => job.id === 'job_retention_fresh')
+      ?.dispatchState,
+  ).toBe('dispatch_failed');
+  const retired = await admin.rpc('retire_job_artifact', {
+    p_job_id: 'job_retention_fresh',
+    p_output_key: 'media/v1/jobs/job_retention_fresh/attempts/a.mp4',
+  });
+  expect(retired.error).toBeNull();
+  expect(retired.data).toBe(true);
 });

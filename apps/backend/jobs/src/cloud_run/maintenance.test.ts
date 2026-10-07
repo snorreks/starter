@@ -49,3 +49,33 @@ describe('bounded R2 artifact retirement', () => {
     expect(closed).toBe(false);
   });
 });
+
+for (const attemptId of ['attempt.v1', 'attempt.', 'a'.repeat(128)]) {
+  it(`retires outputKey-compatible attempt ids of length ${attemptId.length}`, async () => {
+    const key = `media/v1/jobs/job_expired/attempts/${attemptId}.mp4`;
+    const removed: string[] = [];
+    const result = await retireSupabaseArtifacts({
+      queue: async () => [{ job_id: 'job_expired', output_key: key }],
+      media: {
+        delete: async (key) => {
+          removed.push(String(key));
+        },
+        head: async () => null,
+      },
+      retire: async () => true,
+    });
+    expect(result).toEqual({ considered: 1, deleted: 1, refused: 0 });
+    expect(removed).toEqual([key]);
+  });
+}
+
+it('counts a fenced Postgres retirement as refused', async () => {
+  const result = await retireSupabaseArtifacts({
+    queue: async () => [
+      { job_id: 'job_expired', output_key: 'media/v1/jobs/job_expired/attempts/a.mp4' },
+    ],
+    media: { delete: async () => {}, head: async () => null },
+    retire: async () => false,
+  });
+  expect(result).toEqual({ considered: 1, deleted: 0, refused: 1 });
+});

@@ -32,6 +32,7 @@ import {
 } from '@starter/schemas/jobs';
 import { createId } from '@starter/utils';
 import { json, jsonError, readJsonBody, unauthorized } from '#lib/server/http.ts';
+import { dispatchAdmittedJob, publicSupabaseJob } from '#lib/server/supabase_context.ts';
 import type { RequestHandler } from './$types';
 
 /**
@@ -87,7 +88,11 @@ export const GET: RequestHandler = async ({ locals, url }) => {
       return unauthorized();
     }
     const jobs = await repository.listForOwner();
-    return json(200, { jobs, nextCursor: null, serverTime: Date.now() });
+    return json(200, {
+      jobs: jobs.map(publicSupabaseJob),
+      nextCursor: null,
+      serverTime: Date.now(),
+    });
   }
 
   // The list answers with the capability too. An empty list from a deployment that
@@ -167,29 +172,23 @@ export const POST: RequestHandler = async ({ locals, request }) => {
     if (outcome.outcome === 'quota_or_active_limit') {
       return budgetExceeded('The job admission limit has been reached.');
     }
-    if (outcome.outcome === 'created' && outcome.jobId !== null) {
-      const started =
-        repository.dispatch === 'cloud_run'
-          ? await repository.startEncode({
-              jobId: outcome.jobId,
-              attemptId,
-              fixture: parsed.value.fixture,
-              preset: parsed.value.preset,
-            })
-          : await repository.disableDispatch(outcome.jobId);
-      if (!started) {
-        return jsonError(
-          503,
-          'job_dispatch_failed',
-          'The job was admitted, but its Workflow could not be started. Retry with the same idempotency key.',
-        );
-      }
+    const started = await dispatchAdmittedJob(repository, outcome, {
+      attemptId,
+      fixture: parsed.value.fixture,
+      preset: parsed.value.preset,
+    });
+    if (!started) {
+      return jsonError(
+        503,
+        'job_dispatch_failed',
+        'The job was admitted, but its Workflow could not be started. Retry with the same idempotency key.',
+      );
     }
     const job = outcome.jobId === null ? null : await repository.getForOwner(outcome.jobId);
     if (job === null) {
       return jsonError(503, 'job_unavailable', 'The admitted job status could not be read.');
     }
-    return json(202, job);
+    return json(202, publicSupabaseJob(job));
   }
 
   // The capability check comes before the body check. A deployment that cannot run

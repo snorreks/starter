@@ -18,6 +18,7 @@ export const retireSupabaseArtifacts = async (options: {
     Math.max(Math.floor(options.limit ?? MAX_ARTIFACT_RETIREMENTS), 1),
     MAX_ARTIFACT_RETIREMENTS,
   );
+  // Queueing durably increments runs before any validation or storage refusal.
   const queued = await options.queue(limit);
   if (!Array.isArray(queued) || queued.length > limit) {
     throw new Error('Supabase returned an unbounded artifact retirement batch.');
@@ -29,7 +30,8 @@ export const retireSupabaseArtifacts = async (options: {
     if (
       !/^job_[A-Za-z0-9_-]{1,60}$/.test(item.job_id) ||
       !item.output_key.startsWith(key) ||
-      !/^media\/v1\/jobs\/job_[A-Za-z0-9_-]{1,60}\/attempts\/[A-Za-z0-9_-]{1,64}\.mp4$/.test(
+      item.output_key.slice(key.length, -4).includes('..') ||
+      !/^media\/v1\/jobs\/job_[A-Za-z0-9_-]{1,60}\/attempts\/[A-Za-z0-9_.-]{1,128}\.mp4$/.test(
         item.output_key,
       )
     ) {
@@ -43,6 +45,8 @@ export const retireSupabaseArtifacts = async (options: {
     }
     if (await options.retire(item.job_id, item.output_key)) {
       deleted += 1;
+    } else {
+      refused += 1;
     }
   }
   return { considered: queued.length, deleted, refused };

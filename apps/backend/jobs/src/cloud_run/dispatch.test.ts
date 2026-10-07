@@ -65,3 +65,39 @@ describe('Cloud Run dispatch boundary', () => {
     expect(postCount).toBe(1);
   });
 });
+
+it('records an accepted execution when the operation remains incomplete beyond the polling bound', async () => {
+  let accepted = false;
+  let polls = 0;
+  const execution = 'projects/p/locations/r/jobs/j/executions/e1';
+  const dispatch = createCloudRunDispatch({
+    project: 'p',
+    region: 'r',
+    job: 'j',
+    token: async () => 'token',
+    deadlineMs: 1,
+    fetcher: (async (input) => {
+      const url = String(input);
+      if (url.includes('/executions?')) {
+        return Response.json({
+          executions: accepted
+            ? [
+                {
+                  name: execution,
+                  template: { containers: [{ args: ['job_a', 'attempt_a'] }] },
+                },
+              ]
+            : [],
+        });
+      }
+      if (url.endsWith(':run')) {
+        accepted = true;
+        return Response.json({ name: 'projects/p/locations/r/operations/op1' });
+      }
+      polls += 1;
+      return Response.json({ done: false, metadata: { name: 'not-an-execution' } });
+    }) as typeof fetch,
+  });
+  expect(await dispatch.dispatch('job_a', 'attempt_a')).toEqual({ execution, accepted: true });
+  expect(polls).toBe(6);
+});

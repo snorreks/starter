@@ -52,6 +52,7 @@ export interface SupabaseJobStatus {
   id: string;
   kind: 'encode';
   status: 'pending' | 'running' | 'succeeded' | 'failed';
+  dispatchState: 'pending' | 'dispatched' | 'dispatch_failed';
   createdAt: number;
   updatedAt: number;
   outputAvailable: boolean;
@@ -66,6 +67,7 @@ const jobDto = (value: unknown): SupabaseJobStatus | null => {
     typeof row.id !== 'string' ||
     row.kind !== 'encode' ||
     !['pending', 'running', 'succeeded', 'failed'].includes(String(row.status)) ||
+    !['pending', 'dispatched', 'dispatch_failed'].includes(String(row.dispatchState)) ||
     typeof row.createdAt !== 'number' ||
     typeof row.updatedAt !== 'number' ||
     typeof row.outputAvailable !== 'boolean' ||

@@ -88,8 +88,9 @@ const runProcessor = (input, output, attemptId, deadline) =>
     let stdout = '';
     let stderrBytes = 0;
     const timer = setTimeout(() => child.kill('SIGTERM'), deadline);
+    child.stdout.setEncoding('utf8');
     child.stdout.on('data', (chunk) => {
-      stdout += chunk.toString();
+      stdout += chunk;
       if (stdout.length > 16_384) {
         child.kill('SIGTERM');
       }

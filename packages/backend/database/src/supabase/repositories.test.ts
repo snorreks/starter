@@ -172,6 +172,7 @@ describe('request scoped Supabase clients', () => {
       id: 'job_preview_1',
       kind: 'encode',
       status: 'pending',
+      dispatchState: 'pending',
       createdAt: 1,
       updatedAt: 2,
       outputAvailable: false,

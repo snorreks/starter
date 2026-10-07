@@ -80,7 +80,7 @@ export const runCloudRunAttempt = async (
       throw new Error('Postgres refused to claim the job attempt.');
     }
     if (claimed !== true) {
-      return priorFailure();
+      return await priorFailure();
     }
     const token = createGoogleOAuthProvider({ secret: config.GOOGLE_DISPATCHER_CREDENTIAL });
     const dispatch = createCloudRunDispatch({
@@ -119,7 +119,16 @@ export const runCloudRunAttempt = async (
         return { outcome: 'retryable_failure' as const };
       }
       const failure = await priorFailure();
-      return failure.outcome === 'fenced' ? { outcome: 'retryable_failure' as const } : failure;
+      if (failure.outcome !== 'fenced') {
+        return failure;
+      }
+      await admin.rpc('fail_encode_job', {
+        p_job_id: input.jobId,
+        p_attempt_id: input.attemptId,
+        p_error_code: 'internal_error',
+        p_retryable: true,
+      });
+      return { outcome: 'retryable_failure' as const };
     }
     const outputKey = `media/v1/jobs/${input.jobId}/attempts/${input.attemptId}.mp4`;
     const object = await config.MEDIA.head(outputKey);

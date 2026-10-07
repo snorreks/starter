@@ -1,7 +1,8 @@
 import { expect, mock, test } from 'bun:test';
 import { decodeChatStream, type Message } from '@starter/schemas/chat';
 import { POST as postChat } from '../../routes/api/chat/conversations/[id]/messages/+server.ts';
-import { POST as postJob } from '../../routes/api/jobs/+server.ts';
+import { GET as getJobs, POST as postJob } from '../../routes/api/jobs/+server.ts';
+import { GET as getJob } from '../../routes/api/jobs/[id]/+server.ts';
 import { createRequestNotesService } from './notes_service.ts';
 
 const user = { id: 'owner', emailVerified: true };
@@ -131,7 +132,13 @@ test('notes follow pages until the last page or the 200-note limit', async () =>
 });
 
 test('Supabase job admission starts one Cloudflare Workflow and a failed start is visible', async () => {
-  for (const outcome of ['created', 'replayed'] as const) {
+  for (const [outcome, dispatchState] of [
+    ['created', 'pending'],
+    ['replayed', 'pending'],
+    ['replayed', 'dispatch_failed'],
+    ['replayed', 'dispatched'],
+  ] as const) {
+    const shouldStart = outcome === 'created' || dispatchState !== 'dispatched';
     const jobs = {
       dispatch: 'cloud_run',
       admit: mock(
@@ -149,7 +156,7 @@ test('Supabase job admission starts one Cloudflare Workflow and a failed start i
           attemptId: string;
         }) => false,
       ),
-      getForOwner: mock(async () => ({ id: 'job' })),
+      getForOwner: mock(async () => ({ id: 'job', dispatchState })),
     };
     const response = await postJob({
       locals: {
@@ -162,10 +169,10 @@ test('Supabase job admission starts one Cloudflare Workflow and a failed start i
         body: JSON.stringify({ fixture: 'sample-v1', preset: 'demo-180p-v1' }),
       }),
     } as unknown as Parameters<typeof postJob>[0]);
-    expect(response.status).toBe(outcome === 'created' ? 503 : 202);
-    expect(jobs.startEncode).toHaveBeenCalledTimes(outcome === 'created' ? 1 : 0);
+    expect(response.status).toBe(shouldStart ? 503 : 202);
+    expect(jobs.startEncode).toHaveBeenCalledTimes(shouldStart ? 1 : 0);
     expect(jobs.disableDispatch).not.toHaveBeenCalled();
-    if (outcome === 'created') {
+    if (shouldStart) {
       const admitted = jobs.admit.mock.calls[0]?.[0];
       expect(admitted).toMatchObject({ fixture: 'sample-v1', preset: 'demo-180p-v1' });
       expect(admitted?.workflowId).toBe(`encode-${admitted?.id}`);
@@ -175,7 +182,34 @@ test('Supabase job admission starts one Cloudflare Workflow and a failed start i
         preset: 'demo-180p-v1',
       });
       expect(await response.json()).toMatchObject({ error: 'job_dispatch_failed' });
-      expect(jobs.getForOwner).not.toHaveBeenCalled();
+      expect(jobs.getForOwner).toHaveBeenCalledTimes(outcome === 'created' ? 0 : 1);
+    } else {
+      expect((await response.json()) as { id: string }).toEqual({ id: 'job' });
     }
   }
+});
+
+test('Supabase job reads keep dispatch state out of the public DTO', async () => {
+  const job = { id: 'job_a', dispatchState: 'dispatch_failed' };
+  const locals = {
+    user,
+    context: { backendProfile: 'supabase', user },
+    applicationServices: {
+      identity: { user },
+      jobs: {
+        listForOwner: async () => [job],
+        getForOwner: async () => job,
+      },
+    },
+  };
+  const list = await getJobs({ locals } as unknown as Parameters<typeof getJobs>[0]);
+  const listBody = await list.json();
+  expect(listBody).toMatchObject({ jobs: [{ id: 'job_a' }] });
+  expect(JSON.stringify(listBody)).not.toContain('dispatchState');
+  const detail = await getJob({ locals, params: { id: job.id } } as unknown as Parameters<
+    typeof getJob
+  >[0]);
+  const detailBody = await detail.json();
+  expect(detailBody).toMatchObject({ id: 'job_a' });
+  expect(JSON.stringify(detailBody)).not.toContain('dispatchState');
 });

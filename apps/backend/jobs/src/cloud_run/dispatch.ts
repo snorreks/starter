@@ -96,8 +96,8 @@ export const createCloudRunDispatch = (options: {
       throw new Error('Cloud Run returned duplicate executions for one fenced attempt.');
     }
     const row = matching[0];
-    return row && typeof row.name === 'string' && typeof row.state === 'string'
-      ? { execution: row.name, state: row.state }
+    return row && typeof row.name === 'string' && row.name.startsWith(`${resourceBase}/executions/`)
+      ? { execution: row.name, state: typeof row.state === 'string' ? row.state : 'PENDING' }
       : null;
   };
 
@@ -167,7 +167,13 @@ export const createCloudRunDispatch = (options: {
         }
         await new Promise((resolve) => setTimeout(resolve, Math.min(deadlineMs, 1000)));
       }
-      throw new Error('Cloud Run execution operation exceeded its polling bound.');
+      // A run operation can remain pending for the lifetime of the execution.
+      // Reconcile the Execution resource by its override args, never metadata.name.
+      const reconciled = await find(jobId, attemptId);
+      if (reconciled) {
+        return { execution: reconciled.execution, accepted: true };
+      }
+      throw new Error('Cloud Run accepted the operation but no matching execution was found.');
     },
   };
 };

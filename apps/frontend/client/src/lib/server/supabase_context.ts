@@ -12,6 +12,7 @@ import {
   createSupabaseNotesRepository,
   createUserDatabaseClient,
   type SupabaseAdminConfig,
+  type SupabaseJobStatus,
 } from '@starter/database/supabase';
 import {
   createWorkflowDispatchPort,
@@ -41,6 +42,33 @@ export interface SupabaseApplicationJobs extends JobRepository {
     preset: JobPreset;
   }): Promise<boolean>;
 }
+
+/** Dispatch state is a service concern; keep the public job response unchanged. */
+export const publicSupabaseJob = ({ dispatchState: _dispatchState, ...job }: SupabaseJobStatus) =>
+  job;
+
+/** Admission retries recover a Workflow start that did not reach its durable dispatch record. */
+export const dispatchAdmittedJob = async (
+  jobs: SupabaseApplicationJobs,
+  admission: Awaited<ReturnType<JobRepository['admit']>>,
+  input: Omit<Parameters<SupabaseApplicationJobs['startEncode']>[0], 'jobId'>,
+): Promise<boolean> => {
+  if (admission.jobId === null) {
+    return false;
+  }
+  if (admission.outcome !== 'created') {
+    const job = await jobs.getForOwner(admission.jobId);
+    if (!job) {
+      return false;
+    }
+    if (!['pending', 'dispatch_failed'].includes(job.dispatchState)) {
+      return true;
+    }
+  }
+  return jobs.dispatch === 'cloud_run'
+    ? jobs.startEncode({ ...input, jobId: admission.jobId })
+    : jobs.disableDispatch(admission.jobId);
+};
 
 export interface ApplicationServices {
   identity: VerifiedIdentity;

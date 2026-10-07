@@ -1,56 +1,48 @@
+import * as v from 'valibot';
+import { jsonError, readJsonBody } from '#lib/server/http.ts';
 import { createRunnerGrantService } from '#lib/server/runner_grants.ts';
 import type { RequestHandler } from './$types';
 
-const response = (status: number, body: unknown) =>
-  new Response(JSON.stringify(body), {
-    status,
-    headers: { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' },
-  });
+const GrantRequestSchema = v.union([
+  v.strictObject({ attemptId: v.string(), executionName: v.string() }),
+  v.strictObject({
+    attemptId: v.string(),
+    executionName: v.string(),
+    processorExitCode: v.pipe(v.number(), v.integer()),
+  }),
+]);
+const NO_STORE = { 'cache-control': 'no-store' };
 
 /** Internal runner policy: Google service-account JWT for grant minting; signed method/object token for R2 transfer. */
 export const POST: RequestHandler = async ({ request, params, platform, url }) => {
   if (platform?.STARTER_BACKEND_PROFILE !== 'supabase') {
-    return response(503, { error: 'runner_grants_disabled' });
+    return jsonError(503, 'runner_grants_disabled', 'Runner grants are disabled.');
   }
-  let body: unknown;
-  try {
-    body = await request.json();
-  } catch {
-    return response(400, { error: 'invalid_request' });
+  const parsed = await readJsonBody(request, GrantRequestSchema, {
+    maxBytes: 4096,
+    invalidStatus: 400,
+  });
+  if (!parsed.ok) {
+    return parsed.response;
   }
-  const report = body as Record<string, unknown> | null;
-  if (
-    typeof body !== 'object' ||
-    body === null ||
-    !report ||
-    ![2, 3].includes(Object.keys(report).length) ||
-    typeof report.attemptId !== 'string' ||
-    typeof report.executionName !== 'string' ||
-    (Object.keys(report).length === 3 &&
-      (typeof report.processorExitCode !== 'number' || !Number.isInteger(report.processorExitCode)))
-  ) {
-    return response(400, { error: 'invalid_request' });
-  }
+  const report = parsed.value;
   try {
     const service = createRunnerGrantService(platform, url.origin);
-    if (typeof report?.processorExitCode === 'number') {
+    if ('processorExitCode' in report) {
       const recorded = await service.reportProcessorFailure(
         request,
         params.id,
-        report.attemptId as string,
-        report.executionName as string,
+        report.attemptId,
+        report.executionName,
         report.processorExitCode,
       );
-      return response(recorded ? 204 : 409, recorded ? null : { error: 'runner_attempt_fenced' });
+      return recorded
+        ? new Response(null, { status: 204, headers: NO_STORE })
+        : jsonError(409, 'runner_attempt_fenced', 'The runner attempt is no longer active.');
     }
-    return response(
-      200,
-      await service.issue(
-        request,
-        params.id,
-        report?.attemptId as string,
-        report?.executionName as string,
-      ),
+    return Response.json(
+      await service.issue(request, params.id, report.attemptId, report.executionName),
+      { headers: NO_STORE },
     );
   } catch (error) {
     const waiting = error instanceof Error && error.message === 'Runner attempt is not active.';
@@ -58,27 +50,32 @@ export const POST: RequestHandler = async ({ request, params, platform, url }) =
       error instanceof Error &&
       error.message.startsWith('Runner grant configuration is incomplete:');
     if (configuration) {
-      return response(503, { error: 'runner_grants_unavailable' });
+      return jsonError(503, 'runner_grants_unavailable', 'Runner grants are not configured.');
     }
     if (waiting) {
-      return response(409, { error: 'runner_attempt_pending' });
+      return jsonError(409, 'runner_attempt_pending', 'The runner attempt is not active yet.');
     }
-    return response(401, { error: 'runner_identity_refused' });
+    return jsonError(401, 'runner_identity_refused', 'The runner identity was refused.');
   }
 };
 
 const transfer: RequestHandler = async ({ request, params, platform }) => {
   if (platform?.STARTER_BACKEND_PROFILE !== 'supabase') {
-    return response(503, { error: 'runner_grants_disabled' });
+    return jsonError(503, 'runner_grants_disabled', 'Runner grants are disabled.');
   }
   try {
     const service = createRunnerGrantService(platform, new URL(request.url).origin);
     const result = await service.transfer(request, params.id, request.method as 'GET' | 'PUT');
     return result;
   } catch {
-    return response(403, { error: 'object_grant_refused' });
+    return jsonError(403, 'object_grant_refused', 'The object grant was refused.');
   }
 };
 
 export const GET = transfer;
 export const PUT = transfer;
+
+export const DELETE = (): Response =>
+  jsonError(405, 'method_not_allowed', 'Use GET, PUT or POST here.');
+export const PATCH = (): Response =>
+  jsonError(405, 'method_not_allowed', 'Use GET, PUT or POST here.');
