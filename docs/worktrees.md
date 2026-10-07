@@ -60,7 +60,8 @@ values stay out of argv and command output. Browser bundles are checked by
 
 Development ports derive from the checkout path, and E2E ports, logs, state,
 browser output and Supabase projects are owned by a worktree/run scope. A busy
-listener is refused rather than reused. Supabase preview runs create
+dev listener is refused rather than reused; Supabase probes its complete local
+port block and selects the next free block before startup. Supabase preview runs create
 `.wrangler/runs/<run-id>/supabase.dev.vars` privately; a user `.dev.vars` is
 neither read nor changed, and cleanup removes only the unchanged file created by
 that run. The local project identity and all exposed service ports are unique per
