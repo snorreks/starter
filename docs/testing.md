@@ -16,7 +16,12 @@ bun run e2e                # built client + real Worker + real D1 + real browser
 bun run test:all           # all four, in that order, no duplicates
 bun run workflows          # CI workflow policy: pins, permissions, bounds, secrets
 bun run smoke              # fresh checkout of this template, no credentials
-bun run e2e:visual         # screenshots for review
+bun run e2e:visual         # 72 screenshots: routes/states x desktop/mobile x light/dark
+bun run e2e:visual -- --update-snapshots # explicit local baseline update
+bun run e2e:visual:review -- --run <run-id> # optional structured vision review
+bun run e2e:audit          # serialized three-sample Lighthouse measurements
+bun run e2e:full            # real browser -> Workflows/DO/D1/R2 -> Docker FFmpeg
+bun run e2e:doctor          # resolved Chromium, Node/Lighthouse and Docker
 ```
 
 `bun run e2e` and `bun run test:e2e` are the same command. Use whichever reads
@@ -359,20 +364,54 @@ or form mutating request. Every direct `POST`/`PATCH`/`DELETE` in these specs ca
 it explicitly. That is a property of the client, not a workaround: a browser always
 sends it, and the E2E suite is asserting the same thing a browser would do.
 
-### Visual — reports as SKIPPED
+### Visual capture, review and performance
 
-`bun run e2e:visual` captures four real screens to a local directory and stops.
+The visual suite uses a TypeBox-validated manifest, dynamically discovers every
+web and native `+page.svelte` route, prepares real synthetic accounts through
+signup and captured verification mail, and captures the declared state matrix at
+desktop/mobile and light/dark. It verifies expected headings, controls and content,
+fonts, decoded images and horizontal overflow before writing pristine PNGs. Axe
+checks applicable WCAG rules; keyboard focus, reduced motion, 320px width, landscape
+and enlarged-text behavior have a separate browser check. Playwright screenshot
+baselines are explicit and CI refuses snapshot updates. The manifest names each
+coverage gap: no deterministic root error-boundary trigger; no valid reset or device
+codes in screenshot provenance; no separate note create/delete screenshots (the
+functional flow exercises those operations); no deterministic chat transport
+failure fixture; enabled jobs states are exercised by the full lane rather than
+the visual matrix; and native screenshots use its browser host without an
+authenticated bearer flow or packaged Tauri app. Captures and reports stay under
+ignored `.wrangler/runs/`.
 
-Image inspection is **not wired up in this round**, and the output says so:
+Optional visual review is a separate operation, so deterministic checks never
+depend on a model. The OpenRouter-compatible adapter sends a real image part and a
+closed JSON Schema, bounds bytes, deadline and provider calls, retries only
+transient transport errors, allows one schema repair, validates locally and uses
+an atomic cache keyed by image, reference, prompt, schema, provider endpoint, model
+and generation options. The local HTTP fixture verifies the wire request. A paid
+provider review is **NOT RUN** without `.env.e2e` credentials; set
+`E2E_VISION_MODEL` and `E2E_VISION_API_KEY`, then run
+`bun run e2e:visual:review -- --run <run-id>`. The initial policy is advisory;
+System One cascade and design-reference comparison are not implemented.
 
-```
-SKIPPED: visual inspection did not run - image inspection is not wired up in this
-         round; the screenshots are on disk for a human to review.
-```
+`bun run e2e:audit` runs Lighthouse 13.5.0 three times serially for each public
+manifest-selected scenario at desktop and mobile. It refuses redirected routes or
+missing samples/metrics, preserves raw JSON and writes medians for performance,
+accessibility, best-practices, SEO, LCP, CLS, TBT, transfer bytes and requests.
+Current targets are the public landing and login pages. Local lab scores do not
+represent field INP or deployed performance. The provisional thresholds fail this
+local audit when exceeded, but are not yet CI quality gates. No authenticated route
+is reported as audited.
 
-A check that prints green because the step was unavailable is worse than one that
-says it did not run. Nothing is uploaded anywhere, ever — screenshots can contain
-unreleased UI, and that is not a default the tool gets to choose.
+`bun run e2e:full` is the explicit Docker lane. It builds the shipped web and jobs
+Workers, derives their shared D1/R2 and cross-Worker Workflow graph from Wrangler
+configuration, migrates isolated local D1, and starts a source-fingerprinted
+processor container. The browser verifies real signup, verification, UI admission,
+the Workflow/DO/FFmpeg encode, idempotent replay, persisted completion, output hash
+and Range semantics, FFprobe codec/dimensions/duration, plus owner and anonymous
+denials. It fails with a named Docker prerequisite when no compatible engine is
+available. This does not establish Cloudflare managed-container lifecycle or cron
+delivery. `bun run e2e:doctor` launches the resolved Chromium and checks Node and
+Docker readiness before the expensive lanes.
 
 ### Profiles: which lane's prerequisites, asked per lane
 

@@ -173,7 +173,7 @@ Not meaningful until someone supplies the prerequisite.
 | Remote migrations | the above, plus explicit confirmation | `bun run db:migrate:remote -- staging --yes` |
 | Cloudflare historical logs | the above, plus an account id | `bun run logs web --mode staging` |
 | SOPS encrypt/decrypt | `sops` and `age` on PATH, plus your own recipient | `bun run secrets:encrypt -- <gitignored-path>` |
-| Visual inspection | a vision-capable provider and an adapter | `bun run e2e:visual` |
+| Structured visual review | an explicit image-capable model and key in `.env.e2e` | `bun run e2e:visual:review -- --run <run-id>` |
 
 ## Not configured in the template
 
@@ -194,8 +194,9 @@ Stated plainly rather than left to discover.
 | Not run | Why |
 |---|---|
 | **Live Cloudflare** | No deployment, provisioning, remote migration or log query was executed against a real account. |
-| **The visual capture** | `bun run e2e:visual` reports `SKIPPED` with the reason, by design. |
-| **`bun run e2e:visual` under this branch** | unchanged, and deliberately still reports `SKIPPED` rather than going green because image inspection is unavailable. |
+| **Live model review** | Local HTTP provider fixtures verify image parts and strict-schema validation; no paid provider key is configured. Run `bun run e2e:visual:review -- --run <run-id>` after setting `E2E_VISION_MODEL` and `E2E_VISION_API_KEY` in `.env.e2e`. |
+| **Design-reference comparison and System One cascade** | Not implemented; baseline screenshots are separate from external design references. |
+| **Authenticated Lighthouse scenarios** | Current controlled audit covers only public manifest routes. It does not claim that a login redirect audits an authenticated state. |
 
 ### The browser lane no longer needs a `chromium_headless_shell` store path
 
