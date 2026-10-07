@@ -55,7 +55,7 @@ Portable package at `44e758a4e2ad5c5bd5a7257024efedc18416b276`:
 | `bun run test:qa-live` | PASS, two actual Pi children / 26 assertions. |
 | `bun run test:browser-live` | PASS, 5 tests / 38 assertions. |
 | `bun run test:parent-captains-live` | PASS, actual concurrent parent and child Pi processes / 13 assertions. |
-| `bun run test:parent-recovery-live` | PASS, actual Pi restart / 6 assertions. |
+| `bun run test:parent-recovery-live` | PASS, actual Pi restart, stale browser-handle rejection, artifact hash and runtime identity revalidation / 7 assertions. |
 | `bun run test:generic-browser-live` | PASS, real generic project fallback/browser and correlated error fixture / 12 assertions. |
 
 Starter at `1e4d65af5caee3c664a5200bb266bc1e3156dbfe`:
@@ -81,7 +81,8 @@ migration's scope; conflicting wording in the earlier report is corrected here.
 
 - Starter PR [#44](https://github.com/snorreks/starter/pull/44) targets `main` and remains draft.
 - Portable package PR [#1](https://github.com/snorreks/.pi/pull/1) targets `master` and remains draft.
-- Starter CI previously passed all five lanes at `1e4d65af5caee3c664a5200bb266bc1e3156dbfe` in [run 37685202765](https://github.com/snorreks/starter/actions/runs/37685202765). This audit/evidence commit will trigger a new head run; its result must be checked and recorded before reporting final readiness.
+- Starter CI passed all five configured lanes at `3260aa32bc8fda960bdc0678022b44f1185b468a` in [run 37694835817](https://github.com/snorreks/starter/actions/runs/37694835817): static/typecheck/lint/guards, unit/browser, Worker, compute and E2E. E2E took 4m26s including Chromium installation. The workflow contains no database job (the repository's Docker database lane remains a separate command), so database CI was not run.
+- Earlier final-code CI at `1e4d65af5caee3c664a5200bb266bc1e3156dbfe` also passed all five lanes in [run 37685202765](https://github.com/snorreks/starter/actions/runs/37685202765).
 - `gh workflow list --repo snorreks/.pi` returns no configured workflows, so the portable PR has no CI runs. Its local frozen install, unit/type, real Pi, browser, parent captain and recovery checks above are the available verification.
 
 ## Remaining NOT RUN acceptance and exact next action
