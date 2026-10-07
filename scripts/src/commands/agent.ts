@@ -14,6 +14,7 @@ import { resolveE2EPort } from '../shared/e2e_port.ts';
 import { REPO_ROOT } from '../shared/paths.ts';
 import { runBounded } from '../shared/run_bounded.ts';
 import { runScope } from '../shared/run_scope.ts';
+import { assertCaptureSha256 } from '../visual/capture_manifest.ts';
 import {
   type CaptureCrop,
   type InteractiveCaptureOptions,
@@ -845,9 +846,7 @@ export const agentCommand: Command = {
           const bytes = await readFile(absolute);
           const sha256 = createHash('sha256').update(bytes).digest('hex');
           const record = manifest.records.find((entry) => entry.file === file);
-          if (record?.sha256 !== undefined && record.sha256 !== sha256) {
-            throw new Error(`Capture hash mismatch for ${path}.`);
-          }
+          assertCaptureSha256(record?.sha256, sha256, path);
           artifacts.push({
             kind: file === manifestPath ? 'visual-manifest' : 'screenshot',
             path,
