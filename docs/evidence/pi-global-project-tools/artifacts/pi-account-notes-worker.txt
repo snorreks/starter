@@ -1,0 +1,15 @@
+[web] status=ok
+limitations:
+  - Local files are read fully and filtered in memory; there is no server-side index.
+2026-10-07T19:59:13.996Z INFO    [worker/dev] http.request — GET /api/health 200 (trace=tr_85ql8u15jdqv1xik)
+2026-10-07T19:59:14.100Z INFO    [worker/dev] http.request — GET /api/health 200 (trace=tr_ao3b7xkdq8e2spnh)
+2026-10-07T19:59:14.291Z INFO    [worker/dev] http.request — GET /login 200 (trace=tr_pf6vgw4r8t6cngjb)
+2026-10-07T19:59:14.552Z INFO    [worker/dev] http.request — POST /api/auth/sign-up/email 200 (trace=tr_p2z7kw952okwz2u9)
+2026-10-07T19:59:14.557Z INFO    [worker/dev] http.request — GET /api/health 200 (trace=tr_lg76y4h59p2wkhoa)
+2026-10-07T19:59:14.617Z INFO    [worker/dev] http.request — GET /api/dev/mail 200 (trace=tr_ftlhads2hjwgfyq0)
+2026-10-07T19:59:14.636Z WARNING [worker/dev] http.request — GET /favicon.ico 404 (trace=tr_9pbtvucbjrmz912t)
+2026-10-07T19:59:14.667Z INFO    [worker/dev] http.request — GET /api/health 200 (trace=tr_jnsk2y6likx0tbv0)
+2026-10-07T19:59:14.725Z WARNING [worker/dev] http.request — GET /api/auth/verify-email 403 (trace=tr_3r3tvkyry7748pd6)
+2026-10-07T19:59:14.751Z INFO    [worker/dev] http.request — GET /api/health 200 (trace=tr_7ntf1xrlgdc5d5dn)
+2026-10-07T19:59:14.804Z INFO    [worker/dev] http.request — GET /login 200 (trace=tr_p7481qvkk0gfm0ev)
+2026-10-07T19:59:15.015Z WARNING [worker/dev] http.request — POST /api/auth/sign-in/email 403 (trace=tr_8r7qa7bsxfcbtl0k)
