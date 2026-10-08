@@ -44,7 +44,7 @@ test('a validated UUID callback identity is committed before navigation', async 
     emailVerified: true,
   };
   spyOn(auth, 'handleCallback').mockResolvedValue(identity);
-  const navigate = spyOn(nativeNavigation, 'go').mockResolvedValue();
+  const navigate = spyOn(nativeNavigation, 'go').mockResolvedValue(undefined);
   await handleSupabaseCallback('com.example.starter://auth/callback?code=fixture');
   expect(sessionState.user).toEqual({ ...identity, provider: 'email' });
   expect(navigate).toHaveBeenCalledWith('/notes');
@@ -57,7 +57,7 @@ test('a malformed callback subject cannot enter session state or navigate', asyn
     displayName: 'User',
     emailVerified: true,
   });
-  const navigate = spyOn(nativeNavigation, 'go').mockResolvedValue();
+  const navigate = spyOn(nativeNavigation, 'go').mockResolvedValue(undefined);
   await expect(
     handleSupabaseCallback('com.example.starter://auth/callback?code=fixture'),
   ).rejects.toThrow();
