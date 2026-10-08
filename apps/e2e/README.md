@@ -43,7 +43,7 @@ content-addressed cache remain local. System One scoring and design-reference
 comparison are not implemented yet.
 
 `e2e:full` builds the web and jobs Workers, derives their bindings from committed
-Wrangler configuration, creates one isolated Miniflare D1/R2/Workflow/DO graph,
+Wrangler configuration, creates one isolated local Supabase runtime,
 and starts a source-fingerprinted Docker-compatible media image. The real browser
 signs up, verifies email, starts the encode from the Jobs UI, checks idempotent
 replay and persisted completion, fetches and hashes the output, probes it with

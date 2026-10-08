@@ -20,7 +20,6 @@ import { describe, expect, test } from 'bun:test';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { MAINTENANCE_CRON } from '@starter/jobs';
 
 const APP_DIR = fileURLToPath(new URL('..', import.meta.url));
 const CONFIG_PATH = join(APP_DIR, 'wrangler.jsonc');
@@ -39,16 +38,7 @@ interface WranglerConfig {
   main?: string;
   routes?: unknown[];
   vars?: Record<string, string>;
-  d1_databases?: Array<{ binding: string; database_name: string }>;
   r2_buckets?: Array<{ binding: string; bucket_name: string }>;
-  durable_objects?: { bindings: Array<{ name: string; class_name: string }> };
-  containers?: Array<{
-    name: string;
-    class_name: string;
-    max_instances?: number;
-    instance_type?: string;
-    image?: string;
-  }>;
   workflows?: WorkflowEntry[];
   env?: Record<string, WranglerConfig>;
 }
@@ -106,21 +96,9 @@ describe('the committed maintenance schedule', () => {
     expect(scheduledBindings(config().workflows)).toEqual([]);
   });
 
-  test('each deployed environment schedules maintenance on the frozen cron, once', () => {
-    const environments = Object.entries(config().env ?? {});
-    expect(environments.map(([name]) => name).sort()).toEqual(['production', 'staging']);
-
-    for (const [name, section] of environments) {
-      const scheduled = scheduledBindings(section.workflows);
-      // Exactly one binding, and it is maintenance. Two would mean two sweeps of the
-      // same slot, and the wrong one would be a sweep nobody can explain.
-      expect(scheduled, `${name} schedules`).toEqual(['MAINTENANCE_WORKFLOW']);
-
-      const maintenance = section.workflows?.find(
-        (workflow) => workflow.binding === 'MAINTENANCE_WORKFLOW',
-      );
-      expect(maintenance?.schedules).toEqual([MAINTENANCE_CRON]);
-    }
+  test('the neutral template declares no remote schedules', () => {
+    expect(Object.keys(config().env ?? {})).toEqual([]);
+    expect(scheduledBindings(config().workflows)).toEqual([]);
   });
 
   test('the encode workflow is never scheduled', () => {
@@ -171,46 +149,19 @@ describe('the configuration as a whole', () => {
     // deployment asks for it. Neither is configured here.
     expect(document.routes).toBeUndefined();
     const entry = readFileSync(ENTRY_PATH, 'utf8');
-    // The entry must not export a queue consumer or a `scheduled` handler either:
-    // a second trigger for the same sweep is what "never both" rules out at the
-    // code level, and the schedule above is the only one.
-    expect(entry).not.toMatch(/\bscheduled\s*(?:\(|:)/);
+    // Scheduled maintenance is the only supported trigger; queue consumers would
+    // introduce a second orchestration path.
+    expect(entry).toMatch(/async\s+scheduled\s*\(/);
     expect(entry).not.toMatch(/async\s+queue\s*\(/);
   });
 
-  test('the database and the bucket are the ones the web Worker shares', () => {
-    // Sharing is the design: one environment-isolated D1 and one private bucket.
-    // A second database name here would be a second store that maintenance cannot
-    // sweep and the web Worker cannot read.
+  test('compute bindings are not provisioned by a fresh template', () => {
     const document = config();
-    expect(document.d1_databases?.[0]?.database_name).toBe('starter-web');
-    expect(document.r2_buckets?.[0]?.binding).toBe('MEDIA');
-  });
-
-  test('the container cap is two instances on the measured profile', () => {
-    const [container] = config().containers ?? [];
-    expect(container?.class_name).toBe('EncodeContainer');
-    expect(container?.max_instances).toBe(2);
-    // `basic` is what apps/backend/media's measurements chose; `standard-1` would
-    // buy about a second on a job that runs a handful of times an hour.
-    expect(container?.instance_type).toBe('basic');
-    // The image is the crate PR G built, not a registry tag somebody may move.
-    expect(container?.image).toContain('media');
-  });
-
-  test('every deployed environment declares the bindings the Worker requires', () => {
-    // Non-inheritable keys are not inherited: an environment that omits `r2_buckets`
-    // deploys a Worker whose code asks for `MEDIA` and gets nothing.
-    for (const [, section] of Object.entries(config().env ?? {})) {
-      expect(section.d1_databases?.map((binding) => binding.binding)).toContain('DB');
-      expect(section.r2_buckets?.map((binding) => binding.binding)).toContain('MEDIA');
-      expect(section.durable_objects?.bindings.map((binding) => binding.name)).toContain(
-        'CONTAINER',
-      );
-      expect(section.workflows?.map((workflow) => workflow.binding).sort()).toEqual([
-        'ENCODE_WORKFLOW',
-        'MAINTENANCE_WORKFLOW',
-      ]);
-    }
+    expect(document.vars?.JOBS_PROFILE).toBe('disabled');
+    expect(document.r2_buckets).toBeDefined();
+    expect(document.workflows?.map((workflow) => workflow.binding)).toEqual([
+      'ENCODE_WORKFLOW',
+      'MAINTENANCE_WORKFLOW',
+    ]);
   });
 });

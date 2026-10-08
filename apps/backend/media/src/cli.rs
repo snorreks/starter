@@ -42,16 +42,13 @@ use crate::protocol::PRESET_ID;
 /// The status a failure maps to. See the module table.
 pub const fn exit_code_for(code: ErrorCode) -> u8 {
     match code {
-        ErrorCode::UnsupportedPreset
-        | ErrorCode::ProtocolMismatch
-        | ErrorCode::InvalidAttemptId
-        | ErrorCode::UnsupportedTransferEncoding => 3,
+        ErrorCode::UnsupportedPreset => 3,
         ErrorCode::InputEmpty | ErrorCode::PayloadTooLarge => 4,
         ErrorCode::InvalidMedia => 5,
         ErrorCode::InvalidOutput | ErrorCode::OutputTooLarge => 6,
         ErrorCode::DeadlineExceeded => 7,
-        ErrorCode::Cancelled | ErrorCode::Busy => 8,
-        ErrorCode::NotFound | ErrorCode::Internal => 9,
+        ErrorCode::Cancelled => 8,
+        ErrorCode::Internal => 9,
     }
 }
 

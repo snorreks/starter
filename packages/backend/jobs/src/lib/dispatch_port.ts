@@ -1,6 +1,6 @@
 // packages/backend/jobs/src/lib/dispatch_port.ts
 //
-// The typed seam between "D1 admitted this job" and "a Workflow instance exists
+// The typed seam between "Postgres admitted this job" and "a Workflow instance exists
 // for it".
 //
 // This is a port, not a queue. There is deliberately no retry loop, no worker, no
@@ -14,7 +14,7 @@
 //     reconciliation pass all address the same instance;
 //   * dispatch is reported as a durable fact (`dispatched` / `dispatch_failed`)
 //     against the job row, because the interesting failure is exactly the one
-//     that loses memory — D1 committed the admission and then the Workflow call
+//     that loses memory — Postgres committed the admission and then the Workflow call
 //     failed, and a caller that answered 202 has to be able to find that job
 //     later;
 //   * a refusal carries a frozen code, never a provider message.
@@ -25,7 +25,6 @@
 
 import type { JobFixture, JobPreset } from '@starter/schemas/jobs';
 import { workflowIdFor } from './job_identity.ts';
-import type { JobRecord } from './job_repository.ts';
 
 /** What a dispatch needs to know, and nothing about the caller's identity. */
 export interface DispatchTarget {
@@ -129,7 +128,10 @@ export const createDisabledDispatchPort = (): WorkflowDispatchPort => ({
 });
 
 /** The dispatch target for a job, assembled from its own stored fields. */
-export const dispatchTargetFor = (job: JobRecord, attemptId: string): DispatchTarget => ({
+export const dispatchTargetFor = (
+  job: { id: string; workflowId: string; fixture: JobFixture; preset: JobPreset },
+  attemptId: string,
+): DispatchTarget => ({
   jobId: job.id,
   workflowId: job.workflowId,
   fixture: job.fixture,

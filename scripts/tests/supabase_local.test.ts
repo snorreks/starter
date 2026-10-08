@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
-import { createServer } from 'node:net';
 import { mkdtemp, readFile, readlink, rm, stat, writeFile } from 'node:fs/promises';
+import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
@@ -8,11 +8,11 @@ import {
   assertSupabaseOwnership,
   ensureSupabasePortsAvailable,
   persistSupabaseOwnership,
+  removeOwnedWorkerVars,
   requireContainerRuntime,
   resetSupabaseLocal,
   stopSupabaseLocal,
   writeOwnedWorkerVars,
-  removeOwnedWorkerVars,
 } from '../src/db/supabase_local.ts';
 
 describe('isolated local Supabase allocation', () => {
@@ -27,6 +27,24 @@ describe('isolated local Supabase allocation', () => {
           `/supabase/${name}`,
         );
       }
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test('email confirmation is explicitly enabled only for the E2E stack', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'supabase-confirmation-'));
+    const allocation = { ...allocateSupabaseLocal(root, 'email-mode'), root };
+    try {
+      await persistSupabaseOwnership(allocation);
+      const unitConfig = await readFile(
+        join(root, 'supabase-project/supabase/config.toml'),
+        'utf8',
+      );
+      expect(unitConfig).toContain('enable_confirmations = false');
+      await persistSupabaseOwnership(allocation, { emailConfirmations: true });
+      const e2eConfig = await readFile(join(root, 'supabase-project/supabase/config.toml'), 'utf8');
+      expect(e2eConfig).toContain('enable_confirmations = true');
     } finally {
       await rm(root, { recursive: true, force: true });
     }
@@ -94,7 +112,7 @@ describe('isolated local Supabase allocation', () => {
     try {
       await writeFile(userFile, userContents, { mode: 0o600 });
       const generated = await writeOwnedWorkerVars(allocation, {
-        STARTER_BACKEND_PROFILE: 'supabase',
+        SUPABASE_URL: 'http://127.0.0.1:54321',
       });
       expect(generated.path).toBe(join(allocation.root, 'supabase.dev.vars'));
       expect((await stat(generated.path)).mode & 0o777).toBe(0o600);

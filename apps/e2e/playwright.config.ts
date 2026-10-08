@@ -2,7 +2,7 @@
 //
 // End-to-end tests against the real application.
 //
-// This suite runs the **built** Worker in real workerd with a real local D1, and
+// This suite runs the **built** Worker in real workerd with a local Supabase, and
 // drives it in a real browser. That is deliberate and expensive: it is the only
 // lane that can catch a contract mismatch between the page and the API, a
 // bundling mistake that only appears in workerd, or a build that only works in
@@ -94,24 +94,9 @@ const appBaseUrl = `http://127.0.0.1:${APP_PORT}`;
  */
 const RUN_SCOPE = runScope(TEST_RUN_ID);
 
-/**
- * Sign-in budget for the run.
- *
- * Raised, not disabled. Each test creates its own account, so a full run makes
- * roughly a dozen sign-ups in a couple of minutes — well past a
- * production-sane per-minute budget. Leaving it at the default would make every
- * test after the third fail with a rate-limit error and report a product bug.
- *
- * Setting it to 0 would be worse: it would prove nothing about the auth path a
- * real user takes, and a rate-limit bypass is exactly the kind of thing that
- * should not be normal in a test environment.
- */
-export const AUTH_RATE_LIMIT_MAX = '500';
-
 export default defineConfig({
   testDir: './tests',
-  testMatch:
-    process.env.STARTER_BACKEND_PROFILE === 'supabase' ? ['notes.spec.ts'] : ['**/*.spec.ts'],
+  testMatch: ['notes.spec.ts'],
   testIgnore: ['tests/audit/**', 'tests/full/**', 'tests/visual/**'],
   outputDir: `${RUN_SCOPE.artifactDir}/playwright`,
   // Screenshots of failures only: a full-page shot per test would fill a disk
@@ -163,32 +148,14 @@ export default defineConfig({
         // than merging with it, so anything the Worker needs must be listed here
         // explicitly — including these, which the preflight compares against.
         TEST_RUN_ID,
-        ...(process.env.STARTER_BACKEND_PROFILE === 'supabase'
-          ? {
-              STARTER_BACKEND_PROFILE: 'supabase',
-              SUPABASE_URL: process.env.SUPABASE_URL ?? '',
-              SUPABASE_ANON_KEY: process.env.SUPABASE_ANON_KEY ?? '',
-              SUPABASE_MAIL_URL: process.env.SUPABASE_MAIL_URL ?? '',
-              STARTER_DEV_VARS_PATH: process.env.STARTER_DEV_VARS_PATH ?? '',
-              // Wrangler rewrites Host to omit the listener port when bound to
-              // loopback. Auth callback links must return to this browser origin.
-              BETTER_AUTH_URL: appBaseUrl,
-            }
-          : {}),
+        SUPABASE_URL: process.env.SUPABASE_URL ?? '',
+        SUPABASE_ANON_KEY: process.env.SUPABASE_ANON_KEY ?? '',
+        SUPABASE_MAIL_URL: process.env.SUPABASE_MAIL_URL ?? '',
+        STARTER_DEV_VARS_PATH: process.env.STARTER_DEV_VARS_PATH ?? '',
+        APP_ORIGIN: appBaseUrl,
         E2E_RUN_ID: TEST_RUN_ID,
         STARTER_LOG_DIR: RUN_SCOPE.logDir,
         E2E_EVIDENCE_DIR: `${RUN_SCOPE.artifactDir}/visual`,
-        AUTH_RATE_LIMIT_MAX,
-        // The sign-in rate limit is real and stays on; the budget is raised for the
-        // run rather than disabled, for the reasons documented in playwright.config.
-        BETTER_AUTH_SECRET: 'e2e-secret-not-for-production-use-at-all-000',
-        // Origins the app will accept credentialed requests from. There is no
-        // cross-origin client any more, so the list names only the app's own
-        // origin — an allowlist with one entry is still an allowlist, and Better
-        // Auth rejects a request whose `Origin` is not on it.
-        TRUSTED_ORIGINS: [appBaseUrl, process.env.E2E_EXTRA_TRUSTED_ORIGINS]
-          .filter(Boolean)
-          .join(','),
       },
     },
   ],

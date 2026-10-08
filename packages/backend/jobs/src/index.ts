@@ -10,7 +10,4 @@
 
 export * from './lib/dispatch_port.ts';
 export * from './lib/job_identity.ts';
-export * from './lib/job_repository.ts';
-export * from './lib/maintenance.ts';
-export * from './lib/maintenance_run.ts';
 export * from './lib/runner_identity.ts';

@@ -7,6 +7,7 @@ import { DATABASE_DIR, REPO_ROOT } from '../shared/paths.ts';
 import { publicToolEnvironment } from '../shared/private_environment.ts';
 import { runBounded } from '../shared/run_bounded.ts';
 import { runScope } from '../shared/run_scope.ts';
+import { resolveWorkspaceBin } from '../shared/tools.ts';
 
 export interface SupabaseLocalAllocation {
   projectId: string;
@@ -183,7 +184,7 @@ export const persistSupabaseOwnership = async (
     .replace(/^pop3_port = 54326$/m, `pop3_port = ${allocation.ports.pop3}`)
     .replace('api_url = "http://127.0.0.1:54321"', `api_url = "${allocation.urls.api}"`)
     .replace(
-      'enable_confirmations = false',
+      /enable_confirmations = (?:true|false)/,
       `enable_confirmations = ${options.emailConfirmations === true}`,
     )
     .replace('jwt_expiry = 3600', `jwt_expiry = ${options.jwtExpirySeconds ?? 3600}`);
@@ -205,19 +206,20 @@ export const persistSupabaseOwnership = async (
 // Leave time for integration checks and teardown within the 25-minute CI job.
 const CLI_TIMEOUT_MS = 3 * 60 * 1000;
 
+const supabaseCli = (): string => {
+  const binary = resolveWorkspaceBin('supabase', ['packages/backend/database']);
+  if (binary === null) {
+    throw new Error(
+      'The pinned Supabase CLI is unavailable. Run `bun install` to install the database workspace tools.',
+    );
+  }
+  return binary;
+};
+
 const runCli = async (allocation: SupabaseLocalAllocation, args: string[]): Promise<number> => {
   const result = await runBounded({
-    command: 'bun',
-    args: [
-      'run',
-      '--cwd',
-      DATABASE_DIR,
-      'supabase',
-      '--',
-      '--workdir',
-      projectDir(allocation),
-      ...args,
-    ],
+    command: supabaseCli(),
+    args: ['--workdir', projectDir(allocation), ...args],
     cwd: REPO_ROOT,
     env: publicToolEnvironment({ ...process.env, SUPABASE_WORKDIR: projectDir(allocation) }),
     timeoutMs: CLI_TIMEOUT_MS,
@@ -238,17 +240,8 @@ const runCli = async (allocation: SupabaseLocalAllocation, args: string[]): Prom
 
 const captureCli = async (allocation: SupabaseLocalAllocation, args: string[]): Promise<string> => {
   const result = await runBounded({
-    command: 'bun',
-    args: [
-      'run',
-      '--cwd',
-      DATABASE_DIR,
-      'supabase',
-      '--',
-      '--workdir',
-      projectDir(allocation),
-      ...args,
-    ],
+    command: supabaseCli(),
+    args: ['--workdir', projectDir(allocation), ...args],
     cwd: REPO_ROOT,
     env: publicToolEnvironment({ ...process.env, SUPABASE_WORKDIR: projectDir(allocation) }),
     timeoutMs: CLI_TIMEOUT_MS,

@@ -32,7 +32,7 @@ use crate::process::{
     file_len, CancelToken, ProcessOutcome, ProcessRequest, ProcessRunner, SystemProcessRunner,
     TerminationReason,
 };
-use crate::protocol::{EncodeSuccessDocument, Limits, MAX_INPUT_BYTES, MAX_OUTPUT_BYTES};
+use crate::protocol::{EncodeSuccessDocument, MAX_INPUT_BYTES, MAX_OUTPUT_BYTES};
 
 /// How the encoder finds the tools it drives.
 ///
@@ -323,7 +323,7 @@ fn check_input_size(length: u64) -> Result<()> {
     if length == 0 {
         return Err(ProcessorError::new(ErrorCode::InputEmpty));
     }
-    if length > Limits::CURRENT.max_input_bytes {
+    if length > MAX_INPUT_BYTES {
         return Err(ProcessorError::new(ErrorCode::PayloadTooLarge)
             .with_detail(format!("{length} bytes > {}", MAX_INPUT_BYTES)));
     }

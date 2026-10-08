@@ -62,7 +62,6 @@ tasks:
     command: 'bun'
     args: ['run', 'test']
     inputs:
-      - '/packages/backend/database/drizzle-d1/**/*.sql'
       - '@group(sources)'
       - '@group(tests)'
       - '@group(configs)'

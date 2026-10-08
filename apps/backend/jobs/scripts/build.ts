@@ -5,7 +5,7 @@
 // Why Bun's bundler rather than Wrangler's or Vite's
 // ---------------------------------------------------
 // Wrangler's `deploy --dry-run --outdir` bundles too, but it also resolves the whole
-// configuration — including the D1 id and the container image — and this Worker is
+// configuration — including the Postgres id and the container image — and this Worker is
 // deliberately not configured in a fresh checkout. A build that fails because a
 // resource id is absent is a build that cannot be run before a deploy, which is
 // backwards.
