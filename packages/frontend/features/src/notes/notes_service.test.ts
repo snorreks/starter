@@ -23,7 +23,7 @@ import { NotesService } from './notes_service.ts';
 
 const note = (overrides: Partial<Note> = {}): Note => ({
   id: 'note_1',
-  ownerId: 'user_1',
+  ownerId: 'f45b2c4a-7919-4f55-ae89-e73f6753e322',
   title: 'first',
   body: 'body',
   createdAt: 1_700_000_000_000,
@@ -72,7 +72,7 @@ describe('a note list is validated rather than trusted', () => {
     // field is a deploy skew, and quietly dropping it hides the skew until a
     // user notices the field is missing.
     const failure = (await service({
-      notes: [{ ...note(), ownerId: 'user_1', internalScore: 1 }],
+      notes: [{ ...note(), internalScore: 1 }],
       serverTime: 1,
     })
       .list()

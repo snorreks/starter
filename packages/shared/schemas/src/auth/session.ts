@@ -1,8 +1,8 @@
 // packages/shared/schemas/src/auth/session.ts
 //
 // The authenticated-user shape shared by the Worker, the client and the tests.
-// Email + password is the only credential this application has, and the account
-// lifecycle is complete: sign-up, verification, sign-in, recovery, reset.
+// Application accounts are email-backed. The native host also supports OAuth;
+// its identity is validated independently of the web endpoint's wire format.
 
 import * as v from 'valibot';
 import { type Brand, UserIdSchema } from '../common/ids.ts';
@@ -23,7 +23,7 @@ export const SessionUserSchema = v.strictObject({
   id: UserIdSchema,
   email: v.pipe(v.string(), v.minLength(3)),
   displayName: v.pipe(v.string(), v.minLength(1)),
-  /** Only `"email"` exists. The union keeps the door open. */
+  /** Application account category, not the OAuth provider used to authenticate. */
   provider: v.union([v.literal('email')]),
   /**
    * Whether the address has been confirmed.
@@ -37,6 +37,12 @@ export const SessionUserSchema = v.strictObject({
 });
 
 export type SessionUser = v.InferOutput<typeof SessionUserSchema>;
+
+/** Supabase identities require UUID subjects before they enter native session state. */
+export const SupabaseSessionUserSchema = v.strictObject({
+  ...SessionUserSchema.entries,
+  id: v.pipe(v.string(), v.uuid()),
+});
 
 /**
  * The provider's user, exactly as Better Auth's endpoints return it.

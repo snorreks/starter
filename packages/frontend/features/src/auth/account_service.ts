@@ -1,13 +1,10 @@
 // packages/frontend/features/src/auth/account_service.ts
 //
-// Transport for the three endpoints that are neither sign-in nor sign-out.
+// Transport for account lifecycle endpoints, separate from session state.
 //
-// Split out from the session service because those three have a property it does
-// not: **each one may cause mail to be sent.** Better Auth's built-in limiter
-// allows three per minute per IP for `/request-password-reset` and
-// `/send-verification-email`, so a screen that retries any of these
-// automatically is a way for one impatient user to lock themselves out of their
-// own recovery mail. Nothing in this file retries, ever.
+// Mail-producing requests are subject to application and provider rate limits.
+// Retrying automatically can duplicate mail or lock a user out of recovery.
+// Nothing in this file retries, ever.
 //
 // The one thing every caller needs is `authErrorCode`, because "your address is
 // not confirmed" and "your password is wrong" arrive as the same HTTP status with
@@ -26,7 +23,7 @@ export interface PasswordResetInput {
   newPassword: string;
 }
 
-/** The three account endpoints a client screen may call. */
+/** The account lifecycle endpoints a client screen may call. */
 export interface AccountService {
   /** Ask for a recovery email. Refuses a destination that leaves this site. */
   requestPasswordReset(input: PasswordResetRequest): Promise<void>;
@@ -34,7 +31,7 @@ export interface AccountService {
   resetPassword(input: PasswordResetInput): Promise<void>;
   /** Ask for another confirmation link. */
   sendVerificationEmail(input: VerificationRequest): Promise<void>;
-  /** Start Supabase's secure two-address email-change confirmation flow. */
+  /** Ask the account API to start its verified email-change flow. */
   changeEmail(input: { email: string }): Promise<void>;
   /** Delete the currently authenticated account. */
   deleteAccount(): Promise<void>;
@@ -52,9 +49,9 @@ export const createAccountService = (transport: ApiTransport): AccountService =>
    * Ask for a recovery email.
    *
    * The `redirectTo` must be a **relative path**, and that is enforced here rather
-   * than trusted from the caller. Better Auth validates it against `trustedOrigins`,
-   * but refusing to build the request at all means a compromised or careless screen
-   * cannot nominate `https://attacker.example` as the destination for a link that
+   * than trusted from the caller. The account API also validates the destination
+   * against the host's allowed origins. Refusing an absolute destination here
+   * prevents a screen from nominating `https://attacker.example` for a link that
    * carries a credential. `//evil.example` is rejected too: it parses as a relative
    * URL but navigates cross-origin.
    */
@@ -75,9 +72,8 @@ export const createAccountService = (transport: ApiTransport): AccountService =>
   /**
    * Set a new password from a recovery token.
    *
-   * Better Auth consumes the token as it validates it, so a second call with the
-   * same token fails. That is the desired behaviour — a link that works twice is a
-   * link still sitting in somebody's inbox — so this does not retry.
+   * The account API owns validation and consumption of the recovery credential.
+   * This client never retries a credential-bearing mutation automatically.
    */
   async resetPassword(input) {
     await transport.request<unknown>('/api/auth/reset-password', { method: 'POST', body: input });
@@ -121,8 +117,8 @@ export const createAccountService = (transport: ApiTransport): AccountService =>
 /**
  * Where the confirmation link brings a user back to.
  *
- * A path, not a URL: Better Auth resolves it against its own `trustedOrigins`, and
- * an absolute URL here would be a request for a credential to be delivered to an
+ * A path, not a URL: the account API resolves it against the application's origin.
+ * An absolute URL here would request that a credential be delivered to an
  * address this build does not control.
  */
 export const VERIFICATION_RETURN_PATH = '/verify-email';

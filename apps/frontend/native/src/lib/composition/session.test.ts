@@ -18,7 +18,13 @@ mock.module('#lib/runtime/config.ts', () => ({
     ],
   },
 }));
-const { refreshNativeSession, sessionState, supabaseNativeAuth } = await import('./session.ts');
+const {
+  handleSupabaseCallback,
+  nativeNavigation,
+  refreshNativeSession,
+  sessionState,
+  supabaseNativeAuth,
+} = await import('./session.ts');
 if (supabaseNativeAuth === null) {
   throw new Error('Supabase test configuration missing');
 }
@@ -30,15 +36,47 @@ afterEach(() => {
   sessionState.set(null);
 });
 
+test('a validated UUID callback identity is committed before navigation', async () => {
+  const identity = {
+    id: 'f45b2c4a-7919-4f55-ae89-e73f6753e322',
+    email: 'user@example.test',
+    displayName: 'User',
+    emailVerified: true,
+  };
+  spyOn(auth, 'handleCallback').mockResolvedValue(identity);
+  const navigate = spyOn(nativeNavigation, 'go').mockImplementation(async () => undefined);
+  await handleSupabaseCallback('com.example.starter://auth/callback?code=fixture');
+  expect(sessionState.user).toEqual({ ...identity, provider: 'email' });
+  expect(navigate).toHaveBeenCalledWith('/notes');
+});
+
+test('a malformed callback subject cannot enter session state or navigate', async () => {
+  spyOn(auth, 'handleCallback').mockResolvedValue({
+    id: 'user-1',
+    email: 'user@example.test',
+    displayName: 'User',
+    emailVerified: true,
+  });
+  const navigate = spyOn(nativeNavigation, 'go').mockImplementation(async () => undefined);
+  await expect(
+    handleSupabaseCallback('com.example.starter://auth/callback?code=fixture'),
+  ).rejects.toThrow();
+  expect(sessionState.user).toBeNull();
+  expect(navigate).not.toHaveBeenCalled();
+});
+
 test('restored sessions refresh before identity resolution', async () => {
   const calls: string[] = [];
-  spyOn(auth, 'restore').mockResolvedValue({ id: 'user-1', email: null });
+  spyOn(auth, 'restore').mockResolvedValue({
+    id: 'f45b2c4a-7919-4f55-ae89-e73f6753e322',
+    email: null,
+  });
   spyOn(auth, 'ensureFreshAccessToken').mockImplementation(async () => {
     calls.push('fresh');
   });
   spyOn(auth, 'getCurrentUser').mockImplementation(async () => {
     calls.push('identity');
-    return { id: 'user-1', email: 'user@example.test' };
+    return { id: 'f45b2c4a-7919-4f55-ae89-e73f6753e322', email: 'user@example.test' };
   });
   await refreshNativeSession();
   expect(calls).toEqual(['fresh', 'identity']);
@@ -47,7 +85,10 @@ test('restored sessions refresh before identity resolution', async () => {
 
 for (const status of [401, 403, 500]) {
   test(`identity rejection ${status} clears credentials only when rejected by Auth`, async () => {
-    spyOn(auth, 'restore').mockResolvedValue({ id: 'user-1', email: null });
+    spyOn(auth, 'restore').mockResolvedValue({
+      id: 'f45b2c4a-7919-4f55-ae89-e73f6753e322',
+      email: null,
+    });
     spyOn(auth, 'ensureFreshAccessToken').mockResolvedValue();
     spyOn(auth, 'getCurrentUser').mockRejectedValue(
       new SupabaseAuthError('Rejected', status, '/auth/v1/user'),
@@ -60,7 +101,10 @@ for (const status of [401, 403, 500]) {
 }
 
 test('a null identity keeps the existing signed-out behavior', async () => {
-  spyOn(auth, 'restore').mockResolvedValue({ id: 'user-1', email: null });
+  spyOn(auth, 'restore').mockResolvedValue({
+    id: 'f45b2c4a-7919-4f55-ae89-e73f6753e322',
+    email: null,
+  });
   spyOn(auth, 'ensureFreshAccessToken').mockResolvedValue();
   spyOn(auth, 'getCurrentUser').mockResolvedValue(null);
   const signOut = spyOn(auth, 'signOut').mockResolvedValue();
@@ -82,7 +126,10 @@ test('an in-memory session refreshes before identity without reopening the store
   const calls: string[] = [];
   Object.defineProperties(auth, {
     accessToken: { value: 'existing-token', configurable: true },
-    user: { value: { id: 'user-1', email: null }, configurable: true },
+    user: {
+      value: { id: 'f45b2c4a-7919-4f55-ae89-e73f6753e322', email: null },
+      configurable: true,
+    },
   });
   const restore = spyOn(auth, 'restore');
   spyOn(auth, 'ensureFreshAccessToken').mockImplementation(async () => {
@@ -90,7 +137,7 @@ test('an in-memory session refreshes before identity without reopening the store
   });
   spyOn(auth, 'getCurrentUser').mockImplementation(async () => {
     calls.push('identity');
-    return { id: 'user-1', email: 'user@example.test' };
+    return { id: 'f45b2c4a-7919-4f55-ae89-e73f6753e322', email: 'user@example.test' };
   });
   await refreshNativeSession();
   expect(restore).not.toHaveBeenCalled();

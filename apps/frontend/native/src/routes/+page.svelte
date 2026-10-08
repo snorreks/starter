@@ -29,12 +29,7 @@ onDestroy(viewModel.dispose);
       </p>
     {/if}
     <p class="native__explain">
-      {#if viewModel.authProfile === 'supabase'}
-        This app opens Supabase in your browser. After sign-in, the one-time callback returns here.
-      {:else}
-        This app never asks for your password. It shows a short code, your browser approves it, and
-        the session comes back to this window.
-      {/if}
+      This app opens Supabase in your browser. After sign-in, the one-time callback returns here.
     </p>
 
     <button
@@ -65,12 +60,6 @@ onDestroy(viewModel.dispose);
       <p class="native__explain">
         The passphrase is not stored anywhere, not even next to the vault. Without it, nothing
         survives closing the app — which is the default.
-      </p>
-    {/if}
-
-    {#if viewModel.userCode}
-      <p class="native__code" data-testid="native-user-code">
-        Enter this code if your browser did not open automatically: <strong>{viewModel.userCode}</strong>
       </p>
     {/if}
 
@@ -110,11 +99,6 @@ onDestroy(viewModel.dispose);
   .native__passphrase {
     flex-direction: column;
     align-items: stretch;
-  }
-
-  .native__code {
-    font-family: ui-monospace, monospace;
-    letter-spacing: 0.08em;
   }
 
   .native__origin {

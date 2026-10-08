@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
-import { createServer } from 'node:net';
 import { mkdtemp, readFile, readlink, rm, stat, writeFile } from 'node:fs/promises';
+import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
@@ -8,14 +8,32 @@ import {
   assertSupabaseOwnership,
   ensureSupabasePortsAvailable,
   persistSupabaseOwnership,
+  removeOwnedWorkerVars,
   requireContainerRuntime,
   resetSupabaseLocal,
   stopSupabaseLocal,
   writeOwnedWorkerVars,
-  removeOwnedWorkerVars,
 } from '../src/db/supabase_local.ts';
 
 describe('isolated local Supabase allocation', () => {
+  for (const enabled of [false, true]) {
+    test(`owned email confirmation setting ${enabled} overrides the repository default`, async () => {
+      const root = await mkdtemp(join(tmpdir(), 'supabase-confirmations-'));
+      const allocation = { ...allocateSupabaseLocal(root, 'confirmation-run'), root };
+      try {
+        await persistSupabaseOwnership(allocation, { emailConfirmations: enabled });
+        const config = await readFile(
+          join(root, 'supabase-project', 'supabase', 'config.toml'),
+          'utf8',
+        );
+        const email = config.split('[auth.email]')[1]?.split('\n[')[0];
+        expect(email).toContain(`enable_confirmations = ${enabled}`);
+      } finally {
+        await rm(root, { recursive: true, force: true });
+      }
+    });
+  }
+
   test('persisting the same allocation replaces every link without failing', async () => {
     const root = await mkdtemp(join(tmpdir(), 'supabase-links-'));
     const allocation = { ...allocateSupabaseLocal(root, 'repeat-run'), root };

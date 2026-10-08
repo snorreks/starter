@@ -94,7 +94,7 @@ describe('the confirmation bounce is a constant, not a parameter', () => {
 
 describe('nothing here retries', () => {
   test('a refused resend produces exactly one request', async () => {
-    // Better Auth allows three verification emails per minute per IP. A screen that
+    // Supabase Auth allows three verification emails per minute per IP. A screen that
     // retried this would spend another user's quota on their own impatience.
     const calls: Recorded[] = [];
     const transport: ApiTransport = {

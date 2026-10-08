@@ -121,7 +121,7 @@ and Valibot. May **not** import:
 
 - `$app/*`, `@sveltejs/kit` — the router is injected as `Navigation`
 - `@tauri-apps/*` — that is a native composition root's `native-bridge` role
-- `@starter/database`, `@starter/auth`, `drizzle-orm`, `better-auth` — server
+- server database and auth adapters
   implementation, refused by Biome's frontend override
 - `apps/**`, `scripts/**` — including by relative path: a package reaches an
   application through a published export or not at all
