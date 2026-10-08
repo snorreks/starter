@@ -26,8 +26,9 @@ import {
 
 /** A port actually held open, so `isPortBusy` has something real to find. */
 const hold = (port: number): Promise<Server> =>
-  new Promise((resolve) => {
+  new Promise((resolve, reject) => {
     const server = createServer();
+    server.once('error', reject);
     server.listen(port, '127.0.0.1', () => {
       resolve(server);
     });
@@ -133,7 +134,7 @@ describe('a busy port is a refusal, never a silent reuse', () => {
     // full of leftovers looks like. The refusal has to name the port and say why,
     // because the alternative — starting a server that cannot bind — reports a
     // confusing error two steps later.
-    const purpose = 'exhausted';
+    const purpose = newRunId('exhausted');
     const candidates = candidatePorts(purpose, REPO_ROOT);
     for (const port of candidates) {
       servers.push(await hold(port));

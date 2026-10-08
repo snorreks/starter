@@ -14,7 +14,7 @@ export const GET: RequestHandler = async ({ url, locals, cookies }) => {
     redirect(303, '/login?error=invalid_callback');
   }
   const client = createSupabaseAuthClient(
-    { ...config, origin: url.origin, allowedCallbacks: [...CALLBACKS] },
+    { ...config, origin: locals.container.baseUrl, allowedCallbacks: [...CALLBACKS] },
     {
       getAll: () => cookies.getAll().map(({ name, value }) => ({ name, value })),
       setAll: (writes, headers) => {

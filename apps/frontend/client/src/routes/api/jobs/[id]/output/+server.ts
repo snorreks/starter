@@ -81,7 +81,7 @@ export const GET: RequestHandler = async ({ locals, params, request, platform })
     return jsonError(410, 'output_expired', 'The output is no longer available.');
   }
   const headers = new Headers({
-    'content-security-policy': 'sandbox',
+    'content-security-policy': "default-src 'none'; sandbox",
     'x-content-type-options': 'nosniff',
     'accept-ranges': 'bytes',
     'cache-control': 'private, no-store',

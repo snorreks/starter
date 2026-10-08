@@ -1,192 +1,73 @@
 # Authentication
 
-Email and password, and nothing else. One provider, one credential, one session.
-This document is the scope note for that: what the account lifecycle does, what it
-refuses, and where each decision is enforced.
+The web Worker uses Supabase Auth and Postgres. It does not select between auth
+providers or adapt obsolete provider payloads. The native host uses the same
+Supabase identity boundary, with a bearer transport and its own platform storage.
 
-It is a *guide*, not a reference for the library. Better Auth's own documentation
-describes Better Auth. What follows is the part a reader of this repository cannot
-get anywhere else: which of its behaviours this application depends on, and what
-happens when one of them changes.
+## Request identity and ownership
 
-## The lifecycle
+`apps/frontend/client/src/hooks.server.ts` creates one verified identity and one
+set of application services for each request. Configuration comes from the
+validated container; request Host headers do not choose the public auth origin.
 
-| Step | Route | What happens |
-|---|---|---|
-| Sign up | `/login` (`?mode=sign-up`) | Account created, **no session**, verification mail sent |
-| Verify | `/verify-email` | Address confirmed. **Not** a sign-in |
-| Sign in | `/login` | Session cookie set |
-| Recover | `/forgot-password` | Recovery mail sent, to any address |
-| Reset | `/reset-password?token=` | Password replaced, **every session revoked** |
-| Sign out | any page | Session deleted |
+`apps/frontend/client/src/lib/server/supabase_context.ts` composes the user-scoped
+Data API client and repositories. The service-role client is server-only and is
+not a substitute for a caller's token on ordinary ownership reads. Postgres RLS
+and RPC ownership checks protect notes, conversations, messages and jobs.
 
-Two of those are deliberate and both are load-bearing.
+The shared `SessionUserSchema` is a closed application DTO with a UUID subject,
+email, display name, application account category and verification state. Both
+web and native reject unknown identity fields and obsolete provider-shaped
+payloads. The `provider` field describes the application account category, not
+which OAuth provider authenticated a native session.
 
-**Sign-up does not sign anyone in.** `autoSignIn` is off, because the address is
-unconfirmed and an unverified account that can reach the notes screen is a product
-that says "we will confirm your address" and then does not.
+No identity or request collaborator is cached as module-level mutable state.
+`locals.user` and the repositories are rebuilt for every request.
 
-**Verification does not sign anyone in either.** A verification link proves control
-of an address; it is not a credential. `/verify-email` therefore never establishes a
-session, and the user signs in afterwards like anyone else.
+## Account lifecycle
 
-## Where each rule is enforced
+The HTTP adapter is `apps/frontend/client/src/routes/api/auth/[...all]/+server.ts`.
+Server form actions call the account service directly, rather than fetching the
+application's own origin. Both paths use the container's configured public origin.
 
-Ownership is a *server* rule. The browser is not trusted with it, and a client that
-lets you pick a note's owner would be a client whose counterpart has to be guessed.
+The account service in `packages/backend/auth/src/supabase/account.ts` provides
+sign-up, sign-in, sign-out, verification resend, password recovery/reset, email
+change and account deletion. Recovery requests do not disclose whether an address
+exists. Account deletion requires a verified Supabase identity.
 
-| Rule | Enforced in | How |
-|---|---|---|
-| The caller is signed in | `src/lib/server/request_context.ts`, via `hooks.server.ts` | Session resolved per request into `locals.user` |
-| A note belongs to its owner | `src/lib/server/notes_service.ts` | `ownerId` is a parameter, never part of the input; the predicate is in the query |
-| A body cannot name its owner | `api/notes/+server.ts` | `additionalProperties: false`; a client-sent `ownerId` is a 400 |
-| Verification is required | `packages/backend/auth/src/lib/better_auth.ts` | `requireEmailVerification: true`, unconditionally |
+Verification and recovery callbacks pass through `/auth/callback`. Only
+`/verify-email` and `/reset-password` are permitted next paths; an arbitrary URL
+is refused before exchanging a code or writing session cookies. Provider cookie
+writes and cache-control headers are forwarded on success and failure.
 
-The last row has no flag. An earlier draft had one, so that a deployment could turn
-verification off. A setting whose value changes whether accounts work, that exists
-only so somebody can make accounts not work, is a setting nobody will audit.
+Supabase owns its token, session and authentication rate-limit semantics. The
+removed D1 limiter's budgets, replay rules and revocation behavior are not claims
+about this provider. Email confirmation and redirect allowlists must be configured
+on the Supabase project. Native OAuth configuration and platform requirements are
+recorded in `apps/frontend/native/README.md`.
 
-`locals.user` is rebuilt from the request on **every** request. A Worker isolate
-serves many concurrent requests, so anything cached at module scope is one user's
-identity leaking into another's response. `bun run guard` fails a module-level
-`let user`/`session`/`env` for exactly this.
+## Mail and configuration
 
-## Rate limiting
+Supabase auth mail integrates through the configured server mail hook and transport.
+Local fixtures capture mail; hosted delivery requires explicit configuration.
+Do not treat a successful local capture as evidence of Resend delivery or DNS setup.
+No service-role credential, mail secret or provider token belongs in browser output.
 
-The limiter is a D1 table, not a map in the isolate, because an isolate-local map
-gives every user their own bucket and resets on every deploy.
+`apps/frontend/client/src/lib/server/container.ts` validates the server configuration.
+Deployed environments must state their public origin instead of accepting it from
+a request. A missing required binding is a named configuration failure.
 
-`rateLimit.storage: "database"` — Better Auth's own database mode — **does not work
-in this version**, and the reason is worth recording so nobody "simplifies" it back:
+## Validation and schema changes
 
-- its generated `rateLimit` table has no primary key;
-- `@better-auth/drizzle-adapter`'s `incrementOne` returns `null` for a row with no id;
-- Better Auth's `consume` recurses on that `null` without a bound.
+- `bun run test` checks schemas, services and route contracts.
+- `bun run test:database` exercises real local Postgres, Auth, Data API, RLS and RPCs.
+- `bun run test:worker` drives the built Worker; `bun run e2e` drives a real browser.
+- Add new SQL migrations under `supabase/migrations/`; do not rewrite applied ones.
+  Regenerate database types with `bun run db:types` and compare with
+  `bun run db:types:check`.
 
-So the storage is `customStorage`, implemented in
-`packages/backend/database/src/lib/d1_rate_limit.ts` as **one** statement:
-
-```sql
-INSERT INTO rate_limits (key, count, last_request)
-VALUES (?, 1, ?)
-ON CONFLICT(key) DO UPDATE SET
-  count = CASE
-    WHEN ? - last_request >= ? THEN 1
-    ELSE count + 1
-  END,
-  last_request = CASE
-    WHEN ? - last_request >= ? THEN ?
-    ELSE last_request
-  END
-RETURNING count, last_request
-```
-
-The bindings are `(key, at, at, windowMs, at, windowMs, at)`, where `at` is
-one clock reading in milliseconds. A window resets at `at - last_request >= windowMs`,
-including the exact boundary.
-
-One statement, because a read-then-write is a race: two concurrent requests both
-read `count = 4`, both write `5`, and one of five attempts is never recorded. D1
-serializes writes to a row, so the compare-and-set has to happen *in* the statement.
-
-Two details in that SQL are decisions, not formatting:
-
-- **A refused attempt still increments.** The verdict is `count <= max`, so refusing
-  at `count === max` and refusing at `count === max + 1` are the same answer — but the
-  row has to say which one it was, or the boundary is unobservable.
-- **`last_request` is not advanced on a refusal.** Otherwise hammering extends one's
-  own lockout, and the window never closes while someone is still trying.
-
-The prune cutoff is a flat 24 hours of row age, deliberately **not** `now - windowMs`.
-A short rule reaping a long rule's row would let a burst on one endpoint reset
-another endpoint's counter.
-
-Per-path budgets use `AUTH_RATE_LIMIT_WINDOW` and these five custom rules:
-
-| Path | Budget per window |
-|---|---|
-| `/sign-in/email` | `AUTH_RATE_LIMIT_MAX` |
-| `/sign-up/email` | `AUTH_RATE_LIMIT_MAX` |
-| `/request-password-reset` | `AUTH_RATE_LIMIT_MAX × 2` |
-| `/send-verification-email` | `AUTH_RATE_LIMIT_MAX × 2` |
-| `/verify-email` | `AUTH_RATE_LIMIT_MAX × 4` |
-
-### Client addresses
-
-The rate-limit key is the client IP, so the IP header is only trusted where it is
-actually the ingress's. `resolveAuthRateLimitIngress` trusts **nothing** locally, and
-in a deployed environment trusts `cf-connecting-ip` — adding `x-forwarded-for` only
-when the operator names the proxies in `TRUSTED_PROXIES`. A forwarded header is a
-claim made by whoever sent the request, so a per-IP limit keyed on a spoofable
-address is a per-IP limit the caller chooses.
-
-When no address can be resolved, Better Auth falls back to one shared per-path bucket
-and logs a warning at startup. That warning is the fallback working, not a failure;
-it is also the correct behaviour, since an unresolvable address must not become an
-unlimited one.
-
-## Mail
-
-One capability, two transports, chosen by deployment mode:
-
-| `DEPLOYMENT_ENV` | Transport | Requires |
-|---|---|---|
-| `local` | `capture_transport.ts` | nothing |
-| anything else | `resend_transport.ts` | `RESEND_API_KEY` **and** `MAIL_FROM` |
-
-**Local always captures, even if `RESEND_API_KEY` happens to be set.** A stray key in
-a shell profile must not turn a developer's run into real mail; that is how a test
-suite starts mailing real people.
-
-**Non-local without both variables throws from `getContainer`.** Not a warning, not a
-fallback to capture: the sign-up screen would otherwise report a successful sign-up
-for an account whose verification mail was never sent. Failing at container
-construction means the deploy is visibly broken instead of quietly unusable.
-
-`/api/dev/mail` exposes the capture inbox. It is **local-only** — it answers `403`
-outside a local environment, deliberately named rather than disguised as a 404, and it
-is `GET`-only, so it cannot be used to make the application send anything. Every
-response carries the `TEST_RUN_ID` it is scoped to, so a message from an earlier run
-cannot be mistaken for a fresh one.
-
-## What the tests do and do not prove
-
-`bun run test:worker` drives the built Worker in real workerd against real local D1
-(45 tests). `bun run e2e` drives a real browser against that Worker (26 tests),
-including a context with **scripting disabled**, because the form action is the only
-sign-in path available to a browser that never runs a script.
-
-Two things are **not** verified, and the capability matrix says so too:
-
-- **No real mail was sent.** Every message went to the capture inbox. Resend delivery,
-  its SPF/DKIM posture and its error shape are unverified.
-- **No distributed load test was run.** `worker_integration.test.ts` checks exact
-  401/429 counts across concurrent requests to two auth instances sharing local D1,
-  counter persistence across a Worker restart, and resistance to rotating a local
-  client's `cf-connecting-ip`. These checks do not simulate Cloudflare's production
-  routing across simultaneous isolates.
-
-## Two things that will surprise you
-
-**Verification tokens are replayable within their hour.** They are signed JWTs, and
-Better Auth accepts a second use. Recovery tokens are single-use. Asserting
-single-use verification would be asserting a behaviour the library does not have;
-`worker_integration.test.ts` asserts what actually happens instead — the replay is
-idempotent and issues no session.
-
-**`getSession` answers 200 with a literal `null` for a revoked session.** Revocation is
-therefore asserted through `/api/notes` returning 401, because a null body and an
-unauthenticated request look identical at the `getSession` boundary.
-
-## Changing any of this
-
-- Migrations have one authority: `packages/backend/database`, and `bun run
-  db:generate` is the only way to make one. Do not edit an applied migration.
-- `apps/frontend/client/src/lib/server/container.ts` is where auth, mail, the rate
-  limiter and trusted origins are wired. It is the composition root for the server
-  half; adding a dependency there means adding it deliberately, not transitively.
-- The feature's browser half is `@starter/features`'s auth subpath
-  (`packages/frontend/features/src/auth/`), composed by
-  `apps/frontend/client/src/lib/composition/auth.ts`. It is a plain class plus a
-  composition function — see [adding-a-feature.md](adding-a-feature.md) for why there
-  is no base class to extend.
+These commands name missing prerequisites rather than silently skipping. Current
+counts and evidence belong in [the capability matrix](capability-matrix.md), not
+in hand-maintained copies here. Hosted Supabase configuration, real Resend delivery,
+distributed production traffic and physical native-device flows require separate
+live verification; local or fixture checks do not prove them.

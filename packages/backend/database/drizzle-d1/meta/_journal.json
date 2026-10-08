@@ -1,0 +1,55 @@
+{
+  "version": "7",
+  "dialect": "sqlite",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "6",
+      "when": 1790728461907,
+      "tag": "0000_graceful_grey_gargoyle",
+      "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "6",
+      "when": 1790765025979,
+      "tag": "0001_early_captain_cross",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1790942579976,
+      "tag": "0002_broken_vector",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "6",
+      "when": 1791035315668,
+      "tag": "0003_dark_phantom_reporter",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "6",
+      "when": 1791046665476,
+      "tag": "0004_chemical_stranger",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "6",
+      "when": 1791317682749,
+      "tag": "0005_needy_maelstrom",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "6",
+      "when": 1791317682750,
+      "tag": "0006_message_timestamp_ms",
+      "breakpoints": true
+    }
+  ]
+}

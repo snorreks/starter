@@ -12,7 +12,19 @@
   "observability": { "enabled": true },
   "vars": { "DEPLOYMENT_ENV": "local", "JOBS_PROFILE": "disabled", "CHAT_MODEL_PROFILE": "echo" },
   "env": {
-    "staging": { "vars": { "DEPLOYMENT_ENV": "staging", "JOBS_PROFILE": "disabled", "CHAT_MODEL_PROFILE": "echo" } },
-    "production": { "vars": { "DEPLOYMENT_ENV": "production", "JOBS_PROFILE": "disabled", "CHAT_MODEL_PROFILE": "echo" } }
+    "staging": {
+      "vars": {
+        "DEPLOYMENT_ENV": "staging",
+        "JOBS_PROFILE": "disabled",
+        "CHAT_MODEL_PROFILE": "echo"
+      }
+    },
+    "production": {
+      "vars": {
+        "DEPLOYMENT_ENV": "production",
+        "JOBS_PROFILE": "disabled",
+        "CHAT_MODEL_PROFILE": "echo"
+      }
+    }
   }
 }

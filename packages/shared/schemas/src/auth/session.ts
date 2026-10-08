@@ -2,7 +2,7 @@
 //
 // The authenticated-user shape shared by the Worker, the client and the tests.
 // Application accounts are email-backed. The native host also supports OAuth;
-// its identity is validated independently of the web endpoint's wire format.
+// both hosts validate the same closed application DTO.
 
 import * as v from 'valibot';
 import { type Brand, UserIdSchema } from '../common/ids.ts';
@@ -14,7 +14,7 @@ export const SESSION_USER_SCHEMA_VERSION = 1 as const;
  *
  * Branded like the ids, because it is a credential and should not be assignable
  * from an arbitrary string at a call site. The length bound is a route-parameter
- * sanity check, not a guess at Better Auth's format.
+ * sanity check, not a guess at the authentication provider's format.
  */
 export const ResetTokenSchema = v.pipe(v.string(), v.minLength(1), v.maxLength(256));
 export type ResetToken = v.InferOutput<typeof ResetTokenSchema> & Brand<string, 'ResetToken'>;
@@ -38,57 +38,8 @@ export const SessionUserSchema = v.strictObject({
 
 export type SessionUser = v.InferOutput<typeof SessionUserSchema>;
 
-/** Supabase identities require UUID subjects before they enter native session state. */
-export const SupabaseSessionUserSchema = v.strictObject({
-  ...SessionUserSchema.entries,
-  id: v.pipe(v.string(), v.uuid()),
-});
-
-/**
- * The provider's user, exactly as Better Auth's endpoints return it.
- *
- * A separate schema because it is a different contract from `SessionUserSchema`,
- * and conflating them is a mistake this repository has already made once: the
- * client used to take the provider's object and call it a `SessionUser`, which
- * gave a `SessionUser` with `name` where the DTO says `displayName`. Nothing broke
- * until something validated it.
- *
- * Closed on purpose. A field Better Auth adds in a future version is then a
- * visible failure — "the server sent a session user this build does not
- * understand" — rather than a silently different identity shape that only shows up
- * where a screen renders `displayName`. The pinned provider version is
- * `better-auth` in the application's manifest.
- */
-export const SessionUserWireSchema = v.strictObject({
-  id: UserIdSchema,
-  /** The provider's field name for what this application calls `displayName`. */
-  name: v.pipe(v.string(), v.minLength(1)),
-  email: v.pipe(v.string(), v.minLength(3)),
-  emailVerified: v.boolean(),
-  image: v.union([v.string(), v.null()]),
-  createdAt: v.union([v.string(), v.pipe(v.number(), v.finite())]),
-  updatedAt: v.union([v.string(), v.pipe(v.number(), v.finite())]),
-});
-
-export type SessionUserWire = v.InferOutput<typeof SessionUserWireSchema>;
-
-/**
- * Project the provider's user onto this application's DTO.
- *
- * A projection, not a cast, for the reason the schema above exists: the DTO names
- * five fields and a projection is the only thing that can guarantee the other two
- * are not carried along into a screen, a log line or a native bundle. `provider` is
- * a literal for the same reason it is one in the server's `RequestUser` — only
- * email and password is enabled, and a wider union would publish a claim this
- * application cannot honour.
- */
-export const toSessionUser = (wire: SessionUserWire): SessionUser => ({
-  id: wire.id,
-  email: wire.email,
-  displayName: wire.name,
-  provider: 'email',
-  emailVerified: wire.emailVerified,
-});
+/** Native Supabase identities obey the same strict UUID application contract. */
+export const SupabaseSessionUserSchema = SessionUserSchema;
 
 /**
  * Mirrors `emailAndPassword.minPasswordLength` in `@starter/auth`.

@@ -558,7 +558,8 @@ describe('provisionDatabase', () => {
     // wrangler error, whereas an absent one fails at configuration time with a
     // clear one, and `bun run deploy:configure` is what writes the real value.
     expect(committed).not.toContain('"database_id"');
-    expect(committed).toContain('"migrations_dir"');
+    expect(committed).not.toContain('"d1_databases"');
+    expect(committed).not.toContain('"migrations_dir"');
   });
 
   test('refuses without a credential and writes nothing at all', () => {

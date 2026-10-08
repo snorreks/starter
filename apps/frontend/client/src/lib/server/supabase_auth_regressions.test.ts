@@ -16,6 +16,7 @@ const signIn = mock(async () => {
     error: failureStatus === undefined ? null : { message: 'refused', status: failureStatus },
   };
 });
+const reset = mock(async (_email: string, _options: { redirectTo: string }) => ({ error: null }));
 const exchange = mock(async () => {
   await writeSession();
   return { error: null };
@@ -23,7 +24,13 @@ const exchange = mock(async () => {
 mock.module('@supabase/ssr', () => ({
   createServerClient: (_url: string, _key: string, options: { cookies: CookieMethodsServer }) => {
     adapter = options.cookies;
-    return { auth: { signInWithPassword: signIn, exchangeCodeForSession: exchange } };
+    return {
+      auth: {
+        signInWithPassword: signIn,
+        exchangeCodeForSession: exchange,
+        resetPasswordForEmail: reset,
+      },
+    };
   },
 }));
 const { POST, GET, PUT } = await import('../../routes/api/auth/[...all]/+server.ts');
@@ -62,6 +69,7 @@ beforeEach(() => {
   failureStatus = undefined;
   signIn.mockClear();
   exchange.mockClear();
+  reset.mockClear();
 });
 
 test('auth rejects extra fields, malformed JSON, non-object bodies and oversized streams', async () => {
@@ -97,6 +105,16 @@ test('email-change distinguishes a signed-in invalid email from missing identity
       })
     ).status,
   ).toBe(401);
+});
+
+test('recovery links use the configured origin rather than the request host', async () => {
+  const event = makeEvent('request-password-reset', { email: 'a@example.test' });
+  event.locals.container.baseUrl = 'https://app.example.test';
+  const response = await invoke(event);
+  expect(response.status).toBe(200);
+  expect(reset).toHaveBeenCalledWith('a@example.test', {
+    redirectTo: 'https://app.example.test/auth/callback?next=%2Freset-password',
+  });
 });
 
 test('auth cookie writes retain provider headers on success and error responses', async () => {

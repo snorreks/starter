@@ -56,7 +56,11 @@ const handleSupabase = async (event: Parameters<RequestHandler>[0]): Promise<Res
   const cookieWrites: { name: string; value: string; options: Record<string, unknown> }[] = [];
   const responseHeaders = new Headers();
   const client = createSupabaseAuthClient(
-    { ...config, origin: event.url.origin, allowedCallbacks: ['/verify-email', '/reset-password'] },
+    {
+      ...config,
+      origin: event.locals.container.baseUrl,
+      allowedCallbacks: ['/verify-email', '/reset-password'],
+    },
     {
       getAll: () => event.cookies.getAll().map(({ name, value }) => ({ name, value })),
       setAll: (writes, headers) => {
@@ -69,7 +73,7 @@ const handleSupabase = async (event: Parameters<RequestHandler>[0]): Promise<Res
   );
   const admin = createAdminDatabaseClient(config);
   const accounts = createSupabaseAccountService(client, admin, {
-    origin: event.url.origin,
+    origin: event.locals.container.baseUrl,
     allowedCallbacks: ['/verify-email', '/reset-password'],
   });
   const endpoint = event.url.pathname.replace(/^\/api\/auth\//, '');
