@@ -20,13 +20,15 @@ const record = (value: unknown): Record<string, unknown> => {
   return value as Record<string, unknown>;
 };
 
-const workflowSteps = (): Record<string, unknown>[] => {
+const workflowSteps = (
+  options: { file?: string; job?: string } = {},
+): Record<string, unknown>[] => {
   const workflow: unknown = parse(
-    readFileSync(join(REPO_ROOT, '.github/workflows/deploy.yml'), 'utf8'),
+    readFileSync(join(REPO_ROOT, '.github/workflows', options.file ?? 'deploy.yml'), 'utf8'),
   );
-  const steps = record(record(record(workflow).jobs).apply).steps;
+  const steps = record(record(record(workflow).jobs)[options.job ?? 'apply']).steps;
   if (!Array.isArray(steps)) {
-    throw new Error('The deployment apply job has no steps.');
+    throw new Error('The selected workflow job has no steps.');
   }
   return steps.map(record);
 };
@@ -54,6 +56,14 @@ const runTargetExtraction = (target: unknown) => {
   });
   return { result, output: readFileSync(output, 'utf8') };
 };
+
+test('the retained D1 CI migration selects legacy rather than inheriting deployment defaults', () => {
+  const migration = workflowSteps({ file: 'ci.yml', job: 'e2e' }).find(
+    (step) => step.name === 'Apply migrations to local D1',
+  );
+  expect(migration?.run).toBe('bun run db:migrate');
+  expect(migration?.env).toMatchObject({ STARTER_BACKEND_PROFILE: 'legacy' });
+});
 
 describe('deployment workload identity follows resolved compute policy', () => {
   test('disabled compute requires no Google project', () => {
