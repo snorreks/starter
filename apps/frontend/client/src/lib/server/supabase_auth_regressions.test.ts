@@ -214,7 +214,8 @@ test('provider credential failures preserve actionable application outcomes with
       makeEvent('sign-in/email', { email: 'a@example.test', password: 'password' }),
     );
     expect(response.status).toBe(status);
-    expect(await response.json()).toEqual({ error, message: 'Could not complete that request.' });
+    const body: unknown = await response.json();
+    expect(body).toEqual({ error, message: 'Could not complete that request.' });
   }
 });
 
