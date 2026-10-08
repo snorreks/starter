@@ -318,6 +318,7 @@ describe('the rename is reported, never performed', () => {
     const permitted = new Set<string>([
       'LICENSE',
       'docs/starter-extraction.md',
+      'docs/evidence/pi-global-project-tools/acceptance-audit-2026-10-07.md',
       'package.json',
       'bun.lock',
     ]);

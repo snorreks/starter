@@ -16,7 +16,7 @@
 //
 // Three sign-in outcomes, not one boolean
 // --------------------------------------
-// An unverified address produces a *specific* failure from Supabase Auth, and it
+// The account API identifies an unverified address with a specific failure, and it
 // needs a specific response: telling someone "check your email" when their password
 // is wrong teaches them that a wrong password means mail is coming. So the outcome
 // is a union, and the view picks the message.
@@ -309,8 +309,8 @@ export class AuthViewModel implements ScreenOwner, ScreenGuards {
 /**
  * Map a failure onto the outcome the view can act on.
  *
- * Supabase Auth's own message is not shown to the user: for a sign-in it would say
- * which half of the pair was wrong, which is an account-existence oracle.
+ * Backend authentication messages are not shown directly: provider-specific
+ * wording must not become an account-existence oracle in this application's UI.
  * Everything unrecognised collapses into one generic failure — so a future error
  * code from the library cannot accidentally become a new, more specific message.
  */

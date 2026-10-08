@@ -220,6 +220,14 @@ test.describe('authentication', () => {
     // The sign-in link comes from the layout load, so its presence here proves the
     // server rendered the page with a resolved (absent) session.
     await expect(page.getByTestId('landing-sign-in-link')).toBeVisible();
+    await expect(page.getByTestId('sign-in-link')).toHaveClass(/shell__link/);
+    const titleSize = Number.parseFloat(
+      await page.locator('.landing__title').evaluate((node) => getComputedStyle(node).fontSize),
+    );
+    const bodySize = Number.parseFloat(
+      await page.locator('.landing__lede').evaluate((node) => getComputedStyle(node).fontSize),
+    );
+    expect(titleSize).toBeGreaterThan(bodySize * 1.5);
   });
 
   test('a deep link to a client route renders rather than 404ing', async ({ page }) => {
@@ -384,6 +392,16 @@ test.describe('password recovery, in a browser', () => {
     await expect(page.getByText(/if that address has an account/i)).toBeVisible();
     // Explicitly not: "we could not find that account".
     await expect(page.getByText(/no account|does not exist|unknown address/i)).toHaveCount(0);
+  });
+
+  test('an invalid recovery token stops offering the reset form', async ({ page }) => {
+    await page.goto('/reset-password?token=invalid');
+    await page.getByLabel('New password', { exact: true }).fill('a-replacement-passphrase-x');
+    await page.getByRole('button', { name: 'Save the new password' }).click();
+
+    await expect(page.getByRole('alert')).toContainText(/no longer valid|expired/i);
+    await expect(page.getByLabel('New password', { exact: true })).toHaveCount(0);
+    await expect(page.getByRole('link', { name: /new link/i })).toBeVisible();
   });
 
   test('a second use of a recovery link is refused, in the browser', async ({ page, request }) => {

@@ -80,7 +80,7 @@ async function signOut(): Promise<void> {
           Sign out
         </button>
       {:else}
-        <a class="ui-button ui-button--secondary" href="/login" data-testid="sign-in-link">
+        <a class="shell__link" href="/login" data-testid="sign-in-link">
           Sign in
         </a>
       {/if}

@@ -18,7 +18,13 @@ mock.module('#lib/runtime/config.ts', () => ({
     ],
   },
 }));
-const { refreshNativeSession, sessionState, supabaseNativeAuth } = await import('./session.ts');
+const {
+  handleSupabaseCallback,
+  nativeNavigation,
+  refreshNativeSession,
+  sessionState,
+  supabaseNativeAuth,
+} = await import('./session.ts');
 if (supabaseNativeAuth === null) {
   throw new Error('Supabase test configuration missing');
 }
@@ -28,6 +34,35 @@ afterEach(() => {
   Reflect.deleteProperty(auth, 'accessToken');
   Reflect.deleteProperty(auth, 'user');
   sessionState.set(null);
+});
+
+test('a validated UUID callback identity is committed before navigation', async () => {
+  const identity = {
+    id: 'f45b2c4a-7919-4f55-ae89-e73f6753e322',
+    email: 'user@example.test',
+    displayName: 'User',
+    emailVerified: true,
+  };
+  spyOn(auth, 'handleCallback').mockResolvedValue(identity);
+  const navigate = spyOn(nativeNavigation, 'go').mockImplementation(async () => undefined);
+  await handleSupabaseCallback('com.example.starter://auth/callback?code=fixture');
+  expect(sessionState.user).toEqual({ ...identity, provider: 'email' });
+  expect(navigate).toHaveBeenCalledWith('/notes');
+});
+
+test('a malformed callback subject cannot enter session state or navigate', async () => {
+  spyOn(auth, 'handleCallback').mockResolvedValue({
+    id: 'user-1',
+    email: 'user@example.test',
+    displayName: 'User',
+    emailVerified: true,
+  });
+  const navigate = spyOn(nativeNavigation, 'go').mockImplementation(async () => undefined);
+  await expect(
+    handleSupabaseCallback('com.example.starter://auth/callback?code=fixture'),
+  ).rejects.toThrow();
+  expect(sessionState.user).toBeNull();
+  expect(navigate).not.toHaveBeenCalled();
 });
 
 test('restored sessions refresh before identity resolution', async () => {

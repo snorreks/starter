@@ -30,7 +30,7 @@ const ADDRESS = 'someone@example.test';
  * then only carrying the *rejecting* stubs, where the return value is never read.
  */
 const USER: SessionUser = {
-  id: 'f45b2c4a-7919-4f55-ae89-e73f6753e322',
+  id: 'user_1',
   email: ADDRESS,
   displayName: 'Someone',
   provider: 'email',
@@ -88,7 +88,7 @@ const build = (
 };
 
 /**
- * A server failure carrying a Supabase Auth code, the way `ApiClient` throws one.
+ * A server failure carrying a Better Auth code, the way `ApiClient` throws one.
  *
  * The `errorType` comes from `errorTypeForStatus` rather than being written by hand,
  * so these fixtures classify exactly as the transport does. That matters here: the
@@ -270,7 +270,7 @@ describe('a duplicate submission', () => {
 
     // Exactly one. Two sign-ins against the same account from one click is how a
     // duplicate account appears, and it also spends two of the three sign-in
-    // attempts Supabase Auth allows per ten seconds.
+    // attempts Better Auth allows per ten seconds.
     expect(calls).toBe(1);
   });
 

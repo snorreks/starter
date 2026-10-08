@@ -46,8 +46,25 @@ const LIMITS = {
 
 const PARAMS = Type.Object({
   app: Type.Optional(
-    Type.Union([Type.Literal('client'), Type.Literal('api'), Type.Literal('all')], {
-      description: "Which app's logs to read. Defaults to all.",
+    Type.Union([Type.Literal('web'), Type.Literal('all')], {
+      description: "Which application's logs to read. Defaults to all.",
+    }),
+  ),
+  source: Type.Optional(
+    Type.Union([Type.Literal('worker'), Type.Literal('browser')], {
+      description: 'Filter by the producer half of the web application.',
+    }),
+  ),
+  since: Type.Optional(
+    Type.String({ description: 'Restrict local/history reads, e.g. 15m or 2h.' }),
+  ),
+  runId: Type.Optional(
+    Type.String({
+      minLength: 1,
+      maxLength: 64,
+      pattern: '^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$',
+      description:
+        'Read only this checkout’s owned local run. Selects the existing runScope log directory.',
     }),
   ),
   mode: Type.Optional(
@@ -84,9 +101,9 @@ export default function logToolExtension(pi: ExtensionAPI): void {
       'same capability rules a human gets — including refusing a filter the active adapter ' +
       'cannot support rather than silently ignoring it. Prefer this over reading log files ' +
       'directly or guessing at what an API call did: it applies redaction, bounds and the same ' +
-      'capability checks the CLI applies. A non-zero exit from the CLI is a real answer, not a ' +
-      'tool failure — the message says which prerequisite is missing, so relay it rather than ' +
-      'retrying.',
+      'capability checks the CLI applies. Filter local events by runId to read only that run’s ' +
+      'owned log directory. A non-zero exit, timeout, cancellation or spawn failure is returned ' +
+      'as an error with the CLI remedy; relay it rather than retrying.',
     // No `promptGuidelines`. They are appended to the system prompt on every turn
     // of every session, whether or not the session reads a log, and the two this
     // tool used to carry said what the description above now says. The guidance is
@@ -94,7 +111,11 @@ export default function logToolExtension(pi: ExtensionAPI): void {
     // `.pi/tests/tool_surface.test.ts` enforces the absence for every tool.
     promptSnippet: "Read application logs via the project's own log CLI",
     parameters: PARAMS,
-    async execute(_toolCallId, params: LogParams): Promise<AgentToolResult<LogCallDetails>> {
+    async execute(
+      _toolCallId,
+      params: LogParams,
+      signal,
+    ): Promise<AgentToolResult<LogCallDetails>> {
       const args = buildArgs(params);
       const command = usage(args);
 
@@ -104,10 +125,12 @@ export default function logToolExtension(pi: ExtensionAPI): void {
           cwd: REPO_ROOT,
           timeoutMs: LIMITS.timeoutMs,
           maxBytes: LIMITS.maxBytes,
+          signal,
         });
       } catch (error) {
         return {
           content: [{ type: 'text', text: `Could not run bun: ${(error as Error).message}` }],
+          isError: true,
           details: { command, exitCode: -1, truncated: false },
         };
       }
@@ -139,10 +162,13 @@ export default function logToolExtension(pi: ExtensionAPI): void {
 
       return {
         content: [{ type: 'text', text }],
+        isError: result.code !== 0 || result.timedOut || result.cancelled,
         details: {
           command,
           exitCode: result.code,
           truncated: result.truncated,
+          timedOut: result.timedOut,
+          cancelled: result.cancelled,
           ...(result.artifactPath === undefined ? {} : { artifactPath: result.artifactPath }),
         },
       };

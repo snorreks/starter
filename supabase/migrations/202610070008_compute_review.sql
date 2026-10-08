@@ -59,4 +59,3 @@ as $$
     limit 100
   ) page
 $$;
-

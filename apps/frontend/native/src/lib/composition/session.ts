@@ -26,7 +26,7 @@
 
 import { SessionState } from '@starter/features/auth';
 import { type Navigation, parseDto } from '@starter/platform';
-import { type SessionUser, SessionUserSchema } from '@starter/schemas/auth';
+import { type SessionUser, SupabaseSessionUserSchema } from '@starter/schemas/auth';
 import { createBearerTransport } from '#lib/platform/bearer_transport.ts';
 import { createExternalBrowser } from '#lib/platform/external_browser.ts';
 import { StrongholdVault } from '#lib/platform/stronghold_vault.ts';
@@ -105,7 +105,7 @@ const toSessionUser = (user: SupabaseUser): SessionUser => {
     throw new Error('Supabase did not return an email for this account.');
   }
   return parseDto(
-    SessionUserSchema,
+    SupabaseSessionUserSchema,
     {
       id: user.id,
       email: user.email,

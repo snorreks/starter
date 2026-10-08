@@ -49,6 +49,16 @@ export default defineConfig({
         // project deploys to Workers. Left unset rather than set to its default so
         // the distinction is visible.
         fallback: 'plaintext',
+        ...(process.env.STARTER_RUNTIME_ENV_FILE === undefined
+          ? {}
+          : {
+              platformProxy: {
+                envFiles: ['.env', '.env.local', process.env.STARTER_RUNTIME_ENV_FILE],
+                ...(process.env.STARTER_RUNTIME_STATE_DIR === undefined
+                  ? {}
+                  : { persist: { path: process.env.STARTER_RUNTIME_STATE_DIR } }),
+              },
+            }),
       }),
     }),
   ],

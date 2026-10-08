@@ -30,7 +30,7 @@ let { viewModel }: Props = $props();
     <div>
       <h1 class="notes__title">Your notes</h1>
       <p class="notes__subtitle">
-        Stored in Cloudflare Postgres and readable by this account only.
+        Saved to your account and readable only by you.
       </p>
     </div>
     <button

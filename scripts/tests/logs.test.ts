@@ -19,6 +19,9 @@
 // pins the wrong contract reads as evidence the code is correct.
 
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { LOG_SOURCES, type LogEvent, LogEventSchema } from '@starter/schemas';
 import { checkSchema } from '@starter/schemas/common';
 import { parseArgs, toQuery } from '../src/commands/logs.ts';
@@ -29,11 +32,14 @@ import {
 } from '../src/logs/cloudflare_adapter.ts';
 import { parseDuration } from '../src/logs/duration.ts';
 import { buildFilter } from '../src/logs/filter.ts';
-import { parseNdjson } from '../src/logs/local_file_adapter.ts';
+import { parseNdjson, readLocal } from '../src/logs/local_file_adapter.ts';
 import { capabilitiesFor, resolveLogAdapter } from '../src/logs/registry.ts';
 import type { LogQuery } from '../src/logs/types.ts';
 import { type AppId, DEPLOYMENT_CONFIG, targets } from '../src/registry/app_registry.ts';
 import { setDeploymentValues } from '../src/registry/deployment_values.ts';
+import { runScope } from '../src/shared/run_scope.ts';
+
+const temporaryDirectories: string[] = [];
 
 beforeEach(() =>
   setDeploymentValues({
@@ -60,7 +66,12 @@ beforeEach(() =>
     },
   }),
 );
-afterEach(() => setDeploymentValues(null));
+afterEach(() => {
+  setDeploymentValues(null);
+  for (const directory of temporaryDirectories.splice(0)) {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
 
 // ── Fixtures ─────────────────────────────────────────────────────────────────
 
@@ -398,10 +409,54 @@ describe('parseNdjson', () => {
     expect(parseNdjson(ndjson)).toHaveLength(FIXTURES.length);
   });
 
+  test('reads structured Worker records prefixed by wrangler stdout labels', () => {
+    const fixture = JSON.stringify(FIXTURES[0]);
+    expect(parseNdjson(`stdout: ${fixture}\n[wrangler:info] GET / 200 OK`)).toEqual([FIXTURES[0]]);
+  });
+
   test('every fixture validates against the canonical schema', () => {
     for (const fixture of FIXTURES) {
       expect(checkSchema(LogEventSchema, fixture)).toBe(true);
     }
+  });
+});
+
+describe('run-scoped local logs', () => {
+  test('selecting a run never reads another run or checkout log file', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'starter-log-runs-'));
+    temporaryDirectories.push(root);
+    const defaultLogDir = join(root, 'legacy-logs');
+    mkdirSync(defaultLogDir, { recursive: true });
+    writeFileSync(
+      join(defaultLogDir, 'app.ndjson'),
+      `${JSON.stringify(event({ event: 'stale.default', timestamp: Date.now() }))}\n`,
+    );
+    for (const [runId, eventName] of [
+      ['run_one', 'first.run'],
+      ['run_two', 'second.run'],
+    ] as const) {
+      const logDirectory = runScope(runId, root).logDir;
+      mkdirSync(logDirectory, { recursive: true });
+      writeFileSync(
+        join(logDirectory, 'app.ndjson'),
+        `${JSON.stringify(event({ event: eventName, timestamp: Date.now() }))}\n`,
+      );
+    }
+
+    const selected = await readLocal({ app: 'web', mode: 'local', runId: 'run_one' } as LogQuery, {
+      root,
+      defaultLogDir,
+    });
+
+    expect(selected.result.status).toBe('ok');
+    expect(selected.result.events.map((entry) => entry.event)).toEqual(['first.run']);
+
+    const missing = await readLocal(
+      { app: 'web', mode: 'local', runId: 'missing_run' } as LogQuery,
+      { root, defaultLogDir },
+    );
+    expect(missing.result.status).toBe('unavailable');
+    expect(missing.result.events).toEqual([]);
   });
 });
 
@@ -432,6 +487,16 @@ describe('parseArgs / toQuery', () => {
     }
     expect(query.query.since).toBe('30m');
     expect(query.query.limit).toBe(10);
+  });
+
+  test('selects one validated local run by id', () => {
+    const query = toQuery(parseArgs(['web', '--run', 'run_one']));
+    expect(query.ok).toBe(true);
+    if (query.ok) {
+      expect(query.query.runId).toBe('run_one');
+    }
+    expect(toQuery(parseArgs(['web', '--run', '../../other'])).ok).toBe(false);
+    expect(toQuery(parseArgs(['web', '--mode', 'production', '--run', 'run_one'])).ok).toBe(false);
   });
 
   test('caps --limit at the hard maximum', () => {

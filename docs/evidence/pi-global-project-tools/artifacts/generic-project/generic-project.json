@@ -1,0 +1,10 @@
+{
+  "result": "PASS",
+  "command": "bun test live/generic_project_browser.test.ts",
+  "journey": "trusted project fallback command; browser form save; reload persistence; screenshot",
+  "urlPath": "/",
+  "screenshotSha256": "927b072cd6a007c28f19223b783726de2248dd8347220be67e5c7b7c612ad86d",
+  "screenshotBytes": 9509,
+  "width": 1440,
+  "height": 900
+}
