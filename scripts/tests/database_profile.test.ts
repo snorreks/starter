@@ -34,9 +34,10 @@ describe('database commands share the deployment profile policy', () => {
     expect(result.stdout).toContain('would run: wrangler');
   });
 
-  test.each([['migrate', '--dry-run'], ['seed'], ['status']])(
+  test.each(['migrate', 'seed', 'status'] as const)(
     '%s refuses an invalid selector before reaching a provider',
-    (...args) => {
+    (command) => {
+      const args = command === 'migrate' ? [command, '--dry-run'] : [command];
       const result = invoke({ args, profile: 'misspelled' });
       expect(result.error).toBeUndefined();
       expect(result.status).toBe(2);
