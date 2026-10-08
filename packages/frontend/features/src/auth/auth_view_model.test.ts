@@ -50,14 +50,32 @@ describe('the session service canonical identity boundary', () => {
     return { service: new AuthSessionService({ transport, state }), state };
   };
 
-  test('refresh and both credential paths publish the canonical DTO unchanged', async () => {
+  test('credential paths return canonical DTOs but registration does not authenticate', async () => {
     const { service, state } = buildService(USER);
     expect(await service.refresh()).toEqual(USER);
     expect(await service.signIn(ADDRESS, 'password')).toEqual(USER);
+    expect(state.user).toEqual(USER);
     expect(await service.signUp({ email: ADDRESS, password: 'password', name: 'Someone' })).toEqual(
       USER,
     );
-    expect(state.user).toEqual(USER);
+    expect(state.user).toBeNull();
+    expect(state.isAuthenticated).toBe(false);
+  });
+
+  test('sign-in submits only application credentials, never provider transport options', async () => {
+    const bodies: unknown[] = [];
+    const transport: ApiTransport = {
+      request: async <T>(
+        _path: string,
+        options?: Parameters<ApiTransport['request']>[1],
+      ): Promise<T> => {
+        bodies.push(options?.body);
+        return { user: USER } as T;
+      },
+    };
+    const service = new AuthSessionService({ transport, state: new SessionState() });
+    await service.signIn(ADDRESS, 'password');
+    expect(bodies).toEqual([{ email: ADDRESS, password: 'password' }]);
   });
 
   const invalidUsers = [

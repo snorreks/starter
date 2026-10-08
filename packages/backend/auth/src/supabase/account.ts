@@ -33,9 +33,9 @@ const requireResult = <T>(
     // Provider failures become application outcomes without publishing provider
     // messages or distinguishing an unknown address from a wrong password.
     const unverified = error.code === 'email_not_confirmed';
-    const invalidCredentials = error.code === 'invalid_credentials';
+    const credentialStatus = error.code === 'invalid_credentials' ? 401 : (error.status ?? 400);
     throw Object.assign(new Error('Supabase Auth request failed.'), {
-      status: unverified ? 403 : invalidCredentials ? 401 : (error.status ?? 400),
+      status: unverified ? 403 : credentialStatus,
       ...(unverified ? { error: AccountErrorCode.emailNotVerified } : {}),
     });
   }

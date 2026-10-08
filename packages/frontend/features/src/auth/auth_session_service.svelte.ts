@@ -136,7 +136,8 @@ export class AuthSessionService implements AuthSession {
       password: input.password,
       name: input.name,
     });
-    this.#state.set(user);
+    // Registration returns an account DTO, not an authenticated session.
+    this.#state.set(null);
     return user;
   }
 
