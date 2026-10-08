@@ -23,7 +23,7 @@ passes on files Pi cannot load.
 | `lib/` | Helpers. No Pi imports, testable without a runtime |
 | `tests/` | Tests, including the loader smoke test |
 | `skills/` | The conventions, as skills |
-| `prompts/` | `/prompt:review`, `/prompt:check` |
+| `prompts/` | `/prompt:review`, `/prompt:check`, `/prompt:verify-ui`, `/prompt:debug-ui`, `/prompt:delegate`, `/prompt:resume` |
 | `background-tasks/`, `handoffs/` | Their own READMEs; not hand-written run state |
 
 ## Setup and configuration

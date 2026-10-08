@@ -51,7 +51,7 @@ let { data }: { data: PageData } = $props();
   }
 
   .landing__title {
-    font-size: var(--font-size-xl);
+    font-size: var(--font-size-2xl);
     margin: 0;
   }
 

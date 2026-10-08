@@ -27,13 +27,13 @@
 // exit code, so a caller can distinguish "refused" from "the check could not run".
 
 import { captureWrangler } from '../cloudflare/wrangler.ts';
+import { describeCredential } from './credentials.ts';
 import { googleResourcePlan, inspectGoogleResources } from './providers/google.ts';
 import {
   inspectSupabaseAuthConfig,
   runSupabaseMigration,
   supabaseMigrationArgs,
 } from './providers/supabase.ts';
-import { describeCredential } from './credentials.ts';
 import { bucketExists } from './provision.ts';
 import type { ResolvedTarget } from './target.ts';
 
@@ -602,7 +602,7 @@ export const preflightSupabaseProviders = async (
   const env = options.env ?? process.env;
   const commands = [
     supabaseMigrationArgs(target, 'list'),
-    ['GET', 'Google Cloud Run Job and IAM inventory'],
+    ...(target.compute.enabled ? [['GET', 'Google Cloud Run Job and IAM inventory']] : []),
   ];
   const findings: PreflightFinding[] = [];
   if (!env.SUPABASE_ACCESS_TOKEN) {
@@ -660,7 +660,14 @@ export const preflightSupabaseProviders = async (
       });
     }
   }
-  if (!env.GOOGLE_ACCESS_TOKEN) {
+  if (!target.compute.enabled) {
+    findings.push({
+      check: 'google',
+      ok: true,
+      warn: true,
+      detail: 'Compute is disabled: Google Cloud Run and IAM discovery was NOT RUN.',
+    });
+  } else if (!env.GOOGLE_ACCESS_TOKEN) {
     findings.push({
       check: 'google',
       ok: false,

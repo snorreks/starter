@@ -1,0 +1,106 @@
+PR #52 local validation transcript (summary extracted from owned process output)
+Source revision: 3b9a338391afb83faedc47e23dca992850ae9932
+Platform: linux-x64 (Bun 1.4.2; Node v22.23.3)
+All listed processes exited 0; Moon targets explicitly used --cache off.
+Hosted deployments, mail delivery and physical-device validation were NOT RUN.
+Database teardown note: Supabase CLI emitted StopVolumePruneError. The repository's exact-project container/volume cleanup completed, and the owned run directory was removed.
+
+=== :test 2026-10-08T03:08:24Z ===
+     logger:test |  71 pass
+     logger:test |  0 fail
+     logger:test | Ran 71 tests across 3 files. [12.00ms]
+   fixtures:test |  3 pass
+   fixtures:test |  0 fail
+   fixtures:test | Ran 3 tests across 1 file. [3.00ms]
+    schemas:test |  113 pass
+    schemas:test |  0 fail
+    schemas:test | Ran 113 tests across 8 files. [17.00ms]
+   database:test |  20 pass
+   database:test |  0 fail
+   database:test | Ran 20 tests across 2 files. [35.00ms]
+       auth:test |  11 pass
+       auth:test |  0 fail
+       auth:test | Ran 11 tests across 2 files. [22.00ms]
+   platform:test |  38 pass
+   platform:test |  0 fail
+   platform:test | Ran 38 tests across 3 files. [14.00ms]
+   features:test |  163 pass
+   features:test |  0 fail
+   features:test | Ran 163 tests across 11 files. [45.00ms]
+     native:test |  158 pass
+     native:test |  0 fail
+     native:test | Ran 158 tests across 13 files. [46.00ms]
+       jobs:test |  98 pass
+       jobs:test |  0 fail
+       jobs:test | Ran 98 tests across 6 files. [200.00ms]
+jobs-worker:test |  60 pass
+jobs-worker:test |  0 fail
+jobs-worker:test | Ran 60 tests across 11 files. [325.00ms]
+      utils:test |  76 pass
+      utils:test |  0 fail
+      utils:test | Ran 76 tests across 6 files. [449.00ms]
+     client:test |  240 pass
+     client:test |  0 fail
+     client:test | Ran 240 tests across 20 files. [2.21s]
+    scripts:test |  999 pass
+    scripts:test |  0 fail
+    scripts:test | Ran 999 tests across 74 files. [28.29s]
+         pi:test |  242 pass
+         pi:test |  0 fail
+         pi:test | Ran 242 tests across 20 files. [30.80s]
+Tasks: 15 completed
+=== EXIT :test 0 ===
+=== client:test-browser 2026-10-08T03:08:55Z ===
+ Test Files  3 passed (3)
+      Tests  30 passed (30)
+Tasks: 1 completed
+=== EXIT client:test-browser 0 ===
+=== client:test-worker 2026-10-08T03:08:57Z ===
+client:test-worker |  88 pass
+client:test-worker |  0 fail
+client:test-worker | Ran 88 tests across 1 file. [50.78s]
+Tasks: 2 completed
+=== EXIT client:test-worker 0 ===
+=== e2e:e2e 2026-10-08T03:09:58Z ===
+  34 passed (24.1s)
+Tasks: 1 completed
+=== EXIT e2e:e2e 0 ===
+=== :typecheck 2026-10-08T03:10:23Z ===
+Tasks: 16 completed
+=== EXIT :typecheck 0 ===
+=== :lint 2026-10-08T03:10:30Z ===
+Tasks: 16 completed
+=== EXIT :lint 0 ===
+=== :format 2026-10-08T03:10:31Z ===
+Tasks: 16 completed
+=== EXIT :format 0 ===
+=== guard:whole-repo 2026-10-08T03:10:31Z ===
+8 guard(s) passed.
+=== EXIT guard:whole-repo 0 ===
+=== workflows 2026-10-08T03:10:33Z ===
+ok across 5 workflow(s).
+=== EXIT workflows 0 ===
+=== test:database 2026-10-08T03:10:33Z ===
+ 6 pass
+ 0 fail
+Ran 6 tests across 1 file. [432.00ms]
+{"_tag":"Error","error":{"code":"StopVolumePruneError","message":"failed to prune volumes"}}
+=== EXIT test:database 0 ===
+=== test:compute 2026-10-08T03:11:07Z ===
+jobs-worker:test-compute |  17 pass
+jobs-worker:test-compute |  0 fail
+jobs-worker:test-compute | Ran 17 tests across 1 file. [13.88s]
+Tasks: 2 completed
+=== EXIT test:compute 0 ===
+=== frozen-install 2026-10-08T03:13:59Z ===
+bun install v1.4.2 (744846f84)
+Checked 469 installs across 651 packages (no changes) [1014.00ms]
+=== EXIT frozen-install 0 ===
+=== build-bundle 2026-10-08T03:14:00Z ===
+client:check-bundle | bundle ok: 67 file(s) in /home/sonny/.herdr/worktrees/starter/captain-pr-52-review/apps/frontend/client/.svelte-kit/cloudflare
+Tasks: 2 completed
+=== EXIT build-bundle 0 ===
+
+Derived counts: {"unit":2292,"browser":30,"worker":88,"e2e":34,"database":6,"compute":17,"typecheck":16,"lint":16,"format":16,"guards":8,"workflows":5}
+Negative controls: unset backend selection failed before correction and again when the shared default was temporarily mutated back to legacy; restoring Supabase made it pass. Optional-compute fixture tests had three baseline failures before the downstream gates were corrected.
+Independent Luna review found the original three findings addressed. No hosted-provider correctness is claimed by fixture tests.

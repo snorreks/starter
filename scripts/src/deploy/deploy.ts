@@ -498,11 +498,18 @@ export const planDeploy = (
     notices.push(
       `Supabase project ${target.supabase.projectRef} at ${target.supabase.url}; native API ${target.nativeApiOrigin}; callbacks ${target.supabase.nativeRedirectAllowlist.join(', ')}.`,
     );
+    if (target.compute.enabled) {
+      notices.push(
+        `Google Cloud ${target.supabase.googleProjectId}/${target.supabase.googleRegion}, Cloud Run Job ${target.supabase.jobName}, image ${target.supabase.image}, protocol ${target.supabase.protocol}; runner and dispatcher identities are separate.`,
+      );
+      notices.push('Google API discovery and Cloud Run configuration are authenticated phases.');
+    } else {
+      notices.push(
+        'Compute is disabled: no Google discovery, credentials or resource mutations are required.',
+      );
+    }
     notices.push(
-      `Google Cloud ${target.supabase.googleProjectId}/${target.supabase.googleRegion}, Cloud Run Job ${target.supabase.jobName}, image ${target.supabase.image}, protocol ${target.supabase.protocol}; runner and dispatcher identities are separate.`,
-    );
-    notices.push(
-      'Google API discovery and Cloud Run configuration are authenticated phases. The offline plan reads no credentials and performs no provider requests. Supabase project creation is a separate, potentially billable operator action.',
+      'The offline plan reads no credentials and performs no provider requests. Supabase project creation is a separate, potentially billable operator action.',
     );
   }
 
@@ -821,7 +828,7 @@ export const main = async (argv: readonly string[]): Promise<number> => {
       }
     }
     let runnerSubject: string | undefined;
-    if (resolved.target.deploymentProfile === 'supabase') {
+    if (resolved.target.deploymentProfile === 'supabase' && resolved.target.compute.enabled) {
       const token = process.env.GOOGLE_ACCESS_TOKEN;
       if (!token) {
         return fail(

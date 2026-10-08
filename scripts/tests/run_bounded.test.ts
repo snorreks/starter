@@ -36,6 +36,28 @@ const cleanup = (): void => {
 };
 
 describe('a multibyte character split across two reads survives the boundary', () => {
+  test('streams progress chunks while retaining bounded stdout and stderr', async () => {
+    const chunks: Array<{ stream: string; text: string }> = [];
+    const result = await runBounded({
+      command: 'sh',
+      args: ['-c', 'printf out; printf err >&2'],
+      cwd: tmpdir(),
+      timeoutMs: 10_000,
+      maxBytes: 1024,
+      onOutput: (stream, chunk) => chunks.push({ stream, text: chunk.toString() }),
+    });
+
+    expect(result.code).toBe(0);
+    expect(result.stdout).toBe('out');
+    expect(result.stderr).toBe('err');
+    expect(chunks.every(({ stream }) => stream === 'stdout' || stream === 'stderr')).toBe(true);
+    const collected = { stdout: '', stderr: '' };
+    for (const { stream, text } of chunks) {
+      collected[stream as keyof typeof collected] += text;
+    }
+    expect(collected).toEqual({ stdout: result.stdout, stderr: result.stderr });
+  });
+
   test('the assembled stream decodes to the character the child wrote', async () => {
     // `é` then a newline: two bytes, written 200 ms apart. The reader is blocked
     // on an empty pipe when the first write happens, so these are two `data`

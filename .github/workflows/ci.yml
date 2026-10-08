@@ -452,7 +452,10 @@ jobs:
 
       - name: Apply migrations to local D1
         # Without this every route fails on a missing table, and the failure reads
-        # as a product bug rather than as a missing step.
+        # as a product bug rather than as a missing step. This lane exercises D1,
+        # so it must select that backend explicitly, not inherit deployment defaults.
+        env:
+          STARTER_BACKEND_PROFILE: legacy
         run: bun run db:migrate
 
       - name: Restore Playwright's browser cache

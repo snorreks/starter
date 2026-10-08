@@ -19,6 +19,14 @@ That prompt is not ceremony. A project extension is arbitrary code executing wit
 your permissions, and a template that trains you to accept it teaches the wrong
 habit. `defaultProjectTrust` is `ask`, not `always`, for that reason.
 
+The portable workflow package provides one deferred Playwright browser namespace.
+Use it for exploratory browsing, or supply a Starter runtime's run ID to its
+`browser.open` action to require the same local `/api/health` identity before
+Chromium launches. Captures retain that run ID for correlation, but remain
+exploratory and do not count as declared visual scenario coverage. Keep it as the
+single default local browser driver; enable Bladebro only as an explicit alternative,
+not alongside it.
+
 ## What is here
 
 | | |
@@ -46,6 +54,53 @@ habit. `defaultProjectTrust` is `ask`, not `always`, for that reason.
 | `.pi/skills/handoff/` | Writing and resuming a handoff note |
 | `.pi/prompts/review.md` | `/prompt:review` |
 | `.pi/prompts/check.md` | `/prompt:check` |
+| `.pi/prompts/verify-ui.md` | `/prompt:verify-ui` |
+| `.pi/prompts/debug-ui.md` | `/prompt:debug-ui` |
+| `.pi/prompts/delegate.md` | `/prompt:delegate` |
+| `.pi/prompts/resume.md` | `/prompt:resume` |
+
+The trusted project profile `.pi/workflow.json` declares only commands that are
+implemented by this checkout. Run `bun run agent -- describe --json` to see actual
+capability owners and unavailable operations with their dependencies.
+`bun run agent -- doctor --profile built --json` checks whether the locked Chromium
+browser is available. It does not build or start a Worker. The `dev_process`
+namespace owns persistent runtime jobs and their stop handles:
+
+```ts
+dev_process { action: "start_profile", params: { profile: "dev" | "built" } }
+dev_process { action: "runtime_status", params: { runId: "agent_runtime_…" } }
+dev_process { action: "stop_profile", params: { runId: "agent_runtime_…" } }
+```
+
+`dev` runs the Node development server with emulated bindings; `built` builds and
+runs the compiled Worker in workerd with run-scoped local D1. Both profiles require
+a matching `/api/health` run identity before writing `.wrangler/runs/<id>/runtime.json`.
+The descriptor records the resolved Chromium binary, origin, artifact/log roots,
+and (for `built`) the Worker SHA-256. A descriptor is evidence of runtime identity,
+not a process stop token: stop only by the run ID returned from `start_profile`,
+which resolves to the existing token-verified job supervisor. The persistent full
+compute journey remains the explicit Docker-backed `agent compute full` operation.
+`bun run agent -- visual capture --json` runs the declared visual matrix and returns
+the verified run ID, manifest and screenshot hashes. Review remains a separate,
+explicit call: `bun run agent -- visual review --run <id> --json`. It uses the same
+manifest reviewer as `bun run e2e:visual:review -- --run <id>` and never runs
+automatically after capture. The `agent visual import --input-json --json` boundary
+also imports a current browser screenshot after checking its original SHA-256,
+URL, viewport/theme and optional normalized crop. It labels the record `interactive`,
+keeps it outside declared scenario coverage and baselines, and still requires an
+explicit review call. The Pi `repo_task` namespace exposes these as
+`visual_capture`, `visual_import` and `visual_review` actions. Review output
+preserves the grade, provider/model, cache provenance, capture kind/crop metadata,
+report hashes and exact rerun command.
+
+The visual review config takes `E2E_VISION_API_KEY` as an optional per-project
+override, then reads `OPENROUTER_API_KEY` from the process environment. Keep that
+shared credential in your global environment rather than a project mode file.
+The runtime job environment keeps host paths and browser locations while removing
+provider/deploy credentials. The dev profile writes a private run-scoped env file
+containing only its test identity because Vite's Cloudflare platform proxy reads
+Wrangler env files rather than inheriting the launcher process environment.
+Task, development runtime, and log operations continue through their local tools.
 
 ## `.pi/extensions` is executable input, not a source folder
 
@@ -90,8 +145,9 @@ actually emits. It is local, read-only, and needs no credentials.
 ## The log tool
 
 ```ts
-read_logs({ app: "api", mode: "local", level: "ERROR" })
-read_logs({ app: "api", mode: "local", traceId: "trace_abc" })
+read_logs({ app: "web", mode: "local", source: "worker", level: "ERROR" })
+read_logs({ app: "web", mode: "local", source: "browser", since: "15m" })
+read_logs({ app: "web", mode: "local", runId: "e2e_run_42" })
 ```
 
 It shells out to `bun run logs`, so an agent debugs against the same adapters,
@@ -136,6 +192,10 @@ matters more than it sounds.
 ```ts
 repo_task { action: "list", params: { query: "test" } }
 repo_task { action: "run",  params: { task: "pi:test" } }
+repo_task { action: "visual_capture", params: {} }
+repo_task { action: "visual_import", params: { runId: "interactive_…", file: "/private/path/capture.png", sha256: "<sha256>", url: "http://127.0.0.1:4173/notes", heading: "Notes", requirements: ["The saved note is visible."], viewport: "desktop", theme: "light" } }
+repo_task { action: "visual_review", params: { runId: "agent_visual_…" } }
+repo_task { action: "compute_full", params: {} }
 ```
 
 It reads the real task graph through `moon query tasks` rather than guessing a
@@ -149,10 +209,24 @@ not say what you probably meant.
 Merging the two streams, which is the obvious thing to do, makes `JSON.parse`
 throw on a valid response.
 
+Visual capture runs the existing Playwright matrix through `agent visual capture`
+and verifies every referenced image against its manifest hash. It does not review
+screenshots. `visual_review` is a separate operation that may contact the
+configured provider; a failed grade remains failed and a review requiring human
+attention remains `needs-human-review`. `visual_import` copies the browser's PNG
+only after verifying the supplied original hash. It strips query and fragment data
+from the recorded URL, preserves optional crop coordinates as metadata without
+changing the screenshot bytes, and marks the capture exploratory. It does not prove
+runtime identity, interaction behavior, scenario coverage, or baseline approval.
+The `compute_full` action runs the real Docker-backed browser-to-FFmpeg scenario,
+stores the encoded output and probe report under its owned run, and verifies the
+output bytes against the recorded SHA-256 before it reports success. It requires a
+working Docker-compatible engine; it never substitutes the disabled jobs profile.
+
 ### `dev_process` — owned long-running processes
 
 ```ts
-dev_process { action: "start", params: { args: ["bun", "run", "dev:api"] } }
+dev_process { action: "start", params: { args: ["bun", "run", "dev"] } }
 dev_process { action: "status", params: { job: "job-…" } }
 dev_process { action: "logs",   params: { job: "job-…" } }
 dev_process { action: "stop",   params: { job: "job-…" } }
@@ -348,6 +422,10 @@ needs a schema, a route, a ViewModel, a service and tests" gives it a boundary.
 ```
 /prompt:review [focus]   # review the diff, prioritised by what breaks
 /prompt:check            # run every check and report the first real failure
+/prompt:verify-ui        # exercise a UI through its owned browser/runtime
+/prompt:debug-ui         # correlate a UI failure with bounded logs
+/prompt:delegate         # run a capability-limited QA investigation
+/prompt:resume           # revalidate an owned job or run before resuming
 ```
 
 `review` is ordered by consequence: authorization first, then input refusal, then

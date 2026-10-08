@@ -30,7 +30,7 @@ test('visual review requires an explicitly configured model and accepts the Open
   expect(config.apiKey).toBe('file-dedicated');
 });
 
-test('dedicated inherited key wins, then dedicated file key, then OpenRouter fallback', () => {
+test('dedicated keys override the global OpenRouter key; file fallback is not accepted', () => {
   const path = file(
     'E2E_VISION_MODEL=file/model\nE2E_VISION_API_KEY=file-dedicated\nOPENROUTER_API_KEY=file-fallback',
   );
@@ -46,12 +46,12 @@ test('dedicated inherited key wins, then dedicated file key, then OpenRouter fal
       { filePath: path },
     ).apiKey,
   ).toBe('file-dedicated');
-  expect(
+  expect(() =>
     loadVisionConfig(
       { E2E_VISION_MODEL: 'env/model' },
       { filePath: file('OPENROUTER_API_KEY=file-fallback') },
-    ).apiKey,
-  ).toBe('file-fallback');
+    ),
+  ).toThrow('global environment');
 });
 
 test('direct CLI and project agent callers share one environment resolver', () => {
