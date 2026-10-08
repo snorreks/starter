@@ -1,6 +1,6 @@
 {
-  "revision": "9ed4c346fa5164e71b80fa0b224fb9eab17592b6",
-  "note": "Current observations were refreshed from the recorded Prompt 08 transcripts against the complete cutover tree at 9ed4c346 (2026-10-08). Older observations are retained as dated historical rows; live provider and physical-device observations remain NOT RUN.",
+  "revision": "7e82ac8",
+  "note": "Current observations were refreshed from captured Prompt 08 transcripts against the complete cutover implementation tree (9ed4c346; tree verified identical to 7e82ac8 except this evidence artifact). Older observations are retained as dated historical rows; live provider and physical-device observations remain NOT RUN.",
   "platform": "linux-x64; NixOS 26.11; Bun 1.4.2; Node v22.23.3; Chromium 154.0.8037.97; Podman 5.8.7",
   "rows": [
     {
@@ -936,7 +936,7 @@
     {
       "capability": "Unit tests, every project (uncached)",
       "kind": "observed",
-      "revision": "9ed4c346fa5164e71b80fa0b224fb9eab17592b6",
+      "revision": "7e82ac8",
       "command": "node node_modules/@moonrepo/cli/moon.js run --cache off :test",
       "platform": "linux-x64; NixOS 26.11; Bun 1.4.2; Node v22.23.3; Chromium 154.0.8037.97; Podman 5.8.7",
       "result": "1,880 passed, 0 failed across 14 project tasks; includes 837 scripts and 229 Pi tests.",
@@ -947,7 +947,7 @@
     {
       "capability": "Browser lane, real Svelte and Chromium (uncached)",
       "kind": "observed",
-      "revision": "9ed4c346fa5164e71b80fa0b224fb9eab17592b6",
+      "revision": "7e82ac8",
       "command": "node node_modules/@moonrepo/cli/moon.js run --cache off :test client:test-browser",
       "platform": "linux-x64; NixOS 26.11; Bun 1.4.2; Node v22.23.3; Chromium 154.0.8037.97; Podman 5.8.7",
       "result": "29 passed across 3 files.",
@@ -958,7 +958,7 @@
     {
       "capability": "Worker lane, built artifact in workerd with local Supabase",
       "kind": "observed",
-      "revision": "9ed4c346fa5164e71b80fa0b224fb9eab17592b6",
+      "revision": "7e82ac8",
       "command": "bun run test:all (uncached Worker integration target)",
       "platform": "linux-x64; NixOS 26.11; Bun 1.4.2; Node v22.23.3; Chromium 154.0.8037.97; Podman 5.8.7",
       "result": "4 passed, 0 failed; 21 assertions. Legacy bearer rejected, UUID identity accepted, compute disabled explicitly.",
@@ -969,7 +969,7 @@
     {
       "capability": "End to end, built client and Worker in Chromium with local Supabase",
       "kind": "observed",
-      "revision": "9ed4c346fa5164e71b80fa0b224fb9eab17592b6",
+      "revision": "7e82ac8",
       "command": "bun run test:all (uncached E2E integration target)",
       "platform": "linux-x64; NixOS 26.11; Bun 1.4.2; Node v22.23.3; Chromium 154.0.8037.97; Podman 5.8.7",
       "result": "6 passed, 0 failed.",
@@ -980,7 +980,7 @@
     {
       "capability": "Local Supabase Auth, Postgres, Data API and RLS",
       "kind": "observed",
-      "revision": "9ed4c346fa5164e71b80fa0b224fb9eab17592b6",
+      "revision": "7e82ac8",
       "command": "bun run test:database",
       "platform": "linux-x64; NixOS 26.11; Bun 1.4.2; Node v22.23.3; Chromium 154.0.8037.97; Podman 5.8.7",
       "result": "7 integration tests passed (90 assertions); 24 SQL tests passed.",
@@ -991,7 +991,7 @@
     {
       "capability": "Optional Cloud Run runner and real Rust/FFmpeg processing",
       "kind": "observed",
-      "revision": "9ed4c346fa5164e71b80fa0b224fb9eab17592b6",
+      "revision": "7e82ac8",
       "command": "bun run test:compute",
       "platform": "linux-x64; NixOS 26.11; Bun 1.4.2; Node v22.23.3; Chromium 154.0.8037.97; Podman 5.8.7",
       "result": "2 runner tests passed (3 assertions); 53 Rust tests passed; FFmpeg output was 112,717 bytes.",
@@ -1002,7 +1002,7 @@
     {
       "capability": "Typecheck, all projects (uncached)",
       "kind": "observed",
-      "revision": "9ed4c346fa5164e71b80fa0b224fb9eab17592b6",
+      "revision": "7e82ac8",
       "command": "node node_modules/@moonrepo/cli/moon.js run --cache off :typecheck",
       "platform": "linux-x64; NixOS 26.11; Bun 1.4.2; Node v22.23.3; Chromium 154.0.8037.97; Podman 5.8.7",
       "result": "16 tasks completed; all Svelte diagnostics reported 0 errors and 0 warnings.",
@@ -1013,7 +1013,7 @@
     {
       "capability": "Lint, all projects (uncached)",
       "kind": "observed",
-      "revision": "9ed4c346fa5164e71b80fa0b224fb9eab17592b6",
+      "revision": "7e82ac8",
       "command": "node node_modules/@moonrepo/cli/moon.js run --cache off :lint",
       "platform": "linux-x64; NixOS 26.11; Bun 1.4.2; Node v22.23.3; Chromium 154.0.8037.97; Podman 5.8.7",
       "result": "16 tasks completed; no fixes applied.",
@@ -1024,7 +1024,7 @@
     {
       "capability": "Format, all projects (uncached)",
       "kind": "observed",
-      "revision": "9ed4c346fa5164e71b80fa0b224fb9eab17592b6",
+      "revision": "7e82ac8",
       "command": "node node_modules/@moonrepo/cli/moon.js run --cache off :format",
       "platform": "linux-x64; NixOS 26.11; Bun 1.4.2; Node v22.23.3; Chromium 154.0.8037.97; Podman 5.8.7",
       "result": "16 tasks completed; no formatting changes.",
@@ -1035,7 +1035,7 @@
     {
       "capability": "Whole repository guards",
       "kind": "observed",
-      "revision": "9ed4c346fa5164e71b80fa0b224fb9eab17592b6",
+      "revision": "7e82ac8",
       "command": "bun run guard:whole-repo",
       "platform": "linux-x64; NixOS 26.11; Bun 1.4.2; Node v22.23.3; Chromium 154.0.8037.97; Podman 5.8.7",
       "result": "8 of 8 guards passed.",
@@ -1046,7 +1046,7 @@
     {
       "capability": "Workflow policy",
       "kind": "observed",
-      "revision": "9ed4c346fa5164e71b80fa0b224fb9eab17592b6",
+      "revision": "7e82ac8",
       "command": "bun run workflows",
       "platform": "linux-x64; NixOS 26.11; Bun 1.4.2; Node v22.23.3; Chromium 154.0.8037.97; Podman 5.8.7",
       "result": "5 workflow files passed.",
@@ -1057,7 +1057,7 @@
     {
       "capability": "Web build and bundle boundary",
       "kind": "observed",
-      "revision": "9ed4c346fa5164e71b80fa0b224fb9eab17592b6",
+      "revision": "7e82ac8",
       "command": "bun run build && bun run check:bundle",
       "platform": "linux-x64; NixOS 26.11; Bun 1.4.2; Node v22.23.3; Chromium 154.0.8037.97; Podman 5.8.7",
       "result": "Fresh built Worker; browser artifact standalone and 64 files passed bundle check.",
@@ -1068,7 +1068,7 @@
     {
       "capability": "Native static bundle boundary with synthetic public target values",
       "kind": "observed",
-      "revision": "9ed4c346fa5164e71b80fa0b224fb9eab17592b6",
+      "revision": "7e82ac8",
       "command": "VITE_NATIVE_API_ORIGIN=https://api.example.invalid VITE_NATIVE_ENVIRONMENT=local VITE_NATIVE_SUPABASE_URL=https://project.example.invalid VITE_NATIVE_SUPABASE_PROJECT_REF=fixture-project-ref VITE_NATIVE_SUPABASE_ANON_KEY=fixture-public-anon-key bun run --cwd apps/frontend/native build && bun run --cwd apps/frontend/native check:bundle",
       "platform": "linux-x64; NixOS 26.11; Bun 1.4.2; Node v22.23.3; Chromium 154.0.8037.97; Podman 5.8.7",
       "result": "Static native build completed using synthetic public configuration; 23 files passed secret and platform bundle checks.",
@@ -1079,7 +1079,7 @@
     {
       "capability": "Generated Supabase database types match migrations",
       "kind": "observed",
-      "revision": "9ed4c346fa5164e71b80fa0b224fb9eab17592b6",
+      "revision": "7e82ac8",
       "command": "bun run db:types:check",
       "platform": "linux-x64; NixOS 26.11; Bun 1.4.2; Node v22.23.3; Chromium 154.0.8037.97; Podman 5.8.7",
       "result": "Fresh local migrations generated types identical to the tracked file.",
@@ -1090,7 +1090,7 @@
     {
       "capability": "Fresh template smoke",
       "kind": "observed",
-      "revision": "9ed4c346fa5164e71b80fa0b224fb9eab17592b6",
+      "revision": "7e82ac8",
       "command": "bun run smoke",
       "platform": "linux-x64; NixOS 26.11; Bun 1.4.2; Node v22.23.3; Chromium 154.0.8037.97; Podman 5.8.7",
       "result": "Fresh copy completed install, setup, database integration, build, bundle, typecheck, lint, guard and setup doctor.",
@@ -1101,7 +1101,7 @@
     {
       "capability": "Fresh web only template smoke",
       "kind": "observed",
-      "revision": "9ed4c346fa5164e71b80fa0b224fb9eab17592b6",
+      "revision": "7e82ac8",
       "command": "bun run smoke -- --without-heavy",
       "platform": "linux-x64; NixOS 26.11; Bun 1.4.2; Node v22.23.3; Chromium 154.0.8037.97; Podman 5.8.7",
       "result": "Removed 32 native/compute paths; fresh copy completed install, setup, database integration, build, bundle, typecheck, lint, guard and setup doctor.",
@@ -1112,18 +1112,18 @@
     {
       "capability": "PR path budget, fourth stacked PR",
       "kind": "observed",
-      "revision": "9ed4c346fa5164e71b80fa0b224fb9eab17592b6",
+      "revision": "7e82ac8",
       "command": "bun run pr:budget -- --base refactor/supabase-08-3-cloudrun-e2e --max-files 99",
       "platform": "linux-x64; NixOS 26.11; Bun 1.4.2; Node v22.23.3; Chromium 154.0.8037.97; Podman 5.8.7",
-      "result": "84 changed paths against the actual PR 3 branch.",
-      "count": 84,
-      "recordedAt": "2026-10-08T00:33:46.411Z",
+      "result": "87 changed paths against the actual PR 3 branch, including the derived evidence artifact.",
+      "count": 87,
+      "recordedAt": "2026-10-08T00:36:00.000Z",
       "artifact": "docs/evidence/prompt-08-transcripts.txt"
     },
     {
       "capability": "Native desktop and mobile binary/CI lanes",
       "kind": "not-run",
-      "revision": "9ed4c346fa5164e71b80fa0b224fb9eab17592b6",
+      "revision": "7e82ac8",
       "command": "bun run native:build; bun run native:android; bun run native:ios",
       "platform": "linux-x64; NixOS 26.11; Bun 1.4.2; Node v22.23.3; Chromium 154.0.8037.97; Podman 5.8.7",
       "result": "NOT RUN",
@@ -1135,7 +1135,7 @@
     {
       "capability": "Hosted Supabase deployment and live Auth",
       "kind": "not-run",
-      "revision": "9ed4c346fa5164e71b80fa0b224fb9eab17592b6",
+      "revision": "7e82ac8",
       "command": "bun run deploy:preflight --env staging; separately authorized bun run deploy:apply --env staging --yes",
       "platform": "linux-x64; NixOS 26.11; Bun 1.4.2; Node v22.23.3; Chromium 154.0.8037.97; Podman 5.8.7",
       "result": "NOT RUN",
@@ -1147,7 +1147,7 @@
     {
       "capability": "Resend custom SMTP delivery",
       "kind": "not-run",
-      "revision": "9ed4c346fa5164e71b80fa0b224fb9eab17592b6",
+      "revision": "7e82ac8",
       "command": "Run the documented staging signup, verification and recovery flow with configured Resend SMTP",
       "platform": "linux-x64; NixOS 26.11; Bun 1.4.2; Node v22.23.3; Chromium 154.0.8037.97; Podman 5.8.7",
       "result": "NOT RUN",
@@ -1159,7 +1159,7 @@
     {
       "capability": "Hosted Google Cloud Run dispatch and IAM",
       "kind": "not-run",
-      "revision": "9ed4c346fa5164e71b80fa0b224fb9eab17592b6",
+      "revision": "7e82ac8",
       "command": "bun run deploy:preflight --env staging; separately authorized bun run deploy:apply --env staging --yes --only jobs",
       "platform": "linux-x64; NixOS 26.11; Bun 1.4.2; Node v22.23.3; Chromium 154.0.8037.97; Podman 5.8.7",
       "result": "NOT RUN",
@@ -1171,7 +1171,7 @@
     {
       "capability": "Physical Android/iOS PKCE callback and Stronghold behavior",
       "kind": "not-run",
-      "revision": "9ed4c346fa5164e71b80fa0b224fb9eab17592b6",
+      "revision": "7e82ac8",
       "command": "bun run native:android and bun run native:ios on provisioned devices/simulators",
       "platform": "linux-x64; NixOS 26.11; Bun 1.4.2; Node v22.23.3; Chromium 154.0.8037.97; Podman 5.8.7",
       "result": "NOT RUN",

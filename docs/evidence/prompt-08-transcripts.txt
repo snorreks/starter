@@ -6874,3 +6874,10 @@ Source transcript: /tmp/p08-evidence-final.log
 $ bun run scripts/src/cli.ts evidence --check
 ok  103 evidence row(s) at 9ed4c346fa5164e71b80fa0b224fb9eab17592b6; the capability matrix matches.
 ```
+
+## Final PR budget, including generated evidence artifacts (exit 0)
+Source transcript: /tmp/p08-budget-pr4-final2.log
+```text
+$ bun run scripts/src/cli.ts pr-budget --base "refactor/supabase-08-3-cloudrun-e2e" --max-files "99"
+PR path budget: 87/99 paths (base 26e3cff6ede23200a2c213e739dfabe1d9be4886)
+```
