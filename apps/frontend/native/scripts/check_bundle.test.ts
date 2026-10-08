@@ -79,7 +79,7 @@ describe('what the shipped bundle must not contain', () => {
   // one file cannot tell you whether any single one still works.
   for (const marker of [
     'cloudflare:workers',
-    'BETTER_AUTH_SECRET',
+    'SUPABASE_SERVICE_ROLE_KEY',
     'notes_owner_id_idx',
     'device_codes',
     'email_verified',

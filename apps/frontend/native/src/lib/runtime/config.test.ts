@@ -3,13 +3,7 @@
 // The configuration refuses, and each refusal is a failure someone actually made.
 
 import { describe, expect, test } from 'bun:test';
-import {
-  DEFAULT_CLIENT_ID,
-  DEFAULT_DEV_API_ORIGIN,
-  NativeConfigError,
-  resolveApiOrigin,
-  resolveClientId,
-} from './config.ts';
+import { DEFAULT_DEV_API_ORIGIN, NativeConfigError, resolveApiOrigin } from './config.ts';
 
 describe('the API origin a packaged build talks to', () => {
   test('a development build with nothing configured talks to the local Worker', () => {
@@ -141,18 +135,5 @@ describe('the API origin a packaged build talks to', () => {
     expect(resolveApiOrigin({ raw: 'https://API.Example.test:443', dev: false })).toBe(
       'https://api.example.test',
     );
-  });
-});
-
-describe('the device-authorization client id', () => {
-  test('defaults to a public, documented identifier', () => {
-    expect(resolveClientId(undefined)).toBe(DEFAULT_CLIENT_ID);
-    expect(resolveClientId('  ')).toBe(DEFAULT_CLIENT_ID);
-  });
-
-  test('accepts a conventional id and refuses one that would need escaping', () => {
-    expect(resolveClientId('starter-desktop-2')).toBe('starter-desktop-2');
-    expect(() => resolveClientId('starter desktop/2')).toThrow(NativeConfigError);
-    expect(() => resolveClientId('x'.repeat(65))).toThrow(NativeConfigError);
   });
 });

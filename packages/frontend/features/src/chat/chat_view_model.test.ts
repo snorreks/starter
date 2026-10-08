@@ -34,7 +34,7 @@ import { ChatViewModel } from './chat_view_model.svelte.ts';
 
 const conversation = {
   id: 'cnv_1',
-  ownerId: 'usr_1',
+  ownerId: 'f45b2c4a-7919-4f55-ae89-e73f6753e322',
   organizationId: null,
   title: 'Test',
   messageCount: 0,
@@ -45,7 +45,7 @@ const conversation = {
 const message = (overrides: Partial<Message> = {}): Message => ({
   id: 'msg_1',
   conversationId: 'cnv_1',
-  authorId: 'usr_1',
+  authorId: 'f45b2c4a-7919-4f55-ae89-e73f6753e322',
   role: 'user',
   content: 'hi',
   status: 'complete',

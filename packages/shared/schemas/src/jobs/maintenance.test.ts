@@ -64,7 +64,7 @@ describe('MaintenanceEvidenceSchema', () => {
       checkSchema(MaintenanceEvidenceSchema, {
         ...scheduledRun(),
         status: 'failed',
-        errorCode: 'D1_ERROR: no such table: sessions',
+        errorCode: 'Postgres_ERROR: no such table: sessions',
       }),
     ).toBe(false);
   });

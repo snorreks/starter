@@ -4,13 +4,9 @@ import {
   NativeSignInViewModel,
 } from './native_sign_in_view_model.svelte.ts';
 
-const unexpected = async (): Promise<never> => {
-  throw new Error('Unexpected legacy operation');
-};
 const fixture = (overrides: Partial<NativeSignInOptions> = {}) => {
   const calls: string[] = [];
   const viewModel = new NativeSignInViewModel({
-    authProfile: 'supabase',
     apiOrigin: 'https://api.example.test',
     session: { user: null },
     activeVault: { isAvailable: async () => false },
@@ -22,14 +18,9 @@ const fixture = (overrides: Partial<NativeSignInOptions> = {}) => {
     unlockSupabaseVault: async () => {
       calls.push('unlock');
     },
-    unlockVault: unexpected,
     beginSupabaseOAuth: async () => {
       calls.push('oauth');
     },
-    authSessionService: { refresh: unexpected, signOut: unexpected },
-    deviceService: { requestCode: unexpected, awaitApproval: unexpected },
-    externalBrowser: { open: unexpected },
-    adoptSession: unexpected,
     nativeNavigation: {
       go: async (path) => {
         calls.push(path);
@@ -96,27 +87,5 @@ describe('native sign-in decisions', () => {
     await viewModel.signInWithBrowser();
     expect(calls).toEqual(['unlock', 'oauth']);
     expect(viewModel.reauthenticationRequired).toBe(true);
-  });
-
-  test('legacy denial keeps the existing device flow and its terminal message', async () => {
-    const { viewModel } = fixture({
-      authProfile: 'legacy',
-      deviceService: {
-        requestCode: async () => ({
-          device_code: 'device',
-          user_code: 'CODE',
-          verification_uri: 'https://api.example.test/device',
-          verification_uri_complete: 'https://api.example.test/device?code=CODE',
-          expires_in: 600,
-          interval: 5,
-        }),
-        awaitApproval: async () => ({ status: 'denied' }),
-      },
-      externalBrowser: { open: async () => {} },
-    });
-    await viewModel.signInWithBrowser();
-    expect(viewModel.userCode).toBe('CODE');
-    expect(viewModel.phase).toBe('denied');
-    expect(viewModel.errorText).toContain('denied in the browser');
   });
 });

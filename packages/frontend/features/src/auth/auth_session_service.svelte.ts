@@ -15,7 +15,7 @@
 //
 // The endpoints are the provider's, not ours, so the paths are constants here for
 // the same reason the verification callback is: they are part of one contract with
-// Better Auth, and a screen that could choose them could be pointed at a different
+// the application auth API, and a screen that could choose paths could be pointed at a different
 // one.
 
 import { type ApiTransport, parseDto } from '@starter/platform';
@@ -68,7 +68,7 @@ export interface AuthSession {
   signOut(): Promise<void>;
 }
 
-/** The credential endpoints Better Auth serves, under the app's `/api/auth` mount. */
+/** The stable credential endpoints under the application `/api/auth` mount. */
 const AUTH = {
   session: '/api/auth/get-session',
   signIn: '/api/auth/sign-in/email',

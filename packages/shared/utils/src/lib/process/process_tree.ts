@@ -10,7 +10,7 @@
 //   Error: http://127.0.0.1:8788/api/health is already used, make sure that
 //   nothing is running on the port/url or set reuseExistingServer:true
 //
-// — after a green E2E run. Every leaked process also pins memory and a D1
+// — after a green E2E run. Every leaked process also pins memory and a database
 // handle, so repeated runs accumulate rather than recover.
 //
 // Why walk from a recorded root rather than use a pattern: `pkill -f wrangler`

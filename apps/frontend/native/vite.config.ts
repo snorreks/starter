@@ -61,9 +61,8 @@ export default defineConfig(({ command, mode }) => {
       };
       const security = config.app?.security;
       const supabaseUrl = env.VITE_NATIVE_SUPABASE_URL;
-      const additionalOrigins = env.VITE_NATIVE_AUTH_PROFILE === 'supabase' && supabaseUrl !== undefined
-        ? [new URL(supabaseUrl).origin]
-        : [];
+      if (!supabaseUrl) throw new Error('Native Supabase configuration requires VITE_NATIVE_SUPABASE_URL.');
+      const additionalOrigins = [new URL(supabaseUrl).origin];
       assertNativeCsp(security?.csp ?? '', apiOrigin, additionalOrigins);
       assertNativeCsp(security?.devCsp ?? '', apiOrigin, additionalOrigins);
     }

@@ -6,7 +6,7 @@ import { ChatService } from './chat_service.ts';
 
 const conversation = (id: string): Conversation => ({
   id,
-  ownerId: 'user',
+  ownerId: 'f45b2c4a-7919-4f55-ae89-e73f6753e322',
   organizationId: null,
   title: id,
   messageCount: 0,

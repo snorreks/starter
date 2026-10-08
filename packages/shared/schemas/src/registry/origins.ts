@@ -5,7 +5,7 @@
 // This lives in `@starter/schemas` rather than in either plane because the
 // client and the API must agree on it exactly. A browser list in the frontend
 // and a separate list in the Worker is how a real origin ends up rejected by
-// CORS in one direction and by Better Auth's origin check in the other — a
+// CORS in one direction and by Supabase Auth's callback check in the other — a
 // failure that presents as "sign-in works locally and returns 403 once deployed".
 
 /**

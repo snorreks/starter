@@ -35,7 +35,7 @@ import {
 const message = (overrides: Partial<Message> = {}): Message => ({
   id: 'msg_1',
   conversationId: 'cnv_1',
-  authorId: 'usr_1',
+  authorId: 'f45b2c4a-7919-4f55-ae89-e73f6753e322',
   role: 'assistant',
   content: 'Hello.',
   status: 'complete',

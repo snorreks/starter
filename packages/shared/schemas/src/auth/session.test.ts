@@ -1,41 +1,28 @@
 // packages/shared/schemas/src/auth/session.test.ts
 //
-// The provider's user, and the DTO it is projected onto.
-//
-// The case that matters is the projection: the provider says `name` and this
-// application says `displayName`. Treating the two as the same type produced a
-// `SessionUser` whose display name was `undefined`, which no test caught until
-// the end-to-end lane asked a screen to render one. So the wire shape is stated,
-// closed, and projected.
+// The closed application DTO shared by web and native session clients.
 
 import { describe, expect, test } from 'bun:test';
 import { checkSchema } from '../validation.ts';
 import { SessionUserWireSchema, toSessionUser } from './session.ts';
 
-/** The row Better Auth returns: every field on the `users` table, serialized. */
+/** The user object returned by the application's session endpoint. */
 const wire = (overrides: Record<string, unknown> = {}) => ({
-  id: 'user_1',
-  name: 'Someone',
+  id: 'f45b2c4a-7919-4f55-ae89-e73f6753e322',
   email: 'someone@example.test',
+  displayName: 'Someone',
+  provider: 'email',
   emailVerified: true,
-  image: null,
-  createdAt: '2026-01-01T00:00:00.000Z',
-  updatedAt: '2026-01-01T00:00:00.000Z',
   ...overrides,
 });
 
-describe('the provider user is accepted as it is sent', () => {
-  test('a null image is accepted, because the column is nullable', () => {
+describe('the session DTO is validated at the client boundary', () => {
+  test('the expected Supabase-backed identity shape is accepted', () => {
     expect(checkSchema(SessionUserWireSchema, wire())).toBe(true);
-    expect(checkSchema(SessionUserWireSchema, wire({ image: 'https://cdn.test/a.png' }))).toBe(
-      true,
-    );
   });
 
   test('a field this build does not know about is refused', () => {
-    // A closed wire schema on purpose: a Better Auth upgrade that adds a field
-    // becomes a visible refusal at the boundary rather than a silently different
-    // identity shape reaching a screen.
+    // Unknown identity fields are rejected at the shared boundary.
     expect(checkSchema(SessionUserWireSchema, wire({ role: 'admin' }))).toBe(false);
   });
 
@@ -45,8 +32,8 @@ describe('the provider user is accepted as it is sent', () => {
 });
 
 describe('the projection carries only what the DTO names', () => {
-  test('displayName comes from the provider name field', () => {
-    const user = toSessionUser(wire({ name: 'Ada Lovelace' }) as never);
+  test('displayName is carried as the application field', () => {
+    const user = toSessionUser(wire({ displayName: 'Ada Lovelace' }) as never);
 
     expect(user.displayName).toBe('Ada Lovelace');
   });
@@ -58,9 +45,7 @@ describe('the projection carries only what the DTO names', () => {
     expect(toSessionUser(wire() as never).provider).toBe('email');
   });
 
-  test('the timestamps and the image are dropped rather than carried', () => {
-    // The DTO is what reaches a screen, a log line and a native bundle. A field
-    // left on it is a field every one of those now has to decide about.
+  test('the DTO contains only the shared application fields', () => {
     const user = toSessionUser(wire() as never);
 
     expect(Object.keys(user).toSorted()).toEqual([

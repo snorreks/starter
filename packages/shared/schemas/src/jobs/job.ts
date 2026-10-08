@@ -210,10 +210,8 @@ export type JobOutput = v.InferOutput<typeof JobOutputSchema>;
  * next to it would then be a lie: an error string that reaches a browser has to be
  * one this repository enumerated, and an open string cannot be.
  *
- * These are the job's own outcomes. The processor's refusal codes
- * (`invalid_media`, `deadline_exceeded`, …) are a different, larger set and live
- * in `./processor_protocol.ts`; the repository maps one of those onto one of
- * these rather than passing it through.
+ * These are the job's own outcomes. The runner maps processor failures onto
+ * these codes rather than passing process output through to the caller.
  */
 export const JOB_ERROR_CODES = ['encode_failed', 'attempts_exhausted', 'internal_error'] as const;
 export const JobErrorCodeSchema = literalUnion(JOB_ERROR_CODES);
@@ -258,10 +256,7 @@ export type JobList = v.InferOutput<typeof JobListSchema>;
 /**
  * Codes a create request can be refused with.
  *
- * The API's own admission outcomes. The processor's error codes are a separate,
- * larger set — see `./processor_protocol.ts` — because "the container said the
- * media was invalid" and "you have used your five jobs" are facts about different
- * subjects.
+ * The API's own admission outcomes, separate from worker process failures.
  */
 export const JobAdmissionErrorCode = {
   /** The body is not one of the frozen shapes. 400. */

@@ -5,7 +5,7 @@ graph: it imports `@starter/logger` and `@starter/schemas` and nothing else, and
 no project in the workspace may import it *into* `shared`.
 
 That constraint is the point. Anything here runs in a Worker, a browser, and a
-native webview, so an import of `drizzle-orm` or `node:fs` would be either dead
+native webview, so an import of server database code or `node:fs` would be either dead
 code in two of those places or a runtime failure in the third.
 
 ## What is here

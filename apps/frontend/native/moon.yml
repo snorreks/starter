@@ -103,7 +103,6 @@ tasks:
       - '@group(tests)'
       - '@group(workspaceSources)'
       - '$VITE_NATIVE_API_ORIGIN'
-      - '$VITE_NATIVE_CLIENT_ID'
     # `.svelte-kit/output` is a complete artifact, and `check-bundle` consumes
     # it. `cache_scope.ts` additionally watches `bun.lock` and the shared
     # `@starter/*` sources, which live outside this project and cannot be named
