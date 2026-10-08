@@ -26,7 +26,7 @@ declare global {
    * `import { env } from 'cloudflare:workers'` is typed `Cloudflare.Env`, and
    * `Cloudflare.Env` is an empty interface by default — so without this
    * declaration every binding access is an error under `noImplicitAny` and an
-   * unconstrained `any` under `skipLibCheck`, and `DB.prepare(...)` type-checks
+   * unconstrained `any` under `skipLibCheck`, and `Supabase query type-checks` type-checks
    * against nothing.
    *
    * The same fields are declared a second time on `App.Platform` below. That is
@@ -40,8 +40,6 @@ declare global {
    */
   namespace Cloudflare {
     interface Env {
-      readonly DB: D1Database;
-      readonly STARTER_BACKEND_PROFILE?: string;
       readonly SUPABASE_URL?: string;
       readonly SUPABASE_ANON_KEY?: string;
       readonly SUPABASE_SERVICE_ROLE_KEY?: string;
@@ -51,12 +49,8 @@ declare global {
       readonly GOOGLE_RUNNER_SERVICE_ACCOUNT?: string;
       readonly GOOGLE_RUNNER_SUBJECT?: string;
       readonly DEPLOYMENT_ENV?: string;
-      readonly BETTER_AUTH_URL?: string;
-      readonly BETTER_AUTH_SECRET?: string;
-      readonly TRUSTED_ORIGINS?: string;
+      readonly APP_ORIGIN?: string;
       readonly TEST_RUN_ID?: string;
-      readonly AUTH_RATE_LIMIT_MAX?: string;
-      readonly AUTH_RATE_LIMIT_WINDOW?: string;
       readonly TRUSTED_PROXIES?: string;
       readonly RESEND_API_KEY?: string;
       readonly MAIL_FROM?: string;
@@ -83,8 +77,6 @@ declare global {
 
   namespace App {
     interface Platform {
-      readonly DB: D1Database;
-      readonly STARTER_BACKEND_PROFILE?: string;
       readonly SUPABASE_URL?: string;
       readonly SUPABASE_ANON_KEY?: string;
       readonly SUPABASE_SERVICE_ROLE_KEY?: string;
@@ -94,12 +86,8 @@ declare global {
       readonly GOOGLE_RUNNER_SERVICE_ACCOUNT?: string;
       readonly GOOGLE_RUNNER_SUBJECT?: string;
       readonly DEPLOYMENT_ENV?: string;
-      readonly BETTER_AUTH_URL?: string;
-      readonly BETTER_AUTH_SECRET?: string;
-      readonly TRUSTED_ORIGINS?: string;
+      readonly APP_ORIGIN?: string;
       readonly TEST_RUN_ID?: string;
-      readonly AUTH_RATE_LIMIT_MAX?: string;
-      readonly AUTH_RATE_LIMIT_WINDOW?: string;
       readonly TRUSTED_PROXIES?: string;
       readonly RESEND_API_KEY?: string;
       readonly MAIL_FROM?: string;
@@ -121,7 +109,7 @@ declare global {
 
     interface Locals {
       /**
-       * Bindings, the Drizzle handle and the Better Auth instance, built once per
+       * Bindings, the Drizzle handle and the Supabase Auth instance, built once per
        * binding set and origin. Never serialized into page data.
        */
       container: Container;

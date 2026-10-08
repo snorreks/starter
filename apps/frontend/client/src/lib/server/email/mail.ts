@@ -120,7 +120,7 @@ export const resolveMail = (env: MailEnv, isLocal: boolean): MailResolution => {
       ok: true,
       mode: 'capture',
       from: from !== undefined && from.length > 0 ? from : CAPTURE_FROM,
-      // The run id is the harness's identity, so two runs sharing one local D1
+      // The run id is the harness's identity, so two runs sharing one local Postgres
       // still cannot read each other's mail. `TEST_RUN_ID` already exists for
       // exactly this purpose: proving a request reached *this* process.
       inbox: env.TEST_RUN_ID?.trim() ?? 'local',

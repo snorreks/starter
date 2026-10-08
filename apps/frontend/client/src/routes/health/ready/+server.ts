@@ -5,14 +5,14 @@
 // The distinction from `/health` is the point of having two endpoints:
 //
 //   * `/health`     — is the isolate serving? Configuration only. Cheap.
-//   * `/health/ready` — would a request succeed right now? Touches D1.
+//   * `/health/ready` — would a request succeed right now? checks Supabase.
 //
 // A Worker with a deleted database answers `200 ok` to `/health` forever, because
 // nothing in a configuration read can fail. This route is what notices, and it is
 // what the deploy pipeline checks after publishing so a broken release is caught by
 // the run that created it rather than by the next person to open the site.
 //
-// **Bounded, and bounded on purpose.** The probe is `SELECT 1`: D1 answers it
+// **Bounded, and bounded on purpose.** The probe is `SELECT 1`: Postgres answers it
 // without touching a table, so it measures the *binding*, not the data. A probe
 // that read `notes` would report unhealthy when the content is wrong rather than
 // when the configuration is, and would put a query on the hot path of whatever

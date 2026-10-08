@@ -5,7 +5,7 @@ import { GET as getJobs, POST as postJob } from '../../routes/api/jobs/+server.t
 import { GET as getJob } from '../../routes/api/jobs/[id]/+server.ts';
 import { createRequestNotesService } from './notes_service.ts';
 
-const user = { id: 'owner', emailVerified: true };
+const user = { id: 'f45b2c4a-7919-4f55-ae89-e73f6753e322', emailVerified: true };
 const conversationId = 'conv_12345678-1234-4123-8123-123456789012';
 const storedUser: Message = {
   id: 'msg_12345678-1234-4123-8123-123456789012',
@@ -69,7 +69,7 @@ test('a conversation outside page zero streams with the admitted assistant ID', 
   const response = await postChat(event);
   expect(response.status).toBe(200);
   const frames = decodeChatStream(await response.text());
-  expect(chat.findConversation).toHaveBeenCalledWith('owner', conversationId);
+  expect(chat.findConversation).toHaveBeenCalledWith(user.id, conversationId);
   expect(chat.listConversations).not.toHaveBeenCalled();
   expect(frames[0]).toMatchObject({ type: 'user-message', message: { id: storedUser.id } });
   expect(frames[1]).toEqual({ type: 'start', messageId: storedAssistant.id });
@@ -206,7 +206,8 @@ test('Supabase job admission starts one Cloudflare Workflow and a failed start i
     };
     const response = await postJob({
       locals: {
-        context: { backendProfile: 'supabase', user },
+        user: { ...user, email: 'owner@example.test', displayName: 'Owner', provider: 'email' },
+        container: { jobsProfile: 'encode' },
         applicationServices: { identity: { user }, jobs },
       },
       request: new Request('http://localhost/api/jobs', {

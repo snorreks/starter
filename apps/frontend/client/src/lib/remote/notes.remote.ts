@@ -23,11 +23,8 @@ const adapter = () => {
   if (event.locals.user === null) {
     error(401, 'Authentication required.');
   }
-  if (
-    event.locals.context.backendProfile !== 'supabase' ||
-    event.locals.context.services === null
-  ) {
-    error(503, 'Notes remote functions require the Supabase application services.');
+  if (event.locals.context.services === null) {
+    error(401, 'Authentication required.');
   }
   return createNotesRemoteService(event.locals.context.services.notes, event.locals.user.id);
 };

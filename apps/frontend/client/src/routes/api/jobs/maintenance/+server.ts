@@ -21,24 +21,21 @@
 // Thin like every route in this API: resolve the caller, ask the service, map the
 // outcome to a status. No SQL, no trigger arithmetic.
 
-import { json, jsonError, unauthorized } from '#lib/server/http.ts';
+import { LatestMaintenanceSchema } from '@starter/schemas/jobs';
+import * as v from 'valibot';
+import { jsonError, unauthorized } from '#lib/server/http.ts';
 import type { RequestHandler } from './$types';
 
 export const GET: RequestHandler = async ({ locals }) => {
-  const user = locals.user;
-  if (user === null) {
+  const services = locals.applicationServices;
+  if (!locals.user || !services || services.identity.user.id !== locals.user.id) {
     return unauthorized();
   }
-
-  const outcome = await locals.container.jobs.latestMaintenance();
-  if (!outcome.ok) {
-    return jsonError(503, outcome.code, outcome.detail);
+  const result = v.safeParse(LatestMaintenanceSchema, await services.jobs.latestMaintenance());
+  if (!result.success) {
+    return jsonError(503, 'maintenance_status_unavailable', 'Maintenance history is unavailable.');
   }
-
-  // `no-store` is applied to every `/api/*` response by the hook; this endpoint is
-  // no exception. A cached "last run" is a stale claim about a schedule, which is
-  // precisely the kind of evidence that must never be served from a cache.
-  return json(200, outcome.latest);
+  return Response.json(result.output, { headers: { 'cache-control': 'private, no-store' } });
 };
 
 const getOnly = (): Response =>

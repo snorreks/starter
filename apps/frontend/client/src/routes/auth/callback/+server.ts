@@ -6,7 +6,7 @@ const CALLBACKS = new Set(['/verify-email', '/reset-password']);
 
 export const GET: RequestHandler = async ({ url, locals, cookies }) => {
   const config = locals.container.supabase;
-  if (locals.container.backendProfile !== 'supabase' || config === null) {
+  if (config === null) {
     redirect(303, '/login?error=auth_unconfigured');
   }
   const requested = url.searchParams.get('next') ?? '';

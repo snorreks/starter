@@ -77,7 +77,7 @@ bun run build               # vite build -> .svelte-kit/cloudflare/
 bun run check:bundle        # asserts the artifact and that server code stayed server-side
 bun run test                # unit lane for this package
 bun run test:browser        # real Svelte in Chromium
-bun run test:worker         # built Worker in workerd against real local D1
+bun run test:worker         # built Worker in workerd against local Supabase
 bun run typecheck           # svelte-check --threshold error
 bun run lint                # biome lint src
 ```

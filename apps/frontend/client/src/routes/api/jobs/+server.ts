@@ -1,28 +1,3 @@
-// apps/frontend/client/src/routes/api/jobs/+server.ts
-//
-// `/api/jobs` — the collection. Two verbs, both thin.
-//
-// Thin is a specific claim: this file resolves who the caller is, validates the
-// request against the shared schema, maps a service outcome to a status
-// code, and logs the write. It contains no SQL, no budget arithmetic and no
-// ownership rule, because those live in `#lib/server/jobs_service.ts` and
-// `@starter/jobs` where they are reachable from a server load and a scheduled
-// maintenance run as well as from here.
-//
-// The status codes are the frozen contract:
-//
-//   202 accepted (new, or a replay of one this key already created)
-//   400 the body or the `Idempotency-Key` is not one of the frozen shapes
-//   401 no session
-//   403 signed in, address not confirmed
-//   409 this key was used for a different body
-//   429 active / hourly / daily budget exhausted
-//   503 the jobs profile is disabled for this deployment
-//
-// 503 is last on purpose. A deployment without a compute profile must be able to
-// serve notes and auth perfectly well while answering *this* endpoint with a name
-// for what is missing — not a 500, and not a 404 that reads like a wrong URL.
-
 import { workflowIdFor } from '@starter/jobs';
 import { checkSchema } from '@starter/schemas/common';
 import {
@@ -35,232 +10,95 @@ import { json, jsonError, readJsonBody, unauthorized } from '#lib/server/http.ts
 import { dispatchAdmittedJob, publicSupabaseJob } from '#lib/server/supabase_context.ts';
 import type { RequestHandler } from './$types';
 
-/**
- * Byte ceiling for the create body.
- *
- * `CreateEncodeJobSchema` is two frozen enum fields, so a valid body is under a
- * hundred bytes. 4 KiB is generous for the envelope and small enough that a
- * hostile client cannot make the Worker hold anything interesting.
- */
 const MAX_BODY_BYTES = 4 * 1024;
+const unavailable = (message: string) => jsonError(503, 'jobs_profile_disabled', message);
 
-/**
- * 403 rather than 401 for an unconfirmed address.
- *
- * The session is real — this browser proved it holds a credential — but the
- * person behind it has not confirmed they own the address. Both are stated
- * separately because a view that cannot tell them apart tells a real user to wait
- * for a mail that is never coming, or to sign in again for no reason.
- */
-const emailNotVerified = (): Response =>
-  jsonError(403, 'email_not_verified', 'Confirm your email address before starting a job.');
-
-const capabilityUnavailable = (detail: string): Response =>
-  jsonError(503, 'jobs_profile_disabled', detail);
-
-/**
- * Refuse a key that is absent *or* not one of the frozen shapes.
- *
- * Validated, not merely checked for presence: a key containing a space or a
- * control character is a key that two hops may normalise differently, which
- * defeats idempotency without the caller noticing. The same `IdempotencyKeySchema`
- * the browser validates against is the one enforced here, so there is one rule.
- */
-const invalidKey = (): Response =>
-  jsonError(
-    400,
-    'invalid_idempotency_key',
-    `Send an ${IDEMPOTENCY_KEY_HEADER} header of 1-100 printable ASCII characters, with no spaces.`,
-  );
-
-const budgetExceeded = (detail: string): Response => jsonError(429, 'budget_exceeded', detail);
-
-const conflict = (detail: string): Response => jsonError(409, 'idempotency_conflict', detail);
-
-export const GET: RequestHandler = async ({ locals, url }) => {
-  const user = locals.user;
-  if (user === null) {
+export const GET: RequestHandler = async ({ locals }) => {
+  const services = locals.applicationServices;
+  if (!locals.user || !services || services.identity.user.id !== locals.user.id) {
     return unauthorized();
   }
-  if (locals.context?.backendProfile === 'supabase') {
-    const repository = locals.applicationServices?.jobs;
-    if (!repository || locals.applicationServices?.identity.user.id !== user.id) {
-      return unauthorized();
-    }
-    const jobs = await repository.listForOwner();
-    return json(200, {
-      jobs: jobs.map(publicSupabaseJob),
-      nextCursor: null,
-      serverTime: Date.now(),
-    });
-  }
-
-  // The list answers with the capability too. An empty list from a deployment that
-  // cannot show jobs reads as "you have none", which is a different and wrong
-  // statement about the same owner.
-  if (locals.container.jobsProfile !== 'encode') {
-    return capabilityUnavailable(
-      'This deployment has the jobs profile disabled, so jobs cannot be listed here.',
-    );
-  }
-
-  const service = locals.container.jobs;
-  const limit = Number(url.searchParams.get('limit') ?? '');
-  const page = await service.list(user.id, {
-    cursor: url.searchParams.get('cursor'),
-    // A non-numeric or absent limit is the service's default, not a 400: the
-    // clamp in the repository is the real bound and a client asking for "the
-    // usual amount" should not have to say so.
-    ...(Number.isSafeInteger(limit) && limit > 0 ? { limit } : {}),
-  });
-  if (!page.ok) {
-    return jsonError(400, page.code, page.detail);
-  }
-  return json(200, page.page);
+  const jobs = await services.jobs.listForOwner();
+  return json(200, { jobs: jobs.map(publicSupabaseJob), nextCursor: null, serverTime: Date.now() });
 };
 
 export const POST: RequestHandler = async ({ locals, request }) => {
-  // `locals.context`, not a fresh resolution: the hook already resolved this
-  // request's session and trace, and a second resolution is a second identity to
-  // keep in step. See `#lib/server/request_context.ts`.
-  const context = locals.context;
-  const user = context.user;
-  if (user === null) {
+  const user = locals.user;
+  const services = locals.applicationServices;
+  if (!user || !services || services.identity.user.id !== user.id) {
     return unauthorized();
   }
-  if (context?.backendProfile === 'supabase') {
-    if (!user.emailVerified) {
-      return emailNotVerified();
-    }
-    const idempotencyKey = request.headers.get(IDEMPOTENCY_KEY_HEADER);
-    if (idempotencyKey === null || !checkSchema(IdempotencyKeySchema, idempotencyKey)) {
-      return invalidKey();
-    }
-    const parsed = await readJsonBody(request, CreateEncodeJobSchema, {
-      maxBytes: MAX_BODY_BYTES,
-      invalidStatus: 400,
-    });
-    if (!parsed.ok) {
-      return parsed.response;
-    }
-    const repository = locals.applicationServices?.jobs;
-    if (!repository || locals.applicationServices?.identity.user.id !== user.id) {
-      return unauthorized();
-    }
-    if (repository.computeRequested && repository.dispatch !== 'cloud_run') {
-      return capabilityUnavailable(
-        'Supabase compute is enabled without its Cloud Run Workflow binding. Configure the compute profile before admitting jobs.',
-      );
-    }
-    const id = createId('job');
-    const attemptId = createId('attempt');
-    const bytes = new TextEncoder().encode(JSON.stringify(parsed.value));
-    const digest = await crypto.subtle.digest('SHA-256', bytes);
-    const outcome = await repository.admit({
-      id,
-      fixture: parsed.value.fixture,
-      preset: parsed.value.preset,
-      idempotencyKey,
-      fingerprint: [...new Uint8Array(digest)]
-        .map((byte) => byte.toString(16).padStart(2, '0'))
-        .join(''),
-      workflowId: workflowIdFor(id),
-    });
-    if (outcome.outcome === 'idempotency_conflict') {
-      return conflict('That idempotency key was used for a different request.');
-    }
-    if (outcome.outcome === 'quota_or_active_limit') {
-      return budgetExceeded('The job admission limit has been reached.');
-    }
-    const started = await dispatchAdmittedJob(repository, outcome, {
-      attemptId,
-      fixture: parsed.value.fixture,
-      preset: parsed.value.preset,
-    });
-    if (!started) {
-      return jsonError(
-        503,
-        'job_dispatch_failed',
-        'The job was admitted, but its Workflow could not be started. Retry with the same idempotency key.',
-      );
-    }
-    const job = outcome.jobId === null ? null : await repository.getForOwner(outcome.jobId);
-    if (job === null) {
-      return jsonError(503, 'job_unavailable', 'The admitted job status could not be read.');
-    }
-    return json(202, publicSupabaseJob(job));
-  }
-
-  // The capability check comes before the body check. A deployment that cannot run
-  // a job at all has nothing to validate a job against, and a client that fixes
-  // its body and retries into the same 503 would be misled.
   if (locals.container.jobsProfile !== 'encode') {
-    return capabilityUnavailable(
-      'This deployment has the jobs profile disabled, so jobs cannot be started here.',
+    return unavailable('Compute is explicitly disabled for this deployment.');
+  }
+  if (services.jobs.computeRequested && services.jobs.dispatch !== 'cloud_run') {
+    return unavailable('Cloud Run compute prerequisites are incomplete; no job was admitted.');
+  }
+  if (!user.emailVerified) {
+    return jsonError(
+      403,
+      'email_not_verified',
+      'Confirm your email address before starting a job.',
     );
   }
-
-  if (!user.emailVerified) {
-    return emailNotVerified();
+  const key = request.headers.get(IDEMPOTENCY_KEY_HEADER);
+  if (key === null || !checkSchema(IdempotencyKeySchema, key)) {
+    return jsonError(
+      400,
+      'invalid_idempotency_key',
+      `Send a valid ${IDEMPOTENCY_KEY_HEADER} header.`,
+    );
   }
-
-  // Named separately from a bad body: this header is what makes a retry safe, so a
-  // client that omits or malforms it needs to be told *that*, not "validation
-  // failed".
-  const idempotencyKey = request.headers.get(IDEMPOTENCY_KEY_HEADER);
-  if (idempotencyKey === null || !checkSchema(IdempotencyKeySchema, idempotencyKey)) {
-    return invalidKey();
-  }
-
   const parsed = await readJsonBody(request, CreateEncodeJobSchema, {
     maxBytes: MAX_BODY_BYTES,
-    // The frozen contract says 400 for an invalid body. The shared reader's
-    // default is 422, which is right for most of this API; the job contract is
-    // stated in the design and the two shapes are indistinguishable to a client
-    // anyway, so the option exists rather than a second body reader.
     invalidStatus: 400,
   });
   if (!parsed.ok) {
     return parsed.response;
   }
-
-  const outcome = await locals.container.jobs.create(
-    user.id,
-    parsed.value as { fixture: 'sample-v1'; preset: 'demo-180p-v1' },
-    idempotencyKey,
-  );
-
-  if (!outcome.ok) {
-    switch (outcome.code) {
-      case 'idempotency_conflict':
-        return conflict(outcome.detail);
-      case 'budget_exceeded':
-        return budgetExceeded(outcome.detail);
-      case 'jobs_profile_disabled':
-        return capabilityUnavailable(outcome.detail);
-      case 'email_not_verified':
-        return emailNotVerified();
-      default:
-        return jsonError(400, 'invalid_request', 'That job request is not one this API accepts.');
-    }
-  }
-
-  // A write is the event worth correlating, so this is the path that logs. The
-  // replay is labelled, because a client retrying and a client double-submitting
-  // produce the same rows and only one of them is a duplicate.
-  context.logger.write({
-    logLevel: 'INFO',
-    logType: 'info',
-    event: 'jobs.create',
-    traceId: context.traceId,
-    data: { jobId: outcome.job.id, status: outcome.job.status, replayed: outcome.replayed },
+  const id = createId('job');
+  const attemptId = createId('attempt');
+  const bytes = new TextEncoder().encode(JSON.stringify(parsed.value));
+  const digest = await crypto.subtle.digest('SHA-256', bytes);
+  const outcome = await services.jobs.admit({
+    id,
+    fixture: parsed.value.fixture,
+    preset: parsed.value.preset,
+    idempotencyKey: key,
+    fingerprint: [...new Uint8Array(digest)]
+      .map((byte) => byte.toString(16).padStart(2, '0'))
+      .join(''),
+    workflowId: workflowIdFor(id),
   });
-
-  // 202 for both a new job and a replay: the caller asked for a job to exist, and
-  // it does. Distinguishing them in the status would invite a client to treat a
-  // successful retry as a new resource and create a second one.
-  return json(202, outcome.job);
+  if (outcome.outcome === 'idempotency_conflict') {
+    return jsonError(
+      409,
+      'idempotency_conflict',
+      'That idempotency key was used for a different request.',
+    );
+  }
+  if (outcome.outcome === 'quota_or_active_limit') {
+    return jsonError(429, 'budget_exceeded', 'The job admission limit has been reached.');
+  }
+  const started = await dispatchAdmittedJob(services.jobs, outcome, {
+    attemptId,
+    fixture: parsed.value.fixture,
+    preset: parsed.value.preset,
+  });
+  if (!started) {
+    return jsonError(
+      503,
+      'job_dispatch_failed',
+      'The admitted job could not be dispatched. Retry with the same idempotency key.',
+    );
+  }
+  const job = outcome.jobId === null ? null : await services.jobs.getForOwner(outcome.jobId);
+  return job === null
+    ? jsonError(503, 'job_unavailable', 'The admitted job status could not be read.')
+    : json(202, publicSupabaseJob(job));
 };
 
-export const PUT = (): Response => jsonError(405, 'method_not_allowed', 'Use GET or POST here.');
-export const DELETE = (): Response => jsonError(405, 'method_not_allowed', 'Use GET or POST here.');
+const methodNotAllowed = (): Response =>
+  jsonError(405, 'method_not_allowed', 'Use GET or POST here.');
+export const PUT = methodNotAllowed;
+export const DELETE = methodNotAllowed;

@@ -18,12 +18,10 @@ const USER_IDENTITY = (user: {
   emailVerified: boolean;
 }) => ({
   id: user.id,
-  name: user.displayName,
   email: user.email,
+  displayName: user.displayName,
+  provider: 'email' as const,
   emailVerified: user.emailVerified,
-  image: null,
-  createdAt: Date.now(),
-  updatedAt: Date.now(),
 });
 
 // Wire field names follow the account client; value validation uses the shared schemas below.
@@ -177,22 +175,11 @@ const handleSupabase = async (event: Parameters<RequestHandler>[0]): Promise<Res
   }
 };
 
-const handle: RequestHandler = async ({ request, locals, ...event }) => {
-  if (locals.container.backendProfile === 'supabase') {
-    if (request.method !== 'GET' && request.method !== 'POST') {
-      return jsonError(405, 'method_not_allowed', 'Use GET or POST.');
-    }
-    return await handleSupabase({ request, locals, ...event } as Parameters<RequestHandler>[0]);
+const handle: RequestHandler = async (event) => {
+  if (event.request.method !== 'GET' && event.request.method !== 'POST') {
+    return jsonError(405, 'method_not_allowed', 'Use GET or POST.');
   }
-  try {
-    return await locals.container.auth.handler(request);
-  } catch (error) {
-    locals.context.logger.error('auth.handler_failed', {
-      component: 'auth',
-      message: error instanceof Error ? error.message : String(error),
-    });
-    return jsonError(503, 'auth_unconfigured', 'Authentication is not configured.');
-  }
+  return handleSupabase(event);
 };
 
 export const GET = handle;

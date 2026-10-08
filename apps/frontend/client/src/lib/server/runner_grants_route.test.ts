@@ -5,7 +5,7 @@ const invoke = (request: Request) =>
   POST({
     request,
     params: { id: 'job_a' },
-    platform: { STARTER_BACKEND_PROFILE: 'supabase' },
+    platform: { JOBS_PROFILE: 'encode' },
     url: new URL(request.url),
   } as unknown as Parameters<typeof POST>[0]);
 

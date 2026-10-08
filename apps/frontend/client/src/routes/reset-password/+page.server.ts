@@ -4,20 +4,20 @@
 //
 // The link a user clicks is
 // `<origin>/api/auth/reset-password/<token>?callbackURL=%2Freset-password`.
-// Better Auth validates that token **first** and only then redirects to the callback
+// Supabase Auth validates that token **first** and only then redirects to the callback
 // with `?token=`, so this page is reached with a token that was real a moment ago. It
 // can still be expired or consumed by the time the form is submitted, which is why
 // the action treats "invalid token" as an expected answer with its own message rather
 // than a crash.
 //
-// Why the token is a **query parameter** here and not a path segment: Better Auth
+// Why the token is a **query parameter** here and not a path segment: Supabase Auth
 // chooses that shape, and its callback handler appends the token itself. A route
 // written to expect `/reset-password/<token>` would 404 on every link the library
 // ever sends.
 //
 // Three properties this route has to get right:
 //
-//   - **Token is single-use.** Better Auth consumes it as it validates. A second
+//   - **Token is single-use.** Supabase Auth consumes it as it validates. A second
 //     submission fails, which is correct: a link that works twice is a link still
 //     sitting in somebody's inbox.
 //   - **A reset ends every session.** `revokeSessionsOnPasswordReset` is set in the
@@ -47,7 +47,7 @@ export const load: PageServerLoad = async ({ url, locals }) => {
 
   const token = url.searchParams.get('token');
   if (token === null || token.length === 0) {
-    // A bare visit. Someone typed the URL, or followed a link whose token Better Auth
+    // A bare visit. Someone typed the URL, or followed a link whose token Supabase Auth
     // declined to forward. Either way there is nothing to submit.
     return { sent: false, hasToken: false };
   }
@@ -68,7 +68,7 @@ export const actions: Actions = {
     const newPassword = String(form.get('newPassword') ?? '');
 
     // The token comes from the URL the link pointed at, not from a form field. A field
-    // is attacker-controlled; the URL is what Better Auth's callback validated before
+    // is attacker-controlled; the URL is what Supabase Auth's callback validated before
     // it redirected here.
     const token = url.searchParams.get('token') ?? '';
 

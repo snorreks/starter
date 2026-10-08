@@ -22,8 +22,9 @@
 //      broken, which is the regression this branch exists to prevent.
 
 import type { JobDto, LatestMaintenance } from '@starter/schemas/jobs';
+import { LatestMaintenanceSchema } from '@starter/schemas/jobs';
 import { error, redirect } from '@sveltejs/kit';
-import { JOBS_PROFILE_ENCODE } from '#lib/server/jobs_service.ts';
+import * as v from 'valibot';
 import type { PageServerLoad } from './$types';
 
 /**
@@ -36,14 +37,26 @@ import type { PageServerLoad } from './$types';
 const readJobs = async (
   locals: App.Locals,
 ): Promise<{ jobs: JobDto[]; maintenance: LatestMaintenance | null }> => {
-  const listed = await locals.container.jobs.list(locals.user?.id ?? '');
-  if (!listed.ok) {
-    error(400, listed.detail);
+  const services = locals.applicationServices;
+  if (!locals.user || !services || services.identity.user.id !== locals.user.id) {
+    error(401, 'Authentication required.');
   }
-  const jobs = listed.page.jobs;
-
-  const evidence = await locals.container.jobs.latestMaintenance();
-  return { jobs, maintenance: evidence.ok ? evidence.latest : null };
+  const jobs: JobDto[] = (await services.jobs.listForOwner()).map(
+    ({ dispatchState: _dispatchState, errorCode, ...job }) => ({
+      ...job,
+      errorCode:
+        errorCode === 'encode_failed' ||
+        errorCode === 'attempts_exhausted' ||
+        errorCode === 'internal_error'
+          ? errorCode
+          : null,
+    }),
+  );
+  const maintenance = v.safeParse(LatestMaintenanceSchema, await services.jobs.latestMaintenance());
+  if (!maintenance.success) {
+    error(503, 'Maintenance status is unavailable.');
+  }
+  return { jobs: [...jobs], maintenance: maintenance.output };
 };
 
 export const load: PageServerLoad = async ({ locals }) => {
@@ -55,7 +68,7 @@ export const load: PageServerLoad = async ({ locals }) => {
   // The capability check comes before the read. `JOBS_PROFILE` is the deployment
   // mode, not a request: a Worker without it cannot list jobs either, so asking
   // would be a round trip whose only possible answers are 503 and a guess.
-  if (locals.container.jobsProfile !== JOBS_PROFILE_ENCODE) {
+  if (locals.container.jobsProfile !== 'encode') {
     return {
       profile: 'disabled' as const,
       jobs: [],

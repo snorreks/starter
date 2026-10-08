@@ -4,7 +4,7 @@
 //
 // Why this file exists
 // --------------------
-// Better Auth's server-side API sets its cookies on the response *it* produces. A
+// Supabase Auth's server-side API sets its cookies on the response *it* produces. A
 // SvelteKit action cannot return that response — `Actions`' output type is a plain
 // object or `void`, not a `Response` — so an action that calls `auth.api` and drops
 // the headers completes a sign-in that reports success, redirects correctly, and hands
@@ -17,7 +17,7 @@
 //
 // Why the framework's parser, and not a local one
 // ----------------------------------------------
-// Better Auth's session cookie is already percent-encoded — its signature ends in `%3D`.
+// Supabase Auth's session cookie is already percent-encoded — its signature ends in `%3D`.
 // A parser that split the header by hand and handed the raw value to `cookies.set`
 // would have that value encoded a second time by SvelteKit's serializer, and the
 // session token the server read back would differ from the one that was signed. The

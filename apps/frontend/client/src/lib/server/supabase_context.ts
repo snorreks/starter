@@ -34,7 +34,7 @@ export interface SupabaseWebConfig extends SupabaseAdminConfig {
 
 export interface SupabaseApplicationJobs extends JobRepository {
   computeRequested: boolean;
-  dispatch: 'disabled_pending_prompt_06' | 'cloud_run';
+  dispatch: 'disabled' | 'cloud_run';
   startEncode(input: {
     jobId: string;
     attemptId: string;
@@ -97,7 +97,7 @@ export const createApplicationServices = (
     chat: createSupabaseChatRepository(userClient, adminClient),
     jobs: Object.assign(repository, {
       computeRequested: config.jobsProfile === 'encode',
-      dispatch: computeEnabled ? ('cloud_run' as const) : ('disabled_pending_prompt_06' as const),
+      dispatch: computeEnabled ? ('cloud_run' as const) : ('disabled' as const),
       async startEncode(input: {
         jobId: string;
         attemptId: string;

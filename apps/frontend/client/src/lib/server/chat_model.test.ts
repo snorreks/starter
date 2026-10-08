@@ -54,11 +54,11 @@ describe('the echo model', () => {
   test('the chunks concatenate to a real answer derived from the prompt', async () => {
     const model = createEchoChatModel();
 
-    const text = (await collect(model.generate('what is D1?', new AbortController().signal))).join(
-      '',
-    );
+    const text = (
+      await collect(model.generate('what is Postgres?', new AbortController().signal))
+    ).join('');
 
-    expect(text).toContain('what is D1?');
+    expect(text).toContain('what is Postgres?');
   });
 
   test('honours an explicit chunk size', async () => {

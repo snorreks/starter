@@ -3,9 +3,9 @@
 // What this file tests is the forwarding, not the parsing: `parse` belongs to SvelteKit,
 // and re-implementing it here would only test the copy.
 //
-// The real header — Better Auth 1.7.6's
+// The real header — Supabase Auth 1.7.6's
 //
-//   better-auth.session_token=<token>; Max-Age=604800; Path=/; HttpOnly; Secure; SameSite=Lax
+//   Supabase Auth.session_token=<token>; Max-Age=604800; Path=/; HttpOnly; Secure; SameSite=Lax
 //
 // — is exercised end to end by `apps/e2e/tests/auth.spec.ts`, in a browser with
 // scripting disabled, which signs in for real and asserts the session is then usable. A
@@ -72,19 +72,19 @@ const headersOf = (...setCookies: string[]): Headers => {
   return headers;
 };
 
-describe('moving Better Auth cookies onto an action response', () => {
+describe('moving Supabase Auth cookies onto an action response', () => {
   test('a parsed header is applied under its own name and attributes', () => {
     const { sink, applied } = stub();
 
     const count = applySetCookies(
       sink,
       headersOf(
-        'better-auth.session_token=token-value; Max-Age=604800; Path=/; HttpOnly; SameSite=Lax',
+        'Supabase Auth.session_token=token-value; Max-Age=604800; Path=/; HttpOnly; SameSite=Lax',
       ),
     );
 
     expect(count).toBe(1);
-    expect(applied[0]?.name).toBe('better-auth.session_token');
+    expect(applied[0]?.name).toBe('Supabase Auth.session_token');
     expect(applied[0]?.value).toBe('token-value');
     expect(applied[0]?.options).toEqual({
       maxAge: 604800,
@@ -99,7 +99,7 @@ describe('moving Better Auth cookies onto an action response', () => {
 
     const count = applySetCookies(
       sink,
-      headersOf('better-auth.session_token=one; Path=/', 'better-auth.state=two; Path=/'),
+      headersOf('Supabase Auth.session_token=one; Path=/', 'Supabase Auth.state=two; Path=/'),
     );
 
     // A sign-in that clears a state cookie has to clear it; leaving the old one behind is
@@ -107,8 +107,8 @@ describe('moving Better Auth cookies onto an action response', () => {
     // instead of `getSetCookie()` would apply one comma-joined cookie here.
     expect(count).toBe(2);
     expect(applied.map((entry) => entry.name)).toEqual([
-      'better-auth.session_token',
-      'better-auth.state',
+      'Supabase Auth.session_token',
+      'Supabase Auth.state',
     ]);
   });
 
@@ -118,7 +118,7 @@ describe('moving Better Auth cookies onto an action response', () => {
     // The assertion that matters: whatever `parse` produced is what `set` receives. A
     // second `encodeURIComponent` here is what turned `%3D` into `%253D` and produced a
     // session cookie that authenticated nobody.
-    applySetCookies(sink, headersOf('better-auth.session_token=a%3D; Path=/'));
+    applySetCookies(sink, headersOf('Supabase Auth.session_token=a%3D; Path=/'));
 
     expect(applied[0]?.value).toBe('a%3D');
   });
@@ -133,7 +133,7 @@ describe('moving Better Auth cookies onto an action response', () => {
   test('an empty value is a deletion and is applied, not skipped', () => {
     const { sink, applied } = stub();
 
-    const count = applySetCookies(sink, headersOf('better-auth.state=; Max-Age=0; Path=/'));
+    const count = applySetCookies(sink, headersOf('Supabase Auth.state=; Max-Age=0; Path=/'));
 
     // `name=` with nothing after it clears a cookie. Skipping it would leave a stale
     // value in the browser that the next request still carries.

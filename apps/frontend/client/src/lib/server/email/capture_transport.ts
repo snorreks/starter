@@ -14,13 +14,13 @@
 //      finds a way to request one.
 //   2. **Isolated per run.** Messages live under an inbox id supplied by the
 //      caller, which is the harness's `TEST_RUN_ID`. Two runs against one local
-//      D1 see different inboxes, so a stale message from a previous run cannot
+//      Postgres see different inboxes, so a stale message from a previous run cannot
 //      make today's verification test pass.
 //   3. **Never logged.** A verification link is a credential. Nothing in this
 //      file writes to a logger, and the read endpoint returns the token only to a
 //      local caller.
 //
-// Memory, not D1, on purpose: an inbox is a debugging aid for the current run.
+// Memory, not Postgres, on purpose: an inbox is a debugging aid for the current run.
 // Persisting tokens would put single-use credentials at rest in a database that
 // outlives the run, which is strictly worse than losing them.
 

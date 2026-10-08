@@ -1,40 +1,14 @@
 import type { Conversation, ConversationCreate, Message } from '@starter/schemas/chat';
 import { createId } from '@starter/utils';
-import { type ChatService, createChatService } from './chat_service.ts';
+import type { ChatService } from './chat_service.ts';
 import type { ApplicationServices } from './supabase_context.ts';
 
-type AdmissionResult =
-  | { outcome: 'running'; assistantMessageId: string }
-  | { outcome: 'conflict' }
-  | { outcome: 'admitted'; userMessage: Message; assistantMessageId: string }
-  | { outcome: 'completed'; userMessage: Message; assistantMessage: Message };
+export type RequestChatService = ChatService;
 
-export type RequestChatService = Omit<ChatService, 'appendUserMessage'> & {
-  appendUserMessage(
-    ...args: Parameters<ChatService['appendUserMessage']>
-  ): Promise<Message | AdmissionResult | null>;
-  failGeneration(
-    ownerId: string,
-    conversationId: string,
-    clientId: string,
-    state: 'failed' | 'cancelled',
-  ): Promise<void>;
-};
-
-/** Select the complete chat implementation from this request's composition root. */
+/** Return the chat adapter composed for this verified Supabase request. */
 export const createRequestChatService = (locals: {
-  context?: {
-    backendProfile: 'legacy' | 'supabase';
-    user: { id: string } | null;
-    services: ApplicationServices | null;
-  };
-  container: { db: Parameters<typeof createChatService>[0] };
+  context: { user: { id: string } | null; services: ApplicationServices | null };
 }): RequestChatService => {
-  if (locals.context?.backendProfile !== 'supabase') {
-    return Object.assign(createChatService(locals.container.db), {
-      failGeneration: async () => {},
-    });
-  }
   const identity = locals.context.services?.identity;
   const repository = locals.context.services?.chat;
   if (!identity || !repository || identity.user.id !== locals.context.user?.id) {

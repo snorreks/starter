@@ -104,7 +104,7 @@ describe('checkBundle', () => {
 
   test('server code in a client chunk is reported, and the file is named', () => {
     for (const marker of [
-      'BETTER_AUTH_SECRET',
+      'SUPABASE_SERVICE_ROLE_KEY',
       'cloudflare:workers',
       'notes_owner_id_idx',
       'device_codes',
@@ -131,7 +131,7 @@ describe('checkBundle', () => {
 
   test('the session shape the browser parses is not mistaken for a leak', () => {
     // `SessionUserSchema` carries `emailVerified`, which is also a property name in
-    // Better Auth's schema. A marker list that fires on the browser's own session shape
+    // Supabase Auth's schema. A marker list that fires on the browser's own session shape
     // fails a clean build, and the fix people reach for is deleting the marker — which
     // takes the real check with it. The identifiers that only `@starter/database` has
     // carry that weight instead; this pins the collision that was actually hit.
@@ -169,7 +169,7 @@ describe('checkBundle', () => {
       {
         worker:
           'import { env } from "cloudflare:workers";\nimport { drizzle } from "drizzle-orm/d1";\n' +
-          'const s = "BETTER_AUTH_SECRET";\nexport default { fetch() { return new Response(s + !!drizzle + !!env); } };\n',
+          'const s = "SUPABASE_SERVICE_ROLE_KEY";\nexport default { fetch() { return new Response(s + !!drizzle + !!env); } };\n',
       },
     );
     withDir(dir, () => {
