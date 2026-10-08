@@ -46,7 +46,7 @@ const LANDING_PAGE = join(CLIENT_DIR_RELATIVE, 'src/routes/+page.svelte');
 /**
  * A server module that a browser component must not reach.
  *
- * `getContainer` composes the D1 handle and the Better Auth instance. It is the most
+ * `getContainer` composes the Postgres handle and the Supabase Auth instance. It is the most
  * sensitive module in the application, which makes it the right subject: if the build
  * tolerates a component importing *this*, it tolerates anything.
  */

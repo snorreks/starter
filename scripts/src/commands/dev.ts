@@ -18,7 +18,7 @@ const USAGE = [
   'Runs the application on PORT (default 5173) and captures its log stream to',
   '.wrangler/logs/app.ndjson inside this checkout.',
   '',
-  'One process serves the pages, the assets and /api/*. The Worker bindings — D1',
+  'One process serves the pages, the assets and /api/*. The Worker bindings,',
   'included — come from apps/frontend/client/wrangler.jsonc, so the local API is',
   'the same code path production uses, with no proxy in between.',
   '',

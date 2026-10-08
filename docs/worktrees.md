@@ -69,7 +69,7 @@ fixture present, then verifies its bytes are unchanged. The local project identi
 worktree and run. Startup errors, cancellation and teardown errors remain failures
 with ownership evidence preserved for diagnosis.
 
-Visual capture and review currently support the legacy backend only. The suite has
+Visual capture and review use the sole Supabase application backend. The suite has
 no deterministic Supabase visual fixture set, so an unsupported backend is refused
 before a browser starts. Supabase Worker and browser E2E have their own real local
 Auth/Postgres/Mailpit harness. Its email verification is fetched in Node request

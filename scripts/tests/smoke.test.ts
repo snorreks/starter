@@ -31,6 +31,7 @@ import {
   PROJECT_NAME,
   removeHeavyExamples,
   runTemplateSmoke,
+  templateStepEnvironment,
 } from '../src/smoke/template_smoke.ts';
 
 /**
@@ -164,6 +165,15 @@ describe('the rehearsal cannot inherit this machine', () => {
       // directory into /tmp.
       rmSync(dirname(report.dir), { recursive: true, force: true });
     }
+  });
+
+  test('the rehearsal keeps rootless container storage outside its disposable HOME', () => {
+    const env = templateStepEnvironment('/tmp/smoke/copy', {
+      HOME: '/home/example',
+      PATH: '/usr/bin',
+    });
+    expect(env.HOME).toBe('/tmp/smoke/smoke-home');
+    expect(env.XDG_DATA_HOME).toBe('/home/example/.local/share');
   });
 
   test('removal reports what it actually deleted, and an empty tree reports nothing', () => {

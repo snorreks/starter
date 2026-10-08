@@ -2,7 +2,7 @@
 //
 // Where a developer's real resource ids live.
 //
-// The problem this solves: `deploy:configure --provision` created a D1 database
+// The problem this solves: `deploy:configure --provision` created a database
 // and wrote its id into `wrangler.jsonc`. That is one of two files the tooling
 // reads, so provisioning could never complete — `deploy:check` and `db:migrate`
 // read `DEPLOYMENT_CONFIG` in `app_registry.ts`, which stayed `null` forever. The
@@ -55,7 +55,6 @@ export const LOCAL_DEPLOYMENT_FILE = '.starter/deployment.local.json';
 
 export interface DeploymentValues {
   workerName: string | null;
-  d1DatabaseId: string | null;
   r2BucketNames: { uploads: string | null };
   customDomain: string | null;
   accountId: string | null;
@@ -156,7 +155,6 @@ export type LocalDeploymentValues = Omit<
 
 const NULL_VALUES: DeploymentValues = {
   workerName: null,
-  d1DatabaseId: null,
   r2BucketNames: { uploads: null },
   customDomain: null,
   accountId: null,
@@ -215,9 +213,6 @@ const readLocalFile = (root: string): Partial<DeploymentValues> => {
 
   if (raw.workerName !== undefined) {
     out.workerName = usable(raw.workerName);
-  }
-  if (raw.d1DatabaseId !== undefined) {
-    out.d1DatabaseId = usable(raw.d1DatabaseId);
   }
   if (r2 !== undefined) {
     out.r2BucketNames = { uploads: usable(r2.uploads) ?? null };
@@ -287,7 +282,6 @@ export const resolveDeploymentValues = (
   // Defaults, with the committed module as the floor.
   const merged: DeploymentValues = {
     workerName: DEPLOYMENT_CONFIG.workerName,
-    d1DatabaseId: DEPLOYMENT_CONFIG.d1DatabaseId,
     r2BucketNames: { ...NULL_VALUES.r2BucketNames, ...DEPLOYMENT_CONFIG.r2BucketNames },
     customDomain: DEPLOYMENT_CONFIG.customDomain,
     accountId: DEPLOYMENT_CONFIG.accountId,
@@ -297,9 +291,6 @@ export const resolveDeploymentValues = (
   // Layer 2: the gitignored local file.
   if (local.workerName !== undefined) {
     merged.workerName = local.workerName;
-  }
-  if (local.d1DatabaseId !== undefined) {
-    merged.d1DatabaseId = local.d1DatabaseId;
   }
   if (local.r2BucketNames !== undefined) {
     merged.r2BucketNames = { ...merged.r2BucketNames, ...local.r2BucketNames };
@@ -318,7 +309,7 @@ export const resolveDeploymentValues = (
   //
   // These populate the *single set* as well as `injected`, and deliberately are not
   // copied into every environment entry. Copying them was a live
-  // production-safety defect: a `CLOUDFLARE_D1_DATABASE_ID` present in both
+  // production-safety defect: a `legacy D1 identifier` present in both
   // `staging` and `production` means the two environments are the same database,
   // and a staging migration is then a production migration. The values describe
   // *one* environment — the one being deployed — and a set that described all of
@@ -385,17 +376,6 @@ export const resolveDeploymentValues = (
 
   // Kept so a report can name the single field whose layer is not per-environment:
   // the account, which every environment shares.
-  const workerFromEnv = injected.workerName;
-  if (workerFromEnv !== null && workerFromEnv !== undefined) {
-    merged.workerName = workerFromEnv;
-  }
-  if (injected.d1DatabaseId !== undefined) {
-    merged.d1DatabaseId = injected.d1DatabaseId;
-  }
-  if (injected.origin !== undefined) {
-    merged.customDomain = injected.origin;
-  }
-
   if (Object.keys(injected).length > 0) {
     merged.injected = injected;
     const named = env[DEPLOY_ENVIRONMENT_VARIABLE];
@@ -437,13 +417,12 @@ export type ResolutionLayer = 'environment' | 'local-file' | 'default';
 // only to satisfy the index type. `usable('')` is `null`, so the unreachable branch
 // reads as "not set" — the same answer the default path gives.
 export const describeResolution = (
-  field: 'accountId' | 'd1DatabaseId' | 'workerName' | 'origin',
+  field: 'accountId' | 'workerName' | 'origin',
   env: NodeJS.ProcessEnv = process.env,
   root: string = REPO_ROOT,
 ): ResolutionLayer => {
   const FROM_ENV: Record<typeof field, NodeJS.ProcessEnv[string]> = {
     accountId: 'CLOUDFLARE_ACCOUNT_ID',
-    d1DatabaseId: 'CLOUDFLARE_D1_DATABASE_ID',
     workerName: 'CLOUDFLARE_WORKER_NAME',
     origin: 'CLOUDFLARE_PUBLIC_ORIGIN',
   };
@@ -542,7 +521,6 @@ export const topologyFor = (
   // configuration would quietly grow a container it cannot build.
   const fallback = nullTargets();
   fallback.workerName = values.workerName;
-  fallback.d1DatabaseId = values.d1DatabaseId;
   fallback.origin = values.customDomain;
   fallback.jobsProfile = values.jobsProfile;
 

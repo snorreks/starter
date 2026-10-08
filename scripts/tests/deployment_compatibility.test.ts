@@ -23,6 +23,7 @@ import {
 } from '../src/deploy/compatibility.ts';
 import type { ResolvedTarget } from '../src/deploy/target.ts';
 import { REPO_ROOT } from '../src/shared/paths.ts';
+import { testTarget } from './fixtures/deployment_target.ts';
 
 const computeTarget = (): ResolvedTarget => encodeTarget();
 
@@ -37,34 +38,29 @@ const ROOT_SCRIPTS: string[] = Object.keys(
   ).scripts ?? {},
 );
 
-const encodeTarget = (overrides: Partial<ResolvedTarget['compute']> = {}): ResolvedTarget => ({
-  deploymentProfile: 'legacy',
-  environment: 'staging',
-  project: 'starter',
-  accountId: 'a'.repeat(32),
-  workerName: 'starter-staging',
-  d1DatabaseId: 'db-staging',
-  origin: 'https://staging.example',
-  wranglerConfig: 'apps/frontend/client/wrangler.jsonc',
-  jobsWranglerConfig: 'apps/backend/jobs/wrangler.jsonc',
-  compute: {
-    enabled: true,
-    profile: 'encode',
-    jobsWorkerName: 'starter-jobs-staging',
-    mediaBucketName: 'starter-media-staging',
-    encodeWorkflowName: 'starter-encode-staging',
-    maintenanceWorkflowName: 'starter-maintenance-staging',
-    containerImage: '../media/Dockerfile',
-    imageProtocol: PROCESSOR_PROTOCOL_ID,
-    containerProfile: 'basic',
-    ...overrides,
-  },
-  mailFrom: 'noreply@staging.example',
-  nativeApiOrigin: null,
-  supabase: null,
-  requiredSecretNames: ['BETTER_AUTH_SECRET', 'RESEND_API_KEY'],
-  requiredVarNames: ['DEPLOYMENT_ENV', 'BETTER_AUTH_URL', 'MAIL_FROM', 'RELEASE'],
-});
+const encodeTarget = (overrides: Partial<ResolvedTarget['compute']> = {}): ResolvedTarget => {
+  const base = testTarget();
+  return testTarget({
+    compute: {
+      ...base.compute,
+      enabled: true,
+      profile: 'encode',
+      jobsWorkerName: 'starter-jobs-staging',
+      mediaBucketName: 'starter-media-staging',
+      encodeWorkflowName: 'starter-encode-staging',
+      maintenanceWorkflowName: 'starter-maintenance-staging',
+      containerImage: '../media/Dockerfile',
+      imageProtocol: PROCESSOR_PROTOCOL_ID,
+      containerProfile: 'basic',
+      ...overrides,
+    },
+    requiredSecretNames: [
+      'SUPABASE_SERVICE_ROLE_KEY',
+      'RESEND_API_KEY',
+      'GOOGLE_DISPATCHER_CREDENTIAL',
+    ],
+  });
+};
 
 describe('a coherent encode environment is accepted', () => {
   test('every identity present, a known profile, a matching protocol', () => {

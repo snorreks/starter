@@ -17,7 +17,7 @@
 //      report;
 //   3. installs with `--frozen-lockfile`;
 //   4. runs `setup`, which must succeed with no credential of any kind;
-//   5. migrates and seeds a local D1;
+//   5. proves fresh local Supabase setup and database behavior;
 //   6. builds;
 //   7. runs the documented entrypoints that do not need a browser.
 //
@@ -331,7 +331,7 @@ const runStep = (step: string, cwd: string, args: string[]): StepResult => {
     // A rehearsal that inherits the maintainer's environment is not a rehearsal.
     // `HOME` goes to a directory inside the temporary checkout, so anything that
     // reaches for `~/.cache/ms-playwright` or `~/.bun` finds nothing.
-    env: stepEnv(cwd),
+    env: templateStepEnvironment(cwd),
   });
 
   const output = `${result.stdout ?? ''}${result.stderr ?? ''}`;
@@ -364,9 +364,16 @@ const runStep = (step: string, cwd: string, args: string[]): StepResult => {
  */
 const smokeHome = (checkout: string): string => join(dirname(checkout), 'smoke-home');
 
-const stepEnv = (checkout: string): NodeJS.ProcessEnv => ({
-  PATH: process.env.PATH ?? '',
+export const templateStepEnvironment = (
+  checkout: string,
+  host: NodeJS.ProcessEnv = process.env,
+): NodeJS.ProcessEnv => ({
+  PATH: host.PATH ?? '',
   HOME: smokeHome(checkout),
+  // Keep browser caches isolated but let the required rootless container engine
+  // use its normal image store outside the temporary tree. Podman can create
+  // id-mapped files there that the host cannot remove during smoke cleanup.
+  XDG_DATA_HOME: host.XDG_DATA_HOME ?? join(host.HOME ?? smokeHome(checkout), '.local', 'share'),
   STARTER_SKIP_SETUP: '1',
   CI: '1',
 });
@@ -377,7 +384,7 @@ const probeHome = (cwd: string): string | null => {
     cwd,
     encoding: 'utf8',
     timeout: STEP_TIMEOUT_MS,
-    env: stepEnv(cwd),
+    env: templateStepEnvironment(cwd),
   });
 
   const home = (result.stdout ?? '').trim();
@@ -390,19 +397,16 @@ export interface SmokeOptions {
   /** Keep the temporary checkout after the run. */
   keep?: boolean;
   /**
-   * Remove the native and compute examples from the copy before rehearsing.
+   * Remove the native client and compute Worker examples from the copy before rehearsing.
    *
    * The rehearsal then asks the question a downstream project actually asks: does
    * the *web* half still install, build and pass its own guards once the native app
    * and the Rust processor are gone? The starter keeps both; the copy answers for
    * the version that keeps neither.
    *
-   * What this deliberately does NOT remove: `apps/backend/jobs` and
-   * `packages/backend/jobs`. The web Worker imports the jobs *package* for its
-   * `/api/jobs` routes, so deleting it is a guarded feature removal across the web
-   * app rather than a rehearsal. That work is specified in docs/compute.md and is
-   * NOT RUN here; the compute lane's independence from Docker and credentials is
-   * proven by `bun run setup:doctor --profile web` returning 0 with no engine.
+   * The shared jobs package stays because web job routes import its portable
+   * contracts. The deployable jobs Worker and media processor are removed from the
+   * disposable copy, while the web app and shared Supabase database remain.
    */
   withoutHeavyExamples?: boolean;
   /**
@@ -448,6 +452,7 @@ export const HEAVY_EXAMPLES = {
   /** Directories removed wholesale. */
   directories: [
     'apps/frontend/native',
+    'apps/backend/jobs',
     // The Rust/FFmpeg processor. Nothing in the web app imports it: the web Worker
     // reaches it only over HTTP through the jobs Worker, so deleting the crate
     // removes a container image and a Cargo workspace member without removing a
@@ -465,16 +470,23 @@ export const HEAVY_EXAMPLES = {
    * copy that has an example deleted but the workspace map left intact, which reads
    * as "the template is broken" rather than as "the workspace map still names it".
    */
-  moonProjects: ['media', 'native'],
+  moonProjects: ['jobs-worker', 'media', 'native'],
   /** Root scripts that only make sense with the native app present. */
-  packageScripts: ['native:doctor', 'native:dev', 'native:build', 'native:android', 'native:ios'],
+  packageScripts: [
+    'native:doctor',
+    'native:dev',
+    'native:build',
+    'native:android',
+    'native:ios',
+    'test:compute',
+  ],
   /**
    * Biome override keys naming the removed trees.
    *
    * Edited by key rather than by rewriting the config file, because `biome.json`
    * is JSON and a regenerated file would lose the comments a reviewer reads.
    */
-  biomeOverrideKeys: ['apps/frontend/native', 'apps/backend/media'],
+  biomeOverrideKeys: ['apps/frontend/native', 'apps/backend/jobs', 'apps/backend/media'],
 } as const;
 
 /**
@@ -722,7 +734,7 @@ export const runTemplateSmoke = (options: SmokeOptions = {}): SmokeReport => {
 
     // Ask a child what `HOME` it sees, rather than trusting that the directory was
     // created and the env block was correct. Both halves of that are checked by the
-    // same `stepEnv` the real steps use.
+    // same `templateStepEnvironment` the real steps use.
     const reportedHome = probeHome(checkout);
 
     // The documented order. `install` before everything because nothing resolves
@@ -747,8 +759,7 @@ export const runTemplateSmoke = (options: SmokeOptions = {}): SmokeReport => {
     const plan: string[][] = [
       ...installSteps,
       ['run', 'setup'],
-      ['run', 'db:migrate'],
-      ['run', 'db:seed'],
+      ['run', 'test:database'],
       ['run', 'build'],
       ['run', 'check:bundle'],
       ['run', 'typecheck'],

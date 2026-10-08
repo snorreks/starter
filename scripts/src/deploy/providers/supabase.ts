@@ -1,6 +1,6 @@
-import { resolveWorkspaceBin } from '../../shared/tools.ts';
-import { runBoundedSync } from '../../shared/run_bounded.ts';
 import { REPO_ROOT } from '../../shared/paths.ts';
+import { runBoundedSync } from '../../shared/run_bounded.ts';
+import { resolveWorkspaceBin } from '../../shared/tools.ts';
 import type { ResolvedTarget } from '../target.ts';
 
 const MANAGEMENT_API = 'https://api.supabase.com/v1';
@@ -13,9 +13,6 @@ const managementRequest = async (options: {
   method: 'GET' | 'PATCH';
   fetcher?: SupabaseRequest;
 }): Promise<Record<string, unknown>> => {
-  if (options.target.deploymentProfile !== 'supabase' || options.target.supabase === null) {
-    throw new Error('Supabase Management API requires the resolved Supabase target.');
-  }
   if (!options.accessToken || options.accessToken.length > 8192) {
     throw new Error('Supabase access token is missing or invalid.');
   }
@@ -101,9 +98,6 @@ export const supabaseMigrationArgs = (
   target: ResolvedTarget,
   operation: 'list' | 'push',
 ): string[] => {
-  if (target.deploymentProfile !== 'supabase' || target.supabase === null) {
-    throw new Error('Supabase migration requires a resolved Supabase deployment target.');
-  }
   const identity = ['--project-ref', target.supabase.projectRef];
   return operation === 'list'
     ? ['migration', 'list', ...identity, '--workdir', REPO_ROOT]

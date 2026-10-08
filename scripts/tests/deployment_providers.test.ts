@@ -18,12 +18,10 @@ import {
 import type { ResolvedTarget } from '../src/deploy/target.ts';
 
 const target: ResolvedTarget = {
-  deploymentProfile: 'supabase',
   environment: 'staging',
   project: 'starter',
   accountId: 'a'.repeat(32),
   workerName: 'web-staging',
-  d1DatabaseId: '',
   origin: 'https://staging.example',
   wranglerConfig: 'apps/frontend/client/wrangler.jsonc',
   jobsWranglerConfig: 'apps/backend/jobs/wrangler.jsonc',

@@ -64,7 +64,7 @@ export const describeCredential = (env: NodeJS.ProcessEnv = process.env): Creden
     remedy:
       `  export ${CREDENTIAL_ENV_VAR}=<token>   # never on a command line\n` +
       '  Create one at https://dash.cloudflare.com → My Profile → API Tokens, scoped to\n' +
-      '  the account and the Worker/D1 edit permissions this deployment needs.\n\n' +
+      '  the account and the Worker/Postgres edit permissions this deployment needs.\n\n' +
       '  `wrangler login` does not work here by design: this tooling does not read the\n' +
       '  OAuth credentials wrangler writes to a per-user directory, because behaviour that\n' +
       '  depends on hidden machine state cannot be reviewed and does not exist in CI.',

@@ -3,7 +3,6 @@
 // Write this project's Cloudflare configuration.
 //
 //   bun run deploy:configure                 # interactive: asks for names
-//   bun run deploy:configure -- --provision  # create the D1 database
 //   bun run deploy:configure -- --dry-run    # show what would change
 //
 // A template cannot ship resource ids: they belong to whoever instantiates it.
@@ -14,11 +13,10 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import type { DeploymentEnvironment } from '@starter/schemas';
 import { PROCESSOR_PROTOCOL_ID } from '@starter/schemas/jobs';
-import { captureWrangler, hasCloudflareCredential, REPO_ROOT } from '../cloudflare/wrangler.ts';
-import { DEPLOYMENT_CONFIG, JOBS_PROFILES } from '../registry/app_registry.ts';
+import { hasCloudflareCredential, REPO_ROOT } from '../cloudflare/wrangler.ts';
+import { JOBS_PROFILES } from '../registry/app_registry.ts';
 import {
   type DeploymentValues,
-  describeResolution,
   LOCAL_DEPLOYMENT_FILE,
   type LocalDeploymentValues,
   localConfigProblem,
@@ -46,80 +44,6 @@ const WRANGLER_CONFIG = `${CLIENT_DIR_RELATIVE}/wrangler.jsonc`;
 
 /** The same file, resolved against a caller-supplied root. */
 const wranglerConfigAt = (root: string): string => join(root, WRANGLER_CONFIG);
-
-/**
- * The `DB` binding's `database_id` for `environment`, read from config TEXT.
- *
- * Split out of {@link wranglerDatabaseId} so the write path can ask the same question
- * about a candidate file it has not written yet. Two definitions of "what Wrangler
- * would resolve here" would be one more place for the writer and the reader to
- * disagree, which is the failure this module exists to prevent.
- */
-const databaseIdIn = (environment: DeploymentEnvironment, text: string): string | null => {
-  let doc: Record<string, unknown>;
-  try {
-    doc = JSON.parse(stripJsonComments(text)) as Record<string, unknown>;
-  } catch {
-    // A config that does not parse is refused elsewhere, by `inspectConfig`. Here
-    // it reads as "not configured", which is the safe direction: the caller
-    // compares against the id it resolved and refuses on a mismatch.
-    return null;
-  }
-
-  const sections: unknown[] = [doc];
-  const envBlock = doc.env;
-  if (typeof envBlock === 'object' && envBlock !== null) {
-    const scoped = (envBlock as Record<string, unknown>)[environment];
-    if (typeof scoped === 'object' && scoped !== null) {
-      sections.unshift(scoped);
-    }
-  }
-
-  for (const section of sections) {
-    const bindings = (section as Record<string, unknown>).d1_databases;
-    if (!Array.isArray(bindings)) {
-      continue;
-    }
-    for (const binding of bindings) {
-      if (binding === null || typeof binding !== 'object') {
-        continue;
-      }
-      if ((binding as Record<string, unknown>).binding !== 'DB') {
-        continue;
-      }
-      const found = (binding as Record<string, unknown>).database_id;
-      if (typeof found === 'string' && found.trim() !== '') {
-        return found.trim();
-      }
-    }
-  }
-
-  return null;
-};
-
-/**
- * The gitignored overlay, read for one environment.
- *
- * `null` when the config carries no `env.<environment>` block *and* no top-level
- * `d1_databases`, and the resolved string when it does. A `wrangler.jsonc` with a
- * single top-level entry answers for every `--env`, which is exactly the shape
- * this repository warns about: two environments, one database, and no error.
- *
- * Exported so `migrationStep` can compare what the tooling resolved against what
- * Wrangler would reach. Both commands name the binding `DB`, so the argv alone
- * cannot tell the two databases apart.
- */
-export const wranglerDatabaseId = (
-  environment: DeploymentEnvironment,
-  root: string = REPO_ROOT,
-): string | null => {
-  const path = wranglerConfigAt(root);
-  if (!existsSync(path)) {
-    return null;
-  }
-
-  return databaseIdIn(environment, readFileSync(path, 'utf8'));
-};
 
 export interface ConfigCheck {
   ok: boolean;
@@ -176,10 +100,6 @@ export const inspectConfig = (
     const resolved = resolveTarget(environment, { values });
     if (!resolved.ok) {
       problems.push(`${environment}: ${resolved.reason}`);
-      continue;
-    }
-    if (describeResolution('d1DatabaseId') === 'local-file') {
-      notices.push(`D1 database id read from ${LOCAL_DEPLOYMENT_FILE}.`);
     }
   }
 
@@ -233,121 +153,6 @@ export const writeLocalValues = (
 
   mkdirSync(dirname(path), { recursive: true });
   writeFileSync(path, `${JSON.stringify(next, null, 2)}\n`, 'utf8');
-};
-
-/**
- * Create the D1 database and record its id in both places that matter.
- *
- * It used to write only `wrangler.jsonc`, which left `deploy:check` and
- * `db:migrate` reading `null` from the registry forever — so provisioning could
- * never complete, and the documented remedy ("add the id by hand") pointed at a
- * module the `registry-valid` guard rejects. It now writes the gitignored local
- * file as well, which is what the tooling actually reads.
- */
-/**
- * Create the D1 database and record its id in both places that matter.
- *
- * It used to write only `wrangler.jsonc`, which left `deploy:check` and
- * `db:migrate` reading `null` from the registry forever — so provisioning could
- * never complete, and the documented remedy ("add the id by hand") pointed at a
- * module the `registry-valid` guard rejects. It now writes the gitignored local
- * file as well, which is what the tooling actually reads.
- *
- * `create` and `write` are injectable so the whole flow can be driven without a
- * credential. That is not a testing convenience: with a hardcoded
- * `captureWrangler`, this function had *no* test at all, which is precisely how
- * the original bug survived — the write was never executed by anything.
- */
-export const provisionDatabase = (
-  options: {
-    create?: () => { ok: boolean; stdout: string; stderr: string };
-    write?: (current: LocalDeploymentValues) => LocalDeploymentValues;
-    root?: string;
-    hasCredential?: () => boolean;
-    /** Which environment's topology this database belongs to. */
-    environment?: DeploymentEnvironment;
-  } = {},
-): number => {
-  const root = options.root ?? REPO_ROOT;
-  const credentialed = options.hasCredential ?? hasCloudflareCredential;
-  const environment = options.environment ?? 'staging';
-  const create =
-    options.create ??
-    ((): { ok: boolean; stdout: string; stderr: string } =>
-      // Named from the environment, so the two databases are visibly distinct at
-      // the provider. The previous literal was `starter-api` — a name for an
-      // application this repository deleted in PR B, applied to whichever
-      // environment happened to run the command.
-      captureWrangler(['d1', 'create', `${DEPLOYMENT_CONFIG.projectName}-${environment}-db`]));
-
-  if (!credentialed()) {
-    process.stderr.write('No Cloudflare credential. Nothing has been changed.\n');
-    return 1;
-  }
-
-  const created = create();
-  if (!created.ok) {
-    process.stderr.write(`Failed to create the D1 database:\n${created.stderr}\n`);
-    return 1;
-  }
-
-  // Wrangler prints the id on its own line; take the first UUID-shaped token.
-  const id = /\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/i.exec(
-    created.stdout,
-  )?.[0];
-
-  if (id === undefined) {
-    process.stderr.write(
-      'The database was created but its id could not be parsed from the output.\n' +
-        `Nothing was written. Add it to ${LOCAL_DEPLOYMENT_FILE} by hand under\n` +
-        `  "environments": { "${environment}": { "d1DatabaseId": "<id>" } }.\n`,
-    );
-    return 1;
-  }
-
-  // The account id is knowable only with a credential, and every account-scoped
-  // endpoint needs it — the Observability log query being the one that surfaced
-  // this. Read it rather than asking, so `--provision` leaves a configuration that
-  // can actually query logs.
-  const account = /\b[0-9a-f]{32}\b/i.exec(created.stdout)?.[0] ?? null;
-
-  // Only the gitignored target overlay receives live resource IDs. Remote
-  // operations derive their Wrangler config from it; local dev remains neutral.
-
-  // Per environment, not top-level. A single `d1DatabaseId` is the value that let
-  // staging and production share one database: `--env staging` and `--env
-  // production` both read it, so a staging release reached live data.
-  // `resolveTarget` now refuses that configuration outright, but the writer has to
-  // stop producing it.
-  const write =
-    options.write ??
-    ((current: LocalDeploymentValues): LocalDeploymentValues => {
-      const environments = { ...(current.environments ?? {}) };
-      environments[environment] = {
-        ...(environments[environment] ?? {}),
-        d1DatabaseId: id,
-      };
-      return {
-        ...current,
-        environments,
-        accountId: account ?? current.accountId,
-      };
-    });
-
-  writeLocalValues(write, root);
-
-  process.stdout.write(
-    `D1 database id for ${environment} written to ${LOCAL_DEPLOYMENT_FILE}: ${id}\n`,
-  );
-  if (account !== null) {
-    process.stdout.write(`Cloudflare account id recorded: ${account}\n`);
-  } else {
-    process.stdout.write(
-      `The account id was not in wrangler's output. Set it in ${LOCAL_DEPLOYMENT_FILE}\n` +
-        '  or export CLOUDFLARE_ACCOUNT_ID; the log query endpoint is account-scoped.\n',
-    );
-  }
-  return 0;
 };
 
 /**
@@ -640,7 +445,7 @@ export const setConfig = (args: readonly string[], root: string = REPO_ROOT): nu
   if (origin !== undefined && !/^https:\/\/[^/?#]+$/.test(origin)) {
     process.stderr.write(
       `--origin "${origin}" is not an absolute https URL with no path, query or fragment.\n` +
-        '  Nothing has been changed. It is the base URL Better Auth issues cookies for\n' +
+        '  Nothing has been changed. It is the base URL Supabase Auth issues cookies for\n' +
         '  and the address verification fetches.\n',
     );
     return 2;
@@ -711,6 +516,13 @@ export const setConfig = (args: readonly string[], root: string = REPO_ROOT): nu
 };
 
 export const main = (args: readonly string[]): number => {
+  if (args.includes('--provision')) {
+    process.stderr.write(
+      'The Postgres provisioning option was removed. Use `bun run deploy:provision` for configured Cloudflare resources.\n',
+    );
+    return 2;
+  }
+
   if (args.includes('--check') || args.includes('--dry-run')) {
     const check = inspectConfig();
     process.stdout.write(`Cloudflare configuration: ${check.ok ? 'complete' : 'incomplete'}\n`);
@@ -721,30 +533,6 @@ export const main = (args: readonly string[]): number => {
       process.stdout.write(`  notice:  ${notice}\n`);
     }
     return check.ok ? 0 : 1;
-  }
-
-  if (args.includes('--provision')) {
-    // `indexOf` returns -1 when `--env` is absent, and `args[-1 + 1]` is `args[0]` —
-    // which is the string `--provision`, so the documented
-    // `bun run deploy:configure -- --provision` was rejected as an invalid
-    // environment. An absent flag is not an error here; `provisionDatabase` applies
-    // its own `staging` default, which is what an operator who named no
-    // environment means.
-    const envIndex = args.indexOf('--env');
-    const rawEnvironment = envIndex === -1 ? undefined : args[envIndex + 1];
-    if (
-      rawEnvironment !== undefined &&
-      !DEPLOYABLE_ENVIRONMENTS.includes(rawEnvironment as never)
-    ) {
-      process.stderr.write(
-        `--env must be ${DEPLOYABLE_ENVIRONMENTS.join(' or ')} (got "${rawEnvironment}").\n` +
-          '  Nothing has been created.\n',
-      );
-      return 2;
-    }
-    return provisionDatabase({
-      environment: (rawEnvironment as DeploymentEnvironment | undefined) ?? 'staging',
-    });
   }
 
   const WRITE_FLAGS = [
@@ -779,7 +567,6 @@ export const main = (args: readonly string[]): number => {
       '  bun run deploy:configure -- --account <32-hex>\n' +
       '  bun run deploy:configure -- --env staging --worker <name>\n' +
       '  bun run deploy:configure -- --env staging --origin https://<host>\n' +
-      '  bun run deploy:configure -- --env staging --provision\n' +
       '  bun run deploy:configure -- --check                # verify\n' +
       '  bun run deploy:check --env staging                # the offline plan\n',
   );

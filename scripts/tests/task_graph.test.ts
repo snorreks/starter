@@ -253,7 +253,7 @@ describe('tasks that assert against a running process are not cached', () => {
       'scripts:guard-whole-repo',
       'scripts:smoke',
       'scripts:workflows',
-      'database:db-generate',
+      'database:db-types',
     ];
 
     for (const id of mustNotCache) {

@@ -220,9 +220,9 @@ export const CAPABILITY_RULES: readonly CapabilityRule[] = [
   },
   {
     capability: 'worker-runtime',
-    root: 'better-auth',
+    root: 'Supabase Auth',
     reason:
-      'Better Auth owns sessions, password hashing and the database adapter. ' +
+      'Supabase Auth owns sessions, password hashing and the database adapter. ' +
       'It is the auth implementation, not a contract.',
   },
   {

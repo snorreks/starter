@@ -19,10 +19,17 @@ import { afterAll, describe, expect, test } from 'bun:test';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { runWrangler, setProcessRunner } from '../src/cloudflare/wrangler.ts';
-import { type ApplyResult, apply, HEALTH_PATH, renderApply, smoke } from '../src/deploy/apply.ts';
+import {
+  type ApplyResult,
+  apply as applyDeployment,
+  HEALTH_PATH,
+  renderApply,
+  smoke,
+} from '../src/deploy/apply.ts';
 import { type PreflightFinding, preflight, secretListArgv } from '../src/deploy/preflight.ts';
+import { supabaseMigrationArgs } from '../src/deploy/providers/supabase.ts';
 import type { ArtifactCheck } from '../src/deploy/release.ts';
-import type { ResolvedTarget } from '../src/deploy/target.ts';
+import { testTarget } from './fixtures/deployment_target.ts';
 
 /**
  * The readiness URL, as a literal.
@@ -54,35 +61,22 @@ afterAll(() => {
 
 const ACCOUNT = 'abcdef0123456789abcdef0123456789';
 const OTHER_ACCOUNT = '99999999999999999999999999999999';
+const target = testTarget;
 
-const target = (overrides: Partial<ResolvedTarget> = {}): ResolvedTarget => ({
-  deploymentProfile: 'legacy',
-  environment: 'staging',
-  project: 'starter',
-  accountId: ACCOUNT,
-  workerName: 'starter-staging',
-  d1DatabaseId: 'db-staging',
-  origin: 'https://starter-staging.example',
-  wranglerConfig: 'apps/frontend/client/wrangler.jsonc',
-  jobsWranglerConfig: 'apps/backend/jobs/wrangler.jsonc',
-  compute: {
-    enabled: false,
-    profile: 'disabled',
-    jobsWorkerName: null,
-    mediaBucketName: null,
-    encodeWorkflowName: null,
-    maintenanceWorkflowName: null,
-    containerImage: null,
-    imageProtocol: null,
-    containerProfile: null,
-  },
-  mailFrom: 'noreply@starter.example',
-  nativeApiOrigin: null,
-  supabase: null,
-  requiredSecretNames: ['BETTER_AUTH_SECRET', 'RESEND_API_KEY'],
-  requiredVarNames: ['DEPLOYMENT_ENV', 'BETTER_AUTH_URL', 'MAIL_FROM', 'RELEASE'],
-  ...overrides,
-});
+const apply = (options: Parameters<typeof applyDeployment>[0]): Promise<ApplyResult> =>
+  applyDeployment({
+    ...options,
+    configureSupabaseAuth: options.configureSupabaseAuth ?? (() => Promise.resolve()),
+    migrateSupabase:
+      options.migrateSupabase ??
+      ((resolved) => ({
+        code:
+          options.run?.('supabase', supabaseMigrationArgs(resolved, 'push'), {
+            cwd: 'packages/backend/database',
+          }) ?? 0,
+        stderr: '',
+      })),
+  });
 
 const artifact = (overrides: Partial<ArtifactCheck> = {}): ArtifactCheck => ({
   ok: true,
@@ -146,7 +140,7 @@ const httpRecorder = (
 /**
  * A release answering both probes correctly — the success case for verification.
  *
- * `/health/ready` is here because a Worker that is alive but whose D1 binding is
+ * `/health/ready` is here because a Worker that is alive but whose Supabase connection is
  * unusable is the exact release this pipeline exists to catch, and the fixture has
  * to model it for the success case to mean anything.
  */
@@ -161,14 +155,14 @@ const healthy = (url: string): ScriptedResponse => {
       body: {
         ok: true,
         release: { status: 'ok', release: SOURCE_SHA, environment: 'staging', deployed: true },
-        checks: [{ binding: 'DB', ok: true, detail: 'answered a trivial query' }],
+        checks: [{ binding: 'SUPABASE', ok: true, detail: 'answered a trivial query' }],
       },
     };
   }
   return { status: 404, body: { error: 'not_found', message: 'No such route.' } };
 };
 
-/** Alive and correctly identified, but the database binding does not work. */
+/** Alive and correctly identified, but its database is not ready. */
 const aliveButNotReady = (url: string): ScriptedResponse =>
   url.endsWith(READINESS_PATH)
     ? {
@@ -176,13 +170,13 @@ const aliveButNotReady = (url: string): ScriptedResponse =>
         body: {
           ok: false,
           release: { status: 'ok', release: SOURCE_SHA, environment: 'staging', deployed: true },
-          checks: [{ binding: 'DB', ok: false, detail: 'no such table: notes' }],
+          checks: [{ binding: 'SUPABASE', ok: false, detail: 'database unavailable' }],
         },
       }
     : healthy(url);
 
 describe('the apply pipeline spawns exactly the commands it prints', () => {
-  test('migrations are applied to the named database before the deploy', async () => {
+  test('Supabase migrations are applied to the named project before the deploy', async () => {
     const spawns = recorder();
     const http = httpRecorder(healthy);
 
@@ -199,7 +193,7 @@ describe('the apply pipeline spawns exactly the commands it prints', () => {
         stderr: '',
       }),
       now: () => '2026-01-01T00:00:00.000Z',
-      root: fixtureRoot('db-staging'),
+      root: fixtureRoot(),
     });
 
     expect(result.ok).toBe(true);
@@ -207,11 +201,12 @@ describe('the apply pipeline spawns exactly the commands it prints', () => {
     expect(result.record?.versionId).toBe('v1');
     expect(spawns.calls).toHaveLength(2);
 
-    // The migration names the environment and the binding, before anything deploys.
+    // The migration names the resolved project before anything deploys.
     const [migration, deploy] = spawns.calls;
-    expect(migration?.args.slice(0, 4)).toEqual(['d1', 'migrations', 'apply', 'DB']);
-    expect(migration?.args).not.toContain('--env');
-    expect(migration?.args.at(-1)).toContain('staging-web.json');
+    expect(migration?.args).toContain('db');
+    expect(migration?.args).toContain('push');
+    expect(migration?.args).toContain('--project-ref');
+    expect(migration?.args).toContain('stageprojectref00001');
 
     expect(deploy?.args.slice(0, 2)).toEqual(['deploy', '--name']);
     expect(deploy?.args).toContain('starter-staging');
@@ -234,7 +229,7 @@ describe('the apply pipeline spawns exactly the commands it prints', () => {
       run: spawns.run,
       fetch: http.fetch,
       capture: () => ({ ok: false, stdout: '', stderr: '' }),
-      root: fixtureRoot('db-staging'),
+      root: fixtureRoot(),
     });
 
     const deploy = spawns.calls[1];
@@ -254,7 +249,7 @@ describe('the apply pipeline spawns exactly the commands it prints', () => {
       run: spawns.run,
       fetch: http.fetch,
       capture: () => ({ ok: false, stdout: '', stderr: '' }),
-      root: fixtureRoot('db-staging'),
+      root: fixtureRoot(),
     });
 
     // Both probes, against the resolved target. Readiness is the one that decides
@@ -277,13 +272,12 @@ describe('the apply pipeline spawns exactly the commands it prints', () => {
       run: stage.run,
       fetch: httpRecorder(healthy).fetch,
       capture: () => ({ ok: false, stdout: '', stderr: '' }),
-      root: fixtureRoot('db-staging'),
+      root: fixtureRoot(),
     });
     await apply({
       target: target({
         environment: 'production',
         workerName: 'starter-production',
-        d1DatabaseId: 'db-production',
         origin: 'https://starter.example',
       }),
       consented: true,
@@ -293,7 +287,7 @@ describe('the apply pipeline spawns exactly the commands it prints', () => {
       capture: () => ({ ok: false, stdout: '', stderr: '' }),
       // The production fixture names the production database, or the agreement
       // check refuses before the deploy step this test is asserting on.
-      root: fixtureRoot('db-production'),
+      root: fixtureRoot(),
     });
 
     expect(stage.calls[1]?.args).toContain('starter-staging');
@@ -313,7 +307,7 @@ describe('the apply pipeline spawns exactly the commands it prints', () => {
       run: spawns.run,
       fetch: httpRecorder(healthy).fetch,
       capture: () => ({ ok: false, stdout: '', stderr: '' }),
-      root: fixtureRoot('db-staging'),
+      root: fixtureRoot(),
     });
 
     for (const call of spawns.calls) {
@@ -355,7 +349,7 @@ describe('apply refuses and stops at the first failing step', () => {
       inspect: () => artifact(),
       run: spawns.run,
       fetch: httpRecorder(healthy).fetch,
-      root: fixtureRoot('db-staging'),
+      root: fixtureRoot(),
     });
 
     expect(result.ok).toBe(false);
@@ -378,7 +372,7 @@ describe('apply refuses and stops at the first failing step', () => {
       }),
       run: spawns.run,
       fetch: httpRecorder(healthy).fetch,
-      root: fixtureRoot('db-staging'),
+      root: fixtureRoot(),
     });
 
     expect(result.ok).toBe(false);
@@ -388,33 +382,33 @@ describe('apply refuses and stops at the first failing step', () => {
   });
 
   test('a failed migration does not deploy', async () => {
-    const spawns = recorder((args) => (args[0] === 'd1' ? 1 : 0));
+    const spawns = recorder((args) => (args[0] === 'db' ? 1 : 0));
     const result = await apply({
       target: target(),
       consented: true,
       inspect: () => artifact(),
       run: spawns.run,
       fetch: httpRecorder(healthy).fetch,
-      root: fixtureRoot('db-staging'),
+      root: fixtureRoot(),
     });
 
     expect(result.ok).toBe(false);
     expect(result.stoppedAt).toBe('schema');
     expect(spawns.calls).toHaveLength(1);
-    expect(spawns.calls[0]?.args[0]).toBe('d1');
+    expect(spawns.calls[0]?.args[0]).toBe('db');
   });
 
   test('a migration failure says the schema may be partly applied and that a retry is safe', async () => {
     // Resume is a claim that has to be made while writing the message, because the
     // person reading it is deciding whether to re-run the command.
-    const spawns = recorder((args) => (args[0] === 'd1' ? 1 : 0));
+    const spawns = recorder((args) => (args[0] === 'db' ? 1 : 0));
     const result = await apply({
       target: target(),
       consented: true,
       inspect: () => artifact(),
       run: spawns.run,
       fetch: httpRecorder(healthy).fetch,
-      root: fixtureRoot('db-staging'),
+      root: fixtureRoot(),
     });
 
     const migrate = result.outcomes.find((outcome) => outcome.phase === 'schema');
@@ -425,14 +419,14 @@ describe('apply refuses and stops at the first failing step', () => {
   test('a failed deploy still ran the migration, and says a rollback is not one', async () => {
     // The state that matters: schema applied, code not deployed. A rollback of the
     // code does not roll back the schema, and the message has to say so.
-    const spawns = recorder((args) => (args[0] === 'd1' ? 0 : 1));
+    const spawns = recorder((args) => (args[0] === 'db' ? 0 : 1));
     const result = await apply({
       target: target(),
       consented: true,
       inspect: () => artifact(),
       run: spawns.run,
       fetch: httpRecorder(healthy).fetch,
-      root: fixtureRoot('db-staging'),
+      root: fixtureRoot(),
     });
 
     expect(result.ok).toBe(false);
@@ -463,7 +457,7 @@ describe('apply refuses and stops at the first failing step', () => {
           '[{"id":"dep-9","created_on":"2026-01-01T00:00:00Z","versions":[{"version_id":"v9","percentage":100}]}]',
         stderr: '',
       }),
-      root: fixtureRoot('db-staging'),
+      root: fixtureRoot(),
     });
 
     expect(result.ok).toBe(false);
@@ -489,7 +483,7 @@ describe('apply refuses and stops at the first failing step', () => {
       run: spawns.run,
       fetch: http.fetch,
       capture: () => ({ ok: false, stdout: '', stderr: '' }),
-      root: fixtureRoot('db-staging'),
+      root: fixtureRoot(),
     });
 
     expect(JSON.stringify(result.record)).not.toContain('hunter2');
@@ -541,7 +535,7 @@ describe('apply refuses and stops at the first failing step', () => {
       inspect: () => artifact(),
       run: recorder().run,
       fetch: httpRecorder(healthy).fetch,
-      root: fixtureRoot('db-staging'),
+      root: fixtureRoot(),
     });
 
     expect(result.outcomes).toHaveLength(1);
@@ -583,7 +577,7 @@ const answering =
  * still reported a passing preflight.
  */
 const INSTALLED_SECRETS = JSON.stringify([
-  { name: 'BETTER_AUTH_SECRET' },
+  { name: 'SUPABASE_SERVICE_ROLE_KEY' },
   { name: 'RESEND_API_KEY' },
 ]);
 
@@ -594,9 +588,6 @@ describe('preflight is read-only and refuses a mismatched destination', () => {
   const whoami = (account: string) => (args: readonly string[]) => {
     if (args[0] === 'whoami') {
       return { ok: true, stdout: `Account: ${account}\n`, stderr: '' };
-    }
-    if (args[0] === 'd1') {
-      return { ok: true, stdout: `{"uuid":"db-staging","account_id":"${account}"}`, stderr: '' };
     }
     if (args[0] === 'secret') {
       return { ok: true, stdout: INSTALLED_SECRETS, stderr: '' };
@@ -621,16 +612,16 @@ describe('preflight is read-only and refuses a mismatched destination', () => {
     // `secret list` is here because the check that a release is able to confirm an
     // account is read-only too: it reports *names*, never values.
     for (const args of seen) {
-      expect(['whoami', 'd1', 'deployments', 'secret']).toContain(args[0]);
+      expect(['whoami', 'deployments', 'secret']).toContain(args[0]);
     }
-    expect(seen.map((args) => args[0])).toEqual(['whoami', 'd1', 'deployments', 'secret']);
-    expect(seen[2]).toContain('deployments');
-    expect(seen[2]).toContain('list');
+    expect(seen.map((args) => args[0])).toEqual(['whoami', 'deployments', 'secret']);
+    expect(seen[1]).toContain('deployments');
+    expect(seen[1]).toContain('list');
     // The pinned CLI spells this `--format json`, and the scope is `--env`.
     // `--json` is not a flag wrangler 4.142.0 has on `secret list`, and asserting the
     // invented spelling here is what let it reach a real account.
-    expect(seen[3]).toEqual(secretListArgv('starter-staging', 'staging'));
-    expect(seen[3]).toEqual(['secret', 'list', '--name', 'starter-staging', '--format', 'json']);
+    expect(seen[2]).toEqual(secretListArgv('starter-staging', 'staging'));
+    expect(seen[2]).toEqual(['secret', 'list', '--name', 'starter-staging', '--format', 'json']);
   });
 
   test('a matching account and resources pass', () => {
@@ -675,37 +666,6 @@ describe('preflight is read-only and refuses a mismatched destination', () => {
     expect(report.ok).toBe(true);
   });
 
-  test('an unreadable database is refused with the remedy that creates it', () => {
-    const report = preflight(target(), {
-      env: { CLOUDFLARE_API_TOKEN: 't' },
-      run: (args) => {
-        if (args[0] === 'whoami') {
-          return { ok: true, stdout: ACCOUNT, stderr: '' };
-        }
-        return { ok: false, stdout: '', stderr: 'not found' };
-      },
-    });
-
-    expect(report.ok).toBe(false);
-    expect(report.findings[0]?.check).toBe('database');
-    expect(remedyOf(report.findings[0])).toContain('--env staging --provision');
-  });
-
-  test('a database that belongs to another account is refused even though it exists', () => {
-    // Exit code alone is not the check: `d1 info` answers happily for a database in
-    // another account if the token can see it.
-    const report = preflight(target(), {
-      env: { CLOUDFLARE_API_TOKEN: 't' },
-      run: (args) =>
-        args[0] === 'whoami'
-          ? { ok: true, stdout: ACCOUNT, stderr: '' }
-          : { ok: true, stdout: `{"account_id":"${OTHER_ACCOUNT}"}`, stderr: '' },
-    });
-
-    expect(report.ok).toBe(false);
-    expect(report.findings[0]?.detail).toContain(`not ${ACCOUNT}`);
-  });
-
   test('a missing Worker is a first-deploy fact only when the operator says so', () => {
     // `secret list` still answers on a Worker that has never been deployed, so this
     // fixture keeps the two apart: the Worker check fails, the secrets check does
@@ -713,7 +673,6 @@ describe('preflight is read-only and refuses a mismatched destination', () => {
     const failing = answering(
       {
         whoami: { ok: true, stdout: ACCOUNT },
-        d1: { ok: true, stdout: ACCOUNT },
         secret: { ok: true, stdout: INSTALLED_SECRETS },
       },
       { ok: false, stdout: '', stderr: 'no such worker' },
@@ -734,14 +693,14 @@ describe('preflight is read-only and refuses a mismatched destination', () => {
   test('a release with no runtime secrets installed is refused, not reported as ok', () => {
     // The control for `ok` being derived from the findings. Before the fix this
     // returned `ok: true` with a failing `secrets` finding recorded, which is how a
-    // deployment with no `BETTER_AUTH_SECRET` passed preflight.
+    // deployment with no Supabase service key passed preflight.
     const withoutSecrets = preflight(target(), {
       env: { CLOUDFLARE_API_TOKEN: 't' },
       run: answering(
         {
           whoami: { ok: true, stdout: ACCOUNT },
           // One secret present, one absent: the state this control is about.
-          secret: { ok: true, stdout: JSON.stringify([{ name: 'BETTER_AUTH_SECRET' }]) },
+          secret: { ok: true, stdout: JSON.stringify([{ name: 'SUPABASE_SERVICE_ROLE_KEY' }]) },
         },
         { ok: true, stdout: ACCOUNT },
       ),
@@ -793,13 +752,13 @@ describe('preflight is read-only and refuses a mismatched destination', () => {
  * differ. Without this fixture every pipeline test would stop at the migration
  * step — correct behaviour, but it would test nothing else.
  */
-const fixtureRoot = (databaseId: string): string => {
+const fixtureRoot = (): string => {
   const root = mkTempRoot();
   const path = join(root, 'apps/frontend/client/wrangler.jsonc');
   mkdirSync(dirname(path), { recursive: true });
   writeFileSync(
     path,
-    `{\n  "name": "starter",\n  "main": ".svelte-kit/cloudflare/_worker.js",\n  "assets": { "directory": ".svelte-kit/cloudflare", "binding": "ASSETS" },\n  "d1_databases": [\n    {\n      "binding": "DB",\n      "database_name": "starter",\n      "database_id": "${databaseId}"\n    }\n  ]\n}\n`,
+    `{\n  "name": "starter",\n  "main": ".svelte-kit/cloudflare/_worker.js",\n  "assets": { "directory": ".svelte-kit/cloudflare", "binding": "ASSETS" }\n}\n`,
     'utf8',
   );
   return root;
@@ -936,7 +895,7 @@ describe('verification asks whether the release can serve, not only whether it i
         stderr: '',
       }),
       now: () => '2026-01-01T00:00:00.000Z',
-      root: fixtureRoot('db-staging'),
+      root: fixtureRoot(),
     });
 
     expect(result.ok).toBe(false);
@@ -970,7 +929,7 @@ describe('verification asks whether the release can serve, not only whether it i
       run: recorder().run,
       fetch: http.fetch,
       capture: () => ({ ok: false, stdout: '', stderr: '' }),
-      root: fixtureRoot('db-staging'),
+      root: fixtureRoot(),
     });
 
     expect(result.record?.smoke?.readiness?.status).toBe(503);

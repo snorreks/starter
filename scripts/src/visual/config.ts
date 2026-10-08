@@ -1,7 +1,7 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { REPO_ROOT } from '../shared/paths.ts';
 import { parseDotenv } from '../shared/dotenv.ts';
+import { REPO_ROOT } from '../shared/paths.ts';
 
 export interface VisionConfig {
   provider: 'openrouter';

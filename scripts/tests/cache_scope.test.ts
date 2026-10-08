@@ -154,7 +154,7 @@ describe('a fingerprint that reads nothing must not be treated as a fingerprint'
       'packages/frontend/features/src/index.ts',
       'packages/frontend/platform/src/index.ts',
       'apps/backend/jobs/src/index.ts',
-      'packages/backend/database/drizzle-d1/input.sql',
+      'supabase/migrations/202610080001_owner_job_output.sql',
     ]) {
       writeFixture(root);
       const first = resolveCacheMode({ root, previous: null });

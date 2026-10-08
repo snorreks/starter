@@ -44,8 +44,8 @@
 #
 # `concurrency` is keyed on the destination environment with
 # `cancel-in-progress: false`. Two applies to one environment must never overlap:
-# overlapping them means two builds racing to migrate one D1 database, and the loser
-# wins silently. Cancelling a run that is halfway through `d1 migrations apply`
+# overlapping them means two builds racing to migrate one Supabase project database, and the loser
+# wins silently. Cancelling a run that is halfway through `Supabase migration apply`
 # leaves a schema ahead of the code running on it with no record that anything was in
 # flight, so cancellation is off.
 #
@@ -70,14 +70,6 @@ on:
         options:
           - staging
           - production
-      backend_profile:
-        description: 'Complete runtime profile to deploy'
-        required: true
-        default: supabase
-        type: choice
-        options:
-          - legacy
-          - supabase
       migrate:
         description: 'Apply reviewed migrations before deploying.'
         required: true
@@ -89,7 +81,7 @@ on:
         default: false
         type: boolean
       install_secrets:
-        description: 'Install the runtime secrets (BETTER_AUTH_SECRET, RESEND_API_KEY) from the environment.'
+        description: 'Install the Supabase and mail runtime secrets from the environment.'
         required: false
         default: false
         type: boolean
@@ -109,14 +101,13 @@ permissions:
 
 env:
   BUN_VERSION: '1.4.2'
-  STARTER_BACKEND_PROFILE: ${{ inputs.backend_profile || 'supabase' }}
   # ── repository-scoped, nonsecret ────────────────────────────────────────────
   #
   # This is the whole nonsecret configuration a plan needs, and it is
   # repository-scoped on purpose (see the header). `STARTER_DEPLOYMENT_TARGETS` is a
   # JSON object keyed by environment:
   #
-  #   {"staging":  {"workerName": "…", "d1DatabaseId": "…", "origin": "https://…", "mailFrom": "…"},
+  #   {"staging":  {"workerName": "…", "supabaseProjectRef": "…", "origin": "https://…", "mailFrom": "…"},
   #    "production": {…}}
   #
   # Optional fields: jobsWorkerName, mediaBucketName, encodeWorkflowName,
@@ -142,7 +133,6 @@ env:
   # must target something else.
   CLOUDFLARE_WORKER_NAME: ${{ vars.CLOUDFLARE_WORKER_NAME }}
   CLOUDFLARE_JOBS_WORKER_NAME: ${{ vars.CLOUDFLARE_JOBS_WORKER_NAME }}
-  CLOUDFLARE_D1_DATABASE_ID: ${{ vars.CLOUDFLARE_D1_DATABASE_ID }}
   CLOUDFLARE_MEDIA_BUCKET_NAME: ${{ vars.CLOUDFLARE_MEDIA_BUCKET_NAME }}
   CLOUDFLARE_PUBLIC_ORIGIN: ${{ vars.CLOUDFLARE_PUBLIC_ORIGIN }}
   CLOUDFLARE_MAIL_FROM: ${{ vars.CLOUDFLARE_MAIL_FROM }}
@@ -274,17 +264,16 @@ jobs:
 
       - name: Resolve target for workload identity
         id: target
-        if: ${{ inputs.backend_profile == 'supabase' }}
         env:
           DEPLOY_ENVIRONMENT: ${{ env.DEPLOY_ENVIRONMENT }}
           TARGET_FILE: ${{ runner.temp }}/resolved-target.json
         run: |
           bun run deploy:check --env "$DEPLOY_ENVIRONMENT" --json > "$TARGET_FILE"
-          node -e 'const fs = require("node:fs"); const report = JSON.parse(fs.readFileSync(process.env.TARGET_FILE, "utf8")); if (report.phase !== "plan" || report.target?.deploymentProfile !== "supabase" || !report.target.supabase?.googleProjectId) process.exit(1); fs.appendFileSync(process.env.GITHUB_OUTPUT, "google_project_id=" + report.target.supabase.googleProjectId + "\n");'
+          node -e 'const fs = require("node:fs"); const report = JSON.parse(fs.readFileSync(process.env.TARGET_FILE, "utf8")); const target = report.target; if (report.phase !== "plan" || !target?.supabase?.projectRef) process.exit(1); fs.appendFileSync(process.env.GITHUB_OUTPUT, "compute_enabled=" + String(target.compute.enabled) + "\n"); if (target.compute.enabled) fs.appendFileSync(process.env.GITHUB_OUTPUT, "google_project_id=" + target.supabase.googleProjectId + "\n");'
 
       - name: Authenticate to the target Google project with workload identity
         id: google-auth
-        if: ${{ inputs.backend_profile == 'supabase' }}
+        if: ${{ steps.target.outputs.compute_enabled == 'true' }}
         uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3.0.0
         with:
           project_id: ${{ steps.target.outputs.google_project_id }}
@@ -299,8 +288,7 @@ jobs:
       - name: Credential
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          STARTER_BACKEND_PROFILE: ${{ env.STARTER_BACKEND_PROFILE }}
-          SUPABASE_ACCESS_TOKEN: ${{ inputs.backend_profile == 'supabase' && secrets.SUPABASE_ACCESS_TOKEN || '' }}
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
           GOOGLE_ACCESS_TOKEN: ${{ steps.google-auth.outputs.access_token }}
           DEPLOY_ENVIRONMENT: ${{ env.DEPLOY_ENVIRONMENT }}
           FIRST_DEPLOY: ${{ inputs.first_deploy && 'yes' || 'no' }}
@@ -310,7 +298,7 @@ jobs:
             echo "::error::CLOUDFLARE_API_TOKEN is not set on this environment."
             exit 3
           fi
-          if [ "$STARTER_BACKEND_PROFILE" = supabase ] && [ "$FIRST_DEPLOY" = yes ] && [ "$INSTALL_SECRETS" != yes ]; then
+          if [ "$FIRST_DEPLOY" = yes ] && [ "$INSTALL_SECRETS" != yes ]; then
             echo '::error::A Supabase first deploy requires install_secrets=true so no Worker is published without its runtime credentials.'
             exit 3
           fi
@@ -324,12 +312,12 @@ jobs:
 
       # Idempotent, so running it on every apply is cheaper than tracking whether it
       # ran before. Creates the database, the private bucket and uploads the fixture;
-      # with `--install` it also installs BETTER_AUTH_SECRET and RESEND_API_KEY by
+      # with `--install` it also installs Supabase and Resend runtime secrets by
       # value, on stdin, never in argv. Opt-in because it is the one step that
       # writes a credential, and an unattended run should not do that by surprise.
       # The runtime secrets are supplied **only** when the operator asked to install
       # them. This step also runs on a plain first deploy, and handing
-      # `BETTER_AUTH_SECRET` and `RESEND_API_KEY` to a process that was only going to
+      # runtime secret values to a process that was only going to
       # create a database and a bucket gives every child of that process a credential
       # it has no reason to hold. The Cloudflare token is always needed; the other two
       # are not.
@@ -355,11 +343,10 @@ jobs:
           # both copies in the job's environment for no reason — and a rotation that
           # changes one of them but not the other would be invisible until someone
           # noticed which source won.
-          BETTER_AUTH_SECRET: ${{ inputs.install_secrets && inputs.secrets_source == 'github' && secrets.BETTER_AUTH_SECRET || '' }}
           RESEND_API_KEY: ${{ inputs.install_secrets && inputs.secrets_source == 'github' && secrets.RESEND_API_KEY || '' }}
-          SUPABASE_SERVICE_ROLE_KEY: ${{ inputs.install_secrets && inputs.backend_profile == 'supabase' && inputs.secrets_source == 'github' && secrets.SUPABASE_SERVICE_ROLE_KEY || '' }}
-          GOOGLE_DISPATCHER_CREDENTIAL: ${{ inputs.install_secrets && inputs.backend_profile == 'supabase' && inputs.secrets_source == 'github' && secrets.GOOGLE_DISPATCHER_CREDENTIAL || '' }}
-          SUPABASE_ACCESS_TOKEN: ${{ inputs.backend_profile == 'supabase' && secrets.SUPABASE_ACCESS_TOKEN || '' }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ inputs.install_secrets && inputs.secrets_source == 'github' && secrets.SUPABASE_SERVICE_ROLE_KEY || '' }}
+          GOOGLE_DISPATCHER_CREDENTIAL: ${{ inputs.install_secrets && steps.target.outputs.compute_enabled == 'true' && inputs.secrets_source == 'github' && secrets.GOOGLE_DISPATCHER_CREDENTIAL || '' }}
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
           GOOGLE_ACCESS_TOKEN: ${{ steps.google-auth.outputs.access_token }}
           SECRETS_SOURCE: ${{ inputs.secrets_source }}
           # Read only for the sops source, and only when secrets are actually being
@@ -381,11 +368,7 @@ jobs:
               echo "::error::runner image, or run the deploy locally with secrets_source=github."
               exit 3
             }
-            if [ "$STARTER_BACKEND_PROFILE" = supabase ]; then
-              file="secrets/$DEPLOY_ENVIRONMENT.supabase.enc.env"
-            else
-              file="secrets/$DEPLOY_ENVIRONMENT.enc.env"
-            fi
+            file="secrets/$DEPLOY_ENVIRONMENT.supabase.enc.env"
             [ -f "$file" ] || {
               echo "::error::$file is not in this revision. See secrets/README.md."
               exit 3
@@ -409,8 +392,7 @@ jobs:
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           DEPLOY_ENVIRONMENT: ${{ env.DEPLOY_ENVIRONMENT }}
-          STARTER_BACKEND_PROFILE: ${{ env.STARTER_BACKEND_PROFILE }}
-          SUPABASE_ACCESS_TOKEN: ${{ inputs.backend_profile == 'supabase' && secrets.SUPABASE_ACCESS_TOKEN || '' }}
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
           GOOGLE_ACCESS_TOKEN: ${{ steps.google-auth.outputs.access_token }}
           APPLY_MIGRATIONS: ${{ inputs.migrate && 'yes' || 'no' }}
         run: |
