@@ -80,6 +80,7 @@ describe('what the shipped bundle must not contain', () => {
   for (const marker of [
     'cloudflare:workers',
     'SUPABASE_SERVICE_ROLE_KEY',
+    'GOOGLE_DISPATCHER_CREDENTIAL',
     'notes_owner_id_idx',
     'device_codes',
     'email_verified',

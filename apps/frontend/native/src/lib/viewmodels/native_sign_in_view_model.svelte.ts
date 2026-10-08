@@ -1,7 +1,13 @@
 import type { Navigation } from '@starter/platform';
 import type { SessionUser } from '@starter/schemas/auth';
 
-export type SignInPhase = 'signed-out' | 'requesting' | 'waiting' | 'error' | 'cancelled';
+export type SignInPhase =
+  | 'signed-out'
+  | 'authenticated'
+  | 'requesting'
+  | 'waiting'
+  | 'error'
+  | 'cancelled';
 
 export interface NativeSignInOptions {
   readonly apiOrigin: string;
@@ -72,7 +78,14 @@ export class NativeSignInViewModel {
         this.vaultAvailable = true;
         this.reauthenticationRequired = this.#options.requiresReauthentication();
         if (this.#options.hasSession()) {
-          await this.#options.nativeNavigation.go('/notes');
+          this.phase = 'authenticated';
+          this.statusText = '';
+          try {
+            await this.#options.nativeNavigation.go('/notes');
+          } catch (error) {
+            const detail = error instanceof Error ? error.message : 'Navigation failed.';
+            this.errorText = `Signed in, but could not open notes: ${detail}`;
+          }
           return;
         }
       }
@@ -90,7 +103,10 @@ export class NativeSignInViewModel {
         this.phase = 'cancelled';
         return;
       }
-      this.phase = 'error';
+      if (this.phase !== 'authenticated') {
+        this.phase = 'error';
+      }
+      this.statusText = '';
       this.errorText = error instanceof Error ? error.message : 'Sign-in failed.';
     } finally {
       if (this.busy) {

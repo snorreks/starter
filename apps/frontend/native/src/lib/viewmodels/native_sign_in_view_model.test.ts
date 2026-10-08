@@ -72,6 +72,27 @@ describe('native sign-in decisions', () => {
     expect(viewModel.busy).toBe(false);
   });
 
+  test('keeps authenticated phase and clears status when navigation fails after unlock', async () => {
+    const { viewModel } = fixture({
+      hasSession: () => true,
+      nativeNavigation: {
+        go: async () => {
+          throw new Error('Navigation unavailable');
+        },
+      },
+    });
+    viewModel.remember = true;
+    viewModel.passphrase = 'synthetic passphrase';
+    viewModel.statusText = 'stale status';
+
+    await viewModel.signInWithBrowser();
+
+    expect(viewModel.phase).toBe('authenticated');
+    expect(viewModel.statusText).toBe('');
+    expect(viewModel.errorText).toBe('Signed in, but could not open notes: Navigation unavailable');
+    expect(viewModel.busy).toBe(false);
+  });
+
   test('maps legacy credential removal after initialization and vault unlock', async () => {
     let reauthentication = false;
     const { viewModel, calls } = fixture({
