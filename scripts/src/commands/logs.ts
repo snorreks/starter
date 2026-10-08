@@ -46,6 +46,7 @@ import { capabilitiesFor, resolveLogAdapter } from '../logs/registry.ts';
 import type { FlagDoc, LogQuery, LogQueryResult } from '../logs/types.ts';
 import { APP_IDS, APP_LOG_CONFIG, type AppId, isAppId } from '../registry/app_registry.ts';
 import type { Command } from '../shared/command.ts';
+import { runScope } from '../shared/run_scope.ts';
 
 const HARD_LIMIT_CAP = 500;
 
@@ -77,6 +78,7 @@ const FLAG_DOCS: readonly FlagDoc[] = [
     arg: '<duration>',
     description: `How far back to read. Units: ${describeDurationUnits()}.`,
   },
+  { flag: '--run', arg: '<run-id>', description: 'Read only this local run’s log directory.' },
   { flag: '--limit', arg: '<n>', description: 'Maximum events. Default 50, hard cap 500.' },
   { flag: '--follow', arg: '', description: 'Stream live instead of reading history.' },
   {
@@ -134,6 +136,7 @@ const VALUE_FLAGS = new Set([
   '--trace',
   '--uid',
   '--since',
+  '--run',
   '--limit',
   '--duration',
 ]);
@@ -205,6 +208,18 @@ export const toQuery = (
     return { ok: false, message: `--mode must be local, staging or production (got "${mode}").` };
   }
 
+  const runId = readString(parsed.flags, '--run');
+  if (runId !== undefined) {
+    if (mode !== 'local') {
+      return { ok: false, message: '--run is available only with --mode local.' };
+    }
+    try {
+      runScope(runId);
+    } catch (error) {
+      return { ok: false, message: error instanceof Error ? error.message : String(error) };
+    }
+  }
+
   const level = readString(parsed.flags, '--level');
   if (level !== undefined && !isLogLevel(level.toUpperCase())) {
     return { ok: false, message: `--level must be DEBUG, INFO, WARNING, ERROR or NONE.` };
@@ -255,6 +270,7 @@ export const toQuery = (
       ...(readString(parsed.flags, '--since') === undefined
         ? {}
         : { since: readString(parsed.flags, '--since') as string }),
+      ...(runId === undefined ? {} : { runId }),
       ...(limit === undefined ? {} : { limit: Math.min(limit, HARD_LIMIT_CAP) }),
       follow,
       ...(duration === undefined ? {} : { duration }),

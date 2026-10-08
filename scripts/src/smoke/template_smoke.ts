@@ -175,6 +175,8 @@ export const committedFiles = (root: string = REPO_ROOT): string[] => {
  *   * `docs/rename-checklist.md`, `AGENTS.md` — the instructions for changing it.
  *     A rename that rewrote these would delete the instructions.
  *   * `docs/starter-extraction.md` — the record of where this template came from.
+ *   * `docs/evidence/pi-global-project-tools/acceptance-audit-2026-10-07.md` — a
+ *     dated acceptance record whose exact pull-request and CI links are provenance.
  *     Rewriting provenance is not a rename.
  *   * `package.json` and `bun.lock` — the identity itself. There is nothing to
  *     rename until these change.
@@ -186,6 +188,7 @@ const IDENTITY_ALLOWED = new Set([
   'docs/rename-checklist.md',
   'docs/smoke.md',
   'docs/starter-extraction.md',
+  'docs/evidence/pi-global-project-tools/acceptance-audit-2026-10-07.md',
   'package.json',
   'bun.lock',
   'scripts/src/smoke/template_smoke.ts',

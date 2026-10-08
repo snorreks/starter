@@ -12,6 +12,7 @@ import type { ReviewResult } from './schemas.ts';
 
 interface CaptureRecord {
   scenarioId: string;
+  captureKind?: 'interactive' | 'declared-scenario';
   app: string;
   state: string;
   project: string;
@@ -22,6 +23,8 @@ interface CaptureRecord {
   expected: { controls: string[]; content: string[] };
   heading: string;
   status: string;
+  originalSha256?: string;
+  crop?: { x: number; y: number; width: number; height: number } | null;
 }
 
 const htmlEscape = (text: string): string =>
@@ -169,12 +172,14 @@ export const reviewCaptureManifest = async (options: {
     results.push({
       runId: runData.runId,
       scenarioId: record.scenarioId,
+      captureKind: record.captureKind ?? 'declared-scenario',
       app: record.app,
       state: record.state,
       project: record.project,
       url: record.url,
       image: imagePath,
       originalSha256: image.originalSha256,
+      crop: record.crop ?? null,
       derivativePath: image.derivativePath,
       dimensions: image.dimensions,
       preparation: image.preparation,

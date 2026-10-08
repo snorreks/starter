@@ -123,8 +123,8 @@ describe('the default tool surface', () => {
 
     // Five: the log reader, task discovery/execution, owned long-running
     // processes, durable handoff notes, and the optional Herdr capability. Every
-    // family is one tool with an `action` discriminator — 5 tools cover 13
-    // actions, where a tool per action would cost 13 schemas on every turn.
+    // family is one tool with an `action` discriminator, so adding operations does
+    // not add one full schema to every turn.
     expect(tools.length).toBeLessThanOrEqual(6);
   }, 60_000);
 
@@ -170,6 +170,11 @@ describe('the default tool surface', () => {
 
     // The boundary that matters most here: a terminating task is not a job.
     expect(tools.find((tool) => tool.name === 'repo_task')?.description).toContain('dev_process');
+    expect(tools.find((tool) => tool.name === 'repo_task')?.description).toContain(
+      'visual_capture',
+    );
+    expect(tools.find((tool) => tool.name === 'repo_task')?.description).toContain('visual_review');
+    expect(tools.find((tool) => tool.name === 'repo_task')?.description).toContain('compute_full');
     expect(tools.find((tool) => tool.name === 'dev_process')?.description).toContain('repo_task');
 
     // And the boundary that makes resuming safe: a note is a claim, not a fact.

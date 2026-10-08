@@ -20,6 +20,7 @@ type CommandLoader = () => Promise<Command>;
 
 const COMMANDS: Record<string, CommandLoader> = {
   cached: async () => (await import('./commands/cached.ts')).cachedCommand,
+  agent: async () => (await import('./commands/agent.ts')).agentCommand,
   ci: async () => (await import('./commands/ci.ts')).ciCommand,
   configure: async () => (await import('./commands/configure.ts')).configureCommand,
   contract: async () => (await import('./commands/contracts.ts')).contractCommand,

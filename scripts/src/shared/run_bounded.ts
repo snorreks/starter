@@ -40,6 +40,8 @@ export const runBounded = (options: {
   signal?: AbortSignal;
   input?: string;
   env?: NodeJS.ProcessEnv;
+  /** Stream retained child output as it arrives without mixing it into stdout. */
+  onOutput?: (stream: 'stdout' | 'stderr', chunk: Buffer) => void;
   /**
    * `capture` (the default) bounds and returns the output. `inherit` hands the
    * child this process's terminal — live streams, and a stdin that can still
@@ -111,11 +113,12 @@ export const runBounded = (options: {
         finish(null);
       }, 250);
     };
-    const append = (options: { chunk: Buffer; error: boolean }): void => {
-      const kept = options.chunk.subarray(0, Math.max(0, maxBytes - bytes));
-      bytes += options.chunk.length;
+    const append = (item: { chunk: Buffer; error: boolean }): void => {
+      const kept = item.chunk.subarray(0, Math.max(0, maxBytes - bytes));
+      bytes += item.chunk.length;
       if (kept.length > 0) {
-        if (options.error) {
+        options.onOutput?.(item.error ? 'stderr' : 'stdout', kept);
+        if (item.error) {
           stderrChunks.push(kept);
           stderrBytes += kept.length;
         } else {

@@ -22,9 +22,12 @@ export const MAX_LINES = 200;
 
 /** Shapes the tool accepts. Mirrors the TypeBox schema in the extension. */
 export interface LogParams {
-  app?: 'client' | 'api' | 'all';
+  app?: 'web' | 'all';
   mode?: 'local' | 'staging' | 'production';
   level?: 'DEBUG' | 'INFO' | 'WARNING' | 'ERROR';
+  source?: 'worker' | 'browser';
+  since?: string;
+  runId?: string;
   uid?: string;
   traceId?: string;
   limit?: number;
@@ -48,6 +51,15 @@ export const buildArgs = (params: LogParams): string[] => {
   if (level !== undefined) {
     args.push('--level', level);
   }
+  if (params.source !== undefined) {
+    args.push('--source', params.source);
+  }
+  if (params.since !== undefined && params.since.length > 0) {
+    args.push('--since', params.since);
+  }
+  if (params.runId !== undefined && params.runId.length > 0) {
+    args.push('--run', params.runId);
+  }
   if (params.uid !== undefined && params.uid.length > 0) {
     args.push('--uid', params.uid);
   }
@@ -69,6 +81,8 @@ export interface LogCallDetails {
   exitCode: number;
   /** True when output was truncated to stay inside the byte budget. */
   truncated: boolean;
+  timedOut?: boolean;
+  cancelled?: boolean;
   /** Where the full output went, when it went somewhere. */
   artifactPath?: string;
 }

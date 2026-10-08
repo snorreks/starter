@@ -153,18 +153,75 @@ describe('a row must be reproducible and identified', () => {
     }
   });
 
-  test('two rows for one capability are refused rather than silently ranked', () => {
+  test('the same capability may have one row per revision but cannot repeat within a revision', () => {
     const dir = root();
     try {
-      write(dir, { revision: 'f2374d1', rows: [row(), row()] });
+      write(dir, {
+        revision: 'f2374d1',
+        rows: [row(), row({ revision: 'c1a8e37', kind: 'historical' })],
+      });
       const result = readManifest(dir);
-      expect(result.ok).toBe(false);
-      if (!result.ok) {
-        expect(result.problems[0]).toContain('duplicate capability');
+      expect(result.ok).toBe(true);
+
+      write(dir, { revision: 'f2374d1', rows: [row(), row()] });
+      const duplicate = readManifest(dir);
+      expect(duplicate.ok).toBe(false);
+      if (!duplicate.ok) {
+        expect(duplicate.problems[0]).toContain('duplicate capability');
       }
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
+  });
+
+  test('observed and not-run rows match the manifest revision; historical rows retain theirs', () => {
+    const dir = root();
+    try {
+      write(dir, {
+        revision: 'f2374d1',
+        rows: [row({ kind: 'observed', revision: 'c1a8e37' })],
+      });
+      const stale = readManifest(dir);
+      expect(stale.ok).toBe(false);
+      if (!stale.ok) {
+        expect(stale.problems.join('\n')).toContain('must match manifest revision');
+      }
+
+      write(dir, {
+        revision: 'f2374d1',
+        rows: [
+          row({ kind: 'not-run', revision: 'c1a8e37', reason: 'the account is not configured' }),
+        ],
+      });
+      const staleNotRun = readManifest(dir);
+      expect(staleNotRun.ok).toBe(false);
+      if (!staleNotRun.ok) {
+        expect(staleNotRun.problems.join('\n')).toContain('must match manifest revision');
+      }
+
+      write(dir, {
+        revision: 'f2374d1',
+        rows: [row({ kind: 'historical', revision: 'c1a8e37', runId: 'agent_run_123' })],
+      });
+      expect(readManifest(dir).ok).toBe(true);
+
+      write(dir, { revision: 'f2374d1', rows: [row({ runId: 'bad/run/id' })] });
+      const invalidRunId = readManifest(dir);
+      expect(invalidRunId.ok).toBe(false);
+      if (!invalidRunId.ok) {
+        expect(invalidRunId.problems.join('\n')).toContain('runId');
+      }
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test('renders repository-relative artifact paths as links from the matrix file', () => {
+    const rendered = renderCurrentMatrix({
+      revision: 'f2374d1',
+      rows: [row({ artifact: 'docs/evidence/trace.json' })],
+    });
+    expect(rendered).toContain('[docs/evidence/trace.json](../docs/evidence/trace.json)');
   });
 
   test('a manifest whose rows are not objects is refused, not thrown over', () => {
@@ -315,13 +372,16 @@ describe('a stale matrix is caught, with the line that differs', () => {
     expect(after).toContain('no account one credential');
   });
 
-  test('an artifact path stays visible without linking checkout-local output', () => {
+  test('repository evidence artifacts link from the matrix while run-owned outputs stay inline', () => {
     const rendered = renderCurrentMatrix({
       revision: 'f2374d1',
-      rows: [row({ artifact: 'docs/evidence/run|1.json' })],
+      rows: [
+        row({ artifact: 'docs/evidence/run.json' }),
+        row({ capability: 'Local output', artifact: '.wrangler/runs/current/report.json' }),
+      ],
     });
-    expect(rendered).toContain('run\\|1.json');
-    expect(rendered).not.toContain('[docs/evidence/run');
+    expect(rendered).toContain('[docs/evidence/run.json](../docs/evidence/run.json)');
+    expect(rendered).toContain('`.wrangler/runs/current/report.json`');
   });
 
   test('the rendered block excludes historical rows', () => {

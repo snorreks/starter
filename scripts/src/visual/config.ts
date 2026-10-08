@@ -51,15 +51,14 @@ export const loadVisionConfig = (
     );
   }
   const model = read('E2E_VISION_MODEL') ?? '';
-  const dedicatedKey = read('E2E_VISION_API_KEY');
-  const fallbackKey = read('OPENROUTER_API_KEY');
-  const apiKey = dedicatedKey?.trim() ? dedicatedKey : (fallbackKey ?? '');
+  const dedicatedApiKey = read('E2E_VISION_API_KEY');
+  const apiKey = dedicatedApiKey?.trim() ? dedicatedApiKey : (environment.OPENROUTER_API_KEY ?? '');
   if (model.trim() === '') {
     throw new Error('Set E2E_VISION_MODEL in .env.e2e or the environment.');
   }
   if (apiKey.trim() === '') {
     throw new Error(
-      'Set E2E_VISION_API_KEY in the environment or .env.e2e, or set OPENROUTER_API_KEY as the fallback.',
+      'Set E2E_VISION_API_KEY in .env.e2e or provide OPENROUTER_API_KEY in the global environment.',
     );
   }
   const boundedInteger = (name: string, fallback: number, max: number): number => {
