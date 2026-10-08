@@ -12,7 +12,7 @@
 // So there are three layers and this file pins the order, because the order is the
 // feature: a value in more than one place is a value nobody can tell is in effect.
 
-import { afterEach, describe, expect, test } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -36,6 +36,19 @@ import {
   targetsFor,
 } from '../src/registry/deployment_values.ts';
 import { REPO_ROOT } from '../src/shared/paths.ts';
+
+// These fixtures exercise the retained D1 deployment path, not the Supabase default.
+const originalBackendProfile = process.env.STARTER_BACKEND_PROFILE;
+beforeEach(() => {
+  process.env.STARTER_BACKEND_PROFILE = 'legacy';
+});
+afterEach(() => {
+  if (originalBackendProfile === undefined) {
+    delete process.env.STARTER_BACKEND_PROFILE;
+    return;
+  }
+  process.env.STARTER_BACKEND_PROFILE = originalBackendProfile;
+});
 
 const created: string[] = [];
 
