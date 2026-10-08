@@ -59,10 +59,14 @@ describe('isolated local Supabase allocation', () => {
         join(root, 'supabase-project/supabase/config.toml'),
         'utf8',
       );
-      expect(unitConfig).toContain('enable_confirmations = false');
+      expect(unitConfig.split('[auth.email]')[1]?.split('\n[')[0]).toContain(
+        'enable_confirmations = false',
+      );
       await persistSupabaseOwnership(allocation, { emailConfirmations: true });
       const e2eConfig = await readFile(join(root, 'supabase-project/supabase/config.toml'), 'utf8');
-      expect(e2eConfig).toContain('enable_confirmations = true');
+      expect(e2eConfig.split('[auth.email]')[1]?.split('\n[')[0]).toContain(
+        'enable_confirmations = true',
+      );
     } finally {
       await rm(root, { recursive: true, force: true });
     }

@@ -53,7 +53,7 @@ test('missing or enabled compute is refused in the web-only E2E fixture', () => 
   expect(() =>
     graph(
       parseWranglerJsonc(
-        '{"name":"web","main":"worker.js","assets":{"binding":"ASSETS","directory":"assets"}}',
+        '{"name":"web","compatibility_date":"2026-10-01","main":"worker.js","assets":{"binding":"ASSETS","directory":"assets"}}',
       ),
     ),
   ).toThrow('JOBS_PROFILE=disabled explicitly');

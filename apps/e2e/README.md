@@ -17,8 +17,9 @@ bun run e2e:visual -- --update-snapshots  # explicit local baseline update
 bun run e2e:visual:review -- --run <run-id> # optional structured vision review
 bun run e2e:visual:review -- --capture     # capture and review using .env.e2e
 bun run e2e:audit                   # three Lighthouse samples per public target/viewport
-bun run e2e:full                    # real browser-to-Worker-to-FFmpeg encode
+bun run e2e:full                    # built client + local Supabase; compute disabled
 bun run e2e:doctor                  # Chromium, Node/Lighthouse and Docker checks
+bun run test:compute                # Docker compute lane; the real-encode proof
 ```
 
 The visual command covers every discovered Svelte page route plus declared UI
@@ -42,15 +43,16 @@ not run; the HTTP adapter is covered with a local fixture. Review output and its
 content-addressed cache remain local. System One scoring and design-reference
 comparison are not implemented yet.
 
-`e2e:full` builds the web and jobs Workers, derives their bindings from committed
-Wrangler configuration, creates one isolated local Supabase runtime,
-and starts a source-fingerprinted Docker-compatible media image. The real browser
-signs up, verifies email, starts the encode from the Jobs UI, checks idempotent
-replay and persisted completion, fetches and hashes the output, probes it with
-FFprobe inside the owned container, checks a bounded Range read, and verifies
-owner and signed-out denials. Docker is required; the command names the remedy if
-no engine is available. Local Miniflare does not prove Cloudflare's managed
-container lifecycle or cron delivery.
+`e2e:full` provisions an isolated local Supabase stack, builds only the client,
+and serves its built web Worker in Miniflare using the committed Wrangler
+configuration. The runtime reports that compute is disabled. The existing full
+encode spec still expects enabled jobs and a media container, so this command
+cannot currently pass that spec or provide real-encode evidence.
+
+`bun run test:compute` is the only real-encode proof: the Docker compute lane
+builds `Dockerfile.job` and runs the finite media runner against local protocol
+fixtures. It requires a running Docker-compatible engine and image build access.
+Local tests do not prove Cloud Run's managed lifecycle or Cloudflare cron delivery.
 
 Lighthouse runs only public durable routes represented in the scenario manifest
 (`web-landing` and `web-login` currently), on desktop and mobile, with three
@@ -68,7 +70,9 @@ authority.
 The harness selects the same Chromium as the browser lane and allocates per-run
 ports, state and artifacts. It refuses a stale server whose health response does
 not echo the invocation's run ID. `bun run e2e:doctor` proves the browser can
-launch and checks the additional Node and Docker prerequisites.
+launch, requires Node.js >=22.19 for Lighthouse, and checks that a Docker-compatible
+engine responds. Docker is needed for the local Supabase stack as well as the
+separate compute lane; a successful doctor check alone does not prove an encode.
 
 From this package, `bun run test:e2e`, `bun run test:visual`, `bun run test:audit`,
 `bun run test:full`, `bun run test:tooling`, `bun run typecheck`, `bun run lint` and

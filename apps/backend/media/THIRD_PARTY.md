@@ -1,7 +1,8 @@
 # Third-party components in the container image
 
-The image this crate builds runs one large third-party program and links one
-small Rust binary against the C library. This file records where each came from,
+The image built by `Dockerfile.job` runs the Node.js entrypoint
+`runner/runner.mjs`, which invokes the Rust CLI and FFmpeg/FFprobe. The Rust
+binary links against the C library. This file records where each came from,
 under what licence, and what that obliges anyone who ships it. It is updated
 whenever the `apt-get install` line in `Dockerfile.job` changes — an FFmpeg upgrade
 without a provenance update is a review finding, not an oversight.
@@ -31,12 +32,23 @@ licensing would change the obligations; that is a deliberate decision, not a
 packaging detail.
 
 **Why Debian's build and not a static build from elsewhere.** Third-party static
-FFmpeg builds would cut the image from 546 MB to tens of megabytes, and were
+FFmpeg builds could reduce the image size, and were
 declined: they move the supply chain off a distribution archive whose packages
 are checksummed and whose licences are documented, onto a URL whose integrity
 this repository would have to take on trust and pin by a hash somebody supplied.
-The size is measured and recorded in `README.md` so the trade can be revisited
-with evidence rather than memory.
+
+## Node.js — the job entrypoint runtime
+
+| | |
+|---|---|
+| Source | Debian bookworm's archive, installed by `apt-get install --no-install-recommends nodejs=18.20.4+dfsg-1~deb12u3`; source packages at <https://deb.debian.org/debian/pool/main/n/nodejs/> |
+| Pinned package version | `18.20.4+dfsg-1~deb12u3` in `Dockerfile.job` (upstream `v18.20.4`) |
+| Upstream | <https://nodejs.org/> |
+| Licence | **MIT** for Node.js; bundled third-party components carry their own licences, recorded in the Debian copyright file. Preserve the applicable copyright and licence notices when distributing the image. |
+| Complete texts | `/usr/share/doc/nodejs/copyright` inside the image; upstream <https://github.com/nodejs/node/blob/v18.20.4/LICENSE> |
+
+The repository's `runner/runner.mjs` is the first-party Cloud Run job entrypoint.
+It obtains job grants, runs the bounded Rust CLI and reports the result.
 
 ## Rust dependencies
 
