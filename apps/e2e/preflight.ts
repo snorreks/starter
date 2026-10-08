@@ -5,7 +5,7 @@
 // The problem this exists to solve: a leftover server from an earlier command
 // keeps its port. Playwright's `webServer` sees the port answer and — depending on
 // version and reuse settings — either fails confusingly or, worse, *passes*, running
-// every test against the stale process. That stale process has a stale D1 with a
+// every test against the stale process. That stale process has a stale Supabase state with a
 // stale schema and stale seeded users. The suite then reports a product bug that is
 // actually a leftover socket.
 //

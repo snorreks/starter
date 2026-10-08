@@ -3,7 +3,7 @@
 The image this crate builds runs one large third-party program and links one
 small Rust binary against the C library. This file records where each came from,
 under what licence, and what that obliges anyone who ships it. It is updated
-whenever the `apt-get install` line in `Dockerfile` changes — an FFmpeg upgrade
+whenever the `apt-get install` line in `Dockerfile.job` changes — an FFmpeg upgrade
 without a provenance update is a review finding, not an oversight.
 
 ## FFmpeg — the image's largest component
@@ -47,15 +47,14 @@ these commands are not run by CI):
 | Crate | Licence | Why it is here |
 |---|---|---|
 | `serde` | MIT OR Apache-2.0 | derives for the wire types |
-| `serde_json` | MIT OR Apache-2.0 | JSON for `/health`, error bodies and FFprobe's document |
+| `serde_json` | MIT OR Apache-2.0 | JSON for the CLI result and FFprobe's document |
 | `sha2` | MIT OR Apache-2.0 | SHA-256 of the output bytes |
 | `tempfile` | MIT OR Apache-2.0 | owned temp directories that are removed on every path |
 | `signal-hook` | Apache-2.0 OR MIT | SIGTERM/SIGINT; `std` has no signal API |
 | `libc` | MIT OR Apache-2.0 | Unix dev-dependency for sending real signals in integration tests |
 
-Deliberately absent: any HTTP framework. Two routes and a bounded body are
-`src/http.rs`, which keeps the read path and its limits visible instead of hidden
-behind middleware configuration.
+The runner has no HTTP framework or public server. Cloud Run invokes the bounded
+CLI and reads its result document from the job output.
 
 All are MIT/Apache-2.0, so the Rust half of the image carries no copyleft
 obligation. `cargo deny` is not run in CI for this crate; `cargo tree` and

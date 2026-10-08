@@ -1,6 +1,6 @@
 // apps/e2e/tests/notes.spec.ts
 //
-// The full path, through the built Worker, in a real browser, against real D1.
+// The full path, through the built Worker, in a real browser, against Supabase Postgres.
 //
 // One test file on purpose. These tests share one local database and one set of
 // seeded users, and they run in declaration order (`workers: 1`), so the file

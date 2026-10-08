@@ -4,7 +4,8 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "test:e2e": "playwright test --config playwright.config.ts",
+    "test:e2e": "bun run scripts/run_e2e.ts",
+    "test:e2e:playwright": "playwright test --config playwright.config.ts",
     "test:visual": "playwright test --config playwright.visual.config.ts",
     "test:full": "playwright test --config playwright.full.config.ts",
     "test:audit": "playwright test --config playwright.audit.config.ts",

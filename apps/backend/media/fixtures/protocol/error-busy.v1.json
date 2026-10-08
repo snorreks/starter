@@ -1,7 +1,0 @@
-{
-  "error": {
-    "code": "busy",
-    "message": "an encode is already in flight on this container",
-    "retryable": true
-  }
-}

@@ -93,7 +93,7 @@ tasks:
   # cached "pass" would certify a server and a database that were never started.
   #
   # It also has no `inputs`, deliberately. The whole tree is in scope, and this
-  # project's results depend on the built client, the D1 state under
+  # project's results depend on the built client, the Supabase state under
   # `.wrangler/`, and the port the harness binds — none of which Moon can key.
   e2e:
     command: 'bun'

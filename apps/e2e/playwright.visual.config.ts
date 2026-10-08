@@ -4,9 +4,7 @@ import { playwrightLaunchOptions } from '../../scripts/src/shared/browser_path.t
 import { resolveE2EPort } from '../../scripts/src/shared/e2e_port.ts';
 import { REPO_ROOT } from '../../scripts/src/shared/paths.ts';
 import { runScope } from '../../scripts/src/shared/run_scope.ts';
-import { requireVisualBackend } from './src/visual/backend.ts';
 
-requireVisualBackend(process.env.STARTER_BACKEND_PROFILE);
 const runId = process.env.E2E_RUN_ID ?? `visual_${crypto.randomUUID()}`;
 if (
   process.env.CI &&

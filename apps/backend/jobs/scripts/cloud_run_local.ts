@@ -49,6 +49,12 @@ const readBody = async (request: import('node:http').IncomingMessage, limit: num
 };
 
 const run = async () => {
+  const args = process.argv.slice(2);
+  if (args.join(' ') !== '--backend supabase --processor cloud-run-local') {
+    fail(
+      'Run this lane as `bun run test:compute -- --backend supabase --processor cloud-run-local`; no other compute backend or processor is supported.',
+    );
+  }
   const runnerTests = Bun.spawnSync(['bun', 'test', 'runner.test.ts'], {
     cwd: join(media, 'runner'),
     stdout: 'inherit',
@@ -154,6 +160,7 @@ const run = async () => {
     const built = await execute(
       [
         'build',
+        '--no-cache',
         '--file',
         'apps/backend/media/Dockerfile.job',
         '--tag',
@@ -166,6 +173,16 @@ const run = async () => {
     );
     if (built.code !== 0) {
       fail(`The finite Cloud Run job image failed to build.\n${built.output.slice(-4000)}`);
+    }
+    const rustTestCounts = [...built.output.matchAll(/test result: ok\. (\d+) passed/g)].map(
+      (match) => Number(match[1]),
+    );
+    const rustTests = rustTestCounts.reduce((total, count) => total + count, 0);
+    if (rustTests === 0) {
+      fail(
+        'The Rust image build discovered no passing Cargo tests; the compute lane requires ' +
+          'the real encode, cancellation and failure tests to run.',
+      );
     }
     const result = await execute(
       [
@@ -199,7 +216,7 @@ const run = async () => {
       );
     }
     process.stdout.write(
-      `Cloud Run local runner completed a real FFmpeg encode: ${output?.length} bytes. Google IAM and Supabase hosted behavior were not exercised.\n`,
+      `Cloud Run local runner completed ${rustTests} Rust tests and a real FFmpeg encode: ${output?.length} bytes. Google IAM and Supabase hosted behavior were not exercised.\n`,
     );
   } finally {
     server.close();

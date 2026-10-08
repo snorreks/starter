@@ -1,7 +1,0 @@
-{
-  "error": {
-    "code": "payload_too_large",
-    "message": "input body exceeds the configured maximum",
-    "retryable": false
-  }
-}

@@ -2,7 +2,7 @@
 //
 // End-to-end tests against the real application.
 //
-// This suite runs the **built** Worker in real workerd with a real local D1, and
+// This suite runs the **built** Worker in real workerd with a local Supabase, and
 // drives it in a real browser. That is deliberate and expensive: it is the only
 // lane that can catch a contract mismatch between the page and the API, a
 // bundling mistake that only appears in workerd, or a build that only works in
@@ -94,20 +94,6 @@ const appBaseUrl = `http://127.0.0.1:${APP_PORT}`;
  */
 const RUN_SCOPE = runScope(TEST_RUN_ID);
 
-/**
- * Sign-in budget for the run.
- *
- * Raised, not disabled. Each test creates its own account, so a full run makes
- * roughly a dozen sign-ups in a couple of minutes — well past a
- * production-sane per-minute budget. Leaving it at the default would make every
- * test after the third fail with a rate-limit error and report a product bug.
- *
- * Setting it to 0 would be worse: it would prove nothing about the auth path a
- * real user takes, and a rate-limit bypass is exactly the kind of thing that
- * should not be normal in a test environment.
- */
-export const AUTH_RATE_LIMIT_MAX = '500';
-
 export default defineConfig({
   testDir: './tests',
   testMatch: ['**/*.spec.ts'],
@@ -170,11 +156,7 @@ export default defineConfig({
         E2E_RUN_ID: TEST_RUN_ID,
         STARTER_LOG_DIR: RUN_SCOPE.logDir,
         E2E_EVIDENCE_DIR: `${RUN_SCOPE.artifactDir}/visual`,
-        AUTH_RATE_LIMIT_MAX,
-        // Origins the app will accept credentialed requests from. There is no
-        // cross-origin client any more, so the list names only the app's own
-        // origin — an allowlist with one entry is still an allowlist, and Better
-        // Auth rejects a request whose `Origin` is not on it.
+        // Credentialed requests accept only explicitly configured origins.
         TRUSTED_ORIGINS: [appBaseUrl, process.env.E2E_EXTRA_TRUSTED_ORIGINS]
           .filter(Boolean)
           .join(','),

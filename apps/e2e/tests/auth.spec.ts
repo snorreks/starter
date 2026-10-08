@@ -339,7 +339,7 @@ test.describe('authentication', () => {
     // address". Telling this person their password is wrong would send them to reset
     // a password that is fine — and "Email not verified" and "invalid credentials"
     // arrive with the same HTTP status, so this only works because the ViewModel
-    // branches on Better Auth's error *code*.
+    // branches on Supabase Auth's error *code*.
     await expect(page.getByTestId('auth-error')).toContainText(/confirm your address/i);
     // And the resend affordance exists, which is the only thing the user can do.
     await expect(page.getByTestId('auth-resend-verification')).toBeVisible();
@@ -366,7 +366,7 @@ test.describe('password recovery, in a browser', () => {
     const link = await capturedLink(request, account.email, /password/i);
     await page.goto(await authCallback({ request: page.request, link }));
 
-    // Better Auth validated the token before redirecting here, so the form is already
+    // Supabase Auth validated the token before redirecting here, so the form is already
     // live. Server-rendered, which is what makes the next step work without JS.
     // `exact`, because the heading says "Choose a new password" and `getByLabel`
     // substring-matches an element's accessible name as well as a `<label>` — without
