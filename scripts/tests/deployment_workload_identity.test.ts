@@ -64,9 +64,9 @@ test('CI runs the Supabase-owned E2E entrypoint without a second database setup'
   expect(steps.some((step) => String(step.run).includes('db:migrate'))).toBe(false);
   expect(steps.some((step) => JSON.stringify(step.env ?? {}).includes('legacy'))).toBe(false);
   const manifest = JSON.parse(readFileSync(join(REPO_ROOT, 'package.json'), 'utf8'));
-  expect(manifest.scripts.e2e).toBe(
-    'bun run scripts/src/cli.ts cached --backend supabase -- e2e:e2e',
-  );
+  expect(manifest.scripts.e2e).toBe('bun run scripts/src/cli.ts cached -- e2e:e2e');
+  const e2eManifest = JSON.parse(readFileSync(join(REPO_ROOT, 'apps/e2e/package.json'), 'utf8'));
+  expect(e2eManifest.scripts['test:e2e']).toBe('bun run scripts/run_e2e.ts');
 });
 
 describe('deployment workload identity follows resolved compute policy', () => {

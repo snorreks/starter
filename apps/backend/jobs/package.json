@@ -29,6 +29,7 @@
     "jose": "6.2.12"
   },
   "devDependencies": {
+    "@starter/scripts": "workspace:*",
     "@cloudflare/workers-types": "5.20261006.1",
     "@types/bun": "1.4.2",
     "miniflare": "5.20261006.0-alpha",

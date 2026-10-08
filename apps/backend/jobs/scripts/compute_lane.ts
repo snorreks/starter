@@ -1,7 +1,7 @@
 const args = process.argv.slice(2);
 if (args.length !== 1 || args[0] !== 'dev') {
   process.stderr.write(
-    'The jobs Worker has no standalone local runtime. Use `bun run test:compute -- --backend supabase --processor cloud-run-local` for the real Cloud Run runner lane.\n',
+    'The jobs Worker has no standalone local runtime. Use `bun run test:compute` for the real Cloud Run runner lane.\n',
   );
   process.exit(2);
 }

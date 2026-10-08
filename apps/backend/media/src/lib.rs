@@ -59,6 +59,4 @@ mod tests {
         // A local build has no stamped revision and must not imply one.
         assert_eq!(RELEASE, concat!(env!("CARGO_PKG_VERSION"), "+unversioned"));
     }
-
-
 }

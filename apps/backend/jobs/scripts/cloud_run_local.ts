@@ -1,39 +1,30 @@
-import { spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { publicToolEnvironment } from '@starter/scripts/environment';
+import { runBounded } from '@starter/scripts/process';
 
 const root = fileURLToPath(new URL('../../../../', import.meta.url));
 const media = join(root, 'apps/backend/media');
 const image = 'starter-cloud-run-job:local';
 const fail = (message: string): never => {
-  process.stderr.write(`${message}\n`);
-  process.exit(1);
+  throw new Error(message);
 };
 
-const execute = (args: string[], timeoutMs: number) =>
-  new Promise<{ code: number; output: string }>((resolve) => {
-    const child = spawn('docker', args, { cwd: root, stdio: ['ignore', 'pipe', 'pipe'] });
-    let output = '';
-    const timer = setTimeout(() => child.kill('SIGTERM'), timeoutMs);
-    child.stdout.on('data', (part: Buffer) => {
-      output += part.toString();
-    });
-    child.stderr.on('data', (part: Buffer) => {
-      output += part.toString();
-    });
-    child.once('error', () => {
-      clearTimeout(timer);
-      resolve({ code: 127, output });
-    });
-    child.once('exit', (code) => {
-      clearTimeout(timer);
-      resolve({ code: code ?? 1, output });
-    });
+const execute = async (args: string[], timeoutMs: number) => {
+  const result = await runBounded({
+    command: 'docker',
+    args,
+    cwd: root,
+    timeoutMs,
+    maxBytes: 16 * 1024 * 1024,
+    env: publicToolEnvironment(process.env),
   });
+  return { code: result.code, output: `${result.stdout}\n${result.stderr}` };
+};
 
 const readBody = async (request: import('node:http').IncomingMessage, limit: number) => {
   const chunks: Buffer[] = [];
@@ -50,17 +41,21 @@ const readBody = async (request: import('node:http').IncomingMessage, limit: num
 
 const run = async () => {
   const args = process.argv.slice(2);
-  if (args.join(' ') !== '--backend supabase --processor cloud-run-local') {
+  if (args.length !== 0) {
     fail(
-      'Run this lane as `bun run test:compute -- --backend supabase --processor cloud-run-local`; no other compute backend or processor is supported.',
+      'Run `bun run test:compute` without backend or processor switches; there is one compute lane.',
     );
   }
-  const runnerTests = Bun.spawnSync(['bun', 'test', 'runner.test.ts'], {
+  const runnerTests = await runBounded({
+    command: process.execPath,
+    args: ['test', 'runner.test.ts'],
     cwd: join(media, 'runner'),
-    stdout: 'inherit',
-    stderr: 'inherit',
+    timeoutMs: 60_000,
+    maxBytes: 2 * 1024 * 1024,
+    env: publicToolEnvironment(process.env),
+    onOutput: (stream, chunk) => process[stream].write(chunk),
   });
-  if (runnerTests.exitCode !== 0) {
+  if (runnerTests.code !== 0) {
     fail('Finite runner boundary tests failed; the image lane cannot proceed.');
   }
   const probe = await execute(['info'], 15_000);

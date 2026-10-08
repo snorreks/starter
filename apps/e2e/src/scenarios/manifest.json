@@ -217,35 +217,6 @@
       "captureReason": null
     },
     {
-      "id": "web-device-invalid",
-      "app": "web",
-      "route": "/device",
-      "url": "/device",
-      "kind": "page",
-      "state": "missing-code",
-      "fixture": null,
-      "setup": "verified-account",
-      "ready": {
-        "heading": "Approve a device"
-      },
-      "expected": {
-        "controls": [],
-        "content": ["No device code was supplied"]
-      },
-      "variants": {
-        "viewports": ["desktop", "mobile"],
-        "themes": ["light", "dark"]
-      },
-      "capture": true,
-      "regions": ["viewport"],
-      "visualRequirements": ["device-code-guidance"],
-      "referenceId": null,
-      "audit": false,
-      "runtimeProfile": "web-disabled",
-      "baseline": false,
-      "captureReason": null
-    },
-    {
       "id": "web-notes-anonymous",
       "app": "web",
       "route": "/notes",

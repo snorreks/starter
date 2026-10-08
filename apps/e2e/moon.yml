@@ -14,6 +14,7 @@ fileGroups:
   sources:
     - '*.ts'
     - 'src/**/*'
+    - 'scripts/**/*'
   scenarios:
     - 'src/scenarios/**/*'
   references:
@@ -101,7 +102,7 @@ tasks:
     options:
       cache: false
 
-  test-tooling:
+  test:
     command: 'bun'
     args: ['run', 'test:tooling']
     inputs:

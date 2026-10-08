@@ -338,6 +338,4 @@ mod tests {
         assert!(duration_of(&document).is_err());
         assert!(check_video(&[], &preset()).is_err());
     }
-
-
 }

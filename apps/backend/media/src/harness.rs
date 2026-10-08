@@ -157,5 +157,4 @@ mod tests {
         std::fs::remove_dir_all(&first).ok();
         std::fs::remove_dir_all(&second).ok();
     }
-
 }

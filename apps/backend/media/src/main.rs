@@ -12,10 +12,10 @@
 //! * **Argument parsing and exit status.** Small enough to write out; a parser
 //!   crate would be a dependency for eight flags.
 
-use std::path::PathBuf;
-use std::process::ExitCode;
 use signal_hook::consts::{SIGINT, SIGTERM};
 use signal_hook::flag;
+use std::path::PathBuf;
+use std::process::ExitCode;
 
 use starter_media::cli;
 use starter_media::encode::{Encoder, Tools};

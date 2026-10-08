@@ -2,8 +2,8 @@ $schema: 'https://moonrepo.dev/schemas/project.json'
 
 # apps/backend/jobs/moon.yml
 #
-# The scheduled jobs Worker: two Workflows, one container Durable Object, and the
-# bounded maintenance they run.
+# The scheduled jobs Worker: two Workflows dispatch finite Cloud Run jobs and
+# run bounded maintenance.
 #
 # Task names follow the media crate's precedent and its reason: this project
 # publishes no `test`/`lint` task for the *compute* lane, because the root
@@ -52,6 +52,7 @@ dependsOn:
   - jobs
   - schemas
   - utils
+  - scripts
 
 tasks:
   build:

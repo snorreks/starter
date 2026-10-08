@@ -9,9 +9,11 @@ fn the_cli_result_document_matches_its_golden() {
         .join("fixtures")
         .join("protocol")
         .join("encode-success.v1.json");
-    let golden = std::fs::read_to_string(&path).unwrap_or_else(|error| panic!("{}: {error}", path.display()));
+    let golden = std::fs::read_to_string(&path)
+        .unwrap_or_else(|error| panic!("{}: {error}", path.display()));
     let value: serde_json::Value = serde_json::from_str(&golden).expect("valid golden JSON");
-    let document: EncodeSuccessDocument = serde_json::from_value(value.clone()).expect("typed result");
+    let document: EncodeSuccessDocument =
+        serde_json::from_value(value.clone()).expect("typed result");
     assert_eq!(serde_json::to_value(&document).expect("serializes"), value);
     assert_eq!(document.protocol, PROTOCOL_ID);
     assert_eq!(document.preset, PRESET_ID);
@@ -20,5 +22,8 @@ fn the_cli_result_document_matches_its_golden() {
     assert_eq!((document.probe.width, document.probe.height), (320, 180));
     assert_eq!(document.probe.duration_ms, 3_000);
     assert_eq!(document.output_sha256.len(), 64);
-    assert!(document.output_sha256.bytes().all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase()));
+    assert!(document
+        .output_sha256
+        .bytes()
+        .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase()));
 }

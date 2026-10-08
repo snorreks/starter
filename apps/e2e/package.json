@@ -11,7 +11,7 @@
     "test:audit": "playwright test --config playwright.audit.config.ts",
     "doctor:browser": "bun run src/doctor.ts",
     "full:runtime": "bun run src/full/runtime_host.ts",
-    "test:tooling": "bun test src/scenarios src/visual/backend.test.ts",
+    "test:tooling": "bun test src/scenarios scripts",
     "test:headed": "playwright test --config playwright.config.ts --headed",
     "browsers:install": "playwright install --with-deps chromium",
     "capture-evidence": "bun run test:visual",

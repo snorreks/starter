@@ -77,7 +77,10 @@ impl ErrorCode {
 
     /// Whether a caller may try the same bytes again. See the module comment.
     pub const fn retryable(self) -> bool {
-        matches!(self, Self::DeadlineExceeded | Self::Cancelled | Self::Internal)
+        matches!(
+            self,
+            Self::DeadlineExceeded | Self::Cancelled | Self::Internal
+        )
     }
 }
 
