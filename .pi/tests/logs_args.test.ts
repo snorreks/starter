@@ -51,6 +51,9 @@ describe('flags', () => {
       ...buildArgs({ uid: 'u1' }),
       ...buildArgs({ traceId: 't1' }),
       ...buildArgs({ limit: 5 }),
+      ...buildArgs({ source: 'browser' }),
+      ...buildArgs({ since: '15m' }),
+      ...buildArgs({ runId: 'run_42' }),
     ].filter((arg) => arg.startsWith('--'));
 
     const unknown = [...new Set(emitted)].filter((flag) => !CLI_FLAGS.has(flag));
@@ -68,7 +71,7 @@ describe('flags', () => {
 });
 
 describe('buildArgs', () => {
-  test('defaults to all apps in local mode', () => {
+  test('defaults to all producers in local mode', () => {
     const args = buildArgs({});
 
     expect(args.slice(0, 2)).toEqual(['run', 'logs']);
@@ -77,10 +80,23 @@ describe('buildArgs', () => {
   });
 
   test('passes the requested app and mode through', () => {
-    const args = buildArgs({ app: 'api', mode: 'production' });
+    const args = buildArgs({ app: 'web', mode: 'production' });
 
-    expect(args).toContain('api');
+    expect(args).toContain('web');
     expect(args[args.indexOf('--mode') + 1]).toBe('production');
+  });
+
+  test('passes supported source and since filters through', () => {
+    const args = buildArgs({ source: 'browser', since: '15m' });
+
+    expect(args[args.indexOf('--source') + 1]).toBe('browser');
+    expect(args[args.indexOf('--since') + 1]).toBe('15m');
+  });
+
+  test('selects one owned log run by id', () => {
+    const args = buildArgs({ runId: 'run_42' });
+
+    expect(args[args.indexOf('--run') + 1]).toBe('run_42');
   });
 
   test('errorsOnly is shorthand for level ERROR', () => {
@@ -165,7 +181,7 @@ describe('buildArgs', () => {
   test('every flag is followed by a value', () => {
     // A trailing flag with no argument is how a CLI silently does nothing.
     const args = buildArgs({
-      app: 'client',
+      app: 'web',
       mode: 'staging',
       level: 'INFO',
       uid: 'u',

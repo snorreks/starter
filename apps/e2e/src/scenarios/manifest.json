@@ -171,7 +171,7 @@
         "heading": "Choose a new password"
       },
       "expected": {
-        "controls": ["new-password", "reset-submit"],
+        "controls": [],
         "content": ["That link is no longer valid"]
       },
       "variants": {

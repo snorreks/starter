@@ -1,0 +1,12 @@
+{
+  "result": "PASS",
+  "command": "bun test live/generic_project_browser.test.ts",
+  "runtimeRunId": "debug_fixture_4798cb2e2d2448e2965a85089cc33129",
+  "browserConsoleCount": 2,
+  "browserConsoleDropped": 0,
+  "browserNetworkCount": 2,
+  "browserNetworkDropped": 0,
+  "matchingConsole": true,
+  "matchingNetwork": true,
+  "matchingRuntimeLog": true
+}

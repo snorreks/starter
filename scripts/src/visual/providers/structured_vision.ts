@@ -1,5 +1,5 @@
 import type { VisionConfig } from '../config.ts';
-import { type ReviewResult, reviewJsonSchema, validateReviewResult } from '../schemas.ts';
+import { type ReviewResult, validateReviewResult } from '../schemas.ts';
 
 export interface VisionResponse {
   review: ReviewResult;
@@ -56,8 +56,8 @@ export const requestStructuredVision = async (options: {
         type: 'text',
         text:
           repair === undefined
-            ? options.prompt
-            : `${options.prompt}\nThe prior response was invalid. Return a corrected JSON object only. Error: ${repair}`,
+            ? `${options.prompt}\n${RESPONSE_CONTRACT}`
+            : `${options.prompt}\n${RESPONSE_CONTRACT}\nThe prior response was invalid. Return a corrected JSON object only. Error: ${repair}`,
       },
       { type: 'image_url', image_url: { url: dataUrl } },
     ];
@@ -66,10 +66,7 @@ export const requestStructuredVision = async (options: {
       stream: false,
       max_tokens: options.config.maxOutputTokens,
       messages: [{ role: 'user', content }],
-      response_format: {
-        type: 'json_schema',
-        json_schema: { name: 'starter_ui_review_v1', strict: true, schema: reviewJsonSchema() },
-      },
+      response_format: { type: 'json_object' },
       provider: { require_parameters: true },
     };
     let response: Response | undefined;
@@ -169,3 +166,5 @@ export const requestStructuredVision = async (options: {
     `Vision provider did not return a valid review after one schema repair: ${repair ?? 'unknown error'}`,
   );
 };
+
+const RESPONSE_CONTRACT = `Return exactly one JSON object with these required top-level fields: schemaVersion (1), summary (string), dimensions, requirements, issues, reference. dimensions must contain layout, typography, hierarchy, consistency, responsiveFit, and stateClarity. Each dimension has evidence and uncertainty (low, medium, or high), plus either score (integer 0-4) or unassessable (true). requirements is an array of {id, status (met, violated, or unclear), evidence}; copy these requirement IDs exactly once each from the prompt's explicit Requirement IDs line. issues is an array of {dimension, requirementId (one exact supplied ID or null), category, severity (minor, major, or blocker), observation, region, box, impact, correction, uncertainty}. dimension must be one of layout, typography, hierarchy, consistency, responsiveFit, stateClarity. category, observation, region, impact, correction, and uncertainty must be strings. severity must be minor, major, or blocker. box must be null or an object with numeric x, y, width, and height properties from 0 to 1; never use an array. reference is null. Do not include extra fields.`;

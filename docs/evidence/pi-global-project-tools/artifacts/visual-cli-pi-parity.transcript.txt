@@ -1,0 +1,9 @@
+bun test v1.4.2 (744846f84)
+
+tests/live/visual_review_facade.test.ts:
+(pass) visual review through the loaded Pi project tool > matches the project CLI grade and provider/model provenance on the same cached run [263.97ms]
+
+ 1 pass
+ 0 fail
+ 9 expect() calls
+Ran 1 test across 1 file. [419.00ms]

@@ -75,7 +75,51 @@ export interface StartJobOptions {
   /** Extra grace between SIGTERM and SIGKILL. */
   killGraceMs?: number;
   signal?: AbortSignal;
+  /** Keep only host/runtime paths needed by Starter; remove provider/deploy credentials. */
+  environment?: 'inherit' | 'starter-runtime';
 }
+
+const RUNTIME_ENVIRONMENT_KEYS = [
+  'PATH',
+  'HOME',
+  'USER',
+  'LOGNAME',
+  'TMPDIR',
+  'TEMP',
+  'TMP',
+  'LANG',
+  'LC_ALL',
+  'TZ',
+  'SSL_CERT_FILE',
+  'SSL_CERT_DIR',
+  'NODE_EXTRA_CA_CERTS',
+  'BUN_INSTALL',
+  // Moon uses the active Nix-shell marker when resolving host tools for tasks.
+  // Without it a Pi-owned build can lose the shell's Node even though PATH is
+  // preserved, while the same command succeeds in the interactive shell.
+  'IN_NIX_SHELL',
+  'NIX_PROFILES',
+  'PLAYWRIGHT_BROWSERS_PATH',
+  'CHROMIUM_PATH',
+  'XDG_CACHE_HOME',
+  'XDG_CONFIG_HOME',
+  'SYSTEMROOT',
+  'WINDIR',
+  'COMSPEC',
+  'PATHEXT',
+  'APPDATA',
+  'LOCALAPPDATA',
+] as const;
+
+const runtimeEnvironment = (): NodeJS.ProcessEnv =>
+  Object.fromEntries(
+    Object.entries(process.env).filter(
+      ([key]) =>
+        RUNTIME_ENVIRONMENT_KEYS.includes(key as (typeof RUNTIME_ENVIRONMENT_KEYS)[number]) ||
+        key.startsWith('NIX_') ||
+        key === '__NIXOS_SET_ENVIRONMENT_DONE',
+    ),
+  );
 
 export interface JobHandle {
   snapshot(): JobSnapshot;
@@ -237,8 +281,11 @@ export const startJob = (
   };
 
   writeSnapshot(root, snapshot);
+  // Pi can run as a bundled executable whose process.execPath is the Pi binary,
+  // not a JavaScript runtime. The supervisor is a standalone .mjs entrypoint, so
+  // launch it through the documented Node prerequisite instead of the host app.
   const supervisor = spawn(
-    process.execPath,
+    'node',
     [
       fileURLToPath(new URL('./job_supervisor.mjs', import.meta.url)),
       JSON.stringify({
@@ -254,7 +301,11 @@ export const startJob = (
       cwd: root,
       detached: true,
       stdio: ['ignore', 'ignore', 'ignore', 'ipc'],
-      env: { ...process.env, [JOB_TOKEN_ENV]: token, GIT_TERMINAL_PROMPT: '0' },
+      env: {
+        ...(options.environment === 'starter-runtime' ? runtimeEnvironment() : process.env),
+        [JOB_TOKEN_ENV]: token,
+        GIT_TERMINAL_PROMPT: '0',
+      },
     },
   );
 

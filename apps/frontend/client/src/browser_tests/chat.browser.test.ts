@@ -46,11 +46,38 @@ const message: Message = {
   status: 'complete',
   createdAt: 0,
 };
-const transport = {
+const transport: StreamingTransport = {
   async request<T>() {
     return {} as T;
   },
+  openStream: (path, options) => new HttpTransport().openStream(path, options),
 };
+
+test('composer describes its error only while an error exists and retains whitespace validation', () => {
+  const vm = new ChatViewModel({
+    chat: new ChatService({ transport }),
+    conversation,
+    initialMessages: [],
+    newClientId: () => 'cid',
+  });
+  const mounted = mountInDocument(ChatView, { viewModel: vm });
+  try {
+    const input = mounted.target.querySelector<HTMLTextAreaElement>('[data-testid="chat-input"]');
+    expect(input).not.toBeNull();
+    expect(input?.getAttribute('aria-describedby')).toBeNull();
+
+    vm.setDraft('   ');
+    flushSync();
+    expect(input?.getAttribute('aria-describedby')).toBe('chat-composer-error');
+    expect(mounted.target.querySelector('[data-testid="chat-error"]')).not.toBeNull();
+
+    vm.setDraft('hello');
+    flushSync();
+    expect(input?.getAttribute('aria-describedby')).toBeNull();
+  } finally {
+    mounted.destroy();
+  }
+});
 
 test('streaming controls and partial text update before completion', async () => {
   let controller!: ReadableStreamDefaultController<Uint8Array>;

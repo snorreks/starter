@@ -1,9 +1,11 @@
 import { createHash } from 'node:crypto';
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, rename, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, relative } from 'node:path';
 import { expect, test } from '@playwright/test';
+import { REPO_ROOT } from '../../../../scripts/src/shared/paths.ts';
 import { runBounded } from '../../../../scripts/src/shared/run_bounded.ts';
+import { runScope } from '../../../../scripts/src/shared/run_scope.ts';
 import { appBaseUrl } from '../../preflight.ts';
 import { createVerifiedAccount } from '../../src/fixtures/accounts.ts';
 
@@ -67,6 +69,10 @@ test('a verified owner encodes real fixture bytes and can replay, range-read and
     .toLowerCase()
     .replace(/[^a-z0-9_.-]/g, '-');
   const scratch = await mkdtemp(join(tmpdir(), 'starter-e2e-output-'));
+  let probeResult: {
+    format?: { duration?: string };
+    streams?: Array<{ codec_name?: string; width?: number; height?: number }>;
+  };
   try {
     const localOutput = join(scratch, 'output.mp4');
     await writeFile(localOutput, output, { flag: 'wx', mode: 0o600 });
@@ -101,6 +107,7 @@ test('a verified owner encodes real fixture bytes and can replay, range-read and
       format?: { duration?: string };
       streams?: Array<{ codec_name?: string; width?: number; height?: number }>;
     };
+    probeResult = document;
     const video = document.streams?.find((stream) => stream.width !== undefined);
     expect(video).toMatchObject({ codec_name: 'h264', width: 320, height: 180 });
     expect(
@@ -128,4 +135,55 @@ test('a verified owner encodes real fixture bytes and can replay, range-read and
   } finally {
     await anonymous.close();
   }
+
+  const runId = process.env.E2E_RUN_ID;
+  if (!runId) {
+    throw new Error('Full compute evidence requires E2E_RUN_ID.');
+  }
+  const scope = runScope(runId, REPO_ROOT);
+  const evidenceDirectory = join(scope.artifactDir, 'compute');
+  await mkdir(evidenceDirectory, { recursive: true, mode: 0o700 });
+  const mediaPath = join(evidenceDirectory, 'sample-v1-output.mp4');
+  const reportPath = join(evidenceDirectory, 'encode.json');
+  const reportTemporary = `${reportPath}.${crypto.randomUUID()}.tmp`;
+  await writeFile(mediaPath, output, { flag: 'wx', mode: 0o600 });
+  await writeFile(
+    reportTemporary,
+    `${JSON.stringify(
+      {
+        schemaVersion: 1,
+        runId,
+        profile: 'full',
+        status: 'passed',
+        origin: appBaseUrl,
+        fixture: 'sample-v1',
+        jobId: created.id,
+        output: {
+          path: relative(REPO_ROOT, mediaPath),
+          sha256,
+          bytes: output.byteLength,
+          contentType: outputResponse.headers()['content-type'],
+          durationMs: Number(outputResponse.headers()['x-output-duration-ms']),
+        },
+        probe: {
+          codec: probeResult?.streams?.find((stream) => stream.width !== undefined)?.codec_name,
+          width: probeResult?.streams?.find((stream) => stream.width !== undefined)?.width,
+          height: probeResult?.streams?.find((stream) => stream.width !== undefined)?.height,
+          durationSeconds: Number(probeResult?.format?.duration),
+        },
+        assertions: [
+          'UI admission',
+          'idempotent replay',
+          'range read',
+          'owner download',
+          'non-owner denied',
+          'anonymous denied',
+        ],
+      },
+      null,
+      2,
+    )}\n`,
+    { flag: 'wx', mode: 0o600 },
+  );
+  await rename(reportTemporary, reportPath);
 });

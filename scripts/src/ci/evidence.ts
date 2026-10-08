@@ -61,6 +61,8 @@ export interface EvidenceRow {
   recordedAt: string;
   /** Where the full output lives, if it was kept. A relative path or a URL. */
   artifact: string | null;
+  /** Optional process/run identifier when the evidence came from an owned run. */
+  runId?: string;
   /** Required for `not-run`. The exact cause and the command that would run it. */
   reason?: string;
 }
@@ -199,6 +201,9 @@ export const readManifest = (root: string = REPO_ROOT): ManifestResult => {
       if (typeof row?.platform !== 'string' || row.platform.trim() === '') {
         problems.push(`${at}: a platform is required; "linux" alone does not identify a host.`);
       }
+      if (row.runId !== undefined && !/^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/.test(row.runId)) {
+        problems.push(`${at}: runId must be a valid bounded run identifier.`);
+      }
       if (!/^\d{4}-\d{2}-\d{2}T/.test(String(row?.recordedAt))) {
         problems.push(`${at}: recordedAt must be an ISO-8601 timestamp.`);
       }
@@ -207,16 +212,23 @@ export const readManifest = (root: string = REPO_ROOT): ManifestResult => {
         // important", which is the opposite of what it means.
         problems.push(`${at}: a not-run row must say why, and what command would run it.`);
       }
+      if (
+        (row.kind === 'observed' || row.kind === 'not-run') &&
+        row.revision !== manifest.revision
+      ) {
+        problems.push(`${at}: observed and not-run rows must match manifest revision.`);
+      }
       // Every kind, not only `observed`. A historical figure is just as much of a
       // claim — it is the number a reader quotes when asking whether something
       // regressed — so a fractional or string count there is a typo nobody sees.
       if (row.count !== null && row.count !== undefined && !Number.isInteger(row.count)) {
         problems.push(`${at}: count must be an integer or null; got ${JSON.stringify(row.count)}.`);
       }
-      if (seen.has(row?.capability)) {
-        problems.push(`${at}: duplicate capability; one row per capability per revision.`);
+      const revisionKey = `${row?.capability}\0${row?.revision}`;
+      if (seen.has(revisionKey)) {
+        problems.push(`${at}: duplicate capability for revision ${row?.revision}.`);
       }
-      seen.add(row?.capability);
+      seen.add(revisionKey);
     }
   }
 
@@ -259,10 +271,9 @@ export const renderCurrentMatrix = (manifest: EvidenceManifest): string => {
     .map((row) => {
       const result =
         row.kind === 'not-run' ? `NOT RUN — ${row.reason ?? 'no reason recorded'}` : row.result;
-      // Artifacts often live in ignored, run-owned directories. Keep their exact
-      // locations in the evidence table without making checkout-local outputs
-      // look like durable repository links.
-      const artifact = row.artifact === null ? '—' : `\`${cell(row.artifact)}\``;
+      // Link committed repository evidence from the matrix's docs/ directory, but
+      // keep ignored run-owned output paths as literal locations.
+      const artifact = row.artifact === null ? '—' : renderArtifactLink(row.artifact);
       // Leading and trailing pipes as explicit cells, so an unaffected row renders
       // byte-identically to before the escaping was added and the diff of this change
       // is the escaping, not a reformatting of every row.
@@ -277,6 +288,18 @@ export const renderCurrentMatrix = (manifest: EvidenceManifest): string => {
     });
 
   return [...header, ...body].join('\n');
+};
+
+const renderArtifactLink = (artifact: string): string => {
+  const label = cell(artifact);
+  if (/^https?:\/\//i.test(artifact)) {
+    return `[${label}](${artifact})`;
+  }
+  if (!artifact.startsWith('docs/')) {
+    return `\`${label}\``;
+  }
+  const repositoryPath = artifact.replace(/^\.\//, '');
+  return `[${label}](../${cell(repositoryPath)})`;
 };
 
 /**
