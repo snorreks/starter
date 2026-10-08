@@ -8,7 +8,7 @@
 // what to do instead. A refusal that returns `null` or throws a bare `TypeError` is
 // not a refusal an operator can act on.
 
-import { afterEach, describe, expect, test } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import {
   describeCredential,
   hasApiToken,
@@ -34,6 +34,9 @@ afterEach(() => {
   } else {
     process.env.STARTER_BACKEND_PROFILE = originalBackendProfile;
   }
+});
+beforeEach(() => {
+  process.env.STARTER_BACKEND_PROFILE = 'legacy';
 });
 
 /** A project with both environments fully provisioned and properly separated. */
@@ -64,7 +67,7 @@ const configured = (overrides: Partial<DeploymentValues> = {}): DeploymentValues
 });
 
 const resolved = (environment: string, values = configured()): ResolvedTarget => {
-  const result = resolveTarget(environment, { values });
+  const result = resolveTarget(environment, { values, profile: 'legacy' });
   if (!result.ok) {
     throw new Error(`Expected ${environment} to resolve, got: ${result.reason}`);
   }
@@ -72,6 +75,48 @@ const resolved = (environment: string, values = configured()): ResolvedTarget =>
 };
 
 describe('resolveTarget answers with one complete destination', () => {
+  test('an absent selector resolves to Supabase with explicitly disabled compute', () => {
+    delete process.env.STARTER_BACKEND_PROFILE;
+    const configuredValues = supabaseConfigured();
+    const staging = configuredValues.environments?.staging;
+    if (!staging) {
+      throw new Error('The test Supabase target is missing staging.');
+    }
+    const result = resolveTarget('staging', {
+      values: {
+        ...configuredValues,
+        environments: {
+          ...configuredValues.environments,
+          staging: {
+            ...staging,
+            jobsProfile: 'disabled',
+            jobsWorkerName: null,
+            mediaBucketName: null,
+            encodeWorkflowName: null,
+            maintenanceWorkflowName: null,
+            containerProfile: null,
+            googleProjectId: null,
+            googleRegion: null,
+            cloudRunJobName: null,
+            artifactImage: null,
+            runnerServiceAccount: null,
+            dispatcherServiceAccount: null,
+            processorProtocol: null,
+            processorCpu: null,
+            processorMemory: null,
+            processorTimeoutSeconds: null,
+          },
+        },
+      },
+    });
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.target.deploymentProfile).toBe('supabase');
+      expect(result.target.compute).toMatchObject({ enabled: false, profile: 'disabled' });
+      expect(result.target.requiredSecretNames).not.toContain('GOOGLE_DISPATCHER_CREDENTIAL');
+    }
+  });
+
   test('an explicit profile bypasses an invalid environment fallback', () => {
     process.env.STARTER_BACKEND_PROFILE = 'invalid';
     const explicit = resolveTarget('staging', {
@@ -364,8 +409,11 @@ describe('the Supabase deployment profile resolves the complete preview target o
       { artifactImage: `europe-north1-docker.pkg.dev/starter-staging/media/runner:latest` },
       'pinned by digest',
     ],
-    ['disabled compute', { jobsProfile: 'disabled' }, 'Compute is disabled'],
-    ['missing dispatcher identity', { dispatcherServiceAccount: null }, 'dispatcherServiceAccount'],
+    [
+      'missing compute prerequisites',
+      { dispatcherServiceAccount: null },
+      'missing prerequisites: dispatcherServiceAccount',
+    ],
   ] as const)(
     '%s fails during resolution before a provider can mutate',
     (_case, changed, expected) => {

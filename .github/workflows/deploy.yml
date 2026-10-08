@@ -73,7 +73,7 @@ on:
       backend_profile:
         description: 'Complete runtime profile to deploy'
         required: true
-        default: legacy
+        default: supabase
         type: choice
         options:
           - legacy
@@ -109,7 +109,7 @@ permissions:
 
 env:
   BUN_VERSION: '1.4.2'
-  STARTER_BACKEND_PROFILE: ${{ inputs.backend_profile || 'legacy' }}
+  STARTER_BACKEND_PROFILE: ${{ inputs.backend_profile || 'supabase' }}
   # ── repository-scoped, nonsecret ────────────────────────────────────────────
   #
   # This is the whole nonsecret configuration a plan needs, and it is
@@ -280,11 +280,11 @@ jobs:
           TARGET_FILE: ${{ runner.temp }}/resolved-target.json
         run: |
           bun run deploy:check --env "$DEPLOY_ENVIRONMENT" --json > "$TARGET_FILE"
-          node -e 'const fs = require("node:fs"); const report = JSON.parse(fs.readFileSync(process.env.TARGET_FILE, "utf8")); if (report.phase !== "plan" || report.target?.deploymentProfile !== "supabase" || !report.target.supabase?.googleProjectId) process.exit(1); fs.appendFileSync(process.env.GITHUB_OUTPUT, "google_project_id=" + report.target.supabase.googleProjectId + "\n");'
+          node -e 'const fs = require("node:fs"); const report = JSON.parse(fs.readFileSync(process.env.TARGET_FILE, "utf8")); const computeEnabled = report.target?.compute?.enabled; const projectId = report.target?.supabase?.googleProjectId; if (report.phase !== "plan" || report.target?.deploymentProfile !== "supabase" || typeof computeEnabled !== "boolean" || (computeEnabled && (typeof projectId !== "string" || !projectId))) process.exit(1); fs.appendFileSync(process.env.GITHUB_OUTPUT, "compute_enabled=" + computeEnabled + "\ngoogle_project_id=" + (computeEnabled ? projectId : "") + "\n");'
 
       - name: Authenticate to the target Google project with workload identity
         id: google-auth
-        if: ${{ inputs.backend_profile == 'supabase' }}
+        if: ${{ inputs.backend_profile == 'supabase' && steps.target.outputs.compute_enabled == 'true' }}
         uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3.0.0
         with:
           project_id: ${{ steps.target.outputs.google_project_id }}

@@ -6,18 +6,26 @@
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { runWrangler } from '../cloudflare/wrangler.ts';
-import { CLIENT_DIR, REPO_ROOT } from '../shared/paths.ts';
 import {
   runSupabaseLocalStatus,
   runSupabaseMigration,
   supabaseBin,
 } from '../deploy/providers/supabase.ts';
 import { resolveTarget } from '../deploy/target.ts';
+import { resolveBackendProfile } from '../shared/backend_profile.ts';
+import { CLIENT_DIR, REPO_ROOT } from '../shared/paths.ts';
 
 const MIGRATIONS_DIR = join(REPO_ROOT, 'packages/backend/database/drizzle-d1');
 
 export const main = (args: readonly string[] = []): number => {
-  if (process.env.STARTER_BACKEND_PROFILE === 'supabase') {
+  let profile: 'legacy' | 'supabase';
+  try {
+    profile = resolveBackendProfile(process.env.STARTER_BACKEND_PROFILE);
+  } catch (error) {
+    process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
+    return 2;
+  }
+  if (profile === 'supabase') {
     if (supabaseBin() === null) {
       process.stderr.write('Pinned Supabase CLI is unavailable; run `bun install`.\n');
       return 1;

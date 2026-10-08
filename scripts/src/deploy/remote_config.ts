@@ -54,7 +54,11 @@ export const renderRemoteConfig = (options: {
   const scoped =
     environments[target.environment] === undefined ? {} : object(environments[target.environment]);
   const config = { ...source, ...scoped };
-  if (target.deploymentProfile === 'supabase' && !/^\d{8,32}$/.test(options.runnerSubject ?? '')) {
+  if (
+    target.deploymentProfile === 'supabase' &&
+    target.compute.enabled &&
+    !/^\d{8,32}$/.test(options.runnerSubject ?? '')
+  ) {
     throw new Error(
       'Supabase Worker configuration needs the runner service-account uniqueId from authenticated provider discovery.',
     );
@@ -77,9 +81,13 @@ export const renderRemoteConfig = (options: {
           SUPABASE_URL: target.supabase.url,
           SUPABASE_ANON_KEY: target.supabase.publishableKey,
           SUPABASE_MAIL_URL: target.supabase.url,
-          GOOGLE_RUNNER_SERVICE_ACCOUNT: target.supabase.runnerServiceAccount,
-          GOOGLE_RUNNER_SUBJECT: options.runnerSubject,
-          GOOGLE_RUNNER_AUDIENCE: target.origin,
+          ...(target.compute.enabled
+            ? {
+                GOOGLE_RUNNER_SERVICE_ACCOUNT: target.supabase.runnerServiceAccount,
+                GOOGLE_RUNNER_SUBJECT: options.runnerSubject,
+                GOOGLE_RUNNER_AUDIENCE: target.origin,
+              }
+            : {}),
           ...(kind === 'jobs'
             ? {
                 GOOGLE_CLOUD_PROJECT: target.supabase.googleProjectId,

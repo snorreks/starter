@@ -655,8 +655,10 @@ export const apply = async (options: ApplyOptions): Promise<ApplyResult> => {
   const revision = sourceRevision(options.root);
   try {
     const googleToken =
-      target.deploymentProfile === 'supabase' ? process.env.GOOGLE_ACCESS_TOKEN : undefined;
-    if (target.deploymentProfile === 'supabase' && !googleToken) {
+      target.deploymentProfile === 'supabase' && target.compute.enabled
+        ? process.env.GOOGLE_ACCESS_TOKEN
+        : undefined;
+    if (target.deploymentProfile === 'supabase' && target.compute.enabled && !googleToken) {
       throw new Error('GOOGLE_ACCESS_TOKEN is required to resolve the runner identity.');
     }
     const runnerSubject = googleToken
@@ -855,10 +857,10 @@ export const apply = async (options: ApplyOptions): Promise<ApplyResult> => {
   } else {
     if (target.deploymentProfile === 'supabase' && target.supabase !== null) {
       const supabaseToken = process.env.SUPABASE_ACCESS_TOKEN;
-      const googleToken = process.env.GOOGLE_ACCESS_TOKEN;
-      if (!supabaseToken || !googleToken) {
+      const googleToken = target.compute.enabled ? process.env.GOOGLE_ACCESS_TOKEN : undefined;
+      if (!supabaseToken || (target.compute.enabled && !googleToken)) {
         const detail =
-          'SUPABASE_ACCESS_TOKEN and GOOGLE_ACCESS_TOKEN are required to configure the Supabase Auth callbacks and Cloud Run Job.';
+          'SUPABASE_ACCESS_TOKEN is required for Auth callbacks; enabled compute also requires GOOGLE_ACCESS_TOKEN for the Cloud Run Job.';
         outcomes.push(bad('jobs', detail));
         return stop('jobs', detail);
       }
@@ -873,26 +875,29 @@ export const apply = async (options: ApplyOptions): Promise<ApplyResult> => {
           identity: `${target.supabase.projectRef}:auth-callbacks`,
           source: revision.sha,
         });
-        await (
-          options.configureGoogleJob ??
-          ((resolvedTarget) => applyGoogleJob({ target: resolvedTarget, accessToken: googleToken }))
-        )(target);
-        components.push({
-          phase: 'jobs',
-          identity: `${target.supabase.googleProjectId}/${target.supabase.googleRegion}/${target.supabase.jobName}`,
-          source: revision.sha,
-          protocol: target.supabase.protocol,
-        });
-        await (
-          options.configureGoogleGrant ??
-          ((resolvedTarget) =>
-            applyDispatcherGrant({ target: resolvedTarget, accessToken: googleToken }))
-        )(target);
-        components.push({
-          phase: 'jobs',
-          identity: `${target.supabase.dispatcherServiceAccount}:roles/run.invoker`,
-          source: revision.sha,
-        });
+        if (googleToken) {
+          await (
+            options.configureGoogleJob ??
+            ((resolvedTarget) =>
+              applyGoogleJob({ target: resolvedTarget, accessToken: googleToken }))
+          )(target);
+          components.push({
+            phase: 'jobs',
+            identity: `${target.supabase.googleProjectId}/${target.supabase.googleRegion}/${target.supabase.jobName}`,
+            source: revision.sha,
+            protocol: target.supabase.protocol,
+          });
+          await (
+            options.configureGoogleGrant ??
+            ((resolvedTarget) =>
+              applyDispatcherGrant({ target: resolvedTarget, accessToken: googleToken }))
+          )(target);
+          components.push({
+            phase: 'jobs',
+            identity: `${target.supabase.dispatcherServiceAccount}:roles/run.invoker`,
+            source: revision.sha,
+          });
+        }
       } catch (error) {
         const detail =
           error instanceof Error
