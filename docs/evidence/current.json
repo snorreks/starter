@@ -1,7 +1,7 @@
 {
-  "revision": "68a107bfbbab91e65b1874d1e91a2e649d97972b",
-  "note": "Current observed rows were run against this revision. Earlier observations whose revision is not in this checkout are retained as historical rows with their original revision and timestamp; current not-run rows state the remaining validation boundary.",
-  "platform": "linux-x64 (NixOS 26.11; Bun 1.4.2; Node v22.23.3; Chromium 154.0.8037.97; Docker API 5.8.7)",
+  "revision": "3b9a338391afb83faedc47e23dca992850ae9932",
+  "note": "Fresh uncached PR #52 verification of deployment defaults and optional compute. Prior records are preserved as historical, including pre-squash revisions not reachable from main. Current not-run rows identify the remaining boundaries; no hosted deployment or existing live-resource retirement was performed.",
+  "platform": "linux-x64 (Bun 1.4.2; Node v22.23.3)",
   "rows": [
     {
       "capability": "Frozen install (historical observation)",
@@ -202,8 +202,8 @@
       "artifact": null
     },
     {
-      "capability": "Packaged desktop launch, installer and signing",
-      "kind": "not-run",
+      "capability": "Packaged desktop launch, installer and signing (not-run at 68a107b; historical)",
+      "kind": "historical",
       "revision": "68a107bfbbab91e65b1874d1e91a2e649d97972b",
       "command": "bun run native:build (bundled) and launching the binary",
       "platform": "Linux with WebKitGTK 4.1 and a display",
@@ -214,8 +214,8 @@
       "reason": "The AppImage bundle needs linuxdeploy, which this host does not provide (the CLI reports 'failed to run linuxdeploy'). Under Xvfb the binary starts and spawns WebKit subprocesses, but the webview never renders: the Nix store mixes two glibc generations and the WebKit helper processes abort. No rendered UI was captured, so launch is not claimed. Signing and notarisation need platform identities this host does not have."
     },
     {
-      "capability": "Provider deployment (Cloudflare staging and production)",
-      "kind": "not-run",
+      "capability": "Provider deployment (Cloudflare staging and production) (not-run at 68a107b; historical)",
+      "kind": "historical",
       "revision": "68a107bfbbab91e65b1874d1e91a2e649d97972b",
       "command": "bun run deploy:apply --env staging --yes",
       "platform": "any",
@@ -226,8 +226,8 @@
       "reason": "There is no Cloudflare credential anywhere on this host: CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID are unset, no wrangler OAuth state exists, the repository has no Actions secrets, no Actions variables and no GitHub environments at all, and .starter/deployment.local.json does not exist. The account was not guessed and no second account was created. The offline plan, its refusals and the apply pipeline are exercised by fixture instead."
     },
     {
-      "capability": "Live mail delivery (verification, sign-in, recovery)",
-      "kind": "not-run",
+      "capability": "Live mail delivery (verification, sign-in, recovery) (not-run at 68a107b; historical)",
+      "kind": "historical",
       "revision": "68a107bfbbab91e65b1874d1e91a2e649d97972b",
       "command": "bun run deploy verify --env staging",
       "platform": "any",
@@ -238,8 +238,8 @@
       "reason": "No RESEND_API_KEY and no verified sender domain exist on this host, and there is no inbox to receive a message in. Preflight reports the sender-domain check as explicitly NOT CHECKED rather than passing."
     },
     {
-      "capability": "Live sample encode against the deployed Workflow and managed container",
-      "kind": "not-run",
+      "capability": "Live sample encode against the deployed Workflow and managed container (not-run at 68a107b; historical)",
+      "kind": "historical",
       "revision": "68a107bfbbab91e65b1874d1e91a2e649d97972b",
       "command": "POST /api/jobs on a deployed origin, then GET /api/jobs/:id/output",
       "platform": "any",
@@ -250,8 +250,8 @@
       "reason": "Requires a deployed web and jobs Worker with a Cloudflare-managed container; none exists. The local compute lane proves the same encode path against a real FFmpeg container and real D1, and it does not certify the managed container lifecycle."
     },
     {
-      "capability": "Genuine scheduled maintenance firing",
-      "kind": "not-run",
+      "capability": "Genuine scheduled maintenance firing (not-run at 68a107b; historical)",
+      "kind": "historical",
       "revision": "68a107bfbbab91e65b1874d1e91a2e649d97972b",
       "command": "the deployed maintenance run record in D1, carrying its cron schedule and scheduledTime",
       "platform": "any",
@@ -262,8 +262,8 @@
       "reason": "The local Workers runtime cannot deliver a cron event to a Workflow binding's `schedules`, so only the manual branch is exercised locally (compute lane: 'a manual run deletes real rows and records the real counts'). Configuring a schedule is not a firing, and the release record says so explicitly. With no deployment there is no natural firing to wait for."
     },
     {
-      "capability": "iOS build and simulator run",
-      "kind": "not-run",
+      "capability": "iOS build and simulator run (not-run at 68a107b; historical)",
+      "kind": "historical",
       "revision": "68a107bfbbab91e65b1874d1e91a2e649d97972b",
       "command": "bun run native:ios",
       "platform": "macOS with full Xcode",
@@ -274,8 +274,8 @@
       "reason": "This host is linux-x64 and has no Xcode and no xcrun. `bun run setup:doctor -- --profile ios` exits 3 and names xcode and apple-toolchain rather than reporting the lane as available."
     },
     {
-      "capability": "Android build and emulator run",
-      "kind": "not-run",
+      "capability": "Android build and emulator run (not-run at 68a107b; historical)",
+      "kind": "historical",
       "revision": "68a107bfbbab91e65b1874d1e91a2e649d97972b",
       "command": "bun run native:android",
       "platform": "Android SDK + JDK + NDK",
@@ -286,8 +286,8 @@
       "reason": "No ANDROID_HOME, no javac and no adb on this host. `bun run setup:doctor -- --profile android` exits 3 and names android-sdk and android-jdk."
     },
     {
-      "capability": "Signed and notarised distribution",
-      "kind": "not-run",
+      "capability": "Signed and notarised distribution (not-run at 68a107b; historical)",
+      "kind": "historical",
       "revision": "68a107bfbbab91e65b1874d1e91a2e649d97972b",
       "command": "the native release workflows' signing lanes",
       "platform": "per-platform signing identities",
@@ -386,8 +386,8 @@
       "artifact": null
     },
     {
-      "capability": "Unit tests, every project",
-      "kind": "observed",
+      "capability": "Unit tests, every project (observed at 68a107b; historical)",
+      "kind": "historical",
       "revision": "68a107bfbbab91e65b1874d1e91a2e649d97972b",
       "command": "bun run test",
       "platform": "linux-x64 (NixOS 26.11; Bun 1.4.2; Node v22.23.3; Chromium 154.0.8037.97; Docker API 5.8.7)",
@@ -507,8 +507,8 @@
       "artifact": null
     },
     {
-      "capability": "Setup and setup doctor",
-      "kind": "observed",
+      "capability": "Setup and setup doctor (observed at 68a107b; historical)",
+      "kind": "historical",
       "revision": "68a107bfbbab91e65b1874d1e91a2e649d97972b",
       "command": "PATH=\"$PWD/.tools/proto/bin:$PATH\" bun run smoke",
       "platform": "linux-x64 (NixOS 26.11; Bun 1.4.2; Node v22.23.3; Chromium 154.0.8037.97; Docker API 5.8.7)",
@@ -518,8 +518,8 @@
       "artifact": null
     },
     {
-      "capability": "Compute lane (dedicated jobs-worker suite)",
-      "kind": "observed",
+      "capability": "Compute lane (dedicated jobs-worker suite) (observed at 68a107b; historical)",
+      "kind": "historical",
       "revision": "68a107bfbbab91e65b1874d1e91a2e649d97972b",
       "command": "bun run test:compute",
       "platform": "linux-x64 (NixOS 26.11; Bun 1.4.2; Node v22.23.3; Chromium 154.0.8037.97; Docker API 5.8.7)",
@@ -529,8 +529,8 @@
       "artifact": null
     },
     {
-      "capability": "Build and bundle boundary check",
-      "kind": "observed",
+      "capability": "Build and bundle boundary check (observed at 68a107b; historical)",
+      "kind": "historical",
       "revision": "68a107bfbbab91e65b1874d1e91a2e649d97972b",
       "command": "bun run --cwd apps/frontend/client build && bun run --cwd apps/frontend/client check:bundle",
       "platform": "linux-x64 (NixOS 26.11; Bun 1.4.2; Node v22.23.3; Chromium 154.0.8037.97; Docker API 5.8.7)",
@@ -540,8 +540,8 @@
       "artifact": null
     },
     {
-      "capability": "Offline deployment refusals",
-      "kind": "not-run",
+      "capability": "Offline deployment refusals (not-run at 68a107b; historical)",
+      "kind": "historical",
       "revision": "68a107bfbbab91e65b1874d1e91a2e649d97972b",
       "command": "bun run deploy:check --env <env> against fixture overlays",
       "platform": "linux-x64 (NixOS 26.11; Bun 1.4.2; Node v22.23.3; Chromium 154.0.8037.97; Docker API 5.8.7)",
@@ -552,8 +552,8 @@
       "reason": "Deployment planning was outside the E2E implementation validation."
     },
     {
-      "capability": "Fresh-template rehearsal",
-      "kind": "not-run",
+      "capability": "Fresh-template rehearsal (not-run at 68a107b; historical)",
+      "kind": "historical",
       "revision": "68a107bfbbab91e65b1874d1e91a2e649d97972b",
       "command": "bun run smoke",
       "platform": "linux-x64 (NixOS 26.11; Bun 1.4.2; Node v22.23.3; Chromium 154.0.8037.97; Docker API 5.8.7)",
@@ -564,8 +564,8 @@
       "reason": "The fresh-template rehearsal was outside this E2E validation."
     },
     {
-      "capability": "Downstream removal rehearsal",
-      "kind": "not-run",
+      "capability": "Downstream removal rehearsal (not-run at 68a107b; historical)",
+      "kind": "historical",
       "revision": "68a107bfbbab91e65b1874d1e91a2e649d97972b",
       "command": "bun run smoke --without-heavy",
       "platform": "linux-x64 (NixOS 26.11; Bun 1.4.2; Node v22.23.3; Chromium 154.0.8037.97; Docker API 5.8.7)",
@@ -576,8 +576,8 @@
       "reason": "The optional heavy-project removal rehearsal was outside this E2E validation."
     },
     {
-      "capability": "Processor container image inspection",
-      "kind": "not-run",
+      "capability": "Processor container image inspection (not-run at 68a107b; historical)",
+      "kind": "historical",
       "revision": "68a107bfbbab91e65b1874d1e91a2e649d97972b",
       "command": "docker inspect / docker run of the image the compute lane built",
       "platform": "linux-x64 (NixOS 26.11; Bun 1.4.2; Node v22.23.3; Chromium 154.0.8037.97; Docker API 5.8.7)",
@@ -588,8 +588,8 @@
       "reason": "The full lane built and ran its own fingerprinted container, but the separate compute-lane image inspection was not run."
     },
     {
-      "capability": "Native desktop release binary compile",
-      "kind": "not-run",
+      "capability": "Native desktop release binary compile (not-run at 68a107b; historical)",
+      "kind": "historical",
       "revision": "68a107bfbbab91e65b1874d1e91a2e649d97972b",
       "command": "VITE_NATIVE_API_ORIGIN=https://starter-demo.invalid bun run native:build -- --no-bundle",
       "platform": "linux-x64 (NixOS 26.11; Bun 1.4.2; Node v22.23.3; Chromium 154.0.8037.97; Docker API 5.8.7)",
@@ -600,8 +600,8 @@
       "reason": "Native compilation was outside the E2E validation."
     },
     {
-      "capability": "Live structured visual model review",
-      "kind": "not-run",
+      "capability": "Live structured visual model review (not-run at 68a107b; historical)",
+      "kind": "historical",
       "revision": "68a107bfbbab91e65b1874d1e91a2e649d97972b",
       "command": "bun run e2e:visual:review -- --run <run-id>",
       "platform": "linux-x64 (NixOS 26.11; Bun 1.4.2; Node v22.23.3; Chromium 154.0.8037.97; Docker API 5.8.7)",
@@ -612,8 +612,8 @@
       "reason": "No live vision-provider key/model is configured; local HTTP fixtures verify image parts, strict schema validation, retry bounds and grading."
     },
     {
-      "capability": "Authenticated Lighthouse scenarios",
-      "kind": "not-run",
+      "capability": "Authenticated Lighthouse scenarios (not-run at 68a107b; historical)",
+      "kind": "historical",
       "revision": "68a107bfbbab91e65b1874d1e91a2e649d97972b",
       "command": "bun run e2e:audit",
       "platform": "linux-x64 (NixOS 26.11; Bun 1.4.2; Node v22.23.3; Chromium 154.0.8037.97; Docker API 5.8.7)",
@@ -624,8 +624,8 @@
       "reason": "The audit manifest selects public landing/login scenarios only; authenticated durable and transient states are declared gaps."
     },
     {
-      "capability": "Frozen install",
-      "kind": "observed",
+      "capability": "Frozen install (observed at 68a107b; historical)",
+      "kind": "historical",
       "revision": "68a107bfbbab91e65b1874d1e91a2e649d97972b",
       "command": "bun install --frozen-lockfile",
       "platform": "linux-x64 (NixOS 26.11; Bun 1.4.2; Node v22.23.3; Chromium 154.0.8037.97; Docker API 5.8.7)",
@@ -635,8 +635,8 @@
       "artifact": null
     },
     {
-      "capability": "Browser lane (real Svelte, real Chromium)",
-      "kind": "observed",
+      "capability": "Browser lane (real Svelte, real Chromium) (observed at 68a107b; historical)",
+      "kind": "historical",
       "revision": "68a107bfbbab91e65b1874d1e91a2e649d97972b",
       "command": "bun run --cwd apps/frontend/client test:browser",
       "platform": "linux-x64 (NixOS 26.11; Bun 1.4.2; Node v22.23.3; Chromium 154.0.8037.97; Docker API 5.8.7)",
@@ -646,8 +646,8 @@
       "artifact": null
     },
     {
-      "capability": "Worker lane (built bundle in real workerd, real local D1)",
-      "kind": "observed",
+      "capability": "Worker lane (built bundle in real workerd, real local D1) (observed at 68a107b; historical)",
+      "kind": "historical",
       "revision": "68a107bfbbab91e65b1874d1e91a2e649d97972b",
       "command": "bun run --cwd apps/frontend/client test:worker",
       "platform": "linux-x64 (NixOS 26.11; Bun 1.4.2; Node v22.23.3; Chromium 154.0.8037.97; Docker API 5.8.7)",
@@ -657,8 +657,8 @@
       "artifact": null
     },
     {
-      "capability": "End to end (built client and built Worker, one origin)",
-      "kind": "observed",
+      "capability": "End to end (built client and built Worker, one origin) (observed at 68a107b; historical)",
+      "kind": "historical",
       "revision": "68a107bfbbab91e65b1874d1e91a2e649d97972b",
       "command": "bun run --cwd apps/e2e test:e2e",
       "platform": "linux-x64 (NixOS 26.11; Bun 1.4.2; Node v22.23.3; Chromium 154.0.8037.97; Docker API 5.8.7)",
@@ -668,8 +668,8 @@
       "artifact": null
     },
     {
-      "capability": "Typecheck, every project",
-      "kind": "observed",
+      "capability": "Typecheck, every project (observed at 68a107b; historical)",
+      "kind": "historical",
       "revision": "68a107bfbbab91e65b1874d1e91a2e649d97972b",
       "command": "bun run typecheck",
       "platform": "linux-x64 (NixOS 26.11; Bun 1.4.2; Node v22.23.3; Chromium 154.0.8037.97; Docker API 5.8.7)",
@@ -679,8 +679,8 @@
       "artifact": null
     },
     {
-      "capability": "Lint (Biome, verified not applied)",
-      "kind": "observed",
+      "capability": "Lint (Biome, verified not applied) (observed at 68a107b; historical)",
+      "kind": "historical",
       "revision": "68a107bfbbab91e65b1874d1e91a2e649d97972b",
       "command": "bun run lint",
       "platform": "linux-x64 (NixOS 26.11; Bun 1.4.2; Node v22.23.3; Chromium 154.0.8037.97; Docker API 5.8.7)",
@@ -690,8 +690,8 @@
       "artifact": null
     },
     {
-      "capability": "Format (Biome, verified not applied)",
-      "kind": "observed",
+      "capability": "Format (Biome, verified not applied) (observed at 68a107b; historical)",
+      "kind": "historical",
       "revision": "68a107bfbbab91e65b1874d1e91a2e649d97972b",
       "command": "bun run format",
       "platform": "linux-x64 (NixOS 26.11; Bun 1.4.2; Node v22.23.3; Chromium 154.0.8037.97; Docker API 5.8.7)",
@@ -701,8 +701,8 @@
       "artifact": null
     },
     {
-      "capability": "Whole-repository guards",
-      "kind": "observed",
+      "capability": "Whole-repository guards (observed at 68a107b; historical)",
+      "kind": "historical",
       "revision": "68a107bfbbab91e65b1874d1e91a2e649d97972b",
       "command": "bun run guard",
       "platform": "linux-x64 (NixOS 26.11; Bun 1.4.2; Node v22.23.3; Chromium 154.0.8037.97; Docker API 5.8.7)",
@@ -712,8 +712,8 @@
       "artifact": null
     },
     {
-      "capability": "CI workflow policy",
-      "kind": "observed",
+      "capability": "CI workflow policy (observed at 68a107b; historical)",
+      "kind": "historical",
       "revision": "68a107bfbbab91e65b1874d1e91a2e649d97972b",
       "command": "bun run workflows",
       "platform": "linux-x64 (NixOS 26.11; Bun 1.4.2; Node v22.23.3; Chromium 154.0.8037.97; Docker API 5.8.7)",
@@ -734,8 +734,8 @@
       "artifact": "docs/evidence/pi-global-project-tools/acceptance-audit-2026-10-07.md"
     },
     {
-      "capability": "E2E visual matrix (browser, axe and snapshots)",
-      "kind": "not-run",
+      "capability": "E2E visual matrix (browser, axe and snapshots) (not-run at 68a107b; historical)",
+      "kind": "historical",
       "revision": "68a107bfbbab91e65b1874d1e91a2e649d97972b",
       "command": "bun run e2e:visual",
       "platform": "linux-x64 (NixOS 26.11; Bun 1.4.2; Node v22.23.3; Chromium 154.0.8037.97; Docker API 5.8.7)",
@@ -746,8 +746,8 @@
       "reason": "No visual matrix rerun was performed at manifest revision 68a107b. The earlier browser/axe/snapshot parity and AI review findings remain useful historical evidence, not current visual approval."
     },
     {
-      "capability": "Lighthouse public scenario audit",
-      "kind": "observed",
+      "capability": "Lighthouse public scenario audit (observed at 68a107b; historical)",
+      "kind": "historical",
       "revision": "68a107bfbbab91e65b1874d1e91a2e649d97972b",
       "command": "bun run e2e:audit",
       "platform": "linux-x64 (NixOS 26.11; Bun 1.4.2; Node v22.23.3; Chromium 154.0.8037.97; Docker API 5.8.7)",
@@ -757,8 +757,8 @@
       "artifact": null
     },
     {
-      "capability": "Full browser-to-Worker-to-FFmpeg E2E",
-      "kind": "observed",
+      "capability": "Full browser-to-Worker-to-FFmpeg E2E (observed at 68a107b; historical)",
+      "kind": "historical",
       "revision": "68a107bfbbab91e65b1874d1e91a2e649d97972b",
       "command": "bun run e2e:full",
       "platform": "linux-x64 (NixOS 26.11; Bun 1.4.2; Node v22.23.3; Chromium 154.0.8037.97; Docker API 5.8.7)",
@@ -768,8 +768,8 @@
       "artifact": null
     },
     {
-      "capability": "E2E lane doctor",
-      "kind": "observed",
+      "capability": "E2E lane doctor (observed at 68a107b; historical)",
+      "kind": "historical",
       "revision": "68a107bfbbab91e65b1874d1e91a2e649d97972b",
       "command": "bun run e2e:doctor",
       "platform": "linux-x64 (NixOS 26.11; Bun 1.4.2; Node v22.23.3; Chromium 154.0.8037.97; Docker API 5.8.7)",
@@ -1719,6 +1719,401 @@
       "count": null,
       "recordedAt": "2026-10-07T19:59:13.000Z",
       "artifact": "docs/evidence/pi-global-project-tools/artifacts/model-driven-account-notes-20261007.png"
+    },
+    {
+      "capability": "Unit tests (declared Bun/Moon targets)",
+      "kind": "observed",
+      "revision": "3b9a338391afb83faedc47e23dca992850ae9932",
+      "command": "node_modules/.bin/moon run --cache off :test",
+      "platform": "linux-x64 (Bun 1.4.2; Node v22.23.3)",
+      "result": "2292 Bun tests passed, 0 failed; all declared Moon :test targets ran uncached. Rust crate unit tests are not included in this count.",
+      "count": 2292,
+      "recordedAt": "2026-10-08T03:08:24Z",
+      "artifact": "docs/evidence/pr-52-validation.txt"
+    },
+    {
+      "capability": "Browser lane (real Svelte, real Chromium)",
+      "kind": "observed",
+      "revision": "3b9a338391afb83faedc47e23dca992850ae9932",
+      "command": "node_modules/.bin/moon run --cache off client:test-browser",
+      "platform": "linux-x64 (Bun 1.4.2; Node v22.23.3)",
+      "result": "30 checks/tests passed; command exited 0.",
+      "count": 30,
+      "recordedAt": "2026-10-08T03:08:55Z",
+      "artifact": "docs/evidence/pr-52-validation.txt"
+    },
+    {
+      "capability": "Worker lane (built bundle in real workerd, real local D1)",
+      "kind": "observed",
+      "revision": "3b9a338391afb83faedc47e23dca992850ae9932",
+      "command": "node_modules/.bin/moon run --cache off client:test-worker",
+      "platform": "linux-x64 (Bun 1.4.2; Node v22.23.3)",
+      "result": "88 checks/tests passed; command exited 0.",
+      "count": 88,
+      "recordedAt": "2026-10-08T03:08:57Z",
+      "artifact": "docs/evidence/pr-52-validation.txt"
+    },
+    {
+      "capability": "End to end (built client and built Worker, one origin)",
+      "kind": "observed",
+      "revision": "3b9a338391afb83faedc47e23dca992850ae9932",
+      "command": "node_modules/.bin/moon run --cache off e2e:e2e",
+      "platform": "linux-x64 (Bun 1.4.2; Node v22.23.3)",
+      "result": "34 checks/tests passed; command exited 0.",
+      "count": 34,
+      "recordedAt": "2026-10-08T03:09:58Z",
+      "artifact": "docs/evidence/pr-52-validation.txt"
+    },
+    {
+      "capability": "Typecheck, every project",
+      "kind": "observed",
+      "revision": "3b9a338391afb83faedc47e23dca992850ae9932",
+      "command": "node_modules/.bin/moon run --cache off :typecheck",
+      "platform": "linux-x64 (Bun 1.4.2; Node v22.23.3)",
+      "result": "16 project tasks passed; command exited 0.",
+      "count": 16,
+      "recordedAt": "2026-10-08T03:10:23Z",
+      "artifact": "docs/evidence/pr-52-validation.txt"
+    },
+    {
+      "capability": "Lint (Biome, verified not applied)",
+      "kind": "observed",
+      "revision": "3b9a338391afb83faedc47e23dca992850ae9932",
+      "command": "node_modules/.bin/moon run --cache off :lint",
+      "platform": "linux-x64 (Bun 1.4.2; Node v22.23.3)",
+      "result": "16 project tasks passed; command exited 0.",
+      "count": 16,
+      "recordedAt": "2026-10-08T03:10:30Z",
+      "artifact": "docs/evidence/pr-52-validation.txt"
+    },
+    {
+      "capability": "Format (Biome, verified not applied)",
+      "kind": "observed",
+      "revision": "3b9a338391afb83faedc47e23dca992850ae9932",
+      "command": "node_modules/.bin/moon run --cache off :format",
+      "platform": "linux-x64 (Bun 1.4.2; Node v22.23.3)",
+      "result": "16 project tasks passed; command exited 0.",
+      "count": 16,
+      "recordedAt": "2026-10-08T03:10:31Z",
+      "artifact": "docs/evidence/pr-52-validation.txt"
+    },
+    {
+      "capability": "Whole-repository guards",
+      "kind": "observed",
+      "revision": "3b9a338391afb83faedc47e23dca992850ae9932",
+      "command": "bun run guard:whole-repo",
+      "platform": "linux-x64 (Bun 1.4.2; Node v22.23.3)",
+      "result": "8 checks/tests passed; command exited 0.",
+      "count": 8,
+      "recordedAt": "2026-10-08T03:10:31Z",
+      "artifact": "docs/evidence/pr-52-validation.txt"
+    },
+    {
+      "capability": "CI workflow policy",
+      "kind": "observed",
+      "revision": "3b9a338391afb83faedc47e23dca992850ae9932",
+      "command": "bun run workflows",
+      "platform": "linux-x64 (Bun 1.4.2; Node v22.23.3)",
+      "result": "5 checks/tests passed; command exited 0.",
+      "count": 5,
+      "recordedAt": "2026-10-08T03:10:33Z",
+      "artifact": "docs/evidence/pr-52-validation.txt"
+    },
+    {
+      "capability": "Compute lane (dedicated jobs-worker suite)",
+      "kind": "observed",
+      "revision": "3b9a338391afb83faedc47e23dca992850ae9932",
+      "command": "bun run test:compute",
+      "platform": "linux-x64 (Bun 1.4.2; Node v22.23.3)",
+      "result": "17 checks/tests passed; command exited 0.",
+      "count": 17,
+      "recordedAt": "2026-10-08T03:11:07Z",
+      "artifact": "docs/evidence/pr-52-validation.txt"
+    },
+    {
+      "capability": "Database integration (local Supabase, real Postgres/Auth/RLS)",
+      "kind": "observed",
+      "revision": "3b9a338391afb83faedc47e23dca992850ae9932",
+      "command": "bun run test:database",
+      "platform": "linux-x64 (Bun 1.4.2; Node v22.23.3)",
+      "result": "6 tests passed against real local Postgres, Auth, Data API/RLS and concurrent RPCs. Supabase CLI emitted StopVolumePruneError; exact-project cleanup completed and removed the owned run directory.",
+      "count": 6,
+      "recordedAt": "2026-10-08T03:10:33Z",
+      "artifact": "docs/evidence/pr-52-validation.txt"
+    },
+    {
+      "capability": "Frozen install",
+      "kind": "observed",
+      "revision": "3b9a338391afb83faedc47e23dca992850ae9932",
+      "command": "bun install --frozen-lockfile",
+      "platform": "linux-x64 (Bun 1.4.2; Node v22.23.3)",
+      "result": "Frozen dependency installation completed with exit 0; the lockfile was unchanged.",
+      "count": null,
+      "recordedAt": "2026-10-08T03:13:59Z",
+      "artifact": "docs/evidence/pr-52-validation.txt"
+    },
+    {
+      "capability": "Build and bundle boundary check",
+      "kind": "observed",
+      "revision": "3b9a338391afb83faedc47e23dca992850ae9932",
+      "command": "node_modules/.bin/moon run --cache off client:build client:check-bundle",
+      "platform": "linux-x64 (Bun 1.4.2; Node v22.23.3)",
+      "result": "Build and standalone Worker boundary check passed; 67 emitted files were inspected. Wrangler packaging used --dry-run; no deployment occurred.",
+      "count": 67,
+      "recordedAt": "2026-10-08T03:14:00Z",
+      "artifact": "docs/evidence/pr-52-validation.txt"
+    },
+    {
+      "capability": "Packaged desktop launch, installer and signing",
+      "kind": "not-run",
+      "revision": "3b9a338391afb83faedc47e23dca992850ae9932",
+      "command": "bun run native:build (bundled) and launching the binary",
+      "platform": "linux-x64 (Bun 1.4.2; Node v22.23.3)",
+      "result": "NOT RUN during this PR #52 verification round.",
+      "count": null,
+      "recordedAt": "2026-10-08T03:14:00Z",
+      "artifact": null,
+      "reason": "Not executed in this round. Prior recorded boundary at 68a107bfbbab91e65b1874d1e91a2e649d97972b: The AppImage bundle needs linuxdeploy, which this host does not provide (the CLI reports 'failed to run linuxdeploy'). Under Xvfb the binary starts and spawns WebKit subprocesses, but the webview never renders: the Nix store mixes two glibc generations and the WebKit helper processes abort. No rendered UI was captured, so launch is not claimed. Signing and notarisation need platform identities this host does not have."
+    },
+    {
+      "capability": "Provider deployment (Cloudflare staging and production)",
+      "kind": "not-run",
+      "revision": "3b9a338391afb83faedc47e23dca992850ae9932",
+      "command": "bun run deploy:apply --env staging --yes",
+      "platform": "linux-x64 (Bun 1.4.2; Node v22.23.3)",
+      "result": "NOT RUN during this PR #52 verification round.",
+      "count": null,
+      "recordedAt": "2026-10-08T03:14:00Z",
+      "artifact": null,
+      "reason": "Not executed in this round. Prior recorded boundary at 68a107bfbbab91e65b1874d1e91a2e649d97972b: There is no Cloudflare credential anywhere on this host: CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID are unset, no wrangler OAuth state exists, the repository has no Actions secrets, no Actions variables and no GitHub environments at all, and .starter/deployment.local.json does not exist. The account was not guessed and no second account was created. The offline plan, its refusals and the apply pipeline are exercised by fixture instead."
+    },
+    {
+      "capability": "Live mail delivery (verification, sign-in, recovery)",
+      "kind": "not-run",
+      "revision": "3b9a338391afb83faedc47e23dca992850ae9932",
+      "command": "bun run deploy verify --env staging",
+      "platform": "linux-x64 (Bun 1.4.2; Node v22.23.3)",
+      "result": "NOT RUN during this PR #52 verification round.",
+      "count": null,
+      "recordedAt": "2026-10-08T03:14:00Z",
+      "artifact": null,
+      "reason": "Not executed in this round. Prior recorded boundary at 68a107bfbbab91e65b1874d1e91a2e649d97972b: No RESEND_API_KEY and no verified sender domain exist on this host, and there is no inbox to receive a message in. Preflight reports the sender-domain check as explicitly NOT CHECKED rather than passing."
+    },
+    {
+      "capability": "Live sample encode against the deployed Workflow and managed container",
+      "kind": "not-run",
+      "revision": "3b9a338391afb83faedc47e23dca992850ae9932",
+      "command": "POST /api/jobs on a deployed origin, then GET /api/jobs/:id/output",
+      "platform": "linux-x64 (Bun 1.4.2; Node v22.23.3)",
+      "result": "NOT RUN during this PR #52 verification round.",
+      "count": null,
+      "recordedAt": "2026-10-08T03:14:00Z",
+      "artifact": null,
+      "reason": "Not executed in this round. Prior recorded boundary at 68a107bfbbab91e65b1874d1e91a2e649d97972b: Requires a deployed web and jobs Worker with a Cloudflare-managed container; none exists. The local compute lane proves the same encode path against a real FFmpeg container and real D1, and it does not certify the managed container lifecycle."
+    },
+    {
+      "capability": "Genuine scheduled maintenance firing",
+      "kind": "not-run",
+      "revision": "3b9a338391afb83faedc47e23dca992850ae9932",
+      "command": "the deployed maintenance run record in D1, carrying its cron schedule and scheduledTime",
+      "platform": "linux-x64 (Bun 1.4.2; Node v22.23.3)",
+      "result": "NOT RUN during this PR #52 verification round.",
+      "count": null,
+      "recordedAt": "2026-10-08T03:14:00Z",
+      "artifact": null,
+      "reason": "Not executed in this round. Prior recorded boundary at 68a107bfbbab91e65b1874d1e91a2e649d97972b: The local Workers runtime cannot deliver a cron event to a Workflow binding's `schedules`, so only the manual branch is exercised locally (compute lane: 'a manual run deletes real rows and records the real counts'). Configuring a schedule is not a firing, and the release record says so explicitly. With no deployment there is no natural firing to wait for."
+    },
+    {
+      "capability": "iOS build and simulator run",
+      "kind": "not-run",
+      "revision": "3b9a338391afb83faedc47e23dca992850ae9932",
+      "command": "bun run native:ios",
+      "platform": "linux-x64 (Bun 1.4.2; Node v22.23.3)",
+      "result": "NOT RUN during this PR #52 verification round.",
+      "count": null,
+      "recordedAt": "2026-10-08T03:14:00Z",
+      "artifact": null,
+      "reason": "Not executed in this round. Prior recorded boundary at 68a107bfbbab91e65b1874d1e91a2e649d97972b: This host is linux-x64 and has no Xcode and no xcrun. `bun run setup:doctor -- --profile ios` exits 3 and names xcode and apple-toolchain rather than reporting the lane as available."
+    },
+    {
+      "capability": "Android build and emulator run",
+      "kind": "not-run",
+      "revision": "3b9a338391afb83faedc47e23dca992850ae9932",
+      "command": "bun run native:android",
+      "platform": "linux-x64 (Bun 1.4.2; Node v22.23.3)",
+      "result": "NOT RUN during this PR #52 verification round.",
+      "count": null,
+      "recordedAt": "2026-10-08T03:14:00Z",
+      "artifact": null,
+      "reason": "Not executed in this round. Prior recorded boundary at 68a107bfbbab91e65b1874d1e91a2e649d97972b: No ANDROID_HOME, no javac and no adb on this host. `bun run setup:doctor -- --profile android` exits 3 and names android-sdk and android-jdk."
+    },
+    {
+      "capability": "Signed and notarised distribution",
+      "kind": "not-run",
+      "revision": "3b9a338391afb83faedc47e23dca992850ae9932",
+      "command": "the native release workflows' signing lanes",
+      "platform": "linux-x64 (Bun 1.4.2; Node v22.23.3)",
+      "result": "NOT RUN during this PR #52 verification round.",
+      "count": null,
+      "recordedAt": "2026-10-08T03:14:00Z",
+      "artifact": null,
+      "reason": "Not executed in this round. Prior recorded boundary at 68a107bfbbab91e65b1874d1e91a2e649d97972b: No Apple, Microsoft or Android signing input exists here, and this run published nothing. Windows and macOS desktop binaries were not compiled here either: each is built on its own operating system."
+    },
+    {
+      "capability": "Setup and setup doctor",
+      "kind": "not-run",
+      "revision": "3b9a338391afb83faedc47e23dca992850ae9932",
+      "command": "PATH=\"$PWD/.tools/proto/bin:$PATH\" bun run smoke",
+      "platform": "linux-x64 (Bun 1.4.2; Node v22.23.3)",
+      "result": "NOT RUN during this PR #52 verification round.",
+      "count": null,
+      "recordedAt": "2026-10-08T03:14:00Z",
+      "artifact": null,
+      "reason": "Not rerun for the deployment-default and optional-compute fixes; the previous observation at 68a107bfbbab91e65b1874d1e91a2e649d97972b is retained as historical evidence."
+    },
+    {
+      "capability": "Offline deployment refusals",
+      "kind": "not-run",
+      "revision": "3b9a338391afb83faedc47e23dca992850ae9932",
+      "command": "bun run deploy:check --env <env> against fixture overlays",
+      "platform": "linux-x64 (Bun 1.4.2; Node v22.23.3)",
+      "result": "NOT RUN during this PR #52 verification round.",
+      "count": null,
+      "recordedAt": "2026-10-08T03:14:00Z",
+      "artifact": null,
+      "reason": "Not executed in this round. Prior recorded boundary at 68a107bfbbab91e65b1874d1e91a2e649d97972b: Deployment planning was outside the E2E implementation validation."
+    },
+    {
+      "capability": "Fresh-template rehearsal",
+      "kind": "not-run",
+      "revision": "3b9a338391afb83faedc47e23dca992850ae9932",
+      "command": "bun run smoke",
+      "platform": "linux-x64 (Bun 1.4.2; Node v22.23.3)",
+      "result": "NOT RUN during this PR #52 verification round.",
+      "count": null,
+      "recordedAt": "2026-10-08T03:14:00Z",
+      "artifact": null,
+      "reason": "Not executed in this round. Prior recorded boundary at 68a107bfbbab91e65b1874d1e91a2e649d97972b: The fresh-template rehearsal was outside this E2E validation."
+    },
+    {
+      "capability": "Downstream removal rehearsal",
+      "kind": "not-run",
+      "revision": "3b9a338391afb83faedc47e23dca992850ae9932",
+      "command": "bun run smoke --without-heavy",
+      "platform": "linux-x64 (Bun 1.4.2; Node v22.23.3)",
+      "result": "NOT RUN during this PR #52 verification round.",
+      "count": null,
+      "recordedAt": "2026-10-08T03:14:00Z",
+      "artifact": null,
+      "reason": "Not executed in this round. Prior recorded boundary at 68a107bfbbab91e65b1874d1e91a2e649d97972b: The optional heavy-project removal rehearsal was outside this E2E validation."
+    },
+    {
+      "capability": "Processor container image inspection",
+      "kind": "not-run",
+      "revision": "3b9a338391afb83faedc47e23dca992850ae9932",
+      "command": "docker inspect / docker run of the image the compute lane built",
+      "platform": "linux-x64 (Bun 1.4.2; Node v22.23.3)",
+      "result": "NOT RUN during this PR #52 verification round.",
+      "count": null,
+      "recordedAt": "2026-10-08T03:14:00Z",
+      "artifact": null,
+      "reason": "Not executed in this round. Prior recorded boundary at 68a107bfbbab91e65b1874d1e91a2e649d97972b: The full lane built and ran its own fingerprinted container, but the separate compute-lane image inspection was not run."
+    },
+    {
+      "capability": "Native desktop release binary compile",
+      "kind": "not-run",
+      "revision": "3b9a338391afb83faedc47e23dca992850ae9932",
+      "command": "VITE_NATIVE_API_ORIGIN=https://starter-demo.invalid bun run native:build -- --no-bundle",
+      "platform": "linux-x64 (Bun 1.4.2; Node v22.23.3)",
+      "result": "NOT RUN during this PR #52 verification round.",
+      "count": null,
+      "recordedAt": "2026-10-08T03:14:00Z",
+      "artifact": null,
+      "reason": "Not executed in this round. Prior recorded boundary at 68a107bfbbab91e65b1874d1e91a2e649d97972b: Native compilation was outside the E2E validation."
+    },
+    {
+      "capability": "Live structured visual model review",
+      "kind": "not-run",
+      "revision": "3b9a338391afb83faedc47e23dca992850ae9932",
+      "command": "bun run e2e:visual:review -- --run <run-id>",
+      "platform": "linux-x64 (Bun 1.4.2; Node v22.23.3)",
+      "result": "NOT RUN during this PR #52 verification round.",
+      "count": null,
+      "recordedAt": "2026-10-08T03:14:00Z",
+      "artifact": null,
+      "reason": "Not executed in this round. Prior recorded boundary at 68a107bfbbab91e65b1874d1e91a2e649d97972b: No live vision-provider key/model is configured; local HTTP fixtures verify image parts, strict schema validation, retry bounds and grading."
+    },
+    {
+      "capability": "Authenticated Lighthouse scenarios",
+      "kind": "not-run",
+      "revision": "3b9a338391afb83faedc47e23dca992850ae9932",
+      "command": "bun run e2e:audit",
+      "platform": "linux-x64 (Bun 1.4.2; Node v22.23.3)",
+      "result": "NOT RUN during this PR #52 verification round.",
+      "count": null,
+      "recordedAt": "2026-10-08T03:14:00Z",
+      "artifact": null,
+      "reason": "Not executed in this round. Prior recorded boundary at 68a107bfbbab91e65b1874d1e91a2e649d97972b: The audit manifest selects public landing/login scenarios only; authenticated durable and transient states are declared gaps."
+    },
+    {
+      "capability": "E2E visual matrix (browser, axe and snapshots)",
+      "kind": "not-run",
+      "revision": "3b9a338391afb83faedc47e23dca992850ae9932",
+      "command": "bun run e2e:visual",
+      "platform": "linux-x64 (Bun 1.4.2; Node v22.23.3)",
+      "result": "NOT RUN during this PR #52 verification round.",
+      "count": null,
+      "recordedAt": "2026-10-08T03:14:00Z",
+      "artifact": null,
+      "reason": "Not executed in this round. Prior recorded boundary at 68a107bfbbab91e65b1874d1e91a2e649d97972b: No visual matrix rerun was performed at manifest revision 68a107b. The earlier browser/axe/snapshot parity and AI review findings remain useful historical evidence, not current visual approval."
+    },
+    {
+      "capability": "Lighthouse public scenario audit",
+      "kind": "not-run",
+      "revision": "3b9a338391afb83faedc47e23dca992850ae9932",
+      "command": "bun run e2e:audit",
+      "platform": "linux-x64 (Bun 1.4.2; Node v22.23.3)",
+      "result": "NOT RUN during this PR #52 verification round.",
+      "count": null,
+      "recordedAt": "2026-10-08T03:14:00Z",
+      "artifact": null,
+      "reason": "Not rerun for the deployment-default and optional-compute fixes; the previous observation at 68a107bfbbab91e65b1874d1e91a2e649d97972b is retained as historical evidence."
+    },
+    {
+      "capability": "Full browser-to-Worker-to-FFmpeg E2E",
+      "kind": "not-run",
+      "revision": "3b9a338391afb83faedc47e23dca992850ae9932",
+      "command": "bun run e2e:full",
+      "platform": "linux-x64 (Bun 1.4.2; Node v22.23.3)",
+      "result": "NOT RUN during this PR #52 verification round.",
+      "count": null,
+      "recordedAt": "2026-10-08T03:14:00Z",
+      "artifact": null,
+      "reason": "Not rerun for the deployment-default and optional-compute fixes; the previous observation at 68a107bfbbab91e65b1874d1e91a2e649d97972b is retained as historical evidence."
+    },
+    {
+      "capability": "E2E lane doctor",
+      "kind": "not-run",
+      "revision": "3b9a338391afb83faedc47e23dca992850ae9932",
+      "command": "bun run e2e:doctor",
+      "platform": "linux-x64 (Bun 1.4.2; Node v22.23.3)",
+      "result": "NOT RUN during this PR #52 verification round.",
+      "count": null,
+      "recordedAt": "2026-10-08T03:14:00Z",
+      "artifact": null,
+      "reason": "Not rerun for the deployment-default and optional-compute fixes; the previous observation at 68a107bfbbab91e65b1874d1e91a2e649d97972b is retained as historical evidence."
+    },
+    {
+      "capability": "Hosted Supabase and Google Cloud Run/IAM preflight",
+      "kind": "not-run",
+      "revision": "3b9a338391afb83faedc47e23dca992850ae9932",
+      "command": "bun run deploy:preflight --env staging",
+      "platform": "linux-x64 (Bun 1.4.2; Node v22.23.3)",
+      "result": "NOT RUN against hosted providers.",
+      "count": null,
+      "recordedAt": "2026-10-08T03:14:00Z",
+      "artifact": null,
+      "reason": "This round used local integrations and injected provider fixtures. Hosted-provider validation was not performed; no deployment or existing live-resource retirement was authorized."
     }
   ]
 }
