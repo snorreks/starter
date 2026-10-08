@@ -136,6 +136,9 @@ isOneToOne: false
               "job_id": string,"output_key": string
             }[]
                            },
+"readiness_probe":
+{ Args: Record<PropertyKey, never>; Returns: number
+                           },
 "record_cloud_run_execution":
 { Args: { "p_attempt_id": string,"p_execution_name": string,"p_job_id": string }; Returns: boolean
                            },

@@ -43,6 +43,13 @@ export const GET: RequestHandler = async ({ locals, params, request, platform })
   if (!locals.user || !services || services.identity.user.id !== locals.user.id) {
     return unauthorized();
   }
+  if (locals.container.jobsProfile !== 'encode') {
+    return jsonError(
+      503,
+      'jobs_profile_disabled',
+      'Compute is explicitly disabled for this deployment.',
+    );
+  }
   const job = await services.jobs.getForOwner(params.id);
   if (!job) {
     return jsonError(404, 'not_found', 'That job does not exist.');
@@ -52,7 +59,7 @@ export const GET: RequestHandler = async ({ locals, params, request, platform })
   }
   const artifact = await services.jobs.outputForOwner(params.id);
   if (!artifact) {
-    return jsonError(404, 'not_found', 'That job does not exist.');
+    return jsonError(410, 'output_expired', 'The output is no longer available.');
   }
   const bucket = platform?.MEDIA;
   if (!bucket) {
@@ -74,6 +81,8 @@ export const GET: RequestHandler = async ({ locals, params, request, platform })
     return jsonError(410, 'output_expired', 'The output is no longer available.');
   }
   const headers = new Headers({
+    'content-security-policy': 'sandbox',
+    'x-content-type-options': 'nosniff',
     'accept-ranges': 'bytes',
     'cache-control': 'private, no-store',
     'content-type': object.httpMetadata?.contentType ?? 'video/mp4',
@@ -87,3 +96,9 @@ export const GET: RequestHandler = async ({ locals, params, request, platform })
   }
   return new Response(object.body, { status: range ? 206 : 200, headers });
 };
+
+const methodNotAllowed = (): Response => jsonError(405, 'method_not_allowed', 'Use GET here.');
+export const POST = methodNotAllowed;
+export const PUT = methodNotAllowed;
+export const PATCH = methodNotAllowed;
+export const DELETE = methodNotAllowed;

@@ -53,10 +53,7 @@ const readJobs = async (
     }),
   );
   const maintenance = v.safeParse(LatestMaintenanceSchema, await services.jobs.latestMaintenance());
-  if (!maintenance.success) {
-    error(503, 'Maintenance status is unavailable.');
-  }
-  return { jobs: [...jobs], maintenance: maintenance.output };
+  return { jobs: [...jobs], maintenance: maintenance.success ? maintenance.output : null };
 };
 
 export const load: PageServerLoad = async ({ locals }) => {

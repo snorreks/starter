@@ -7,6 +7,13 @@ export const GET: RequestHandler = async ({ locals, params }) => {
   if (!locals.user || !services || services.identity.user.id !== locals.user.id) {
     return unauthorized();
   }
+  if (locals.container.jobsProfile !== 'encode') {
+    return jsonError(
+      503,
+      'jobs_profile_disabled',
+      'Compute is explicitly disabled for this deployment.',
+    );
+  }
   const job = await services.jobs.getForOwner(params.id);
   return job === null
     ? jsonError(404, 'not_found', 'That job does not exist.')

@@ -169,8 +169,8 @@ export const handle: Handle = async ({ event, resolve }) => {
       ...container.supabase,
       origin: container.baseUrl,
       allowedCallbacks: ['/verify-email', '/reset-password'],
-      jobsProfile: event.platform?.JOBS_PROFILE,
-      encodeWorkflow: event.platform?.ENCODE_WORKFLOW,
+      jobsProfile: container.jobsProfile,
+      encodeWorkflow: container.env.ENCODE_WORKFLOW,
     });
     event.locals.supabaseIdentity = requestContext.identity;
     event.locals.applicationServices = requestContext.services;

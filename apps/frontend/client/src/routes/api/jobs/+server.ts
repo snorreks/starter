@@ -18,6 +18,13 @@ export const GET: RequestHandler = async ({ locals }) => {
   if (!locals.user || !services || services.identity.user.id !== locals.user.id) {
     return unauthorized();
   }
+  if (locals.container.jobsProfile !== 'encode') {
+    return jsonError(
+      503,
+      'jobs_profile_disabled',
+      'Compute is explicitly disabled for this deployment.',
+    );
+  }
   const jobs = await services.jobs.listForOwner();
   return json(200, { jobs: jobs.map(publicSupabaseJob), nextCursor: null, serverTime: Date.now() });
 };

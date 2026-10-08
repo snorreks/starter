@@ -521,3 +521,14 @@ test('maintenance evidence is authenticated, scoped to the environment, and omit
   });
   expect(JSON.stringify(result.data)).not.toContain(runKey);
 });
+
+test('anonymous readiness executes the constant database probe without table access', async () => {
+  const response = await fetch(`${url}/rest/v1/rpc/readiness_probe`, {
+    method: 'POST',
+    headers: { apikey: anonKey, 'content-type': 'application/json' },
+    body: '{}',
+    signal: AbortSignal.timeout(2_000),
+  });
+  expect(response.status).toBe(200);
+  expect(await response.json()).toBe(1);
+});

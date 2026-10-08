@@ -241,6 +241,7 @@ test('Supabase job reads keep dispatch state out of the public DTO', async () =>
   const locals = {
     user,
     context: { backendProfile: 'supabase', user },
+    container: { jobsProfile: 'encode' },
     applicationServices: {
       identity: { user },
       jobs: {
