@@ -494,22 +494,22 @@ export const planDeploy = (
     );
   }
 
+  notices.push(
+    `Supabase project ${target.supabase.projectRef} at ${target.supabase.url}; native API ${target.nativeApiOrigin}; callbacks ${target.supabase.nativeRedirectAllowlist.join(', ')}.`,
+  );
+  if (target.compute.enabled) {
     notices.push(
-      `Supabase project ${target.supabase.projectRef} at ${target.supabase.url}; native API ${target.nativeApiOrigin}; callbacks ${target.supabase.nativeRedirectAllowlist.join(', ')}.`,
+      `Google Cloud ${target.supabase.googleProjectId}/${target.supabase.googleRegion}, Cloud Run Job ${target.supabase.jobName}, image ${target.supabase.image}, protocol ${target.supabase.protocol}; runner and dispatcher identities are separate.`,
     );
-    if (target.compute.enabled) {
-      notices.push(
-        `Google Cloud ${target.supabase.googleProjectId}/${target.supabase.googleRegion}, Cloud Run Job ${target.supabase.jobName}, image ${target.supabase.image}, protocol ${target.supabase.protocol}; runner and dispatcher identities are separate.`,
-      );
-      notices.push('Google API discovery and Cloud Run configuration are authenticated phases.');
-    } else {
-      notices.push(
-        'Compute is disabled: no Google discovery, credentials or resource mutations are required.',
-      );
-    }
+    notices.push('Google API discovery and Cloud Run configuration are authenticated phases.');
+  } else {
     notices.push(
-      'The offline plan reads no credentials and performs no provider requests. Supabase project creation is a separate, potentially billable operator action.',
+      'Compute is disabled: no Google discovery, credentials or resource mutations are required.',
     );
+  }
+  notices.push(
+    'The offline plan reads no credentials and performs no provider requests. Supabase project creation is a separate, potentially billable operator action.',
+  );
 
   notices.push(
     `CLOUDFLARE_API_TOKEN is the deployment credential and is NOT a runtime secret. The Worker needs\n  ` +

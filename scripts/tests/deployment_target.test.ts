@@ -41,7 +41,78 @@ const values = (
   environments: { staging, production },
 });
 
+const enabled = (
+  environment: 'staging' | 'production',
+  changes: Record<string, string | null> = {},
+) =>
+  configured(environment, {
+    jobsProfile: 'encode',
+    containerProfile: 'basic',
+    googleProjectId: `starter-${environment}`,
+    googleRegion: 'europe-north1',
+    cloudRunJobName: `starter-media-${environment}`,
+    artifactImage: `europe-north1-docker.pkg.dev/starter-${environment}/media/runner@sha256:${'a'.repeat(64)}`,
+    runnerServiceAccount: `runner-${environment}@starter-${environment}.iam.gserviceaccount.com`,
+    dispatcherServiceAccount: `dispatch-${environment}@starter-${environment}.iam.gserviceaccount.com`,
+    processorProtocol: 'sample-v1',
+    processorCpu: '2',
+    processorMemory: '2Gi',
+    processorTimeoutSeconds: '900',
+    jobsWorkerName: `starter-jobs-${environment}`,
+    mediaBucketName: `starter-media-${environment}`,
+    encodeWorkflowName: `starter-encode-${environment}`,
+    maintenanceWorkflowName: `starter-maintenance-${environment}`,
+    ...changes,
+  });
+
 describe('Supabase is the only deployable application backend', () => {
+  test('the enabled negative-control fixture is itself a valid target', () => {
+    expect(
+      resolveTarget('staging', { values: values(enabled('staging'), enabled('production')) }).ok,
+    ).toBe(true);
+  });
+
+  test.each([
+    ['shared Supabase project', { supabaseProjectRef: ref('production') }, 'Supabase project'],
+    ['shared Google project', { googleProjectId: 'starter-production' }, 'Google Cloud project'],
+    ['shared bucket', { mediaBucketName: 'starter-media-production' }, 'R2 bucket'],
+    [
+      'shared runner',
+      { runnerServiceAccount: 'runner-production@starter-production.iam.gserviceaccount.com' },
+      'runner identity',
+    ],
+    [
+      'foreign callback',
+      {
+        nativeRedirectAllowlist:
+          'https://foreign.example/auth/callback,com.example.starter://auth/callback',
+      },
+      'redirect allowlist',
+    ],
+    ['mismatched Auth origin', { supabaseAuthUrl: 'https://other-project.supabase.co' }, 'origins'],
+    [
+      'API path instead of origin',
+      {
+        supabaseUrl: 'https://stageprojectref00001.supabase.co/rest/v1',
+        supabaseAuthUrl: 'https://stageprojectref00001.supabase.co/rest/v1',
+      },
+      'HTTPS origins',
+    ],
+    [
+      'mutable image',
+      { artifactImage: 'europe-north1-docker.pkg.dev/starter-staging/media/runner:latest' },
+      'pinned by digest',
+    ],
+    ['missing dispatcher', { dispatcherServiceAccount: null }, 'dispatcherServiceAccount'],
+  ] as const)('%s is refused before any provider mutation', (_name, changes, reason) => {
+    const result = resolveTarget('staging', {
+      values: values(enabled('staging', changes), enabled('production')),
+    });
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.reason).toContain(reason);
+    }
+  });
   test('resolves the public Supabase config and explicit disabled compute from one target', () => {
     const result = resolveTarget('staging', { values: values() });
     expect(result.ok).toBe(true);
