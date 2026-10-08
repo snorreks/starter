@@ -1,6 +1,6 @@
 import { createSupabaseAccountService } from '@starter/auth/supabase';
 import { createAdminDatabaseClient } from '@starter/database/supabase';
-import { SignInInputSchema, SignUpInputSchema } from '@starter/schemas/auth';
+import { AccountErrorCode, SignInInputSchema, SignUpInputSchema } from '@starter/schemas/auth';
 import { checkSchema } from '@starter/schemas/common';
 import { errorTypeForStatus } from '@starter/utils';
 import * as v from 'valibot';
@@ -45,7 +45,16 @@ const failure = (error: unknown): Response => {
       ? error.status
       : 400;
   const type = errorTypeForStatus(status);
-  return jsonError(status, type, 'Could not complete that request.');
+  const unverified =
+    typeof error === 'object' &&
+    error !== null &&
+    'error' in error &&
+    error.error === AccountErrorCode.emailNotVerified;
+  return jsonError(
+    status,
+    unverified ? AccountErrorCode.emailNotVerified : type,
+    'Could not complete that request.',
+  );
 };
 
 const handleSupabase = async (event: Parameters<RequestHandler>[0]): Promise<Response> => {

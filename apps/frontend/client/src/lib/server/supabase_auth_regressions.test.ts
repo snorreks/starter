@@ -3,6 +3,11 @@ import type { CookieMethodsServer } from '@supabase/ssr';
 
 let adapter: CookieMethodsServer;
 let failureStatus: number | undefined;
+let failureCode: string | undefined;
+let cookieSecure: boolean | undefined;
+let exchangeFailed = false;
+const updatePassword = mock(async () => ({ error: null }));
+const signOut = mock(async () => ({ error: null }));
 const cacheHeaders = { 'Cache-Control': 'private, no-store', Pragma: 'no-cache', Expires: '0' };
 const writeSession = () =>
   adapter.setAll?.(
@@ -13,22 +18,38 @@ const signIn = mock(async () => {
   await writeSession();
   return {
     data: { user: { id: 'user', email: 'a@example.test' } },
-    error: failureStatus === undefined ? null : { message: 'refused', status: failureStatus },
+    error:
+      failureStatus === undefined
+        ? null
+        : { message: 'refused', status: failureStatus, code: failureCode },
   };
 });
 const reset = mock(async (_email: string, _options: { redirectTo: string }) => ({ error: null }));
 const exchange = mock(async () => {
   await writeSession();
-  return { error: null };
+  return {
+    data: { user: { id: 'user' } },
+    error: exchangeFailed ? { message: 'used code' } : null,
+  };
 });
 mock.module('@supabase/ssr', () => ({
-  createServerClient: (_url: string, _key: string, options: { cookies: CookieMethodsServer }) => {
+  createServerClient: (
+    _url: string,
+    _key: string,
+    options: {
+      cookies: CookieMethodsServer;
+      cookieOptions?: { secure?: boolean };
+    },
+  ) => {
     adapter = options.cookies;
+    cookieSecure = options.cookieOptions?.secure;
     return {
       auth: {
         signInWithPassword: signIn,
         exchangeCodeForSession: exchange,
         resetPasswordForEmail: reset,
+        updateUser: updatePassword,
+        signOut,
       },
     };
   },
@@ -36,6 +57,9 @@ mock.module('@supabase/ssr', () => ({
 const { POST, GET, PUT } = await import('../../routes/api/auth/[...all]/+server.ts');
 const { GET: callback } = await import('../../routes/auth/callback/+server.ts');
 const { submitAuthAction } = await import('./auth_action.ts');
+const { load: resetLoad, actions: resetActions } = await import(
+  '../../routes/reset-password/+page.server.ts'
+);
 
 const makeEvent = (endpoint: string, body: unknown = {}, method = 'POST') => {
   const url = new URL(`http://localhost/api/auth/${endpoint}`);
@@ -46,7 +70,12 @@ const makeEvent = (endpoint: string, body: unknown = {}, method = 'POST') => {
       method,
       ...(method === 'GET' ? {} : { body: JSON.stringify(body) }),
     }),
-    cookies: { getAll: () => [], set: mock(() => {}) },
+    cookies: {
+      getAll: () => [],
+      get: mock((): string | undefined => undefined),
+      set: mock((_name: string, _value: string, _options: unknown) => {}),
+      delete: mock(() => {}),
+    },
     locals: {
       container: {
         backendProfile: 'supabase',
@@ -67,6 +96,10 @@ const invoke = (event: ReturnType<typeof makeEvent>) =>
   POST(event as unknown as Parameters<typeof POST>[0]);
 beforeEach(() => {
   failureStatus = undefined;
+  failureCode = undefined;
+  exchangeFailed = false;
+  updatePassword.mockClear();
+  signOut.mockClear();
   signIn.mockClear();
   exchange.mockClear();
   reset.mockClear();
@@ -168,4 +201,79 @@ test('invalid callbacks never exchange the code or write session cookies', async
   expect(exchange).toHaveBeenCalledWith('local-code');
   expect(event.cookies.set).toHaveBeenCalledTimes(1);
   expect(event.locals.context.responseHeaders.get('cache-control')).toBe('private, no-store');
+});
+
+test('provider credential failures preserve actionable application outcomes without provider messages', async () => {
+  for (const [code, status, error] of [
+    ['invalid_credentials', 401, 'unauthorized'],
+    ['email_not_confirmed', 403, 'EMAIL_NOT_VERIFIED'],
+  ] as const) {
+    failureStatus = 400;
+    failureCode = code;
+    const response = await invoke(
+      makeEvent('sign-in/email', { email: 'a@example.test', password: 'password' }),
+    );
+    expect(response.status).toBe(status);
+    expect(await response.json()).toEqual({ error, message: 'Could not complete that request.' });
+  }
+});
+
+test('cookie security follows the application origin, including local HTTP', async () => {
+  for (const [origin, secure] of [
+    ['http://127.0.0.1:8888', false],
+    ['https://app.example.test', true],
+  ] as const) {
+    const event = makeEvent('sign-in/email', { email: 'a@example.test', password: 'password' });
+    event.locals.container.baseUrl = origin;
+    expect((await invoke(event)).status).toBe(200);
+    expect(cookieSecure).toBe(secure);
+  }
+});
+
+test('a consumed recovery callback cannot leave a usable reset form', async () => {
+  const event = makeEvent('unused', undefined, 'GET');
+  event.url = new URL('http://localhost/auth/callback?code=used&next=/reset-password');
+  exchangeFailed = true;
+  await expect(callback(event as never)).rejects.toMatchObject({
+    location: '/reset-password?invalid=1',
+  });
+  expect(event.cookies.delete).toHaveBeenCalledWith('starter-recovery-user', {
+    path: '/reset-password',
+  });
+  expect(event.cookies.set.mock.calls.some(([name]) => name === 'starter-recovery-user')).toBe(
+    false,
+  );
+});
+
+test('recovery requires a same-user callback marker and signs out after updating', async () => {
+  const event = makeEvent('unused', undefined, 'GET');
+  event.url = new URL('http://localhost/reset-password?token=forged');
+  event.request = new Request(event.url, {
+    method: 'POST',
+    body: new URLSearchParams({ newPassword: 'replacement-password' }),
+  });
+  expect(await resetLoad(event as never)).toMatchObject({ hasToken: false });
+  expect(await resetActions.default?.(event as never)).toMatchObject({
+    status: 400,
+    data: { tokenInvalid: true },
+  });
+  expect(updatePassword).not.toHaveBeenCalled();
+  Object.assign(event.locals, { user: { id: 'user', email: 'a@example.test' } });
+  event.cookies.get.mockImplementation(() => 'other-user');
+  expect(await resetLoad(event as never)).toMatchObject({ hasToken: false });
+  event.cookies.get.mockImplementation(() => 'user');
+  expect(await resetLoad(event as never)).toMatchObject({ hasToken: true });
+  event.request = new Request(event.url, {
+    method: 'POST',
+    body: new URLSearchParams({ newPassword: 'replacement-password' }),
+  });
+  await expect(resetActions.default?.(event as never)).rejects.toMatchObject({
+    location: '/login?reset=1',
+  });
+  expect(updatePassword).toHaveBeenCalledWith({ password: 'replacement-password' });
+  expect(signOut).toHaveBeenCalledTimes(1);
+  expect(signOut).toHaveBeenCalledWith({ scope: 'global' });
+  expect(event.cookies.delete).toHaveBeenCalledWith('starter-recovery-user', {
+    path: '/reset-password',
+  });
 });

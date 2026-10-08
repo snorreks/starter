@@ -450,14 +450,6 @@ jobs:
       - name: Install
         run: bun install --frozen-lockfile
 
-      - name: Apply migrations to local D1
-        # Without this every route fails on a missing table, and the failure reads
-        # as a product bug rather than as a missing step. This lane exercises D1,
-        # so it must select that backend explicitly, not inherit deployment defaults.
-        env:
-          STARTER_BACKEND_PROFILE: legacy
-        run: bun run db:migrate
-
       - name: Restore Playwright's browser cache
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
@@ -470,6 +462,8 @@ jobs:
         run: bun run --cwd apps/e2e browsers:install
 
       - name: End-to-end tests
+        # `bun run e2e` owns a fresh local Supabase Auth/Postgres stack, applies
+        # its migrations, and tears down only that run's resources. No D1 setup.
         # `e2e:e2e` is the real Playwright suite. It builds the app, starts the
         # BUILT Worker in workerd on one origin, proves that origin is this run's
         # Worker via a run id, and drives a browser against it.

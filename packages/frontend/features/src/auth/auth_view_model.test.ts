@@ -148,7 +148,7 @@ const build = (
 const serverError = (code: string, status: number): AppError =>
   new AppError(errorTypeForStatus(status), `server said ${code}`, {
     status,
-    cause: { code, message: `server said ${code}` },
+    cause: { error: code, message: `server said ${code}` },
   });
 
 describe('a failed sign-in', () => {

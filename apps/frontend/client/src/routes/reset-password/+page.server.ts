@@ -2,30 +2,12 @@
 //
 // Set a new password from a recovery link.
 //
-// The link a user clicks is
-// `<origin>/api/auth/reset-password/<token>?callbackURL=%2Freset-password`.
-// Supabase Auth validates that token **first** and only then redirects to the callback
-// with `?token=`, so this page is reached with a token that was real a moment ago. It
-// can still be expired or consumed by the time the form is submitted, which is why
-// the action treats "invalid token" as an expected answer with its own message rather
-// than a crash.
-//
-// Why the token is a **query parameter** here and not a path segment: Supabase Auth
-// chooses that shape, and its callback handler appends the token itself. A route
-// written to expect `/reset-password/<token>` would 404 on every link the library
-// ever sends.
-//
-// Three properties this route has to get right:
-//
-//   - **Token is single-use.** Supabase Auth consumes it as it validates. A second
-//     submission fails, which is correct: a link that works twice is a link still
-//     sitting in somebody's inbox.
-//   - **A reset ends every session.** `revokeSessionsOnPasswordReset` is set in the
-//     auth config. The scenario is somebody else holding a session cookie, and the
-//     owner resetting their password expects them locked out.
-//   - **The token is not logged.** Nothing here writes it, and `console` output from
-//     this process is captured by `bun run logs`; the form has no `action`, so the
-//     token is not echoed back into the rendered HTML either.
+// GoTrue consumes the mail credential, then the application callback exchanges
+// its single-use PKCE code for a session. The reset form requires that verified
+// session and a short-lived, same-user callback marker; query tokens are not proof.
+// A successful reset consumes the marker and signs out globally. Supabase revokes
+// refresh tokens; already issued access tokens remain valid until their expiry.
+// No recovery credential is rendered into the form or written to a log.
 
 import {
   AccountErrorCode,
@@ -38,17 +20,18 @@ import { fail, redirect } from '@sveltejs/kit';
 import { submitAuthAction } from '#lib/server/auth_action.ts';
 import type { Actions, PageServerLoad } from './$types';
 
-export const load: PageServerLoad = async ({ url, locals }) => {
+export const load: PageServerLoad = async ({ url, locals, cookies }) => {
   // `?sent=1` means "we have already asked", arriving from the forgot form. No token
   // yet, and no form to show.
   if (url.searchParams.get('sent') === '1') {
     return { sent: true, hasToken: false };
   }
 
-  const token = url.searchParams.get('token');
-  if (token === null || token.length === 0) {
-    // A bare visit. Someone typed the URL, or followed a link whose token Supabase Auth
-    // declined to forward. Either way there is nothing to submit.
+  if (
+    !locals.user ||
+    cookies.get('starter-recovery-user') !== locals.user.id ||
+    url.searchParams.has('invalid')
+  ) {
     return { sent: false, hasToken: false };
   }
 
@@ -67,10 +50,16 @@ export const actions: Actions = {
     const form = await request.formData();
     const newPassword = String(form.get('newPassword') ?? '');
 
-    // The token comes from the URL the link pointed at, not from a form field. A field
-    // is attacker-controlled; the URL is what Supabase Auth's callback validated before
-    // it redirected here.
-    const token = url.searchParams.get('token') ?? '';
+    if (
+      !locals.user ||
+      cookies.get('starter-recovery-user') !== locals.user.id ||
+      url.searchParams.has('invalid')
+    ) {
+      return fail(400, {
+        tokenInvalid: true,
+        errors: { newPassword: 'That link is no longer valid. Ask for a new one.' },
+      });
+    }
 
     if (newPassword.length < PASSWORD_MIN_LENGTH) {
       return fail(422, {
@@ -93,7 +82,6 @@ export const actions: Actions = {
         'reset-password',
         {
           newPassword,
-          token,
         },
         locals.context?.responseHeaders ?? null,
       );
@@ -130,6 +118,7 @@ export const actions: Actions = {
     // Signed out, deliberately. Every session was just revoked, including this
     // browser's, and pretending otherwise would leave the shell showing a user
     // with no session.
+    cookies.delete('starter-recovery-user', { path: '/reset-password' });
     redirect(303, '/login?reset=1');
   },
 };

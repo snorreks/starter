@@ -126,6 +126,8 @@ export const createApplicationServices = (
 export const createSupabaseAuthClient = (config: SupabaseWebConfig, cookies: CookieMethodsServer) =>
   createServerClient(config.url, config.anonKey, {
     cookies,
+    // The configured application origin owns cookie security, not the Auth host.
+    cookieOptions: { secure: new URL(config.origin).protocol === 'https:' },
     auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: false },
   });
 
@@ -147,7 +149,11 @@ export const createSupabaseRequestContext = async (
     getAll: () => cookies.getAll().map(({ name, value }) => ({ name, value })),
     setAll: (writes, headers) => {
       for (const { name, value, options } of writes) {
-        cookies.set(name, value, { ...options, path: options.path ?? '/' });
+        cookies.set(name, value, {
+          ...options,
+          path: options.path ?? '/',
+          secure: new URL(config.origin).protocol === 'https:',
+        });
       }
       for (const [name, value] of Object.entries(headers)) {
         responseHeaders.set(name, value);

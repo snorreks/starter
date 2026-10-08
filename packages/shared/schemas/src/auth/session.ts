@@ -103,41 +103,16 @@ export const ApiErrorSchema = v.strictObject({
 
 export type ApiError = v.InferOutput<typeof ApiErrorSchema>;
 
-/**
- * Read Better Auth's machine-readable code out of a caught error.
- *
- * Lives here, in the portable package, rather than in a client service or a route
- * adapter, because three places need it and two of them are on opposite sides of
- * the server plane: a form action classifies a failure the same way the ViewModel
- * does, and putting this in browser transport code would mean the server importing
- * from the browser.
- *
- * It is a plain function over `unknown` rather than a typed helper, so it works on
- * anything that was thrown without a cast. `EMAIL_NOT_VERIFIED` and a wrong
- * password are both 403, and this is the only thing that tells them apart.
- */
+/** Read the application error envelope carried by either transport or form actions. */
 export const authErrorCode = (error: unknown): string | undefined => {
-  const errorLike = error as { cause?: unknown; body?: unknown } | null | undefined;
-
-  // Two shapes, because there are two callers:
-  //   * an HTTP failure, where `ApiClient` put the parsed response body in `cause`
-  //     — so the code is `cause.code`;
-  //   * a server-side `auth.api.*` failure, where Better Auth's `APIError` carries
-  //     the same object as `body` — so the code is `body.code`.
-  // Checking one and not the other would make this work in a route action and
-  // silently return `undefined` in a ViewModel, which is the harder failure to
-  // notice because the classification then falls through to "unknown".
-  for (const candidate of [errorLike?.cause, errorLike?.body]) {
-    if (typeof candidate !== 'object' || candidate === null) {
-      continue;
-    }
-    const code = (candidate as { code?: unknown }).code;
-    if (typeof code === 'string') {
-      return code;
-    }
+  if (typeof error !== 'object' || error === null || !('cause' in error)) {
+    return undefined;
   }
-
-  return undefined;
+  const candidate = error.cause;
+  if (typeof candidate !== 'object' || candidate === null || !('error' in candidate)) {
+    return undefined;
+  }
+  return typeof candidate.error === 'string' ? candidate.error : undefined;
 };
 
 /**

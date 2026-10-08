@@ -39,6 +39,8 @@
     "@starter/ui": "workspace:*",
     "@starter/utils": "workspace:*",
     "@supabase/ssr": "0.12.7",
+    "better-auth": "1.7.7",
+    "drizzle-orm": "0.45.3",
     "jose": "6.2.12",
     "valibot": "1.5.0"
   },

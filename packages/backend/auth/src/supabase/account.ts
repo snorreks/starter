@@ -1,4 +1,5 @@
 import type { SupabaseClient } from '@starter/database/supabase';
+import { AccountErrorCode } from '@starter/schemas/auth';
 import type { VerifiedIdentity } from './identity.ts';
 
 export interface SupabaseAccountConfig {
@@ -24,10 +25,18 @@ export interface SupabaseAccountService {
   deleteAccount(identity: VerifiedIdentity): Promise<void>;
 }
 
-const requireResult = <T>(data: T, error: { message: string; status?: number } | null): T => {
+const requireResult = <T>(
+  data: T,
+  error: { message: string; status?: number; code?: string } | null,
+): T => {
   if (error) {
-    throw Object.assign(new Error(`Supabase Auth request failed: ${error.message}`), {
-      status: typeof error.status === 'number' ? error.status : 400,
+    // Provider failures become application outcomes without publishing provider
+    // messages or distinguishing an unknown address from a wrong password.
+    const unverified = error.code === 'email_not_confirmed';
+    const invalidCredentials = error.code === 'invalid_credentials';
+    throw Object.assign(new Error('Supabase Auth request failed.'), {
+      status: unverified ? 403 : invalidCredentials ? 401 : (error.status ?? 400),
+      ...(unverified ? { error: AccountErrorCode.emailNotVerified } : {}),
     });
   }
   return data;
@@ -100,6 +109,8 @@ export const createSupabaseAccountService = (
   async resetPassword(input) {
     const { error } = await userClient.auth.updateUser({ password: input.newPassword });
     requireResult(undefined, error);
+    const signedOut = await userClient.auth.signOut({ scope: 'global' });
+    requireResult(undefined, signedOut.error);
   },
 
   async sendVerificationEmail(input) {

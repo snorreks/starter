@@ -125,7 +125,7 @@ export class AuthSessionService implements AuthSession {
   }
 
   async signIn(email: string, password: string): Promise<SessionUser> {
-    const user = await this.#credentials(AUTH.signIn, { email, password, returnHeaders: true });
+    const user = await this.#credentials(AUTH.signIn, { email, password });
     this.#state.set(user);
     return user;
   }

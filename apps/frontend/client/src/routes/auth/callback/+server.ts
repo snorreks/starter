@@ -27,13 +27,29 @@ export const GET: RequestHandler = async ({ url, locals, cookies }) => {
       },
     },
   );
+  const invalidDestination =
+    requested === '/reset-password' ? '/reset-password?invalid=1' : '/login?error=invalid_callback';
+  if (requested === '/reset-password') {
+    cookies.delete('starter-recovery-user', { path: '/reset-password' });
+  }
   const code = url.searchParams.get('code');
   if (!code) {
-    redirect(303, '/login?error=invalid_callback');
+    redirect(303, invalidDestination);
   }
-  const { error } = await client.auth.exchangeCodeForSession(code);
+  const { data, error } = await client.auth.exchangeCodeForSession(code);
   if (error) {
-    redirect(303, '/login?error=invalid_callback');
+    redirect(303, invalidDestination);
+  }
+  if (requested === '/reset-password' && data.user) {
+    // The form requires both a verified session and this short-lived callback
+    // marker. A query token alone must never make a reset form usable.
+    cookies.set('starter-recovery-user', data.user.id, {
+      path: '/reset-password',
+      httpOnly: true,
+      sameSite: 'lax',
+      secure: new URL(locals.container.baseUrl).protocol === 'https:',
+      maxAge: 600,
+    });
   }
   redirect(303, requested);
 };
