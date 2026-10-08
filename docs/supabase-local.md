@@ -1,8 +1,6 @@
 # Local Supabase foundation
 
-Prompt 02 adds an isolated local Supabase stack and Postgres repositories beside
-the existing D1 backend. The application continues to use D1 and Better Auth by
-default. No hosted project or live data is touched by these commands.
+The application uses Supabase for identity and data in every environment. This guide describes the isolated local Supabase stack and Postgres repositories; no hosted project or live data is touched by these commands. No hosted project or live data is touched by these commands.
 
 ## Run the local lane
 

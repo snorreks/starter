@@ -1,73 +1,23 @@
-# Authentication
+# Authentication and accounts
 
-The web Worker uses Supabase Auth and Postgres. It does not select between auth
-providers or adapt obsolete provider payloads. The native host uses the same
-Supabase identity boundary, with a bearer transport and its own platform storage.
+Supabase Auth is the only application identity provider. Supabase owns password verification, sessions, refresh tokens, email verification and recovery. Application user ids are UUIDs; old non-UUID account identifiers do not authenticate.
 
-## Request identity and ownership
+## Web requests
 
-`apps/frontend/client/src/hooks.server.ts` creates one verified identity and one
-set of application services for each request. Configuration comes from the
-validated container; request Host headers do not choose the public auth origin.
+The web Worker verifies the access token on each request and creates a request scoped Supabase user client. Data API calls carry that token and rely on row level security. The Worker constructs the application identity from the verified Supabase user, never from a caller supplied owner id or user metadata.
 
-`apps/frontend/client/src/lib/server/supabase_context.ts` composes the user-scoped
-Data API client and repositories. The service-role client is server-only and is
-not a substitute for a caller's token on ordinary ownership reads. Postgres RLS
-and RPC ownership checks protect notes, conversations, messages and jobs.
+Administrative operations use a separate server only service role client. It is limited to internal RPCs and maintenance paths. The service role key, Google dispatcher credential and Resend API key are secrets; they are never returned in DTOs, exposed in browser/native bundles or written to argv and logs.
 
-The shared `SessionUserSchema` is a closed application DTO with a UUID subject,
-email, display name, application account category and verification state. Both
-web and native reject unknown identity fields and obsolete provider-shaped
-payloads. The `provider` field describes the application account category, not
-which OAuth provider authenticated a native session.
+## Native requests
 
-No identity or request collaborator is cached as module-level mutable state.
-`locals.user` and the repositories are rebuilt for every request.
+Native sign-in uses Supabase PKCE through the external browser and an exact callback allowlist. Bearer tokens are attached by the native transport. Credential persistence is opt in through the platform vault; otherwise the session is held in memory. Refresh is single flight, scoped to project and API origin, and logout prevents an in flight refresh from publishing credentials again. The former RFC 8628 device flow is removed; existing users must authenticate with the new Supabase identity.
 
-## Account lifecycle
+## Authorization and abuse limits
 
-The HTTP adapter is `apps/frontend/client/src/routes/api/auth/[...all]/+server.ts`.
-Server form actions call the account service directly, rather than fetching the
-application's own origin. Both paths use the container's configured public origin.
+RLS and transactional SQL enforce owner boundaries even when callers bypass the Worker and use the Data API directly. Chat and job admission counters update in transactions, so concurrent requests cannot overspend limits. Job attempts are fenced by attempt ids; stale retries cannot publish results. The local database lane tests two synthetic users, direct Data API denial, concurrent admission and retries.
 
-The account service in `packages/backend/auth/src/supabase/account.ts` provides
-sign-up, sign-in, sign-out, verification resend, password recovery/reset, email
-change and account deletion. Recovery requests do not disclose whether an address
-exists. Account deletion requires a verified Supabase identity.
+## Email and local setup
 
-Verification and recovery callbacks pass through `/auth/callback`. Only
-`/verify-email` and `/reset-password` are permitted next paths; an arbitrary URL
-is refused before exchanging a code or writing session cookies. Provider cookie
-writes and cache-control headers are forwarded on success and failure.
+Supabase Auth uses the configured mail provider for verification and recovery. Local Supabase captures mail in its Mailpit service, so tests can redeem real local links without external delivery. Hosted Resend delivery is an operator live check and remains NOT RUN until credentials and a hosted project are available.
 
-Supabase owns its token, session and authentication rate-limit semantics. The
-removed D1 limiter's budgets, replay rules and revocation behavior are not claims
-about this provider. Email confirmation and redirect allowlists must be configured
-on the Supabase project. Native OAuth configuration and platform requirements are
-recorded in `apps/frontend/native/README.md`.
-
-## Mail and configuration
-
-Supabase auth mail integrates through the configured server mail hook and transport.
-Local fixtures capture mail; hosted delivery requires explicit configuration.
-Do not treat a successful local capture as evidence of Resend delivery or DNS setup.
-No service-role credential, mail secret or provider token belongs in browser output.
-
-`apps/frontend/client/src/lib/server/container.ts` validates the server configuration.
-Deployed environments must state their public origin instead of accepting it from
-a request. A missing required binding is a named configuration failure.
-
-## Validation and schema changes
-
-- `bun run test` checks schemas, services and route contracts.
-- `bun run test:database` exercises real local Postgres, Auth, Data API, RLS and RPCs.
-- `bun run test:worker` drives the built Worker; `bun run e2e` drives a real browser.
-- Add new SQL migrations under `supabase/migrations/`; do not rewrite applied ones.
-  Regenerate database types with `bun run db:types` and compare with
-  `bun run db:types:check`.
-
-These commands name missing prerequisites rather than silently skipping. Current
-counts and evidence belong in [the capability matrix](capability-matrix.md), not
-in hand-maintained copies here. Hosted Supabase configuration, real Resend delivery,
-distributed production traffic and physical native-device flows require separate
-live verification; local or fixture checks do not prove them.
+Use `bun run setup:doctor -- --profile database` and `bun run test:database` for local prerequisites and verification. See [docs/database.md](database.md), [docs/native.md](native.md), and [docs/secrets.md](secrets.md).

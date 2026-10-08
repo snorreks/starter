@@ -290,14 +290,19 @@ const configCheck = (): Check => {
   }
 
   const text = readFileSync(config, 'utf8');
-  const ok = /"d1_databases"/.test(text) && /"migrations_dir"/.test(text);
+  const ok =
+    /"DEPLOYMENT_ENV"\s*:\s*"local"/.test(text) && /"JOBS_PROFILE"\s*:\s*"disabled"/.test(text);
 
   return {
     name: 'wrangler.jsonc',
     severity: 'required',
     ok,
-    detail: ok ? 'D1 binding and migrations_dir present' : 'missing a d1_databases binding',
-    ...(ok ? {} : { remedy: 'It must name a d1_databases binding and its migrations_dir.' }),
+    detail: ok
+      ? 'neutral local environment and explicit disabled compute are configured'
+      : 'missing explicit local deployment or compute mode',
+    ...(ok
+      ? {}
+      : { remedy: 'Keep DEPLOYMENT_ENV=local and JOBS_PROFILE=disabled in the neutral template.' }),
   };
 };
 

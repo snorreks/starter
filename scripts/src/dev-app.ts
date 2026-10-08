@@ -166,8 +166,12 @@ const varFlags = (): string[] => {
   const args: string[] = [];
 
   for (const name of FORWARDED_VARS) {
-    const value =
-      name === 'TEST_RUN_ID' ? (process.env.TEST_RUN_ID ?? E2E_SCOPE?.runId) : process.env[name];
+    let value = process.env[name];
+    if (name === 'APP_ORIGIN') {
+      value = value || `http://${HOST}:${PORT}`;
+    } else if (name === 'TEST_RUN_ID') {
+      value = process.env.TEST_RUN_ID ?? E2E_SCOPE?.runId;
+    }
     if (value !== undefined && value.length > 0) {
       args.push('--var', `${name}:${value}`);
     }
@@ -316,7 +320,7 @@ export const main = (mode: DevMode = 'app'): Promise<number> => {
     cwd: target.cwd,
     detached: false,
     stdio: ['ignore', 'pipe', 'pipe'],
-    env: process.env,
+    env: { ...process.env },
   });
 
   const childPid = child.pid ?? 0;

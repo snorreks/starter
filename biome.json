@@ -1,5 +1,5 @@
 {
-  "$schema": "https://biomejs.dev/schemas/2.5.13/schema.json",
+  "$schema": "https://biomejs.dev/schemas/2.5.14/schema.json",
   "vcs": {
     "enabled": true,
     "clientKind": "git",
@@ -16,7 +16,6 @@
       "!**/test-results",
       "!**/playwright-report",
       "!**/.evidence",
-      "!**/drizzle-d1/meta",
       "!packages/backend/database/src/supabase/database.types.ts",
       "!**/*.min.js"
     ],
@@ -125,7 +124,9 @@
   },
   "overrides": [
     {
-      "includes": ["**"],
+      "includes": [
+        "**"
+      ],
       "linter": {
         "rules": {
           "style": {
@@ -139,7 +140,10 @@
       }
     },
     {
-      "includes": ["**", "!**/*.d.ts"],
+      "includes": [
+        "**",
+        "!**/*.d.ts"
+      ],
       "linter": {
         "rules": {
           "style": {
@@ -151,7 +155,10 @@
       }
     },
     {
-      "includes": ["scripts/**/*.ts", ".pi/**/*.ts"],
+      "includes": [
+        "scripts/**/*.ts",
+        ".pi/**/*.ts"
+      ],
       "linter": {
         "rules": {
           "style": {
@@ -205,7 +212,10 @@
                     "message": "The server plane must not depend on Svelte's client runtime. It runs in workerd with no DOM. Shared view logic belongs in packages/frontend, which this plane may not import."
                   },
                   {
-                    "group": ["@starter/ui", "@starter/ui/*"],
+                    "group": [
+                      "@starter/ui",
+                      "@starter/ui/*"
+                    ],
                     "message": "The server plane must not import frontend packages. Move shared pure logic into packages/shared."
                   }
                 ]
@@ -216,7 +226,10 @@
       }
     },
     {
-      "includes": ["packages/backend/**/*.ts", "scripts/**/*.ts"],
+      "includes": [
+        "packages/backend/**/*.ts",
+        "scripts/**/*.ts"
+      ],
       "linter": {
         "rules": {
           "style": {
@@ -237,11 +250,19 @@
               "options": {
                 "patterns": [
                   {
-                    "group": ["svelte", "@sveltejs/kit", "@sveltejs/vite-plugin-svelte", "svelte/"],
+                    "group": [
+                      "svelte",
+                      "@sveltejs/kit",
+                      "@sveltejs/vite-plugin-svelte",
+                      "svelte/"
+                    ],
                     "message": "The server plane must not depend on Svelte. Shared view logic belongs in packages/frontend, which this plane may not import."
                   },
                   {
-                    "group": ["@starter/ui", "@starter/ui/*"],
+                    "group": [
+                      "@starter/ui",
+                      "@starter/ui/*"
+                    ],
                     "message": "The server plane must not import frontend packages. Move shared pure logic into packages/shared."
                   }
                 ]
@@ -281,16 +302,18 @@
               "options": {
                 "patterns": [
                   {
-                    "group": ["node:*", "bun:*"],
+                    "group": [
+                      "node:*",
+                      "bun:*"
+                    ],
                     "message": "Frontend code runs in a browser. Put platform-specific work behind a platform adapter in packages/frontend."
                   },
                   {
-                    "group": ["@starter/database", "@starter/auth"],
+                    "group": [
+                      "@starter/database",
+                      "@starter/auth"
+                    ],
                     "message": "The frontend must not import backend implementation. Share the contract through @starter/schemas instead."
-                  },
-                  {
-                    "group": ["drizzle-orm", "better-auth"],
-                    "message": "Database and auth implementation belongs to the server plane. The frontend speaks HTTP."
                   }
                 ]
               }
@@ -320,7 +343,9 @@
       }
     },
     {
-      "includes": ["**/*.svelte"],
+      "includes": [
+        "**/*.svelte"
+      ],
       "linter": {
         "rules": {
           "style": {
@@ -331,7 +356,10 @@
       }
     },
     {
-      "includes": ["scripts/**/*.ts", ".pi/**/*.ts"],
+      "includes": [
+        "scripts/**/*.ts",
+        ".pi/**/*.ts"
+      ],
       "linter": {
         "rules": {
           "suspicious": {
@@ -344,11 +372,21 @@
       }
     },
     {
-      "includes": ["packages/shared/logger/src/lib/console_logger.ts"],
-      "linter": { "rules": { "suspicious": { "noConsole": "off" } } }
+      "includes": [
+        "packages/shared/logger/src/lib/console_logger.ts"
+      ],
+      "linter": {
+        "rules": {
+          "suspicious": {
+            "noConsole": "off"
+          }
+        }
+      }
     },
     {
-      "includes": ["scripts/src/lib/guards/**/*.ts"],
+      "includes": [
+        "scripts/src/lib/guards/**/*.ts"
+      ],
       "linter": {
         "rules": {
           "style": {
@@ -359,40 +397,60 @@
       }
     },
     {
-      "includes": ["apps/frontend/native/src/lib/test_setup.ts"],
+      "includes": [
+        "apps/frontend/native/src/lib/test_setup.ts"
+      ],
       "linter": {
         "rules": {
-          "suspicious": { "noConsole": "off" },
-          "style": { "noRestrictedImports": "off" }
+          "suspicious": {
+            "noConsole": "off"
+          },
+          "style": {
+            "noRestrictedImports": "off"
+          }
         }
       }
     },
     {
-      "includes": ["apps/frontend/client/src/lib/test_setup.ts"],
+      "includes": [
+        "apps/frontend/client/src/lib/test_setup.ts"
+      ],
       "linter": {
         "rules": {
-          "suspicious": { "noConsole": "off" },
-          "style": { "noRestrictedImports": "off" }
+          "suspicious": {
+            "noConsole": "off"
+          },
+          "style": {
+            "noRestrictedImports": "off"
+          }
         }
       }
     },
     {
-      "includes": ["**/*.svelte"],
+      "includes": [
+        "**/*.svelte"
+      ],
       "linter": {
         "rules": {
           "correctness": {
             "noUnusedVariables": "off",
             "noUnusedImports": "off"
           },
-          "style": { "useConsistentTypeDefinitions": "off" }
+          "style": {
+            "useConsistentTypeDefinitions": "off"
+          }
         }
       }
     },
     {
-      "includes": ["apps/frontend/client/src/lib/server/container.ts"],
+      "includes": [
+        "apps/frontend/client/src/lib/server/container.ts"
+      ],
       "linter": {
         "rules": {
-          "style": { "useConsistentTypeDefinitions": "off" }
+          "style": {
+            "useConsistentTypeDefinitions": "off"
+          }
         }
       }
     },
@@ -401,7 +459,13 @@
         "apps/frontend/client/src/routes/+layout.svelte",
         "packages/frontend/ui/src/screen_container.svelte"
       ],
-      "linter": { "rules": { "suspicious": { "noConsole": "off" } } }
+      "linter": {
+        "rules": {
+          "suspicious": {
+            "noConsole": "off"
+          }
+        }
+      }
     },
     {
       "includes": [
@@ -417,7 +481,10 @@
               "options": {
                 "patterns": [
                   {
-                    "group": ["@tauri-apps", "@tauri-apps/**"],
+                    "group": [
+                      "@tauri-apps",
+                      "@tauri-apps/**"
+                    ],
                     "message": "Only apps/frontend/native/src/lib/platform/** may name the Tauri API: it is injected by the native shell and does not exist in a browser. Everything else takes an ApiTransport, a SessionStore or an ExternalBrowser by constructor argument."
                   }
                 ]

@@ -127,7 +127,6 @@ describe('tailCloudflare', () => {
   const provision = (): void => {
     setDeploymentValues({
       workerName: 'starter-web',
-      d1DatabaseId: 'db-1',
       r2BucketNames: { uploads: null },
       customDomain: null,
       jobsProfile: 'disabled',
@@ -259,7 +258,6 @@ describe('tailCloudflare', () => {
   test('refuses when no Worker is provisioned', async () => {
     setDeploymentValues({
       workerName: null,
-      d1DatabaseId: 'db-1',
       r2BucketNames: { uploads: null },
       customDomain: null,
       jobsProfile: 'disabled',
@@ -294,14 +292,12 @@ describe('environment-specific log targets', () => {
       setDeploymentValues({
         accountId: 'a'.repeat(32),
         workerName: 'single-web',
-        d1DatabaseId: 'single-db',
         r2BucketNames: { uploads: null },
         customDomain: null,
         jobsProfile: 'disabled',
         environments: {
           staging: targets({
             workerName: 'staging-web',
-            d1DatabaseId: 'staging-db',
             origin: 'https://staging.example',
           }),
         },

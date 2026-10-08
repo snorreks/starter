@@ -3,7 +3,7 @@
 // THE single project registry, for the tooling.
 //
 // It lives here rather than in `@starter/schemas` because almost none of it is a
-// contract: `DEPLOYMENT_CONFIG` names Cloudflare Workers and D1 databases, and
+// contract: `DEPLOYMENT_CONFIG` names Cloudflare Workers, and
 // `APP_LOG_CONFIG` says which log adapter serves which environment. No browser
 // bundle, no Worker and no request ever reads those. Shipping them from the
 // portable schema package meant every frontend build carried deployment topology
@@ -16,7 +16,7 @@
 // on exactly.
 //
 // Three rules this file exists to enforce:
-//   1. No inherited resource ids. Worker names, bucket names and D1 database ids
+//   1. No inherited resource ids. Worker names and bucket names
 //      are per-user placeholders that a new project must fill in.
 //   2. Capabilities are declared, not assumed. An adapter that cannot filter by
 //      user id says so here, and the CLI returns `capability_unsupported`
@@ -137,14 +137,6 @@ export const DEPLOYMENT_CONFIG_SCHEMA = v.strictObject({
    * production names is the outcome this whole layer exists to prevent.
    */
   workerName: v.union([v.pipe(v.string(), v.minLength(1)), v.null()]),
-  /**
-   * The D1 database id. Must be filled by the operator; never committed.
-   *
-   * `minLength: 1` for the same reason `workerName` has it: an empty string
-   * satisfies a bare string schema and defeats the validation that is supposed to
-   * catch an unset value. `null` is how "not provisioned" is spelled.
-   */
-  d1DatabaseId: v.union([v.pipe(v.string(), v.minLength(1)), v.null()]),
   /** Optional R2 bucket for user uploads. A documented future capability. */
   r2BucketNames: v.strictObject({
     uploads: v.union([v.string(), v.null()]),
@@ -184,7 +176,6 @@ export const DEPLOYMENT_CONFIG: DeploymentConfig = {
   // fresh clone targets nobody. `deploy:configure` writes the real values into the
   // gitignored overlay, which is the only layer any tool reads them from.
   workerName: null,
-  d1DatabaseId: null,
   r2BucketNames: { uploads: null },
   customDomain: null,
   accountId: null,
@@ -207,7 +198,10 @@ export const DEPLOYMENT_CONFIG: DeploymentConfig = {
  * Worker, and the other two must reach it and must never appear in a log, an argv
  * or a release record.
  */
-export const REQUIRED_REMOTE_SECRET_NAMES = ['BETTER_AUTH_SECRET', 'RESEND_API_KEY'] as const;
+export const REQUIRED_REMOTE_SECRET_NAMES = [
+  'SUPABASE_SERVICE_ROLE_KEY',
+  'RESEND_API_KEY',
+] as const;
 /** Secrets required by the explicit Supabase/Cloud Run deployment profile. */
 export const SUPABASE_REMOTE_SECRET_NAMES = [
   'SUPABASE_SERVICE_ROLE_KEY',
@@ -230,7 +224,9 @@ export const DEPLOY_CREDENTIAL_NAME = 'CLOUDFLARE_API_TOKEN';
 /** Nonsecret vars every remote environment needs. Names only, never values. */
 export const REQUIRED_REMOTE_VAR_NAMES = [
   'DEPLOYMENT_ENV',
-  'BETTER_AUTH_URL',
+  'APP_ORIGIN',
+  'SUPABASE_URL',
+  'SUPABASE_ANON_KEY',
   'MAIL_FROM',
   'RELEASE',
 ] as const;
@@ -244,9 +240,8 @@ export const REQUIRED_REMOTE_VAR_NAMES = [
  * names the call that needs it, so a new step without a scope is a visible
  * omission rather than a runtime 403 nobody can explain.
  *
- * `Workers Scripts: Edit` covers Worker deploys and D1 migrations through
- * Wrangler; `D1: Edit` and `R2: Edit` are separate resources in Cloudflare's model;
- * containers and Workflows ride on the Workers Script permission for the bound
+ * `Workers Scripts: Edit` covers Worker deploys; `R2: Edit` is a separate resource
+ * in Cloudflare's model; Workflows ride on the Workers Script permission for the bound
  * Worker. `Account Settings: Read` is what `whoami` and account-scoped queries
  * need.
  */
@@ -258,7 +253,6 @@ export interface TokenScope {
 export const REQUIRED_TOKEN_SCOPES: readonly TokenScope[] = [
   { permission: 'Account Settings: Read', neededBy: '`wrangler whoami` — the account check' },
   { permission: 'Workers Scripts: Edit', neededBy: 'the web and jobs Worker deploys' },
-  { permission: 'D1: Edit', neededBy: '`wrangler d1 migrations apply` and `d1 execute`' },
   { permission: 'R2: Edit', neededBy: '`wrangler r2 bucket create` and the fixture upload' },
 ] as const;
 
@@ -268,7 +262,7 @@ export const REQUIRED_TOKEN_SCOPES: readonly TokenScope[] = [
  * One entry, and the name is the same one `LOG_APPS` in `@starter/schemas` uses,
  * because there is one application: one Worker serves the HTML, the assets and the
  * API. It was `['client', 'api']`, which described a deployment where the browser
- * and the API were separate resources with separate names and separate D1
+ * and the API were separate resources with separate names and separate Postgres
  * databases — two Workers to provision for what is now one.
  *
  * The browser and the Worker are still told apart in a log, by `source`
@@ -350,8 +344,8 @@ export const APP_LOG_CONFIG: Record<AppId, AppLogConfig> = {
  * Per-environment resource identity.
  *
  * One set of names and ids could not describe a real deployment: a Worker is named
- * once per account, so staging and production are two Workers, and a D1 database
- * per environment. With one set, `--env staging` and `--env production` produced
+ * once per account, so staging and production are two Workers and two Supabase
+ * projects. With one set, `--env staging` and `--env production` produced
  * *identical* plans, so the flag changed a notice and nothing else — the worst kind
  * of no-op, because the plan looked environment-specific and was not.
  *
@@ -382,7 +376,6 @@ export interface EnvironmentTargets {
    * addressable from the internet and nothing about it belongs in `origin`.
    */
   jobsWorkerName: string | null;
-  d1DatabaseId: string | null;
   /**
    * The private R2 bucket holding the fixture and job output, or `null`.
    *
@@ -399,8 +392,7 @@ export interface EnvironmentTargets {
   /**
    * The container image this environment runs.
    *
-   * A reference, not a digest: the committed value is the Dockerfile the jobs
-   * Worker builds (`../media/Dockerfile`), and the digest that actually ran is
+   * A reference, not a digest: the committed value is the Dockerfile the Cloud Run Job builds (`../media/Dockerfile.job`), and the digest that actually ran is
    * recorded per release. Retention and rollback are about digests, and that
    * record lives in the release, not in configuration.
    */
@@ -475,7 +467,6 @@ export interface EnvironmentTargets {
 export const ENVIRONMENT_TARGET_FIELDS = [
   'workerName',
   'jobsWorkerName',
-  'd1DatabaseId',
   'mediaBucketName',
   'encodeWorkflowName',
   'maintenanceWorkflowName',
@@ -562,7 +553,6 @@ export type JobsProfile = (typeof JOBS_PROFILES)[number];
  * can never reach `resolveTarget` as an `undefined`.
  */
 export const EnvironmentTargetsSchema = v.strictObject({
-  d1DatabaseId: v.optional(v.union([v.pipe(v.string(), v.minLength(1)), v.null()])),
   workerName: v.optional(v.union([v.pipe(v.string(), v.minLength(1)), v.null()])),
   jobsWorkerName: v.optional(v.union([v.pipe(v.string(), v.minLength(1)), v.null()])),
   mediaBucketName: v.optional(v.union([v.pipe(v.string(), v.minLength(1)), v.null()])),

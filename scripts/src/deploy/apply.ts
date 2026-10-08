@@ -59,7 +59,7 @@ import {
   supabaseSchemaRevision,
   writeReleaseRecord,
 } from './release.ts';
-import { remoteConfigPath, renderRemoteConfig, writeRemoteConfig } from './remote_config.ts';
+import { remoteConfigPath, writeRemoteConfig } from './remote_config.ts';
 import type { ResolvedTarget } from './target.ts';
 
 /** Where the built Worker and its assets live. */
@@ -73,7 +73,7 @@ export const HEALTH_PATH = '/health';
  *
  * Also public and also safe to fetch, and also asked on every verification — the
  * two are different questions. `/health` reads configuration, so nothing in it can
- * fail on its own: a Worker whose D1 binding points at a deleted database answers
+ * fail on its own: a Worker whose Postgres binding points at a deleted database answers
  * `200 ok` with the right release id forever. Recording that as a verified release
  * is how a deploy reports success while every real request 500s.
  */
@@ -230,48 +230,19 @@ const bad = (phase: Phase, detail: string): StepOutcome => ({ phase, ok: false, 
  */
 export const migrationStep = (
   target: ResolvedTarget,
-  root: string = REPO_ROOT,
 ): { ok: true; args: string[]; description: string } | { ok: false; detail: string } => {
-  if (target.deploymentProfile === 'supabase') {
-    try {
-      return {
-        ok: true,
-        args: supabaseMigrationArgs(target, 'push'),
-        description: `Apply reviewed Supabase migrations to project ${target.supabase?.projectRef}`,
-      };
-    } catch (error) {
-      return {
-        ok: false,
-        detail: error instanceof Error ? error.message : 'Invalid Supabase target.',
-      };
-    }
-  }
-  if (target.d1DatabaseId.trim() === '') {
-    return { ok: false, detail: 'No D1 database id in the resolved target; refusing to migrate.' };
-  }
-
   try {
-    renderRemoteConfig({ target, root });
+    return {
+      ok: true,
+      args: supabaseMigrationArgs(target, 'push'),
+      description: `Apply reviewed Supabase migrations to project ${target.supabase.projectRef}`,
+    };
   } catch (error) {
     return {
       ok: false,
-      detail: `Cannot render the migration/deploy config: ${error instanceof Error ? error.message : 'invalid source config'}`,
+      detail: error instanceof Error ? error.message : 'Invalid Supabase target.',
     };
   }
-
-  return {
-    ok: true,
-    args: [
-      'd1',
-      'migrations',
-      'apply',
-      'DB',
-      '--remote',
-      '--config',
-      remoteConfigPath({ target, root }),
-    ],
-    description: `Apply reviewed migrations to ${target.d1DatabaseId} (${target.environment})`,
-  };
 };
 
 /**
@@ -346,19 +317,15 @@ export const deployStep = (
  * A wrapper rather than a second implementation: the two callers want different
  * things from the same step, and a second copy of the argv is how they drifted.
  */
-const migrate = (
-  target: ResolvedTarget,
-  argv: string[][],
-  root: string = REPO_ROOT,
-): { ok: boolean; detail: string } => {
-  const step = migrationStep(target, root);
+const migrate = (target: ResolvedTarget, argv: string[][]): { ok: boolean; detail: string } => {
+  const step = migrationStep(target);
 
   if (!step.ok) {
     return { ok: false, detail: step.detail };
   }
 
   argv.push(step.args);
-  return { ok: true, detail: `migrated ${target.d1DatabaseId}` };
+  return { ok: true, detail: `migrated Supabase project ${target.supabase.projectRef}` };
 };
 
 /**
@@ -593,7 +560,7 @@ export const deploymentIdentity = (
  * Stops at the first failing step and says which one. Resume behaviour is
  * explicit rather than inferred: every step is idempotent given the step before
  * it, so re-running `apply` after a deploy failure re-validates and re-verifies
- * rather than re-migrating blindly — `wrangler d1 migrations apply` applies only
+ * rather than re-migrating blindly — `wrangler Supabase migration apply` applies only
  * what the journal has not recorded.
  */
 export const apply = async (options: ApplyOptions): Promise<ApplyResult> => {
@@ -654,11 +621,8 @@ export const apply = async (options: ApplyOptions): Promise<ApplyResult> => {
 
   const revision = sourceRevision(options.root);
   try {
-    const googleToken =
-      target.deploymentProfile === 'supabase' && target.compute.enabled
-        ? process.env.GOOGLE_ACCESS_TOKEN
-        : undefined;
-    if (target.deploymentProfile === 'supabase' && target.compute.enabled && !googleToken) {
+    const googleToken = target.compute.enabled ? process.env.GOOGLE_ACCESS_TOKEN : undefined;
+    if (target.compute.enabled && !googleToken) {
       throw new Error('GOOGLE_ACCESS_TOKEN is required to resolve the runner identity.');
     }
     const runnerSubject = googleToken
@@ -712,29 +676,21 @@ export const apply = async (options: ApplyOptions): Promise<ApplyResult> => {
       ok('schema', 'skipped by request; the schema is whatever the last apply left behind'),
     );
   } else {
-    const migrated = migrate(target, argv, root);
+    const migrated = migrate(target, argv);
     if (!migrated.ok) {
       outcomes.push(bad('schema', migrated.detail));
       return stop('schema', migrated.detail);
     }
-    const migration =
-      target.deploymentProfile === 'supabase'
-        ? (
-            options.migrateSupabase ??
-            ((resolvedTarget) => {
-              const result = runSupabaseMigration(resolvedTarget, 'push');
-              return { code: result.code, stderr: result.stderr };
-            })
-          )(target)
-        : {
-            code: run('wrangler', argv[argv.length - 1] as string[], { cwd: CLIENT_DIR }),
-            stderr: '',
-          };
+    const migration = (
+      options.migrateSupabase ??
+      ((resolvedTarget) => {
+        const result = runSupabaseMigration(resolvedTarget, 'push');
+        return { code: result.code, stderr: result.stderr };
+      })
+    )(target);
     if (migration.code !== 0) {
       const recovery =
-        target.deploymentProfile === 'supabase'
-          ? 'Check `supabase_migrations.schema_migrations` before retrying; re-running `apply` is safe because Supabase records applied migrations there.'
-          : 're-running `apply` is safe, because D1 records each migration in its journal and re-applies only what is missing.';
+        'Check `supabase_migrations.schema_migrations` before retrying; re-running `apply` is safe because Supabase records applied migrations there.';
       const stderr = migration.stderr.trim();
       const detail =
         `Migration failed with exit code ${migration.code}. The schema may be partly applied. ${recovery}` +
@@ -744,10 +700,7 @@ export const apply = async (options: ApplyOptions): Promise<ApplyResult> => {
     }
     components.push({
       phase: 'schema',
-      identity:
-        target.deploymentProfile === 'supabase'
-          ? (target.supabase?.projectRef ?? 'unknown')
-          : target.d1DatabaseId,
+      identity: target.supabase.projectRef,
       source: revision.sha,
     });
     outcomes.push(ok('schema', migrated.detail));
@@ -803,50 +756,32 @@ export const apply = async (options: ApplyOptions): Promise<ApplyResult> => {
       outcomes.push(bad('image', `${incompatible.reason}\n  ${incompatible.remedy}`));
       return stop('image', incompatible.reason);
     }
-    if (target.deploymentProfile === 'supabase') {
-      const accessToken = process.env.GOOGLE_ACCESS_TOKEN;
-      if (!accessToken) {
-        const detail =
-          'GOOGLE_ACCESS_TOKEN is required to verify the immutable Cloud Run image digest.';
-        outcomes.push(bad('image', detail));
-        return stop('image', detail);
-      }
-      try {
-        const image = await (
-          options.verifyGoogleImage ??
-          ((resolvedTarget) => verifyGoogleArtifactImage({ target: resolvedTarget, accessToken }))
-        )(target);
-        components.push({
-          phase: 'image',
-          identity: image.image,
-          source: revision.sha,
-          protocol: target.supabase?.protocol,
-        });
-        outcomes.push(
-          ok('image', `Artifact Registry confirmed ${image.digest} for ${image.image}`),
-        );
-      } catch (error) {
-        const detail = error instanceof Error ? error.message : 'Google image verification failed.';
-        outcomes.push(bad('image', detail));
-        return stop('image', detail);
-      }
-    } else {
+    const accessToken = process.env.GOOGLE_ACCESS_TOKEN;
+    if (!accessToken) {
+      const detail =
+        'GOOGLE_ACCESS_TOKEN is required to verify the immutable Cloud Run image digest.';
+      outcomes.push(bad('image', detail));
+      return stop('image', detail);
+    }
+    try {
+      const image = await (
+        options.verifyGoogleImage ??
+        ((resolvedTarget) => verifyGoogleArtifactImage({ target: resolvedTarget, accessToken }))
+      )(target);
       components.push({
         phase: 'image',
-        identity: target.compute.containerImage ?? 'unconfigured',
+        identity: image.image,
         source: revision.sha,
-        protocol: target.compute.imageProtocol,
+        protocol: target.supabase.protocol,
       });
-      outcomes.push(
-        ok(
-          'image',
-          `${target.compute.containerImage} must speak ${target.compute.imageProtocol ?? 'an unstated protocol'} ` +
-            `on profile ${target.compute.containerProfile ?? 'unstated'}`,
-        ),
-      );
+      outcomes.push(ok('image', `Artifact Registry confirmed ${image.digest} for ${image.image}`));
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : 'Google image verification failed.';
+      outcomes.push(bad('image', detail));
+      return stop('image', detail);
     }
   } else {
-    outcomes.push(ok('image', 'no compute profile: this release builds no image'));
+    outcomes.push(ok('image', 'compute is disabled; no image is required'));
   }
 
   // -- jobs ---------------------------------------------------------------
@@ -855,57 +790,58 @@ export const apply = async (options: ApplyOptions): Promise<ApplyResult> => {
   if (!wants('jobs')) {
     outcomes.push(skipped('jobs'));
   } else {
-    if (target.deploymentProfile === 'supabase' && target.supabase !== null) {
-      const supabaseToken = process.env.SUPABASE_ACCESS_TOKEN;
-      const googleToken = target.compute.enabled ? process.env.GOOGLE_ACCESS_TOKEN : undefined;
-      if (!supabaseToken || (target.compute.enabled && !googleToken)) {
-        const detail =
-          'SUPABASE_ACCESS_TOKEN is required for Auth callbacks; enabled compute also requires GOOGLE_ACCESS_TOKEN for the Cloud Run Job.';
-        outcomes.push(bad('jobs', detail));
-        return stop('jobs', detail);
+    const supabaseToken = process.env.SUPABASE_ACCESS_TOKEN;
+    const googleToken = target.compute.enabled ? process.env.GOOGLE_ACCESS_TOKEN : undefined;
+    if (!supabaseToken && options.configureSupabaseAuth === undefined) {
+      const detail = 'SUPABASE_ACCESS_TOKEN is required to configure Supabase Auth callbacks.';
+      outcomes.push(bad('jobs', detail));
+      return stop('jobs', detail);
+    }
+    if (target.compute.enabled && !googleToken) {
+      const detail = 'GOOGLE_ACCESS_TOKEN is required to configure the enabled Cloud Run Job.';
+      outcomes.push(bad('jobs', detail));
+      return stop('jobs', detail);
+    }
+    try {
+      if (options.configureSupabaseAuth !== undefined) {
+        await options.configureSupabaseAuth(target);
+      } else if (supabaseToken !== undefined) {
+        await applySupabaseAuthConfig({ target, accessToken: supabaseToken });
       }
-      try {
+      components.push({
+        phase: 'jobs',
+        identity: `${target.supabase.projectRef}:auth-callbacks`,
+        source: revision.sha,
+      });
+      if (target.compute.enabled && googleToken) {
         await (
-          options.configureSupabaseAuth ??
-          ((resolvedTarget) =>
-            applySupabaseAuthConfig({ target: resolvedTarget, accessToken: supabaseToken }))
+          options.configureGoogleJob ??
+          ((resolvedTarget) => applyGoogleJob({ target: resolvedTarget, accessToken: googleToken }))
         )(target);
         components.push({
           phase: 'jobs',
-          identity: `${target.supabase.projectRef}:auth-callbacks`,
+          identity: `${target.supabase.googleProjectId}/${target.supabase.googleRegion}/${target.supabase.jobName}`,
+          source: revision.sha,
+          protocol: target.supabase.protocol,
+        });
+        await (
+          options.configureGoogleGrant ??
+          ((resolvedTarget) =>
+            applyDispatcherGrant({ target: resolvedTarget, accessToken: googleToken }))
+        )(target);
+        components.push({
+          phase: 'jobs',
+          identity: `${target.supabase.dispatcherServiceAccount}:roles/run.invoker`,
           source: revision.sha,
         });
-        if (googleToken) {
-          await (
-            options.configureGoogleJob ??
-            ((resolvedTarget) =>
-              applyGoogleJob({ target: resolvedTarget, accessToken: googleToken }))
-          )(target);
-          components.push({
-            phase: 'jobs',
-            identity: `${target.supabase.googleProjectId}/${target.supabase.googleRegion}/${target.supabase.jobName}`,
-            source: revision.sha,
-            protocol: target.supabase.protocol,
-          });
-          await (
-            options.configureGoogleGrant ??
-            ((resolvedTarget) =>
-              applyDispatcherGrant({ target: resolvedTarget, accessToken: googleToken }))
-          )(target);
-          components.push({
-            phase: 'jobs',
-            identity: `${target.supabase.dispatcherServiceAccount}:roles/run.invoker`,
-            source: revision.sha,
-          });
-        }
-      } catch (error) {
-        const detail =
-          error instanceof Error
-            ? error.message
-            : 'Provider configuration failed; later stages were stopped.';
-        outcomes.push(bad('jobs', detail));
-        return stop('jobs', detail);
       }
+    } catch (error) {
+      const detail =
+        error instanceof Error
+          ? error.message
+          : 'Provider configuration failed; later stages were stopped.';
+      outcomes.push(bad('jobs', detail));
+      return stop('jobs', detail);
     }
     const step = jobsDeployStep(target, revision.sha, root);
     if (step === null) {
@@ -1276,28 +1212,23 @@ const buildRecord = (
           containerProfile: target.compute.containerProfile,
           // What the committed jobs configuration declares, which is the only
           // offline answer available. Whether a run has actually happened is a
-          // question about D1, not about this record.
+          // question about Postgres, not about this record.
           scheduleConfigured: true,
         }
       : null,
     nativeApiOrigin: target.nativeApiOrigin,
-    schemaRevision:
-      target.deploymentProfile === 'supabase' ? supabaseSchemaRevision(options.root) : null,
+    schemaRevision: supabaseSchemaRevision(options.root),
     verificationStatus: smokeResult.ok ? 'verified' : 'failed',
-    ...(target.deploymentProfile === 'supabase' && target.supabase !== null
-      ? {
-          providerTargets: {
-            supabaseProjectRef: target.supabase.projectRef,
-            googleProjectId: target.supabase.googleProjectId,
-            googleRegion: target.supabase.googleRegion,
-            cloudRunJobName: target.supabase.jobName,
-            image: target.supabase.image,
-            protocol: target.supabase.protocol,
-            r2Bucket: target.compute.mediaBucketName,
-            nativeApiOrigin: target.nativeApiOrigin,
-          },
-        }
-      : {}),
+    providerTargets: {
+      supabaseProjectRef: target.supabase.projectRef,
+      googleProjectId: target.supabase.googleProjectId,
+      googleRegion: target.supabase.googleRegion,
+      cloudRunJobName: target.supabase.jobName,
+      image: target.supabase.image,
+      protocol: target.supabase.protocol,
+      r2Bucket: target.compute.mediaBucketName,
+      nativeApiOrigin: target.nativeApiOrigin,
+    },
   };
 };
 

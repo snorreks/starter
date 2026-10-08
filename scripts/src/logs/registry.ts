@@ -69,9 +69,5 @@ export const prerequisiteFor = (app: AppId, mode: DeploymentEnvironment): string
     );
   }
 
-  if (mode === 'production' && deploymentValues().d1DatabaseId === null) {
-    return 'No D1 database id is configured.\n  Run: bun run deploy:configure -- --provision';
-  }
-
   return null;
 };

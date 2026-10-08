@@ -52,14 +52,14 @@ bun run check:bundle        # verify the artifact and that it matches its build 
 # Test — four engine-free application lanes, plus database and compute integrations
 bun run test                # unit, every project
 bun run test:browser        # real Svelte in Chromium
-bun run test:worker         # build, then the built Worker in workerd + real local D1
+bun run test:worker         # build, then the built Worker in workerd + real local Supabase
 bun run e2e                 # built client + built Worker + real browser, one origin
 bun run test:all            # all four, no duplicates
 bun run test:database       # local Supabase: real Postgres, Auth, Data API/RLS and concurrent RPCs.
                             # Needs Docker or Podman; not included in test:all.
 bun run db:types            # regenerate Supabase database.types.ts from reset local migrations.
 bun run db:types:check      # regenerate to a temporary file and compare without overwriting.
-bun run test:compute        # the jobs Worker: real Workflows, real D1/R2, real FFmpeg.
+bun run test:compute        # the finite Cloud Run runner: Docker, real FFmpeg, local grant fixtures.
                             # Needs a Docker engine, is never cached, and is NOT in
                             # test:all. Without Docker it fails with the missing
                             # prerequisite named — it never skips.
@@ -164,12 +164,12 @@ neither comes from this flake, and both are named by `setup:doctor --profile`.
 apps/frontend/client     ONE SvelteKit app: browser half + Worker half
 apps/frontend/native     static SvelteKit app + src-tauri shell; the same features,
                          a bearer transport, an opt-in Stronghold vault
-apps/backend/jobs        the jobs Worker: EncodeWorkflow, MaintenanceWorkflow, the
-                         container Durable Object. No public route.
-apps/backend/media       the Rust/FFmpeg processor that runs inside the container
+apps/backend/jobs        the private jobs Worker: Workflows dispatch optional
+                         Cloud Run jobs. No public route.
+apps/backend/media       finite Rust/FFmpeg CLI executed by Cloud Run
 apps/e2e                 Playwright specs + the harness that starts the server
 packages/shared/*        portable; no project dependencies
-packages/backend/*       database, auth — server only
+packages/backend/*       Supabase database and auth — server only
 packages/frontend/*      ui, platform, features — browser only
 scripts                  one tooling workspace
 .pi                      agent extensions, helpers, tests
@@ -200,11 +200,11 @@ Three directory rules that are *not* stylistic:
   `#lib/server/…`, never `fetch()`ing its own origin. A round trip to `/api/notes`
   from inside the process that serves `/api/notes` is a second, differently
   authenticated path to the same data.
-- **Compute is a second Worker with no public route.** The jobs Worker exports two
-  Workflows and one container Durable Object and nothing else: its `fetch` answers
-  404, the web Worker owns `/api/jobs` and starts an encode through a cross-Worker
-  workflow binding, and the container holds no credential, no R2 key and no D1. A
-  second REST API here would be a second authorization surface with no owner.
+- **Compute is optional and has no public route.** The jobs Worker exports Workflows
+  and dispatches Cloud Run only when `JOBS_PROFILE=encode` is configured;
+  `JOBS_PROFILE=disabled` is explicit. The web Worker owns `/api/jobs`. Supabase
+  Postgres owns job state, while the finite runner uses short-lived object grants
+  and holds no Supabase credential or persistent storage key.
 - **A feature receives its collaborators; it does not find them.** `NotesService`
   takes an `ApiTransport`, `AuthViewModel` takes a session, an account service and
   a `Navigation`. Only `apps/frontend/client/src/lib/composition/` decides which
@@ -213,8 +213,8 @@ Three directory rules that are *not* stylistic:
 
 - **The native app is a client of the web Worker, not a second server.**
   `apps/frontend/native/src/lib/platform/**` is the only directory permitted to name
-  `@tauri-apps/*`, and no module in the native app may reach `@starter/database`,
-  `@starter/auth`, `drizzle-orm`, `better-auth` or a Cloudflare binding. Two
+  `@tauri-apps/*`, and no module in the native app may reach server-only
+  `@starter/database`, `@starter/auth`, or a Cloudflare binding. Two
   `check:bundle` commands assert the same property on the emitted artifacts, in
   opposite directions.
 - **A count in a document is derived, never typed.** `docs/evidence/current.json`
@@ -232,10 +232,10 @@ Three directory rules that are *not* stylistic:
 - **A secret value never reaches argv, a log line or an artifact.** `wrangler secret
   put` takes the *name* in argv and the value on stdin; `secretInArgvProblem` refuses
   a value-shaped argument, and the Cloudflare API token is never a substitute for
-  `BETTER_AUTH_SECRET` or `RESEND_API_KEY`.
+  `SUPABASE_SERVICE_ROLE_KEY` or `RESEND_API_KEY`.
 - **One authority decides what a command would change.** `scripts/src/deploy/target.ts`
   exports `resolveTarget(environment)`, and it covers the *whole* environment: web
-  Worker, jobs Worker, both Workflow identities, D1, the private R2 bucket, the image
+  Worker, jobs Worker, both Workflow identities, Supabase project, private R2 bucket, image
   and its protocol, the public origin, the mail sender and the native API origin. A
   plan that printed one Worker while `apply` went on to build an image and deploy a
   second Worker was not the thing an approval was given against. Every command that
@@ -315,10 +315,10 @@ bun run --cwd packages/backend/database db:generate
 | [docs/capability-matrix.md](docs/capability-matrix.md) | what is verified, fixture-verified, or not run |
 | [docs/first-round-review.md](docs/first-round-review.md) | fixed and open findings |
 | [docs/architecture.md](docs/architecture.md) | boundaries and why |
-| [docs/auth.md](docs/auth.md) | the account lifecycle, the D1 rate limiter, and mail |
-| [docs/cloudflare.md](docs/cloudflare.md) | Workers, D1, credentials, the deployment-mode binding |
+| [docs/auth.md](docs/auth.md) | Supabase identity, authorization, native sessions, and mail |
+| [docs/cloudflare.md](docs/cloudflare.md) | Workers, R2, credentials, and deployment modes |
 | [docs/deployment.md](docs/deployment.md) | the one deployment path: the resolved target, the CI variable model, provisioning, secret installation, the ordered pipeline, migrations, concurrency, health, rollback and image retention |
-| [docs/compute.md](docs/compute.md) | what the compute example does and does not do, the Cloud Run Jobs escape route, and when Stream replaces the container |
+| [docs/compute.md](docs/compute.md) | what the compute example does and does not do, the optional Cloud Run Jobs runner and its limits |
 | [docs/evidence/current.json](docs/evidence/current.json) | the machine-readable record `docs/capability-matrix.md` is generated from |
 | [docs/logs.md](docs/logs.md) | the log CLI and its refusals |
 | [docs/secrets.md](docs/secrets.md) | SOPS: the operations, and what each one refuses |

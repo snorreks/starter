@@ -10,7 +10,7 @@
 // GitHub only exposes **environment-scoped** variables and secrets to a job that
 // declares that environment. So a project configured the documented way
 // ("set the staging variables on the staging environment") has a `plan` job that
-// resolves an empty configuration and refuses with "No D1 database id is
+// resolves an empty configuration and refuses with "No Postgres database id is
 // configured", while the operator's `staging` environment is fully populated and
 // visible to nobody who can see it. The plan is not merely incomplete: it is
 // wrong about the same project the apply job is about to deploy.
@@ -56,7 +56,7 @@
 // ── What this module is not ──────────────────────────────────────────────────
 //
 // It never reads, writes or validates a secret. `CLOUDFLARE_API_TOKEN`,
-// `BETTER_AUTH_SECRET` and `RESEND_API_KEY` are not here, are not part of the map
+// `SUPABASE_SERVICE_ROLE_KEY` and `RESEND_API_KEY` are not here, are not part of the map
 // schema, and are refused by the schema's closed object if someone tries to add
 // them: a secret in a repository variable is a secret in every workflow log that
 // echoes the resolved target.
@@ -110,13 +110,12 @@ export const allTargetFieldVariables = (): string[] =>
  *
  * Applied only to `DEPLOY_ENVIRONMENT`. Kept as an explicit table rather than
  * derived from a naming convention, because a convention that maps a field name to
- * a variable name would also map `d1DatabaseId` to something an operator sets by
+ * a variable name would also map `supabaseProjectRef` to something an operator sets by
  * habit and CI sets by accident.
  */
 export const DEPLOY_OVERRIDE_VARIABLES: Readonly<Record<string, keyof EnvironmentTargets>> = {
   CLOUDFLARE_WORKER_NAME: 'workerName',
   CLOUDFLARE_JOBS_WORKER_NAME: 'jobsWorkerName',
-  CLOUDFLARE_D1_DATABASE_ID: 'd1DatabaseId',
   CLOUDFLARE_MEDIA_BUCKET_NAME: 'mediaBucketName',
   CLOUDFLARE_PUBLIC_ORIGIN: 'origin',
   CLOUDFLARE_MAIL_FROM: 'mailFrom',
@@ -190,7 +189,7 @@ export const parseEnvironmentMap = (raw: string | undefined): MapResult => {
           }`,
           remedy:
             'The value must be a JSON object keyed by environment, e.g.\n' +
-            '  {"staging": {"workerName": "…", "d1DatabaseId": "…"}}',
+            '  {"staging": {"workerName": "…", "supabaseProjectRef": "…", "supabaseUrl": "…", "supabasePublishableKey": "…"}}',
           environment: null,
         },
       ],
@@ -247,7 +246,7 @@ export const parseEnvironmentMap = (raw: string | undefined): MapResult => {
       }
 
       for (const [field, value] of Object.entries(entry as Record<string, unknown>)) {
-        if (SECRET_LIKE.test(field)) {
+        if (field !== 'supabasePublishableKey' && SECRET_LIKE.test(field)) {
           problems.push({
             message: `"${environment}.${field}" looks like a credential.`,
             remedy:

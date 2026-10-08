@@ -27,7 +27,7 @@ export interface GoogleResourcePlan {
 
 export const googleResourcePlan = (target: ResolvedTarget): GoogleResourcePlan => {
   const config = target.supabase;
-  if (target.deploymentProfile !== 'supabase' || config === null) {
+  if (config === null) {
     throw new Error('Google planning requires a resolved Supabase deployment target.');
   }
   return {
@@ -119,9 +119,6 @@ const request = async (options: {
   fetcher?: GoogleRequest;
   allowNotFound?: boolean;
 }): Promise<unknown> => {
-  if (options.target.deploymentProfile !== 'supabase' || options.target.supabase === null) {
-    throw new Error('Google provider calls require the resolved Supabase target.');
-  }
   if (!options.accessToken || options.accessToken.length > 8192) {
     throw new Error('Google access token is missing or invalid.');
   }

@@ -113,7 +113,6 @@ describe('DEPLOYMENT_CONFIG', () => {
 
   test('a fresh clone has provisioned nothing', () => {
     expect(DEPLOYMENT_CONFIG.workerName).toBeNull();
-    expect(DEPLOYMENT_CONFIG.d1DatabaseId).toBeNull();
     expect(DEPLOYMENT_CONFIG.r2BucketNames.uploads).toBeNull();
     expect(DEPLOYMENT_CONFIG.customDomain).toBeNull();
     expect(DEPLOYMENT_CONFIG.accountId).toBeNull();

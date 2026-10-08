@@ -37,23 +37,34 @@ const ACCOUNT = 'abcdef0123456789abcdef0123456789';
 const configured = (): DeploymentValues => ({
   accountId: ACCOUNT,
   workerName: null,
-  d1DatabaseId: null,
   r2BucketNames: { uploads: null },
   customDomain: null,
   jobsProfile: 'disabled',
   environments: {
     staging: targets({
       workerName: 'starter-staging',
-      d1DatabaseId: 'db-staging',
       origin: 'https://starter-staging.example',
       mailFrom: 'noreply@starter.example',
+      nativeApiOrigin: 'https://starter-staging.example',
+      supabaseProjectRef: 'stageprojectref00001',
+      supabaseUrl: 'https://stageprojectref00001.supabase.co',
+      supabaseAuthUrl: 'https://stageprojectref00001.supabase.co',
+      supabasePublishableKey: 'sb_publishable_test',
+      nativeRedirectAllowlist:
+        'https://starter-staging.example/auth/callback,com.example.starter://auth/callback',
       jobsProfile: 'disabled',
     }),
     production: targets({
       workerName: 'starter-production',
-      d1DatabaseId: 'db-production',
       origin: 'https://starter.example',
       mailFrom: 'noreply@starter.example',
+      nativeApiOrigin: 'https://starter.example',
+      supabaseProjectRef: 'prodprojectref000001',
+      supabaseUrl: 'https://prodprojectref000001.supabase.co',
+      supabaseAuthUrl: 'https://prodprojectref000001.supabase.co',
+      supabasePublishableKey: 'sb_publishable_test',
+      nativeRedirectAllowlist:
+        'https://starter.example/auth/callback,com.example.starter://auth/callback',
       jobsProfile: 'disabled',
     }),
   },
@@ -285,7 +296,7 @@ describe('the offline plan names one destination and the commands for it', () =>
 
     // No secret is ever in the plan: the required secrets appear as names, and the
     // plan is what gets pasted into a ticket.
-    expect(rendered).toContain('BETTER_AUTH_SECRET, RESEND_API_KEY');
+    expect(rendered).toContain('SUPABASE_SERVICE_ROLE_KEY, RESEND_API_KEY');
     expect(rendered).not.toMatch(/secret\s*[:=]\s*[A-Za-z0-9]{8,}/i);
   });
 
@@ -307,7 +318,6 @@ describe('the offline plan names one destination and the commands for it', () =>
     const empty: DeploymentValues = {
       accountId: null,
       workerName: null,
-      d1DatabaseId: null,
       r2BucketNames: { uploads: null },
       customDomain: null,
       jobsProfile: 'disabled',
