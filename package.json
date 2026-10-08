@@ -51,7 +51,6 @@
     "native:android": "bun run scripts/src/cli.ts native android",
     "native:ios": "bun run scripts/src/cli.ts native ios",
     "logs:local": "bun run scripts/src/cli.ts logs web --mode local --follow",
-    "db:generate": "moon run database:db-generate",
     "db:migrate": "bun run scripts/src/cli.ts db migrate --local",
     "db:migrate:remote": "bun run scripts/src/cli.ts db migrate --remote",
     "db:status": "bun run scripts/src/cli.ts db status",
@@ -70,7 +69,7 @@
     "deploy:apply": "bun run scripts/src/cli.ts deploy apply",
     "deploy:status": "bun run scripts/src/cli.ts deploy status",
     "deploy": "bun run scripts/src/cli.ts deploy",
-    "e2e": "bun run scripts/src/cli.ts cached -- e2e:e2e",
+    "e2e": "bun run scripts/src/cli.ts cached --backend supabase -- e2e:e2e",
     "e2e:visual": "bun run --cwd apps/e2e test:visual",
     "e2e:visual:review": "bun run scripts/src/cli.ts visual review",
     "e2e:doctor": "bun run scripts/src/cli.ts e2e doctor",
@@ -88,7 +87,7 @@
     "test:compute": "bun run scripts/src/cli.ts cached -- jobs-worker:test-compute",
     "test:browser": "bun run scripts/src/cli.ts cached -- client:test-browser",
     "test:browser-launch": "bun run scripts/src/cli.ts cached -- scripts:test-browser-launch",
-    "test:e2e": "bun run scripts/src/cli.ts cached -- e2e:e2e",
+    "test:e2e": "bun run scripts/src/cli.ts cached --backend supabase -- e2e:e2e",
     "test:all": "bun run test && bun run test:browser && bun run test:worker && bun run test:e2e"
   },
   "devDependencies": {

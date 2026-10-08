@@ -225,8 +225,9 @@ bun run db:migrate                                    # local D1, applies every 
   SQL on purpose, because the correlated subqueries and the conflict-target-less
   `ON CONFLICT` are the design, and expressing them through a query builder would
   obscure exactly the part that has to be right.
-* Reached by `apps/frontend/client/src/lib/server/jobs_service.ts` (server plane
-  only) and by `apps/backend/jobs` (the jobs Worker).
+* The web server uses `apps/frontend/client/src/lib/server/supabase_context.ts`
+  and the Supabase jobs repository. The retained D1 repository is reached by
+  `apps/backend/jobs` pending the compute cutover, not by the web request path.
 * `workflowIdFor` lives in its own module (`job_identity.ts`) because both the
   repository and the dispatch port need it, and a value import between those two
   would be a cycle.

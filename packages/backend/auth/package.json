@@ -14,12 +14,11 @@
     "format": "biome format src",
     "fix": "biome check --write src --error-on-warnings",
     "typecheck": "tsgo --noemit",
-    "test": "bun test --pass-with-no-tests"
+    "test": "bun test src"
   },
   "dependencies": {
     "@starter/database": "workspace:*",
     "@starter/schemas": "workspace:*",
-    "@supabase/ssr": "0.12.7",
-    "better-auth": "1.7.7"
+    "@supabase/ssr": "0.12.7"
   }
 }

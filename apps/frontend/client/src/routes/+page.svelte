@@ -17,7 +17,7 @@ let { data }: { data: PageData } = $props();
   <title>Starter</title>
   <meta
     name="description"
-    content="A SvelteKit application on one Cloudflare Worker, with D1 and Better Auth."
+    content="A SvelteKit application on one Cloudflare Worker, with Postgres and Supabase Auth."
   />
 </svelte:head>
 

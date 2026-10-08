@@ -18,7 +18,7 @@
 //     on whichever screen reaches it first, and nothing in the build reports it.
 //   * **server code in a client chunk.** The browser half and the Worker half of
 //     one application share a build, which is exactly the situation in which
-//     `drizzle-orm` or `better-auth` can end up in a file the browser downloads.
+//     `drizzle-orm` or `Better Auth` can end up in a file the browser downloads.
 //     A green build is still a green build in that case, and the result is a
 //     published database driver plus an auth implementation sitting in public
 //     assets.
@@ -64,7 +64,7 @@ const NATIVE_SPECIFIER = '@tauri-apps/';
  * chunk to look at.
  *
  * **These have to be strings that survive minification.** The obvious choice —
- * `drizzle-orm`, `better-auth` — does not work, and the reason is worth recording
+ * `drizzle-orm`, `Better Auth` — does not work, and the reason is worth recording
  * because it was measured rather than assumed: a client module that imports
  * `@starter/database` bundles cleanly and the library *name* is gone, while the
  * schema it carries survives as a string. A negative control (`import { notes }
@@ -79,9 +79,8 @@ const NATIVE_SPECIFIER = '@tauri-apps/';
  */
 const SERVER_MARKERS = [
   // Configuration secret names from `src/lib/server/env.ts`.
-  'BETTER_AUTH_SECRET',
-  'BETTER_AUTH_URL',
   'SUPABASE_SERVICE_ROLE_KEY',
+  'GOOGLE_DISPATCHER_CREDENTIAL',
   'private.chat_generations',
   'complete_chat_generation',
   'service_role required',
@@ -96,7 +95,7 @@ const SERVER_MARKERS = [
   'device_codes',
   'account_id',
   'provider_id',
-  // Better Auth's own DDL, snake-cased the way this application's migrations spell it.
+  // Legacy identity DDL, snake-cased the way this application's migrations spell it.
   'email_verified',
   // `emailVerified` was on this list and is deliberately not any more. It is the
   // property name Better Auth's schema carries, and it is *also* a field of

@@ -9,7 +9,7 @@
 //     load balancer polls it.
 //   * `readiness` — expensive. Touches the bindings a request actually needs. A
 //     `/health` that only re-reads a variable proves the isolate is alive and
-//     nothing else: a Worker whose D1 binding points at a deleted database answers
+//     nothing else: a Worker whose Postgres binding points at a deleted database answers
 //     "ok" forever while every real request fails with a 500.
 //
 // The split is the standard liveness/readiness split, and the reason it matters
@@ -68,44 +68,55 @@ export interface ReadinessReport {
 /**
  * Readiness: prove the bindings a request needs actually work.
  *
- * Only `DB` is exercised. That is not a shortcut — it is the only required
+ * Only the Supabase Data API is exercised. That is not a shortcut — it is the only required
  * binding in `AppEnv` that can fail on its own. Auth and mail are constructed in
  * `getContainer`, which throws before this is ever reached, so a Worker with a
- * missing or malformed `BETTER_AUTH_SECRET` or an unusable mail configuration does
+ * missing or malformed `SUPABASE_SERVICE_ROLE_KEY` or an unusable mail configuration does
  * not start and never reaches a readiness response at all.
  *
- * The query is `SELECT 1`, which D1 answers without touching a table. A readiness
+ * The query is `SELECT 1`, which Postgres answers without touching a table. A readiness
  * check that read a real table would report unhealthy when the *data* is wrong
  * rather than when the *binding* is wrong, and would put a query on the hot path
  * of whatever polls it.
  */
-export const readiness = async (container: Container): Promise<ReadinessReport> => {
+export const readiness = async (
+  container: Container,
+  timeoutMs = 2_000,
+): Promise<ReadinessReport> => {
   const identity = releaseIdentity(container);
-  const checks: ReadinessReport['checks'] = [];
-
   try {
-    await container.db.run(sqlSelectOne);
-    checks.push({ binding: 'DB', ok: true, detail: 'answered a trivial query' });
-  } catch (error) {
-    // The message names the binding and the cause, never the D1 id: the id is in
-    // the deployment configuration, and a health endpoint is public.
-    checks.push({
-      binding: 'DB',
-      ok: false,
-      detail: error instanceof Error ? error.message : 'unknown error',
+    const response = await fetch(`${container.supabase.url}/rest/v1/rpc/readiness_probe`, {
+      method: 'POST',
+      headers: { apikey: container.supabase.anonKey, 'content-type': 'application/json' },
+      body: '{}',
+      signal: AbortSignal.timeout(timeoutMs),
     });
+    const ok = response.ok && (await response.json()) === 1;
+    return {
+      ok,
+      release: identity,
+      checks: [
+        {
+          binding: 'SUPABASE_URL',
+          ok,
+          detail: ok ? 'answered SELECT 1' : 'Database probe failed',
+        },
+      ],
+    };
+  } catch {
+    return {
+      ok: false,
+      release: identity,
+      checks: [
+        {
+          binding: 'SUPABASE_URL',
+          ok: false,
+          detail: 'Database probe failed',
+        },
+      ],
+    };
   }
-
-  return { ok: checks.every((check) => check.ok), release: identity, checks };
 };
-
-/**
- * `SELECT 1`, spelled as a template so it is the exact string D1 receives.
- *
- * No parameter and no interpolation: a readiness probe that could be influenced
- * would be a very strange thing to have in this codebase.
- */
-const sqlSelectOne = 'select 1 as ok';
 
 /**
  * Headers for every health response.
@@ -125,7 +136,11 @@ export const healthHeaders = { 'cache-control': 'no-store' } as const;
  * bindings" should be able to check the list in one place rather than infer it
  * from the shape of a `try` block.
  */
-export const REQUIRED_BINDINGS: readonly string[] = ['DB'];
+export const REQUIRED_BINDINGS: readonly string[] = [
+  'SUPABASE_URL',
+  'SUPABASE_ANON_KEY',
+  'SUPABASE_SERVICE_ROLE_KEY',
+];
 
 /** Narrow an arbitrary value to the env shape readiness touches. */
 export const asEnv = (value: unknown): Pick<AppEnv, 'RELEASE'> => value as Pick<AppEnv, 'RELEASE'>;

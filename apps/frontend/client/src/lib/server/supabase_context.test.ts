@@ -29,7 +29,7 @@ describe('application services reject identities from another backend', () => {
   test('creates only a per-user data service for the verified Supabase identity', () => {
     const services = createApplicationServices(identity, config);
     expect(services.identity.user.id).toBe(identity.user.id);
-    expect(services.jobs.dispatch).toBe('disabled_pending_prompt_06');
+    expect(services.jobs.dispatch).toBe('disabled');
     expect(services.jobs.computeRequested).toBe(false);
     expect(services.notes).toBeDefined();
     expect(services.chat).toBeDefined();
@@ -38,7 +38,7 @@ describe('application services reject identities from another backend', () => {
   test('keeps an enabled but unbound compute profile distinguishable from disabled compute', () => {
     const services = createApplicationServices(identity, { ...config, jobsProfile: 'encode' });
     expect(services.jobs.computeRequested).toBe(true);
-    expect(services.jobs.dispatch).toBe('disabled_pending_prompt_06');
+    expect(services.jobs.dispatch).toBe('disabled');
   });
 
   test('starts one deterministically named Workflow with opaque ids and the frozen job contract', async () => {

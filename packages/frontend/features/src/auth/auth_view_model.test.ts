@@ -15,11 +15,15 @@
 // wrong — and they would wait there for mail that is never coming.
 
 import { describe, expect, mock, test } from 'bun:test';
-import type { Navigation } from '@starter/platform';
+import type { ApiTransport, Navigation } from '@starter/platform';
 import type { SessionUser } from '@starter/schemas/auth';
 import { AppError, errorTypeForStatus } from '@starter/utils';
 import type { AccountService } from './account_service.ts';
-import type { AuthSession } from './auth_session_service.svelte.ts';
+import {
+  type AuthSession,
+  AuthSessionService,
+  SessionState,
+} from './auth_session_service.svelte.ts';
 import { AuthViewModel } from './auth_view_model.svelte.ts';
 
 const ADDRESS = 'someone@example.test';
@@ -30,12 +34,76 @@ const ADDRESS = 'someone@example.test';
  * then only carrying the *rejecting* stubs, where the return value is never read.
  */
 const USER: SessionUser = {
-  id: 'user_1',
+  id: 'f45b2c4a-7919-4f55-ae89-e73f6753e322',
   email: ADDRESS,
   displayName: 'Someone',
   provider: 'email',
   emailVerified: true,
 };
+
+describe('the session service canonical identity boundary', () => {
+  const buildService = (user: unknown) => {
+    const transport: ApiTransport = {
+      request: async <T>(): Promise<T> => ({ user }) as T,
+    };
+    const state = new SessionState();
+    return { service: new AuthSessionService({ transport, state }), state };
+  };
+
+  test('credential paths return canonical DTOs but registration does not authenticate', async () => {
+    const { service, state } = buildService(USER);
+    expect(await service.refresh()).toEqual(USER);
+    expect(await service.signIn(ADDRESS, 'password')).toEqual(USER);
+    expect(state.user).toEqual(USER);
+    expect(await service.signUp({ email: ADDRESS, password: 'password', name: 'Someone' })).toEqual(
+      USER,
+    );
+    expect(state.user).toBeNull();
+    expect(state.isAuthenticated).toBe(false);
+  });
+
+  test('sign-in submits only application credentials, never provider transport options', async () => {
+    const bodies: unknown[] = [];
+    const transport: ApiTransport = {
+      request: async <T>(
+        _path: string,
+        options?: Parameters<ApiTransport['request']>[1],
+      ): Promise<T> => {
+        bodies.push(options?.body);
+        return { user: USER } as T;
+      },
+    };
+    const service = new AuthSessionService({ transport, state: new SessionState() });
+    await service.signIn(ADDRESS, 'password');
+    expect(bodies).toEqual([{ email: ADDRESS, password: 'password' }]);
+  });
+
+  const invalidUsers = [
+    { ...USER, id: 'user_1' },
+    {
+      id: USER.id,
+      email: ADDRESS,
+      name: 'Someone',
+      emailVerified: true,
+      image: null,
+      createdAt: '2026-01-01T00:00:00.000Z',
+      updatedAt: '2026-01-01T00:00:00.000Z',
+    },
+  ];
+  for (const [index, user] of invalidUsers.entries()) {
+    test(`invalid identity ${index} cannot enter state through any session path`, async () => {
+      const { service, state } = buildService(user);
+      state.set(USER);
+      expect(await service.refresh()).toBeNull();
+      expect(state.user).toBeNull();
+      await expect(service.signIn(ADDRESS, 'password')).rejects.toThrow();
+      await expect(
+        service.signUp({ email: ADDRESS, password: 'password', name: 'Someone' }),
+      ).rejects.toThrow();
+      expect(state.user).toBeNull();
+    });
+  }
+});
 
 /** A `SessionService` whose every method the test controls. */
 const sessionStub = (
@@ -98,7 +166,7 @@ const build = (
 const serverError = (code: string, status: number): AppError =>
   new AppError(errorTypeForStatus(status), `server said ${code}`, {
     status,
-    cause: { code, message: `server said ${code}` },
+    cause: { error: code, message: `server said ${code}` },
   });
 
 describe('a failed sign-in', () => {

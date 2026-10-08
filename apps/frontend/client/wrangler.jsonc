@@ -1,6 +1,4 @@
 {
-  // Local dev/build contract. Remote operations derive a gitignored exact-target
-  // config under .starter/deploy; no live resource ID belongs in this template.
   "$schema": "../../../node_modules/wrangler/config-schema.json",
   "name": "starter-web",
   "compatibility_date": "2026-10-01",
@@ -9,24 +7,24 @@
   "assets": {
     "binding": "ASSETS",
     "directory": ".svelte-kit/cloudflare",
-    // SSR owns unmatched navigations. A static 404 page would bypass the Worker
-    // for browser requests while the same URL still worked from an API client.
     "not_found_handling": "none"
   },
   "observability": { "enabled": true },
-  // Deployment mode is explicit; only local may derive auth origin/defaults.
-  // Compute stays disabled until a resolved target supplies all its bindings.
-  // Chat model defaults to `echo` (no binding needed) unless overridden.
   "vars": { "DEPLOYMENT_ENV": "local", "JOBS_PROFILE": "disabled", "CHAT_MODEL_PROFILE": "echo" },
-  "d1_databases": [
-    {
-      "binding": "DB",
-      "database_name": "starter-web",
-      "migrations_dir": "../../../packages/backend/database/drizzle-d1"
-    }
-  ],
   "env": {
-    "staging": { "vars": { "DEPLOYMENT_ENV": "staging", "JOBS_PROFILE": "disabled", "CHAT_MODEL_PROFILE": "echo" } },
-    "production": { "vars": { "DEPLOYMENT_ENV": "production", "JOBS_PROFILE": "disabled", "CHAT_MODEL_PROFILE": "echo" } }
+    "staging": {
+      "vars": {
+        "DEPLOYMENT_ENV": "staging",
+        "JOBS_PROFILE": "disabled",
+        "CHAT_MODEL_PROFILE": "echo"
+      }
+    },
+    "production": {
+      "vars": {
+        "DEPLOYMENT_ENV": "production",
+        "JOBS_PROFILE": "disabled",
+        "CHAT_MODEL_PROFILE": "echo"
+      }
+    }
   }
 }

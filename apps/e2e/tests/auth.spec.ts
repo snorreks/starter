@@ -66,7 +66,7 @@ const capturedLink = async (
   const body = (await response.json()) as {
     messages: Array<{ subject: string; text: string }>;
   };
-  const message = body.messages.find((entry) => subject.test(entry.subject));
+  const message = body.messages.find((entry) => subject.test(`${entry.subject} ${entry.text}`));
   if (message === undefined) {
     throw new Error(
       `No mail matching ${subject} captured for ${email}. ` +
@@ -78,6 +78,20 @@ const capturedLink = async (
     throw new Error('No link in the captured mail');
   }
   return line.trim();
+};
+
+// Redeem GoTrue's loopback link in Node; the application callback uses the
+// same cookie jar that requested the mail so PKCE is still exercised.
+const authCallback = async (options: {
+  request: APIRequestContext;
+  link: string;
+}): Promise<string> => {
+  const response = await options.request.get(options.link, { maxRedirects: 0 });
+  expect(response.status()).toBe(303);
+  const location = response.headers().location;
+  expect(location).toBeDefined();
+  const callback = new URL(location ?? '', options.link);
+  return new URL(`${callback.pathname}${callback.search}${callback.hash}`, appBaseUrl).href;
 };
 
 /**
@@ -96,17 +110,15 @@ const registerViaApi = async (request: APIRequestContext, account: Account): Pro
   expect(created.ok(), `sign-up failed: ${created.status()} ${await created.text()}`).toBe(true);
 
   // No session yet, by design. Asserted rather than assumed.
-  expect(((await created.json()) as { token: string | null }).token).toBeNull();
+  expect(await created.json()).toMatchObject({ session: null, user: { emailVerified: false } });
+  const anonymous = await request.get(`${appBaseUrl}/api/auth/get-session`);
+  expect(await anonymous.json()).toEqual({ user: null });
 
-  const link = await capturedLink(request, account.email, /Verify/);
-  // `maxRedirects: 0` so the 302 Better Auth issues is observed rather than the page
-  // it points at. Following it would make a *failed* verification look like a
-  // success, because the error redirect also lands on a 200.
-  const verified = await request.get(link, { headers: originHeaders, maxRedirects: 0 });
-  expect(
-    verified.status(),
-    `verification failed: ${verified.status()} ${await verified.text()}`,
-  ).toBe(302);
+  const link = await capturedLink(request, account.email, /verify|confirm|sign.?up/i);
+  const callback = await authCallback({ request, link });
+  const verified = await request.get(callback, { maxRedirects: 0 });
+  expect(verified.status()).toBe(303);
+  expect(verified.headers().location).toBe('/verify-email');
 
   const signedIn = await request.post(`${appBaseUrl}/api/auth/sign-in/email`, {
     data: { email: account.email, password: account.password },
@@ -141,14 +153,11 @@ const signUpViaUi = async (page: Page, account: Account): Promise<void> => {
   // Followed in the browser, which is the point: this is the navigation a person makes
   // after clicking a link in an email client, and it is the only assertion here that
   // proves the link and the page agree.
-  await page.goto(await capturedLink(page.request, account.email, /Verify/));
+  const link = await capturedLink(page.request, account.email, /verify|confirm|sign.?up/i);
+  await page.goto(await authCallback({ request: page.request, link }));
   await expect(page).toHaveURL(/\/verify-email/);
-
-  // Verification is not a sign-in, so authenticate properly.
-  await page.goto('/login');
-  await page.getByTestId('auth-email-input').fill(account.email);
-  await page.getByTestId('auth-password-input').fill(account.password);
-  await page.getByTestId('auth-submit').click();
+  await expect(page.getByTestId('current-user')).toHaveText(account.email);
+  await page.goto('/notes');
 
   await expect(page.getByRole('heading', { name: 'Your notes' })).toBeVisible();
 };
@@ -278,8 +287,15 @@ test.describe('authentication', () => {
     // Verify, then sign in. Signing in has to *navigate*: an action that returned an
     // outcome instead would leave this browser — which will never run a script to read
     // one — sitting on the form with a session cookie it has no way to act on.
-    await page.goto(await capturedLink(page.request, account.email, /Verify/));
+    const link = await capturedLink(page.request, account.email, /verify|confirm|sign.?up/i);
+    await page.goto(await authCallback({ request: page.request, link }));
     await expect(page).toHaveURL(/\/verify-email/);
+    await expect(page.getByTestId('current-user')).toHaveText(account.email);
+    const signedOut = await page.request.post(`${appBaseUrl}/api/auth/sign-out`, {
+      data: {},
+      headers: originHeaders,
+    });
+    expect(signedOut.ok()).toBe(true);
 
     await page.goto('/login');
     await page.getByTestId('auth-email-input').fill(account.email);
@@ -308,7 +324,9 @@ test.describe('authentication', () => {
       headers: originHeaders,
     });
     expect(created.ok(), await created.text()).toBe(true);
-    expect(((await created.json()) as { token: string | null }).token).toBeNull();
+    expect(await created.json()).toMatchObject({ session: null, user: { emailVerified: false } });
+    const anonymous = await request.get(`${appBaseUrl}/api/auth/get-session`);
+    expect(await anonymous.json()).toEqual({ user: null });
 
     await page.goto('/login');
     await expect(page.getByTestId('auth-email-input')).toBeVisible();
@@ -346,7 +364,7 @@ test.describe('password recovery, in a browser', () => {
     await expect(page.getByText(/if that address has an account/i)).toBeVisible();
 
     const link = await capturedLink(request, account.email, /password/i);
-    await page.goto(link);
+    await page.goto(await authCallback({ request: page.request, link }));
 
     // Better Auth validated the token before redirecting here, so the form is already
     // live. Server-rendered, which is what makes the next step work without JS.
@@ -396,9 +414,13 @@ test.describe('password recovery, in a browser', () => {
 
   test('an invalid recovery token stops offering the reset form', async ({ page }) => {
     await page.goto('/reset-password?token=invalid');
-    await page.getByLabel('New password', { exact: true }).fill('a-replacement-passphrase-x');
-    await page.getByRole('button', { name: 'Save the new password' }).click();
-
+    // A forged query is not a recovery session. Even posting without the form
+    // must be refused by the server, not just hidden in the browser.
+    const refused = await page.request.post('/reset-password?token=invalid', {
+      form: { newPassword: 'a-replacement-passphrase-x' },
+      headers: originHeaders,
+    });
+    expect(refused.status()).toBe(400);
     await expect(page.getByRole('alert')).toContainText(/no longer valid|expired/i);
     await expect(page.getByLabel('New password', { exact: true })).toHaveCount(0);
     await expect(page.getByRole('link', { name: /new link/i })).toBeVisible();
@@ -414,14 +436,14 @@ test.describe('password recovery, in a browser', () => {
     });
     const link = await capturedLink(request, account.email, /password/i);
 
-    await page.goto(link);
+    await page.goto(await authCallback({ request: page.request, link }));
     await page.getByLabel('New password', { exact: true }).fill('first-replacement-x');
     await page.getByRole('button', { name: 'Save the new password' }).click();
     await expect(page).toHaveURL(/\/login\?reset=1/);
 
     // The link is a live credential until it is used; after that it must be inert.
     // Re-following it lands on the "no longer valid" page rather than a form.
-    await page.goto(link);
+    await page.goto(await authCallback({ request: page.request, link }));
     await expect(page.getByText(/no longer valid|expired/i)).toBeVisible();
     await expect(page.getByLabel('New password', { exact: true })).toHaveCount(0);
   });
@@ -551,16 +573,18 @@ test.describe('input the Worker must refuse', () => {
     // There is no `GET /api/notes/:id` route — only PATCH and DELETE take an id.
     // So the assertion is on those, where a missing row is the handler's own
     // 404 rather than the router's.
-    const patched = await request.patch(`${appBaseUrl}/api/notes/note_does_not_exist`, {
-      data: { title: 'x' },
-      headers: originHeaders,
-    });
-    expect(patched.status()).toBe(404);
+    for (const id of ['note_does_not_exist', crypto.randomUUID()]) {
+      const patched = await request.patch(`${appBaseUrl}/api/notes/${id}`, {
+        data: { title: 'x' },
+        headers: originHeaders,
+      });
+      expect(patched.status()).toBe(404);
 
-    const deleted = await request.delete(`${appBaseUrl}/api/notes/note_does_not_exist`, {
-      headers: originHeaders,
-    });
-    expect(deleted.status()).toBe(404);
+      const deleted = await request.delete(`${appBaseUrl}/api/notes/${id}`, {
+        headers: originHeaders,
+      });
+      expect(deleted.status()).toBe(404);
+    }
   });
 
   test('an unknown API route is a JSON 404, not an HTML error page', async ({ request }) => {

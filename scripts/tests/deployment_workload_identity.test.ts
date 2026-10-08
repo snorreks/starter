@@ -57,12 +57,16 @@ const runTargetExtraction = (target: unknown) => {
   return { result, output: readFileSync(output, 'utf8') };
 };
 
-test('the retained D1 CI migration selects legacy rather than inheriting deployment defaults', () => {
-  const migration = workflowSteps({ file: 'ci.yml', job: 'e2e' }).find(
-    (step) => step.name === 'Apply migrations to local D1',
+test('CI runs the Supabase-owned E2E entrypoint without a second database setup', () => {
+  const steps = workflowSteps({ file: 'ci.yml', job: 'e2e' });
+  const suite = steps.find((step) => step.name === 'End-to-end tests');
+  expect(suite?.run).toBe('set -o pipefail; bun run e2e 2>&1 | tee "$RUNNER_TEMP/e2e.log"');
+  expect(steps.some((step) => String(step.run).includes('db:migrate'))).toBe(false);
+  expect(steps.some((step) => JSON.stringify(step.env ?? {}).includes('legacy'))).toBe(false);
+  const manifest = JSON.parse(readFileSync(join(REPO_ROOT, 'package.json'), 'utf8'));
+  expect(manifest.scripts.e2e).toBe(
+    'bun run scripts/src/cli.ts cached --backend supabase -- e2e:e2e',
   );
-  expect(migration?.run).toBe('bun run db:migrate');
-  expect(migration?.env).toMatchObject({ STARTER_BACKEND_PROFILE: 'legacy' });
 });
 
 describe('deployment workload identity follows resolved compute policy', () => {

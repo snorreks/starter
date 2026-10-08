@@ -16,9 +16,9 @@
     // `bun` is added so the Bun unit lane (src/**/*.test.ts and its preload) is
     // covered by this one program rather than by a second, separately-run check.
     //
-    // `@cloudflare/workers-types` supplies `D1Database` and the rest of the
+    // `@cloudflare/workers-types` supplies `Supabase bindings` and the rest of the
     // platform's global interfaces. It has to be listed here rather than left to
-    // be discovered: without it, `App.Platform.DB: D1Database` and every D1 stub
+    // be discovered: without it, `App.Platform.DB: Supabase bindings` and every Supabase runtime
     // in a test resolve to `any` under `skipLibCheck`, and the binding contract
     // this PR introduces would be typed by nothing at all.
     "types": ["$app/types", "bun", "@cloudflare/workers-types/experimental"],

@@ -1,83 +1,36 @@
 # @starter/database
 
-Cloudflare D1 compatibility and the additive Supabase Postgres foundation. The
-application default remains on the complete D1/Better Auth backend until the final
-cutover prompt.
+Supabase Postgres clients and repository adapters for the application.
 
 ## Purpose and runtime
 
-Server code, and the only package that may open a database handle. It runs in
-workerd against the `DB` binding, which is why `drizzle-orm` carries the
-`worker-runtime` capability in the policy: it is the database implementation, not a
-contract.
+Server only. SQL migrations under `supabase/migrations/` define tables, RLS, grants and transactional RPCs. Generated types in `src/supabase/database.types.ts` are derived from a fresh local migration reset. Repository adapters project database rows into shared DTOs.
 
-- `src/lib/schema.ts` is the single source of truth. Row types are derived from it
-  with `$inferSelect` / `$inferInsert`; never hand-write a parallel type.
-- `drizzle-d1/` holds forward-only generated D1 migrations. `src/supabase/` contains
-  request-scoped Supabase clients and repository adapters; `supabase/migrations/`
-  at the repository root owns Postgres schema, RLS and transactional RPCs. Storage
-  rows stay private and adapters project them to shared DTOs.
+User clients carry a verified request token and rely on RLS. Service role clients are reserved for server owned operations and never enter browser or native artifacts. Jobs and maintenance use fenced RPCs; the `private` schema is not exposed through the Data API.
 
-## Setup and configuration
+## Setup and commands
 
-No environment variable. The binding name is `DB`, declared in
-`apps/frontend/client/wrangler.jsonc`; the database id is *not* committed — it is
-in the git-ignored `.starter/deployment.local.json`, and
-`bun run deploy:check` reports which ids are still unset. The `registry-valid`
-guard fails the build if a resource id appears as a literal in the registry.
-
-## Commands
-
-From the repository root:
+The local stack uses real Postgres, Supabase Auth, Data API and Mailpit containers. Docker or Podman is required. Each run owns a unique project id, API/database/Studio/mail ports and lifecycle token; one run cannot reset another run's stack.
 
 ```bash
-bun run db:generate   # drizzle-kit generate
-bun run db:migrate    # apply to local D1
-bun run db:status     # which migrations have been applied
-bun run test:database # real local Supabase/Auth/Postgres integration lane (Docker required)
-bun run db:types      # regenerate generated Postgres types after a local reset
-bun run db:types:check # regenerate to temporary output and compare
+bun run setup:doctor -- --profile database
+bun run test:database
+bun run db:types
+bun run db:types:check
+bun run db:migrate
+bun run db:status
 ```
 
-From `packages/backend/database`, the generate step is
-`bun run --cwd packages/backend/database db:generate` — through the package that
-declares `drizzle-kit`, never `bunx`, which would download whatever the registry
-serves.
+`db:types:check` regenerates into a temporary file and compares without overwriting the committed types. Use the package's pinned Supabase CLI; do not run `bunx` for stateful tools.
 
-Supabase CLI and `@supabase/supabase-js` are pinned by this package. The scripts
-workspace owns checkout allocation and lifecycle but does not import backend code.
-Each local run derives its project id and API/Postgres/Studio/mail/SMTP ports from
-one allocation and records a private owner token before it can stop or reset that
-stack. Local Auth mail is captured at the allocation's Mailpit URL.
+## Tests and boundaries
 
-Adding a table:
+Unit tests cover adapter projection and request behavior. `test:database` is the real local Postgres/Auth/Data API lane and refuses with a named Docker prerequisite when unavailable. It verifies cross-user denial, concurrent transactional admission, retries, leases, fencing, maintenance and retention.
 
-1. Add it to `src/lib/schema.ts`.
-2. `bun run db:generate` (commits the SQL and the snapshot).
-3. `bun run db:migrate` to apply locally.
-4. Add the matching Valibot contract to `@starter/schemas` if it crosses the wire.
+## Access model
 
-## Tests and artifacts
+Supabase Postgres is the sole application database. The Data API exposes only application relations protected by RLS. Internal job, generation and maintenance state lives in the unexposed `private` schema. User clients are request scoped and carry a verified access token. Service role access stays in server operations and fixed RPCs; it is not a general browser or native capability.
 
-`bun test`: the rate limiter's atomic storage is covered here, against a real D1,
-because its correctness depends on the installed Better Auth and Drizzle behaviour
-rather than on a hand-rolled claim. That is also why this project's `test` script
-no longer carries `--pass-with-no-tests` — with a test file present, the flag was
-permission for a future test file to be deleted without anything failing.
+Multi-step operations that require atomicity use SQL RPCs with fixed search paths, explicit grants, authenticated identity checks and concurrency controls. The database lane refuses nonzero when its engine is missing; credential-free unit tests do not start Docker.
 
-Artifacts: the SQL files and snapshots under `drizzle-d1/`. Applying them produces
-tables, not files.
-
-## Boundaries and documentation
-
-Server-only. Importing this from frontend code is a layering violation, and the
-guard reports it as `plane-reachability` or, for a type-only import, as
-`server-type-only`.
-
-Migrations are forward-only. There is no down migration and no automatic schema
-rollback; a bad release is recovered by deploying a new one — see
-[docs/deployment.md](../../../docs/deployment.md).
-
-- [docs/cloudflare.md](../../../docs/cloudflare.md) — D1, bindings, credentials
-- [docs/auth.md](../../../docs/auth.md) — why the rate limiter's storage is custom
-- [docs/deployment.md](../../../docs/deployment.md) — where migrations run in the pipeline
+The package is server only. See [docs/auth.md](../../../docs/auth.md), [docs/testing.md](../../../docs/testing.md), and [docs/deployment.md](../../../docs/deployment.md).

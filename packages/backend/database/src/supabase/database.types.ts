@@ -111,8 +111,19 @@ isOneToOne: false
 "finish_encode_job":
 { Args: { "p_attempt_id": string,"p_codec": string,"p_duration_ms": number,"p_format": string,"p_height": number,"p_job_id": string,"p_output_bytes": number,"p_output_key": string,"p_sha256": string,"p_width": number }; Returns: boolean
                            },
+"finish_maintenance_run":
+{ Args: { "p_artifacts_queued"?: number,"p_artifacts_retired"?: number,"p_error_code"?: string,"p_run_key": string,"p_status": string }; Returns: boolean
+                           },
 "get_encode_job":
 { Args: { "p_job_id": string }; Returns: Json
+                           },
+"get_encode_job_output":
+{ Args: { "p_job_id": string }; Returns: {
+              "expires_at": string,"output_key": string
+            }[]
+                           },
+"get_latest_maintenance":
+{ Args: Record<PropertyKey, never>; Returns: Json
                            },
 "list_encode_jobs":
 { Args: Record<PropertyKey, never>; Returns: Json
@@ -124,6 +135,9 @@ isOneToOne: false
 { Args: { "p_cutoff": string,"p_limit"?: number }; Returns: {
               "job_id": string,"output_key": string
             }[]
+                           },
+"readiness_probe":
+{ Args: Record<PropertyKey, never>; Returns: number
                            },
 "record_cloud_run_execution":
 { Args: { "p_attempt_id": string,"p_execution_name": string,"p_job_id": string }; Returns: boolean

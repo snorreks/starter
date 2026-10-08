@@ -6,9 +6,9 @@
 // with a development auth secret, and the defect they cover was reachable from a
 // plain misconfiguration:
 //
-//   const isLocal = env.BETTER_AUTH_URL === undefined || env.BETTER_AUTH_URL.includes('localhost');
+//   const isLocal = env.APP_ORIGIN === undefined || env.APP_ORIGIN.includes('localhost');
 //
-// A Worker deployed without `BETTER_AUTH_URL` — the single most likely binding to
+// A Worker deployed without `APP_ORIGIN` — the single most likely binding to
 // be missing — satisfied the first clause, was classified local, and got the
 // shipped secret. `https://attacker-localhost.example` satisfied the second.
 //
@@ -25,26 +25,27 @@
 import { describe, expect, test } from 'bun:test';
 import {
   type AppEnv,
-  AUTH_SECRET_PLACEHOLDER,
   parseAbsoluteHttpUrl,
   requireBindings,
-  resolveAuthSecret,
-  resolveBackendProfile,
+  requireSupabaseConfig,
   resolveDeploymentEnvironment,
 } from './env.ts';
 
 /** A binding set with only the fields a decision here depends on. */
 const bindings = (overrides: Partial<AppEnv> = {}): AppEnv =>
   ({
-    DB: {} as unknown as D1Database,
+    SUPABASE_URL: 'http://127.0.0.1:54321',
+    SUPABASE_ANON_KEY: 'anon-test',
+    SUPABASE_SERVICE_ROLE_KEY: 'service-test',
+    JOBS_PROFILE: 'disabled',
     DEPLOYMENT_ENV: 'local',
-    BETTER_AUTH_URL: 'http://127.0.0.1:5173',
+    APP_ORIGIN: 'http://127.0.0.1:5173',
     ...overrides,
   }) as AppEnv;
 
 describe('resolveDeploymentEnvironment', () => {
   test('a missing DEPLOYMENT_ENV is an error, not a local default', () => {
-    const result = resolveDeploymentEnvironment({ BETTER_AUTH_URL: 'https://web.example.com' });
+    const result = resolveDeploymentEnvironment({ APP_ORIGIN: 'https://web.example.com' });
 
     expect(result.ok).toBe(false);
     if (result.ok) {
@@ -56,7 +57,7 @@ describe('resolveDeploymentEnvironment', () => {
   test('an empty DEPLOYMENT_ENV is an error', () => {
     const result = resolveDeploymentEnvironment({
       DEPLOYMENT_ENV: '   ',
-      BETTER_AUTH_URL: 'https://web.example.com',
+      APP_ORIGIN: 'https://web.example.com',
     });
     expect(result.ok).toBe(false);
   });
@@ -64,7 +65,7 @@ describe('resolveDeploymentEnvironment', () => {
   test('an unrecognised DEPLOYMENT_ENV is an error, not a local default', () => {
     const result = resolveDeploymentEnvironment({
       DEPLOYMENT_ENV: 'prod',
-      BETTER_AUTH_URL: 'https://web.example.com',
+      APP_ORIGIN: 'https://web.example.com',
     });
     expect(result.ok).toBe(false);
     if (result.ok) {
@@ -76,7 +77,7 @@ describe('resolveDeploymentEnvironment', () => {
   test('local resolves to local and reports the configured origin', () => {
     const result = resolveDeploymentEnvironment({
       DEPLOYMENT_ENV: 'local',
-      BETTER_AUTH_URL: 'http://127.0.0.1:5173',
+      APP_ORIGIN: 'http://127.0.0.1:5173',
     });
     expect(result).toEqual({
       ok: true,
@@ -89,7 +90,7 @@ describe('resolveDeploymentEnvironment', () => {
   test.each(['staging', 'production'])('%s resolves to a remote environment', (environment) => {
     const result = resolveDeploymentEnvironment({
       DEPLOYMENT_ENV: environment,
-      BETTER_AUTH_URL: 'https://web.example.com',
+      APP_ORIGIN: 'https://web.example.com',
     });
     expect(result).toEqual({
       ok: true,
@@ -99,19 +100,19 @@ describe('resolveDeploymentEnvironment', () => {
     });
   });
 
-  test('a remote environment without BETTER_AUTH_URL fails', () => {
+  test('a remote environment without APP_ORIGIN fails', () => {
     const result = resolveDeploymentEnvironment({ DEPLOYMENT_ENV: 'production' });
     expect(result.ok).toBe(false);
     if (result.ok) {
       throw new Error('unreachable');
     }
-    expect(result.problem).toContain('BETTER_AUTH_URL');
+    expect(result.problem).toContain('APP_ORIGIN');
   });
 
   test('a remote environment over plain http fails', () => {
     const result = resolveDeploymentEnvironment({
       DEPLOYMENT_ENV: 'production',
-      BETTER_AUTH_URL: 'http://web.example.com',
+      APP_ORIGIN: 'http://web.example.com',
     });
     expect(result.ok).toBe(false);
     if (result.ok) {
@@ -129,7 +130,7 @@ describe('resolveDeploymentEnvironment', () => {
   ])('a remote hostname containing "localhost" is remote, not local: %s', (url) => {
     const result = resolveDeploymentEnvironment({
       DEPLOYMENT_ENV: 'production',
-      BETTER_AUTH_URL: url,
+      APP_ORIGIN: url,
     });
     expect(result).toEqual({
       ok: true,
@@ -140,11 +141,11 @@ describe('resolveDeploymentEnvironment', () => {
   });
 
   test.each(['not-a-url', 'ftp://example.com', '//example.com', 'https://'])(
-    'a malformed BETTER_AUTH_URL is rejected: %s',
+    'a malformed APP_ORIGIN is rejected: %s',
     (url) => {
       const result = resolveDeploymentEnvironment({
         DEPLOYMENT_ENV: 'local',
-        BETTER_AUTH_URL: url,
+        APP_ORIGIN: url,
       });
       expect(result.ok).toBe(false);
     },
@@ -152,7 +153,7 @@ describe('resolveDeploymentEnvironment', () => {
 });
 
 describe('the local public origin is derived from the request, and only then', () => {
-  test('a local run with no BETTER_AUTH_URL uses the request origin', () => {
+  test('a local run with no APP_ORIGIN uses the request origin', () => {
     // This is the case the migration depends on. One origin serves the HTML and
     // the API, so a value that has to be edited whenever the dev port changes is
     // a value that will be wrong the first time two checkouts run at once.
@@ -168,9 +169,9 @@ describe('the local public origin is derived from the request, and only then', (
     });
   });
 
-  test('an explicit BETTER_AUTH_URL still wins over the request origin', () => {
+  test('an explicit APP_ORIGIN still wins over the request origin', () => {
     const result = resolveDeploymentEnvironment(
-      { DEPLOYMENT_ENV: 'local', BETTER_AUTH_URL: 'http://localhost:5173' },
+      { DEPLOYMENT_ENV: 'local', APP_ORIGIN: 'http://localhost:5173' },
       'http://127.0.0.1:6100',
     );
     expect(result.ok && result.baseUrl).toBe('http://localhost:5173');
@@ -224,84 +225,26 @@ describe('the local public origin is derived from the request, and only then', (
     if (result.ok) {
       throw new Error('unreachable');
     }
-    expect(result.problem).toContain('BETTER_AUTH_URL');
+    expect(result.problem).toContain('APP_ORIGIN');
   });
 });
 
-describe('resolveAuthSecret', () => {
-  test('local with no secret gets the development placeholder', () => {
-    expect(resolveAuthSecret(bindings(), true)).toBe(AUTH_SECRET_PLACEHOLDER);
-  });
-
-  test('local with a real secret keeps it', () => {
-    const secret = 'a'.repeat(32);
-    expect(resolveAuthSecret(bindings({ BETTER_AUTH_SECRET: secret }), true)).toBe(secret);
-  });
-
-  test('remote with no secret throws', () => {
-    expect(() => resolveAuthSecret(bindings(), false)).toThrow(/BETTER_AUTH_SECRET is not set/);
-  });
-
-  // This is the one that matters most: an explicitly supplied *development*
-  // secret is still a development secret.
-  test('remote with the shipped development placeholder throws', () => {
-    expect(() =>
-      resolveAuthSecret(bindings({ BETTER_AUTH_SECRET: AUTH_SECRET_PLACEHOLDER }), false),
-    ).toThrow(/shipped development placeholder/);
-  });
-
-  test('remote with a short secret throws', () => {
-    expect(() => resolveAuthSecret(bindings({ BETTER_AUTH_SECRET: 'too-short' }), false)).toThrow(
-      /32 characters/,
-    );
-  });
-
-  test('remote with a long-enough secret returns it', () => {
-    const secret = 'x'.repeat(32);
-    expect(resolveAuthSecret(bindings({ BETTER_AUTH_SECRET: secret }), false)).toBe(secret);
-  });
-
-  test('whitespace around a secret is trimmed before the length check', () => {
-    expect(() => resolveAuthSecret(bindings({ BETTER_AUTH_SECRET: '  ' }), false)).toThrow(
-      /is not set/,
-    );
-  });
-});
-
-describe('backend profile selection', () => {
-  test('keeps legacy as the default until cutover', () => {
-    expect(resolveBackendProfile({})).toBe('legacy');
-  });
-
-  test('refuses unknown profiles and incomplete Supabase preview config', () => {
-    expect(() => resolveBackendProfile({ STARTER_BACKEND_PROFILE: 'supabse' })).toThrow(
-      /legacy.*supabase/,
-    );
-    expect(() => resolveBackendProfile({ STARTER_BACKEND_PROFILE: 'supabase' })).toThrow(
+describe('Supabase is the sole backend', () => {
+  test('fails with missing Supabase configuration instead of selecting a legacy backend', () => {
+    expect(() => requireSupabaseConfig({})).toThrow(
       /SUPABASE_URL.*SUPABASE_ANON_KEY.*SUPABASE_SERVICE_ROLE_KEY/,
     );
-  });
-
-  test('selects Supabase only with complete public and administrative config', () => {
-    expect(
-      resolveBackendProfile({
-        STARTER_BACKEND_PROFILE: 'supabase',
-        SUPABASE_URL: 'http://127.0.0.1:54321',
-        SUPABASE_ANON_KEY: 'anon',
-        SUPABASE_SERVICE_ROLE_KEY: 'service',
-      }),
-    ).toBe('supabase');
   });
 });
 
 describe('requireBindings', () => {
-  test('a missing D1 binding names the binding and the file to edit', () => {
-    expect(() => requireBindings({})).toThrow(/wrangler\.jsonc/);
-    expect(() => requireBindings(undefined)).toThrow(/"DB"/);
-    expect(() => requireBindings(null)).toThrow(/"DB"/);
+  test('missing Supabase bindings name the missing values', () => {
+    expect(() => requireBindings({})).toThrow(/SUPABASE_URL.*SUPABASE_ANON_KEY/);
+    expect(() => requireBindings(undefined)).toThrow(/Worker bindings/);
+    expect(() => requireBindings(null)).toThrow(/Worker bindings/);
   });
 
-  test('a binding set with D1 is returned unchanged', () => {
+  test('a complete Supabase binding set is returned unchanged', () => {
     const env = bindings();
     expect(requireBindings(env)).toBe(env);
   });

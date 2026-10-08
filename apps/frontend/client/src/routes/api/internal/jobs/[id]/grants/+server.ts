@@ -15,15 +15,15 @@ const NO_STORE = { 'cache-control': 'no-store' };
 
 /** Internal runner policy: Google service-account JWT for grant minting; signed method/object token for R2 transfer. */
 export const POST: RequestHandler = async ({ request, params, platform, url }) => {
-  if (platform?.STARTER_BACKEND_PROFILE !== 'supabase') {
-    return jsonError(503, 'runner_grants_disabled', 'Runner grants are disabled.');
-  }
   const parsed = await readJsonBody(request, GrantRequestSchema, {
     maxBytes: 4096,
     invalidStatus: 400,
   });
   if (!parsed.ok) {
     return parsed.response;
+  }
+  if (platform?.JOBS_PROFILE !== 'encode') {
+    return jsonError(503, 'runner_grants_disabled', 'Runner grants are disabled.');
   }
   const report = parsed.value;
   try {
@@ -60,7 +60,7 @@ export const POST: RequestHandler = async ({ request, params, platform, url }) =
 };
 
 const transfer: RequestHandler = async ({ request, params, platform }) => {
-  if (platform?.STARTER_BACKEND_PROFILE !== 'supabase') {
+  if (platform?.JOBS_PROFILE !== 'encode') {
     return jsonError(503, 'runner_grants_disabled', 'Runner grants are disabled.');
   }
   try {

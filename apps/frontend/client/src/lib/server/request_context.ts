@@ -13,7 +13,6 @@
 // hook already built — it does not resolve the session a second time.
 
 import type { VerifiedIdentity } from '@starter/auth/supabase';
-import { users } from '@starter/database';
 import {
   type ConsoleLogger,
   createLogger,
@@ -24,7 +23,6 @@ import {
 } from '@starter/logger';
 import { type DeploymentEnvironment, isDeploymentEnvironment } from '@starter/schemas/logging';
 import { createId } from '@starter/utils';
-import { eq } from 'drizzle-orm';
 import type { Container } from './container.ts';
 import { unauthorized } from './http.ts';
 import type { ApplicationServices } from './supabase_context.ts';
@@ -33,8 +31,8 @@ import type { ApplicationServices } from './supabase_context.ts';
  * The verified caller, as page data.
  *
  * Structurally `SessionUser` from `@starter/schemas` — the DTO the browser's
- * `SessionService` already expects — but built here from the Better Auth session
- * rather than handed through. The mapping is the point: Better Auth's user object
+ * `SessionService` already expects — but built here from the Supabase Auth session
+ * rather than handed through. The mapping is the point: Supabase Auth's user object
  * carries `image` and its session object carries a token, and a page load that
  * returned any of those would be publishing a session credential into the HTML.
  * Naming the fields is what makes that impossible to do by accident.
@@ -80,7 +78,6 @@ export interface RequestContext {
   /** The single structured destination this request's records are written to. */
   emitter: StructuredEmitter;
   container: Container;
-  backendProfile: 'legacy' | 'supabase';
   identity: VerifiedIdentity | null;
   services: ApplicationServices | null;
   responseHeaders: Headers | null;
@@ -205,69 +202,6 @@ export const boundCorrelationLabel = (raw: string | null): string | null => {
 };
 
 /**
- * Resolve the caller from the session cookie or the bearer token.
- *
- * Better Auth verifies the token against D1 itself. Reading a user id from a
- * request body, from a client-controlled header, or from a decoded-but-
- * unverified JWT would all be forgeable; this call is not.
- */
-export const resolveUser = async (
-  container: Container,
-  headers: Headers,
-): Promise<RequestUser | null> => {
-  const session = await container.auth.api.getSession({ headers });
-  if (!session?.user) {
-    return null;
-  }
-  // `provider: 'email'` is a literal, not a value read from anywhere. Only email
-  // and password is enabled, and a cast to a wider provider would publish a claim
-  // this application cannot honour.
-  return {
-    id: session.user.id,
-    email: session.user.email,
-    displayName: session.user.name,
-    provider: 'email',
-    emailVerified: session.user.emailVerified,
-  };
-};
-
-/**
- * Resolve the explicitly seeded emulator identity from D1. The fixture itself is
- * owned by the launcher; the application reads the user record through its normal
- * database binding just like it reads notes.
- */
-const emulatorUserFor = async (
-  container: Container,
-  runtime: LogRuntime,
-): Promise<RequestUser | null> => {
-  const nodeProcess = (globalThis as { process?: { env?: Record<string, string | undefined> } })
-    .process;
-  const userId = nodeProcess?.env?.STARTER_EMULATOR_USER_ID;
-  const bindHost = nodeProcess?.env?.DEV_HOST ?? '127.0.0.1';
-  if (
-    runtime !== 'node' ||
-    !container.isLocal ||
-    !new Set(['127.0.0.1', 'localhost', '::1', '[::1]']).has(bindHost) ||
-    nodeProcess?.env?.STARTER_EMULATOR_MOCKS !== 'true' ||
-    userId === undefined ||
-    userId.length === 0
-  ) {
-    return null;
-  }
-
-  const user = await container.db.query.users.findFirst({ where: eq(users.id, userId) });
-  return user === undefined
-    ? null
-    : {
-        id: user.id,
-        email: user.email,
-        displayName: user.name,
-        provider: 'email',
-        emailVerified: user.emailVerified,
-      };
-};
-
-/**
  * Build the context for one request.
  *
  * `container` comes first because it is the authority: the environment, the
@@ -295,15 +229,13 @@ export const buildRequestContext = async (
   // site remembering to pass it.
   const { logger, emitter } = createServerRecordLogger(context, options.runtime, { traceId });
 
-  const runtime = options.runtime ?? detectLogRuntime();
-  const user = await resolveRequestUser(container, request, runtime, options);
+  const user = resolveRequestUser(options);
   return {
     user,
     traceId,
     requestId: boundCorrelationLabel(request.headers.get('cf-ray')),
     clientTraceId: boundCorrelationLabel(request.headers.get('x-trace-id')),
     container,
-    backendProfile: container.backendProfile,
     identity: options.identity ?? null,
     services: options.services ?? null,
     responseHeaders: options.responseHeaders ?? null,
@@ -312,21 +244,9 @@ export const buildRequestContext = async (
   };
 };
 
-const resolveRequestUser = async (
-  container: Container,
-  request: Request,
-  runtime: LogRuntime,
-  options: { identity?: VerifiedIdentity | null },
-): Promise<RequestContext['user']> => {
-  if (Object.hasOwn(options, 'identity')) {
-    if (options.identity) {
-      return { ...options.identity.user, provider: 'email' };
-    }
-    return null;
-  }
-  return (
-    (await emulatorUserFor(container, runtime)) ?? (await resolveUser(container, request.headers))
-  );
-};
+const resolveRequestUser = (options: {
+  identity?: VerifiedIdentity | null;
+}): RequestContext['user'] =>
+  options.identity ? { ...options.identity.user, provider: 'email' } : null;
 
 export { unauthorized };

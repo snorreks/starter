@@ -43,7 +43,9 @@ const verificationLink = async (page: Page, email: string): Promise<string> => {
     throw new Error(`mail inbox unavailable: ${response.status()}`);
   }
   const body = (await response.json()) as { messages: Array<{ subject: string; text: string }> };
-  const message = body.messages.find((entry) => entry.subject.includes('Verify'));
+  const message = body.messages.find((entry) =>
+    /verify|confirm|sign.?up/i.test(`${entry.subject} ${entry.text}`),
+  );
   if (message === undefined) {
     throw new Error(`No verification mail captured for ${email}`);
   }
@@ -51,7 +53,12 @@ const verificationLink = async (page: Page, email: string): Promise<string> => {
   if (line === undefined) {
     throw new Error('No link in the verification mail');
   }
-  return line.trim();
+  const verified = await page.request.get(line.trim(), { maxRedirects: 0 });
+  expect(verified.status()).toBe(303);
+  const location = verified.headers().location;
+  expect(location).toBeDefined();
+  const callback = new URL(location ?? '', line.trim());
+  return new URL(`${callback.pathname}${callback.search}${callback.hash}`, page.url()).href;
 };
 
 const signUp = async (page: Page, account = newAccount()): Promise<void> => {
@@ -66,11 +73,10 @@ const signUp = async (page: Page, account = newAccount()): Promise<void> => {
   await expect(page.getByTestId('auth-error')).toContainText(/confirm your address/i);
 
   await page.goto(await verificationLink(page, account.email));
-  await page.goto('/login');
-  await page.getByTestId('auth-email-input').fill(account.email);
-  await page.getByTestId('auth-password-input').fill(account.password);
-  await page.getByTestId('auth-submit').click();
-  await expect(page).toHaveURL(/\/notes$/);
+  await expect(page).toHaveURL(/\/verify-email/);
+  await expect(page.getByTestId('current-user')).toHaveText(account.email);
+  await page.goto('/notes');
+  await expect(page.getByRole('heading', { name: 'Your notes' })).toBeVisible();
 };
 
 test.describe('the jobs screen with the profile switched off', () => {

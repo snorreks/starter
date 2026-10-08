@@ -21,7 +21,7 @@ import { emptySnippet, mountInDocument } from './mount_helper.ts';
 
 const note = (overrides: Partial<Note> = {}): Note => ({
   id: 'note_1',
-  ownerId: 'user_1',
+  ownerId: 'f45b2c4a-7919-4f55-ae89-e73f6753e322',
   title: 'A note',
   body: 'Body text',
   createdAt: 1_700_000_000_000,

@@ -7,7 +7,7 @@
 // to a browser that did not run any. A form action is the only way a submission
 // reaches the server that is not a `fetch`.
 //
-// Both branches converge on the same Better Auth endpoints the browser calls
+// Both branches converge on the same Supabase Auth endpoints the browser calls
 // directly. There is no second authorization rule here and no second place where a
 // session is created: this calls `auth.handler`, including the middleware used
 // by `/api/auth/[...all]`.
@@ -122,7 +122,7 @@ export const actions: Actions = {
       // The helper applied response cookies before this redirect, which throws.
       // Require a cookie so a successful sign-in cannot silently lose its session.
       if (result.cookies === 0) {
-        // Better Auth reported success and set no session. Failing loudly beats a
+        // Supabase Auth reported success and set no session. Failing loudly beats a
         // redirect to a page that bounces straight back here, which is what a
         // zero-cookie sign-in otherwise produces.
         error(500, 'Could not start a session. Try again.');
@@ -146,7 +146,7 @@ export const actions: Actions = {
   },
 };
 
-/** The slice of Better Auth this action calls, taken from the container it comes from. */
+/** The slice of Supabase Auth this action calls, taken from the container it comes from. */
 type AuthContainer = App.Locals['container'];
 
 /**
@@ -165,9 +165,9 @@ type AuthAttempt =
   | { kind: 'refused'; status: number; errors: Record<string, string> };
 
 /**
- * Run the credentials against Better Auth, turning a rejection into a refusal.
+ * Run the credentials against Supabase Auth, turning a rejection into a refusal.
  *
- * A helper so the `try` that catches Better Auth's rejections cannot also swallow the
+ * A helper so the `try` that catches Supabase Auth's rejections cannot also swallow the
  * `redirect` that follows a successful sign-in — both throw, and an action whose single
  * `try` covers both turns every success into a 400.
  */
@@ -205,7 +205,7 @@ const attemptCredentials = async (
 /**
  * Field errors and a single message, so the view has nothing to interpret.
  *
- * Better Auth's own text is not forwarded. For sign-in it distinguishes a wrong
+ * Supabase Auth's own text is not forwarded. For sign-in it distinguishes a wrong
  * password from an unknown address, and passing that through turns this form into
  * a way to discover which addresses have accounts.
  */
