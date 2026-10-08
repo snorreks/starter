@@ -1,6 +1,11 @@
 import { WorkflowEntrypoint, type WorkflowEvent, type WorkflowStep } from 'cloudflare:workers';
 import { runSupabaseArtifactRetention } from '../cloud_run/maintenance.ts';
-import { type JobsEnv, requireJobsBindings, requireJobsDeploymentEnvironment } from '../env.ts';
+import {
+  type JobsEnv,
+  requireJobsBindings,
+  requireJobsDeploymentEnvironment,
+  resolveJobsProfile,
+} from '../env.ts';
 
 export interface MaintenanceWorkflowParams {
   runKey: string;
@@ -12,13 +17,18 @@ export class MaintenanceWorkflow extends WorkflowEntrypoint<JobsEnv, Maintenance
   override async run(event: WorkflowEvent<MaintenanceWorkflowParams>, step: WorkflowStep) {
     const env = requireJobsBindings(this.env);
     requireJobsDeploymentEnvironment(env);
-    if (env.JOBS_PROFILE === 'disabled') {
+    const profile = resolveJobsProfile(env);
+    if (profile.ok && profile.profile === 'disabled') {
       return { outcome: 'compute_profile_disabled' as const };
     }
-    return step.do('supabase-r2-artifact-retention', async () => ({
-      outcome: 'artifact_retention' as const,
-      ...(await runSupabaseArtifactRetention(env, event.payload)),
-      historyRetention: 'supabase_cron' as const,
-    }));
+    return step.do(
+      'supabase-r2-artifact-retention',
+      { retries: { limit: 0, delay: 1000, backoff: 'constant' } },
+      async () => ({
+        outcome: 'artifact_retention' as const,
+        ...(await runSupabaseArtifactRetention(env, event.payload)),
+        historyRetention: 'supabase_cron' as const,
+      }),
+    );
   }
 }

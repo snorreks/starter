@@ -2,7 +2,12 @@ import { WorkflowEntrypoint, type WorkflowEvent, type WorkflowStep } from 'cloud
 import { MAX_JOB_ATTEMPTS } from '@starter/schemas/jobs';
 import { createId } from '@starter/utils';
 import { runCloudRunAttempt } from '../cloud_run/compute.ts';
-import { type JobsEnv, requireJobsBindings, requireJobsDeploymentEnvironment } from '../env.ts';
+import {
+  type JobsEnv,
+  requireJobsBindings,
+  requireJobsDeploymentEnvironment,
+  resolveJobsProfile,
+} from '../env.ts';
 
 export interface EncodeWorkflowParams {
   jobId: string;
@@ -15,7 +20,8 @@ export class EncodeWorkflow extends WorkflowEntrypoint<JobsEnv, EncodeWorkflowPa
   override async run(event: WorkflowEvent<EncodeWorkflowParams>, step: WorkflowStep) {
     const env = requireJobsBindings(this.env);
     requireJobsDeploymentEnvironment(env);
-    if (env.JOBS_PROFILE === 'disabled') {
+    const profile = resolveJobsProfile(env);
+    if (profile.ok && profile.profile === 'disabled') {
       return { jobId: event.payload.jobId, outcome: 'compute_profile_disabled' as const };
     }
     for (let number = 0; number < MAX_JOB_ATTEMPTS; number += 1) {

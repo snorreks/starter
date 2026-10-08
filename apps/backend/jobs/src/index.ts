@@ -80,7 +80,12 @@ export default {
       }
       const existing = await env.MAINTENANCE_WORKFLOW?.get(id);
       const state = await existing?.status();
-      if (!state || !['queued', 'running', 'complete', 'completed'].includes(state.status)) {
+      if (
+        !state ||
+        !['queued', 'running', 'waiting', 'paused', 'waitingForPause', 'complete'].includes(
+          state.status,
+        )
+      ) {
         throw new Error(`Scheduled maintenance instance ${id} exists in an unexpected state.`);
       }
     }

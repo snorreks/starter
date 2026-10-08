@@ -4,6 +4,7 @@ import { convertV4MiniflareOptions, Miniflare } from 'miniflare';
 import { REPO_ROOT } from '../../../../scripts/src/shared/paths.ts';
 import { runBounded } from '../../../../scripts/src/shared/run_bounded.ts';
 import { runScope } from '../../../../scripts/src/shared/run_scope.ts';
+import { readRuntimeBindings } from './runtime_bindings.ts';
 import { buildWorkerGraph, parseWranglerJsonc } from './worker_graph.ts';
 
 const CLIENT_ROOT = join(REPO_ROOT, 'apps/frontend/client');
@@ -38,6 +39,7 @@ const command = async (
 };
 
 const start = async (): Promise<void> => {
+  const bindings = readRuntimeBindings(process.env);
   await command('bun', ['run', 'build'], CLIENT_ROOT, 5 * 60_000);
   let worker: Miniflare | undefined;
   try {
@@ -48,9 +50,9 @@ const start = async (): Promise<void> => {
       clientRoot: CLIENT_ROOT,
       testRunId: runId,
       appOrigin: appUrl,
-      supabaseUrl: required('SUPABASE_URL'),
-      supabaseAnonKey: required('SUPABASE_ANON_KEY'),
-      supabaseServiceRoleKey: required('SUPABASE_SERVICE_ROLE_KEY'),
+      supabaseUrl: bindings.SUPABASE_URL,
+      supabaseAnonKey: bindings.SUPABASE_ANON_KEY,
+      supabaseServiceRoleKey: bindings.SUPABASE_SERVICE_ROLE_KEY,
       ...(process.env.SUPABASE_MAIL_URL === undefined
         ? {}
         : { supabaseMailUrl: process.env.SUPABASE_MAIL_URL }),
@@ -95,14 +97,6 @@ const start = async (): Promise<void> => {
   } finally {
     await worker?.dispose();
   }
-};
-
-const required = (key: string): string => {
-  const value = process.env[key]?.trim();
-  if (!value) {
-    throw new Error(`The E2E runtime requires ${key} from its owned local Supabase stack.`);
-  }
-  return value;
 };
 
 await start();
