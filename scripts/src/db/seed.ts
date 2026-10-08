@@ -9,6 +9,7 @@
 import { join } from 'node:path';
 import { MOCK_NOTES, MOCK_USER } from '@starter/fixtures';
 import { runWrangler } from '../cloudflare/wrangler.ts';
+import { resolveBackendProfile } from '../shared/backend_profile.ts';
 import { CLIENT_DIR } from '../shared/paths.ts';
 import { seedSupabaseLocal } from './seed_supabase.ts';
 
@@ -41,7 +42,14 @@ export const SEED_STATEMENTS: readonly string[] = [
 ];
 
 export const main = async (args: readonly string[] = []): Promise<number> => {
-  if (process.env.STARTER_BACKEND_PROFILE === 'supabase') {
+  let profile: 'legacy' | 'supabase';
+  try {
+    profile = resolveBackendProfile(process.env.STARTER_BACKEND_PROFILE);
+  } catch (error) {
+    process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
+    return 2;
+  }
+  if (profile === 'supabase') {
     if (args.length > 0) {
       process.stderr.write(
         'Supabase synthetic seed accepts no remote target. It is restricted to the local loopback stack.\n',

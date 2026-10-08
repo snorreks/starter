@@ -409,7 +409,11 @@ describe('the Supabase deployment profile resolves the complete preview target o
       { artifactImage: `europe-north1-docker.pkg.dev/starter-staging/media/runner:latest` },
       'pinned by digest',
     ],
-    ['missing compute prerequisites', { dispatcherServiceAccount: null }, 'missing prerequisites'],
+    [
+      'missing compute prerequisites',
+      { dispatcherServiceAccount: null },
+      'missing prerequisites: dispatcherServiceAccount',
+    ],
   ] as const)(
     '%s fails during resolution before a provider can mutate',
     (_case, changed, expected) => {

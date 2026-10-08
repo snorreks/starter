@@ -43,6 +43,7 @@ import {
   effectiveDeploymentValues,
   topologyFor,
 } from '../registry/deployment_values.ts';
+import { resolveBackendProfile } from '../shared/backend_profile.ts';
 import { CLIENT_DIR_RELATIVE } from '../shared/paths.ts';
 import { targetCompatibilityProblem } from './compatibility.ts';
 
@@ -461,14 +462,14 @@ export const resolveTarget = (
   const values = options.values ?? effectiveDeploymentValues();
   let profile = options.profile;
   if (profile === undefined) {
-    const environmentProfile = process.env.STARTER_BACKEND_PROFILE;
-    if (environmentProfile !== undefined && !['legacy', 'supabase'].includes(environmentProfile)) {
+    try {
+      profile = resolveBackendProfile(process.env.STARTER_BACKEND_PROFILE);
+    } catch (error) {
       return fail(
-        'STARTER_BACKEND_PROFILE must be legacy or supabase.',
+        error instanceof Error ? error.message : String(error),
         'Select an explicit supported deployment profile.',
       );
     }
-    profile = environmentProfile === 'legacy' ? 'legacy' : 'supabase';
   }
 
   // Refused before any other work, so an unknown word can never be resolved

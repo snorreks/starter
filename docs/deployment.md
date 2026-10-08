@@ -38,7 +38,10 @@ compute destination. With `STARTER_BACKEND_PROFILE=supabase`, that same target a
 owns the Supabase project/auth URL and redirect allowlist, Google project/region,
 private Cloud Run Job, immutable Artifact Registry image, runner/dispatcher identities,
 protocol, bounds and required secret names. When `STARTER_BACKEND_PROFILE` is unset,
-legacy D1/container targets remain the default.
+Supabase is the default for both target resolution and direct database commands.
+Set `STARTER_BACKEND_PROFILE=legacy` explicitly to use the retained D1/container path;
+unknown selector values are refused before a provider is reached. With
+`jobsProfile: disabled`, Supabase does not require Google configuration or authentication.
 
 Precedence, highest first:
 
@@ -58,7 +61,8 @@ remain separate credentials.
 
 ## Supabase and Cloud Run preview
 
-Set `STARTER_BACKEND_PROFILE=supabase` for these commands. The complete target must
+These commands default to Supabase; setting `STARTER_BACKEND_PROFILE=supabase`
+explicitly has the same effect. The complete target must
 exist for both environments before planning. Plan and preflight never create a
 Supabase project; project creation is a separately authorized, potentially billable
 operator action. SQL changes follow expand/contract ordering: add schema first,
