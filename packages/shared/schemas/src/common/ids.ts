@@ -4,8 +4,11 @@ declare const brandSymbol: unique symbol;
 export type Brand<T, B extends string> = T & { readonly [brandSymbol]: B };
 
 const resourceId = v.pipe(v.string(), v.minLength(1), v.maxLength(64));
-export const UserIdSchema = v.pipe(v.string(), v.uuid());
+export const UserIdSchema = resourceId;
 export type UserId = v.InferOutput<typeof UserIdSchema> & Brand<string, 'UserId'>;
+export const SupabaseUserIdSchema = v.pipe(v.string(), v.uuid());
+export type SupabaseUserId = v.InferOutput<typeof SupabaseUserIdSchema> &
+  Brand<string, 'SupabaseUserId'>;
 export const NoteIdSchema = resourceId;
 export type NoteId = v.InferOutput<typeof NoteIdSchema> & Brand<string, 'NoteId'>;
 export const SessionIdSchema = resourceId;

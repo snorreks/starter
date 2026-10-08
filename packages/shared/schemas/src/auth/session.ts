@@ -1,8 +1,8 @@
 // packages/shared/schemas/src/auth/session.ts
 //
 // The authenticated-user shape shared by the Worker, the client and the tests.
-// Email + password is the only credential this application has, and the account
-// lifecycle is complete: sign-up, verification, sign-in, recovery, reset.
+// Application accounts are email-backed. The native host also supports OAuth;
+// its identity is validated independently of the web endpoint's wire format.
 
 import * as v from 'valibot';
 import { type Brand, UserIdSchema } from '../common/ids.ts';
@@ -14,7 +14,7 @@ export const SESSION_USER_SCHEMA_VERSION = 1 as const;
  *
  * Branded like the ids, because it is a credential and should not be assignable
  * from an arbitrary string at a call site. The length bound is a route-parameter
- * sanity check, not a guess at Supabase Auth's format.
+ * sanity check, not a guess at Better Auth's format.
  */
 export const ResetTokenSchema = v.pipe(v.string(), v.minLength(1), v.maxLength(256));
 export type ResetToken = v.InferOutput<typeof ResetTokenSchema> & Brand<string, 'ResetToken'>;
@@ -23,7 +23,7 @@ export const SessionUserSchema = v.strictObject({
   id: UserIdSchema,
   email: v.pipe(v.string(), v.minLength(3)),
   displayName: v.pipe(v.string(), v.minLength(1)),
-  /** Only `"email"` exists. The union keeps the door open. */
+  /** Application account category, not the OAuth provider used to authenticate. */
   provider: v.union([v.literal('email')]),
   /**
    * Whether the address has been confirmed.
@@ -38,24 +38,57 @@ export const SessionUserSchema = v.strictObject({
 
 export type SessionUser = v.InferOutput<typeof SessionUserSchema>;
 
+/** Supabase identities require UUID subjects before they enter native session state. */
+export const SupabaseSessionUserSchema = v.strictObject({
+  ...SessionUserSchema.entries,
+  id: v.pipe(v.string(), v.uuid()),
+});
+
 /**
- * The session endpoint's application DTO. Provider-specific fields stay on the
- * server; browser and native callers receive only this validated shape.
+ * The provider's user, exactly as Better Auth's endpoints return it.
+ *
+ * A separate schema because it is a different contract from `SessionUserSchema`,
+ * and conflating them is a mistake this repository has already made once: the
+ * client used to take the provider's object and call it a `SessionUser`, which
+ * gave a `SessionUser` with `name` where the DTO says `displayName`. Nothing broke
+ * until something validated it.
+ *
+ * Closed on purpose. A field Better Auth adds in a future version is then a
+ * visible failure — "the server sent a session user this build does not
+ * understand" — rather than a silently different identity shape that only shows up
+ * where a screen renders `displayName`. The pinned provider version is
+ * `better-auth` in the application's manifest.
  */
 export const SessionUserWireSchema = v.strictObject({
   id: UserIdSchema,
+  /** The provider's field name for what this application calls `displayName`. */
+  name: v.pipe(v.string(), v.minLength(1)),
   email: v.pipe(v.string(), v.minLength(3)),
-  displayName: v.pipe(v.string(), v.minLength(1)),
-  provider: v.literal('email'),
   emailVerified: v.boolean(),
+  image: v.union([v.string(), v.null()]),
+  createdAt: v.union([v.string(), v.pipe(v.number(), v.finite())]),
+  updatedAt: v.union([v.string(), v.pipe(v.number(), v.finite())]),
 });
 
 export type SessionUserWire = v.InferOutput<typeof SessionUserWireSchema>;
 
 /**
- * Project the checked endpoint DTO onto the application session type.
+ * Project the provider's user onto this application's DTO.
+ *
+ * A projection, not a cast, for the reason the schema above exists: the DTO names
+ * five fields and a projection is the only thing that can guarantee the other two
+ * are not carried along into a screen, a log line or a native bundle. `provider` is
+ * a literal for the same reason it is one in the server's `RequestUser` — only
+ * email and password is enabled, and a wider union would publish a claim this
+ * application cannot honour.
  */
-export const toSessionUser = (wire: SessionUserWire): SessionUser => wire;
+export const toSessionUser = (wire: SessionUserWire): SessionUser => ({
+  id: wire.id,
+  email: wire.email,
+  displayName: wire.name,
+  provider: 'email',
+  emailVerified: wire.emailVerified,
+});
 
 /**
  * Mirrors `emailAndPassword.minPasswordLength` in `@starter/auth`.
@@ -120,7 +153,7 @@ export const ApiErrorSchema = v.strictObject({
 export type ApiError = v.InferOutput<typeof ApiErrorSchema>;
 
 /**
- * Read an authentication error code out of a caught error.
+ * Read Better Auth's machine-readable code out of a caught error.
  *
  * Lives here, in the portable package, rather than in a client service or a route
  * adapter, because three places need it and two of them are on opposite sides of
@@ -138,7 +171,7 @@ export const authErrorCode = (error: unknown): string | undefined => {
   // Two shapes, because there are two callers:
   //   * an HTTP failure, where `ApiClient` put the parsed response body in `cause`
   //     — so the code is `cause.code`;
-  //   * a server-side auth failure, where the provider error carries
+  //   * a server-side `auth.api.*` failure, where Better Auth's `APIError` carries
   //     the same object as `body` — so the code is `body.code`.
   // Checking one and not the other would make this work in a route action and
   // silently return `undefined` in a ViewModel, which is the harder failure to
