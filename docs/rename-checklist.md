@@ -67,8 +67,9 @@ bun run contract new "Replace notes with <entity>"
 The pieces to remove, in dependency order:
 
 1. `packages/shared/schemas/src/notes/`
-2. `packages/backend/database/src/lib/schema.ts` — the `notes` table
-3. a migration: `bun run db:generate && bun run db:migrate`
+2. `packages/backend/database/src/supabase/notes_repository.ts` — the notes repository
+3. a new SQL migration under `supabase/migrations/`, then `bun run db:migrate`
+   and `bun run db:types`; do not rewrite an applied migration
 4. `apps/frontend/client/src/lib/server/notes_service.ts`, and its two route adapters
    (`src/routes/api/notes/+server.ts` and `src/routes/api/notes/[id]/+server.ts`)
 5. `packages/frontend/features/src/notes/` — the View, ViewModel and service are
@@ -89,7 +90,7 @@ grep -rn "Starter\|starter" --include=*.ts --include=*.svelte \
 ```
 
 Expect hits in: `README.md`, `AGENTS.md`, `apps/frontend/client/src/routes/+layout.svelte`,
-`apps/frontend/client/wrangler.jsonc`, and `packages/backend/database/drizzle.config.ts`.
+`apps/frontend/client/wrangler.jsonc`, and `supabase/config.toml`.
 
 The `@starter/*` package scope can stay. It is not user-visible, and renaming it
 touches every import in the repository for no benefit. If you do rename it, change

@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { SessionUserSchema, SupabaseSessionUserSchema } from './auth/session.ts';
+import { SupabaseSessionUserSchema } from './auth/session.ts';
 import {
   NOTE_TITLE_MAX_LENGTH,
   NoteCreateSchema,
@@ -34,7 +34,7 @@ describe('shared Standard Schema validation', () => {
     expect(checkSchema(NoteSchema, { ...note, title: `${title}a` })).toBe(false);
   });
 
-  test('web and native identities require UUID subjects at the session boundary', () => {
+  test('Supabase identities require UUID subjects at the session boundary', () => {
     const user = {
       id: 'f45b2c4a-7919-4f55-ae89-e73f6753e322',
       email: 'user@example.test',
@@ -42,10 +42,8 @@ describe('shared Standard Schema validation', () => {
       provider: 'email',
       emailVerified: true,
     };
-    for (const schema of [SessionUserSchema, SupabaseSessionUserSchema]) {
-      expect(checkSchema(schema, user)).toBe(true);
-      expect(checkSchema(schema, { ...user, id: 'usr_legacy' })).toBe(false);
-    }
+    expect(checkSchema(SupabaseSessionUserSchema, user)).toBe(true);
+    expect(checkSchema(SupabaseSessionUserSchema, { ...user, id: 'usr_legacy' })).toBe(false);
   });
 
   test('rejects empty updates and preserves valid updates', () => {

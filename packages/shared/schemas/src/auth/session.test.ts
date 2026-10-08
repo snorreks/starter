@@ -19,7 +19,9 @@ for (const schema of [SessionUserSchema, SupabaseSessionUserSchema]) {
     });
 
     test('rejects non-UUID identities', () => {
-      expect(checkSchema(schema, user({ id: 'user_1' }))).toBe(false);
+      for (const id of ['user_1', 'usr_legacy']) {
+        expect(checkSchema(schema, user({ id }))).toBe(false);
+      }
     });
 
     test('rejects the obsolete provider name payload even with a UUID', () => {
