@@ -3,7 +3,7 @@ name: CI Feedback
 # This workflow uses default-branch code only. No PR checkout, dependency install,
 # log download, or artifact execution occurs with its comment-writing token.
 # workflow_run also supports fork PRs whose CI token cannot write comments.
-on:
+on: # zizmor: ignore[dangerous-triggers] Trusted default-branch reporter; never executes PR code or artifacts.
   workflow_run:
     workflows: [CI]
     types: [completed]

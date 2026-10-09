@@ -154,6 +154,9 @@ export const committedFiles = (root: string = REPO_ROOT): string[] => {
     ['ls-files', '--cached', '--others', '--exclude-standard', '-z'],
     { cwd: root, encoding: 'utf8', timeout: 30_000, maxBuffer: 16 * 1024 * 1024 },
   );
+  if (listed.error !== undefined) {
+    throw new Error(`Could not list template files: ${listed.error.message}`);
+  }
   if (listed.status === 0) {
     return listed.stdout.split('\0').filter(Boolean).sort();
   }

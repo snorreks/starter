@@ -170,26 +170,62 @@ test('plaintext staged at an encrypted path cannot be hidden by encrypted workin
   expect(result.stderr + result.stdout).not.toContain('private-fixture-value');
 });
 
-test('clean staged content reaches affected typechecks and propagates their failure', () => {
+test.each([false, true])(
+  'clean staged content propagates typecheck failure (broad: %s)',
+  (broad) => {
+    const root = fixture();
+    const path = broad ? 'biome.json' : 'scripts/src/file with spaces.ts';
+    writeFileSync(
+      join(root, path),
+      broad
+        ? '{\n  "formatter": { "indentStyle": "space" },\n  "files": { "ignoreUnknown": true }\n}\n'
+        : 'export const value = 2;\n',
+    );
+    git(root, ['add', path]);
+    const bin = join(root, 'node_modules/.bin');
+    writeFileSync(join(bin, 'bun'), '#!/bin/sh\nprintf "%s\\n" "$@" > guard-args.txt\nexit 0\n');
+    chmodSync(join(bin, 'bun'), 0o755);
+    writeFileSync(join(bin, 'moon'), '#!/bin/sh\nprintf "%s\\n" "$@" > moon-args.txt\nexit 27\n');
+    chmodSync(join(bin, 'moon'), 0o755);
+    const result = spawnSync(process.execPath, [source], {
+      cwd: root,
+      encoding: 'utf8',
+      env: { ...process.env, PATH: `${bin}:${process.env.PATH}` },
+    });
+    expect(result.status).toBe(27);
+    expect(readFileSync(join(root, 'guard-args.txt'), 'utf8')).toBe(
+      'run\nscripts/src/cli.ts\nguard\n',
+    );
+    const args = readFileSync(join(root, 'moon-args.txt'), 'utf8');
+    expect(args).toStartWith('run\n:typecheck\n');
+    expect(args).toContain('--cache\noff\n');
+    expect(args).toContain('--concurrency\n4\n');
+    if (broad) {
+      expect(args).not.toContain('--affected');
+      expect(args).not.toContain('--status');
+      expect(args).not.toContain('--downstream');
+      expect(args).not.toContain('--upstream');
+    } else {
+      expect(args).toContain('--affected\n--status=staged\n');
+      expect(args).toContain('--downstream\ndeep\n');
+      expect(args).toContain('--upstream\ndeep\n');
+    }
+  },
+);
+
+test.each([
+  'sops_mac=ENC[AES256_GCM,data:fixture]\n',
+  'sops_mac=plaintext\nsops_version=3.13.3\n',
+  'sops_mac=ENC[truncated\nsops_version=3.13.3\n',
+  'sops_mac=ENC[AES256_GCM,data:fixture]\nother_sops_version=ENC[fixture]\n',
+  'other_sops_mac=ENC[fixture]\nsops_version=3.13.3\n',
+])('incomplete SOPS metadata is rejected: %s', (metadata) => {
   const root = fixture();
-  writeFileSync(join(root, 'scripts/src/file with spaces.ts'), 'export const value = 2;\n');
-  git(root, ['add', 'scripts/src/file with spaces.ts']);
-  const bin = join(root, 'node_modules/.bin');
-  writeFileSync(join(bin, 'bun'), '#!/bin/sh\nprintf "%s\\n" "$@" > guard-args.txt\nexit 0\n');
-  chmodSync(join(bin, 'bun'), 0o755);
-  writeFileSync(join(bin, 'moon'), '#!/bin/sh\nprintf "%s\\n" "$@" > moon-args.txt\nexit 27\n');
-  chmodSync(join(bin, 'moon'), 0o755);
-  const result = spawnSync(process.execPath, [source], {
-    cwd: root,
-    encoding: 'utf8',
-    env: { ...process.env, PATH: `${bin}:${process.env.PATH}` },
-  });
-  expect(result.status).toBe(27);
-  expect(readFileSync(join(root, 'guard-args.txt'), 'utf8')).toBe(
-    'run\nscripts/src/cli.ts\nguard\n',
-  );
-  const args = readFileSync(join(root, 'moon-args.txt'), 'utf8');
-  expect(args).toContain('--affected\n--status=staged\n');
-  expect(args).toContain('--cache\noff\n');
-  expect(args).toContain('--downstream\ndeep\n');
+  mkdirSync(join(root, 'secrets'));
+  writeFileSync(join(root, 'secrets/staging.enc.env'), `TOKEN=ENC[fixture]\n${metadata}`);
+  git(root, ['add', 'secrets/staging.enc.env']);
+  const result = spawnSync(process.execPath, [source], { cwd: root, encoding: 'utf8' });
+  expect(result.status).not.toBe(0);
+  expect(result.stderr).toContain('malformed SOPS envelope');
+  expect(result.stderr + result.stdout).not.toContain('TOKEN=');
 });

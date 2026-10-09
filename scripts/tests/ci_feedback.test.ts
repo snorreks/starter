@@ -90,7 +90,12 @@ test('an older CI attempt cannot overwrite feedback for a newer run or changed P
         };
       }
       if (path.includes('/ci.yml/runs?')) {
-        return { workflow_runs: [{ id: 11, head_sha: run.head_sha, run_attempt: 1 }] };
+        return {
+          workflow_runs: [
+            { id: 10, head_sha: run.head_sha, run_attempt: 1 },
+            { id: 11, head_sha: run.head_sha, run_attempt: 1 },
+          ],
+        };
       }
       throw new Error(`Stale run reached ${path}`);
     };
@@ -124,10 +129,22 @@ test('fork feedback finds the PR through its commit and clears a previous failur
       };
     }
     if (path.includes('/ci.yml/runs?')) {
-      return { workflow_runs: [{ id: 20, head_sha: run.head_sha, run_attempt: 2 }] };
+      return {
+        workflow_runs: [
+          { id: 20, head_sha: run.head_sha, run_attempt: 1 },
+          { id: 20, head_sha: run.head_sha, run_attempt: 2 },
+        ],
+      };
     }
     if (path.includes('/jobs?')) {
-      return { jobs: [{ id: 25, name: 'CI', conclusion: 'success', steps: [] }], total_count: 1 };
+      return {
+        jobs: [
+          { id: 25, name: 'CI', conclusion: 'success', steps: [] },
+          { id: 26, name: 'Optional skipped lane', conclusion: 'skipped', steps: [] },
+          { id: 27, name: 'Neutral lane', conclusion: 'neutral', steps: [] },
+        ],
+        total_count: 3,
+      };
     }
     if (path.includes('/comments?')) {
       return [
@@ -146,6 +163,9 @@ test('fork feedback finds the PR through its commit and clears a previous failur
   };
   await reportCI({ request, run, repo: 'owner/repo', serverUrl: 'https://github.com' });
   expect(body).toContain('CI passed');
+  expect(body).toContain('attempt 2');
+  expect(body).not.toContain('Optional skipped lane');
+  expect(body).not.toContain('Neutral lane');
   expect(body).not.toContain('Prompt to fix CI');
 });
 

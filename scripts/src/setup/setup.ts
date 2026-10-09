@@ -187,8 +187,14 @@ export const performSetup = (options: { force?: boolean; quiet?: boolean } = {})
   // Hooks must be checked on warm setup too: Git configuration is not part of
   // the readiness fingerprint, and core.hooksPath belongs to each worktree.
   if (report.ok) {
-    if (installHooks(REPO_ROOT)) {
-      performed.push('pre-commit hook installed');
+    try {
+      if (installHooks(REPO_ROOT)) {
+        performed.push('pre-commit hook installed');
+      }
+    } catch (error) {
+      const warning = `Pre-commit hook not installed: ${error instanceof Error ? error.message : String(error)}`;
+      performed.push(warning);
+      log(`  Warning: ${warning}`);
     }
   }
 

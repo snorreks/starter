@@ -106,7 +106,11 @@ async function reportCI({ request, run, repo, serverUrl }) {
   if (jobs.length === 0) {
     throw new Error('CI reported no jobs; feedback was NOT published.');
   }
-  const failed = jobs.filter((job) => job.conclusion !== 'success');
+  const failed = jobs.filter((job) =>
+    ['failure', 'timed_out', 'cancelled', 'action_required', 'startup_failure', 'stale'].includes(
+      job.conclusion,
+    ),
+  );
   const passing = run.conclusion === 'success' && failed.length === 0;
   const commands = new Set();
   const lines = [

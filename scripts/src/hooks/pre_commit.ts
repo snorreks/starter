@@ -65,7 +65,8 @@ export const runPreCommit = async (cwd = process.cwd()): Promise<number> => {
         .split('\n')
         .filter((line) => line.trim() !== '' && !line.startsWith('#'));
       if (
-        !lines.some((line) => /^sops_mac=ENC\[/.test(line)) ||
+        !lines.some((line) => /^sops_mac=ENC\[.*\]$/.test(line)) ||
+        !lines.some((line) => /^sops_version=/.test(line)) ||
         lines.some((line) => !/^sops_[^=]+=/.test(line) && !/^[^=]+=ENC\[.*\]$/.test(line))
       ) {
         throw new Error(
