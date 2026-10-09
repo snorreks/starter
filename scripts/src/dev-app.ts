@@ -55,10 +55,7 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { dirname, join } from 'node:path';
-import { MOCK_USER } from '@starter/fixtures';
 import { killTree } from '@starter/utils/process';
-import { runWrangler } from './cloudflare/wrangler.ts';
-import { SEED_STATEMENTS } from './db/seed.ts';
 import { EXIT, fail } from './shared/command.ts';
 import { CLIENT_DIR, REPO_ROOT } from './shared/paths.ts';
 import { runScope, worktreePort } from './shared/run_scope.ts';
@@ -107,12 +104,12 @@ const HOST = process.env.DEV_HOST ?? '127.0.0.1';
  * Only when set, so an ordinary `bun run dev` carries nothing and cannot inherit a
  * stale run id or a test-only rate limit from a previous run.
  */
+// Credentials belong in the run-owned environment file, never command arguments.
 const FORWARDED_VARS = [
   'TEST_RUN_ID',
-  'AUTH_RATE_LIMIT_MAX',
-  'TRUSTED_ORIGINS',
-  'BETTER_AUTH_SECRET',
   'DEPLOYMENT_ENV',
+  'SUPABASE_MAIL_URL',
+  'APP_ORIGIN',
 ] as const;
 
 /**
@@ -159,34 +156,38 @@ const clearStale = (): void => {
 /**
  * Bindings to forward, with the local origin resolved by this launcher.
  *
- * `BETTER_AUTH_URL` is handled separately and deliberately, because nothing else
+ * `APP_ORIGIN` is handled separately and deliberately, because nothing else
  * can supply it correctly.
  *
  * The launcher passes `--host`, which makes Wrangler 4.142.0 rewrite the request
  * URL, Host and Origin to omit the public port. Without that flag the port is
  * preserved. `requestOriginFor` cannot recover a port absent from both URL and
- * Host, so this launcher supplies the public origin through `BETTER_AUTH_URL`.
+ * Host, so this launcher supplies the public origin through `APP_ORIGIN`.
  *
- * A caller that already set `BETTER_AUTH_URL` keeps their value: this is a default,
+ * A caller that already set `APP_ORIGIN` keeps their value: this is a default,
  * not an override.
  */
 const varFlags = (): string[] => {
   const args: string[] = [];
 
   for (const name of FORWARDED_VARS) {
-    const value =
-      name === 'TEST_RUN_ID' ? (process.env.TEST_RUN_ID ?? E2E_SCOPE?.runId) : process.env[name];
+    let value = process.env[name];
+    if (name === 'APP_ORIGIN') {
+      value = value || `http://${HOST}:${PORT}`;
+    } else if (name === 'TEST_RUN_ID') {
+      value = process.env.TEST_RUN_ID ?? E2E_SCOPE?.runId;
+    }
     if (value !== undefined && value.length > 0) {
       args.push('--var', `${name}:${value}`);
     }
   }
 
-  const configuredUrl = process.env.BETTER_AUTH_URL;
+  const configuredUrl = process.env.APP_ORIGIN;
   const resolvedUrl =
     configuredUrl !== undefined && configuredUrl.length > 0
       ? configuredUrl
       : `http://${HOST}:${PORT}`;
-  args.push('--var', `BETTER_AUTH_URL:${resolvedUrl}`);
+  args.push('--var', `APP_ORIGIN:${resolvedUrl}`);
 
   return args;
 };
@@ -275,32 +276,6 @@ export const buildTarget = (mode: DevMode): Target => {
  * `await`s this knows nothing of the server's is left running.
  */
 export const main = (mode: DevMode = 'app'): Promise<number> => {
-  if (mode === 'app' || E2E_SCOPE !== undefined) {
-    const configArgs = ['--config', WRANGLER_CONFIG, ...persistenceFlags(), ...localEnvFileFlags()];
-    const migrated = runWrangler(['d1', 'migrations', 'apply', 'DB', '--local', ...configArgs]);
-    if (migrated !== 0) {
-      return Promise.resolve(fail('Could not prepare the local D1 database (migrations failed).'));
-    }
-  }
-
-  if (mode === 'app') {
-    const configArgs = ['--config', WRANGLER_CONFIG, ...persistenceFlags()];
-    const seeded = runWrangler([
-      'd1',
-      'execute',
-      'DB',
-      '--local',
-      ...configArgs,
-      '--command',
-      SEED_STATEMENTS.join('; '),
-    ]);
-    if (seeded !== 0) {
-      return Promise.resolve(
-        fail('Could not populate the emulator database (local D1 seed failed).'),
-      );
-    }
-  }
-
   const target = buildTarget(mode);
 
   if (target.bin === null) {
@@ -350,15 +325,7 @@ export const main = (mode: DevMode = 'app'): Promise<number> => {
     cwd: target.cwd,
     detached: false,
     stdio: ['ignore', 'pipe', 'pipe'],
-    env: {
-      ...process.env,
-      ...(mode === 'app'
-        ? {
-            STARTER_EMULATOR_MOCKS: 'true',
-            STARTER_EMULATOR_USER_ID: MOCK_USER.id,
-          }
-        : {}),
-    },
+    env: { ...process.env },
   });
 
   const childPid = child.pid ?? 0;

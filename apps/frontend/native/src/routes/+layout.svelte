@@ -3,11 +3,10 @@
 
   Sign-out is the interesting part, and the order is the whole design:
 
-    1. `authSessionService.signOut()` — the *server* revokes the session, so a
+    1. `supabaseNativeAuth.signOut()` — the *server* revokes the session, so a
        token that leaked out of this window stops working. Doing this locally
        first would leave a live credential on the server.
-    2. `discardSession()` — the in-memory token goes, and the vault entry is
-       removed (or queued, if the vault is locked).
+    2. The Supabase session vault entry is removed.
     3. Navigate.
 
   A failure in step 1 must not leave the window looking signed in, so the local

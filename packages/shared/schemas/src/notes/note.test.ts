@@ -5,7 +5,7 @@
 // These schemas are the single source of truth for three consumers that cannot
 // see each other: the client validates before sending, the Worker validates
 // before writing, and the Drizzle column types mirror them. A schema that is
-// looser than intended lets bad data reach D1 and fail later, somewhere that no
+// looser than intended lets bad data reach the database and fail later, somewhere that no
 // longer knows what the original request was.
 //
 // The refusal tests matter most: `additionalProperties: false` is what makes
@@ -27,7 +27,7 @@ import {
 
 const validNote = () => ({
   id: 'note_1',
-  ownerId: 'user_1',
+  ownerId: 'f45b2c4a-7919-4f55-ae89-e73f6753e322',
   title: 'Shopping list',
   body: 'Milk, bread',
   createdAt: 1_700_000_000_000,

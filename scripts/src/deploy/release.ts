@@ -278,7 +278,7 @@ export interface ReleaseRecord {
      * Not whether one *happened*. Those are different claims and conflating them is
      * how a deployment comes to be reported as "the scheduler works" when all that
      * exists is a cron expression. An actual run is evidenced by a maintenance run
-     * record in D1 carrying its schedule and scheduled time.
+     * record in Postgres carrying its schedule and scheduled time.
      */
     scheduleConfigured: boolean;
   } | null;

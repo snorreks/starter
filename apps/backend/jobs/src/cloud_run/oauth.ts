@@ -50,7 +50,8 @@ export const createGoogleOAuthProvider = (options: {
     try {
       const response = await fetcher(url, {
         method: 'POST',
-        redirect: 'error',
+        // workerd supports manual, not error; non-2xx (including redirects) is refused below.
+        redirect: 'manual',
         signal: controller.signal,
         headers: { 'content-type': 'application/x-www-form-urlencoded' },
         body: new URLSearchParams({

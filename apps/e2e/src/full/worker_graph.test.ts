@@ -1,68 +1,96 @@
 import { expect, test } from 'bun:test';
+import { Response as MiniflareResponse } from 'miniflare';
 import { buildWorkerGraph, parseWranglerJsonc } from './worker_graph.ts';
 
-const clientConfig = `{
-  // A JSONC configuration is the source of runtime facts.
+const config = (extra = '') =>
+  parseWranglerJsonc(`{
   "name": "web",
   "compatibility_date": "2026-10-01",
   "compatibility_flags": ["nodejs_compat"],
   "main": ".svelte-kit/cloudflare/_worker.js",
   "assets": { "binding": "ASSETS", "directory": ".svelte-kit/cloudflare", "not_found_handling": "none" },
-  "d1_databases": [{ "binding": "DB", "database_name": "shared-db" }]
-}`;
-const jobsConfig = `{
-  "name": "jobs",
-  "compatibility_date": "2026-10-01",
-  "compatibility_flags": ["nodejs_compat"],
-  "main": "dist/index.js",
-  "d1_databases": [{ "binding": "DB", "database_name": "shared-db", "migrations_dir": "migrations" }],
-  "r2_buckets": [{ "binding": "MEDIA", "bucket_name": "shared-media" }],
-  "durable_objects": { "bindings": [{ "name": "CONTAINER", "class_name": "EncodeContainer" }] },
-  "workflows": [{ "binding": "ENCODE_WORKFLOW", "name": "starter-encode", "class_name": "EncodeWorkflow" }]
-}`;
+  "vars": { "JOBS_PROFILE": "disabled" }${extra}
+}`);
 
-test('the full graph shares declared stores and dispatches the declared Workflow cross-Worker', () => {
-  const graph = buildWorkerGraph({
-    client: parseWranglerJsonc(clientConfig),
-    jobs: parseWranglerJsonc(jobsConfig),
+const graph = (client = config()) =>
+  buildWorkerGraph({
+    client,
     clientRoot: '/repo/apps/frontend/client',
-    jobsRoot: '/repo/apps/backend/jobs',
     testRunId: 'visual_full_01',
-    processorOrigin: 'http://127.0.0.1:8099',
-    authSecret: 'a sufficiently long local only test secret',
-    trustedOrigins: 'http://127.0.0.1:4183',
+    appOrigin: 'http://127.0.0.1:4183',
+    supabaseUrl: 'http://127.0.0.1:54321',
+    supabaseAnonKey: 'local-anon',
+    supabaseServiceRoleKey: 'local-service-role',
+    supabaseMailUrl: 'http://127.0.0.1:54324',
   });
-  expect(graph.workers).toHaveLength(2);
-  expect((graph.workers[0]?.d1Databases as Record<string, unknown>)?.DB).toBe('shared-db');
-  expect((graph.workers[1]?.d1Databases as Record<string, unknown>)?.DB).toBe('shared-db');
-  expect((graph.workers[0]?.r2Buckets as Record<string, unknown>)?.MEDIA).toBe('shared-media');
-  expect((graph.workers[1]?.r2Buckets as Record<string, unknown>)?.MEDIA).toBe('shared-media');
-  expect(graph.workers[0]?.workflows?.ENCODE_WORKFLOW).toEqual({
-    name: 'starter-encode',
-    className: 'EncodeWorkflow',
-    scriptName: 'jobs',
+const configJson = (profile: string) =>
+  `{"name":"web","compatibility_date":"2026-10-01","main":"worker.js","assets":{"binding":"ASSETS","directory":"assets"},"vars":{"JOBS_PROFILE":"${profile}"}}`;
+
+test('the built web Worker uses local Supabase and explicitly disables optional compute', () => {
+  const result = graph();
+  expect(result.workers).toHaveLength(1);
+  const worker = result.workers[0];
+  expect(worker?.bindings).toMatchObject({
+    SUPABASE_URL: 'http://127.0.0.1:54321',
+    SUPABASE_ANON_KEY: 'local-anon',
+    SUPABASE_SERVICE_ROLE_KEY: 'local-service-role',
+    DEPLOYMENT_ENV: 'local',
+    JOBS_PROFILE: 'disabled',
+    APP_ORIGIN: 'http://127.0.0.1:4183',
+    TEST_RUN_ID: 'visual_full_01',
   });
-  expect(graph.workers[0]?.assets?.run_worker_first).toBe(true);
+  expect(worker?.d1Databases).toBeUndefined();
+  expect(worker?.durableObjects).toBeUndefined();
+  expect(worker?.assets).toMatchObject({ binding: 'ASSETS', run_worker_first: true });
 });
 
-test('a divergent D1 database fails before a server can start', () => {
-  const jobs = parseWranglerJsonc(jobsConfig);
-  const databases = jobs.d1_databases as Array<Record<string, unknown>>;
-  const database = databases[0];
-  if (database === undefined) {
-    throw new Error('Fixture config omitted its D1 database.');
-  }
-  database.database_name = 'private-jobs-db';
-  expect(() =>
-    buildWorkerGraph({
-      client: parseWranglerJsonc(clientConfig),
-      jobs,
-      clientRoot: '/repo/apps/frontend/client',
+test('full compute shares real R2 and cross-Worker Workflows, never a processor service replacement', () => {
+  const outbound = async () => new MiniflareResponse(null, { status: 500 });
+  const result = buildWorkerGraph({
+    client: config(),
+    clientRoot: '/repo/apps/frontend/client',
+    testRunId: 'full_compute',
+    appOrigin: 'http://127.0.0.1:4183',
+    supabaseUrl: 'http://127.0.0.1:54321',
+    supabaseAnonKey: 'local-anon',
+    supabaseServiceRoleKey: 'local-service-role',
+    compute: {
       jobsRoot: '/repo/apps/backend/jobs',
-      testRunId: 'visual_full_01',
-      processorOrigin: 'http://127.0.0.1:8099',
-      authSecret: 'a sufficiently long local only test secret',
-      trustedOrigins: 'http://127.0.0.1:4183',
-    }),
-  ).toThrow('must share the same D1');
+      bindings: { COMPUTE_PROTOCOL: 'sample-v1' },
+      outbound,
+    },
+  });
+  expect(result.workers).toHaveLength(2);
+  const [web, jobs] = result.workers;
+  expect(jobs?.scriptPath).toBe('/repo/apps/backend/jobs/dist/index.js');
+  for (const worker of result.workers) {
+    expect(worker.bindings?.JOBS_PROFILE).toBe('encode');
+    expect(worker.r2Buckets).toEqual({ MEDIA: 'e2e-media-full_compute' });
+    expect(worker.outboundService).toBe(outbound);
+    expect(worker.serviceBindings).toBeUndefined();
+    expect(worker.workflows?.ENCODE_WORKFLOW).toMatchObject({
+      className: 'EncodeWorkflow',
+      scriptName: 'web-jobs',
+    });
+  }
+  expect(web?.workflows).toEqual(jobs?.workflows);
+});
+
+test('a web Worker with a legacy D1 application binding is refused', () => {
+  expect(() =>
+    graph(config(', "d1_databases": [{"binding":"DB","database_name":"legacy"}]')),
+  ).toThrow('must not declare an application D1 binding');
+});
+
+test('missing or enabled compute is refused in the web-only E2E fixture', () => {
+  expect(() =>
+    graph(
+      parseWranglerJsonc(
+        '{"name":"web","compatibility_date":"2026-10-01","main":"worker.js","assets":{"binding":"ASSETS","directory":"assets"}}',
+      ),
+    ),
+  ).toThrow('JOBS_PROFILE=disabled explicitly');
+  expect(() => graph(parseWranglerJsonc(configJson('encode')))).toThrow(
+    'JOBS_PROFILE=disabled explicitly',
+  );
 });

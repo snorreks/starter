@@ -367,14 +367,14 @@ describe('transactional admission and attempt fencing in Postgres', () => {
       await userB.client.rpc('record_job_dispatch', {
         p_job_id: jobId,
         p_dispatch_state: 'dispatch_failed',
-        p_error_code: 'dispatch_disabled_pending_prompt_06',
+        p_error_code: 'compute_profile_disabled',
       }),
     ).toMatchObject({ error: { code: '42501' } });
     expect(
       await admin.rpc('record_job_dispatch', {
         p_job_id: jobId,
         p_dispatch_state: 'dispatch_failed',
-        p_error_code: 'dispatch_disabled_pending_prompt_06',
+        p_error_code: 'compute_profile_disabled',
       }),
     ).toMatchObject({ data: true, error: null });
 
@@ -392,6 +392,38 @@ describe('transactional admission and attempt fencing in Postgres', () => {
       p_attempt_id: 'attempt-reclaimed',
     });
     expect(reclaimed.data).toBe(true);
+    await sql`update private.jobs set lease_expires_at=now()-interval '1 second' where id=${jobId}`;
+    const finalAttempt = { p_job_id: jobId, p_attempt_id: 'attempt-final' };
+    expect(await admin.rpc('claim_encode_job', finalAttempt)).toMatchObject({
+      data: true,
+      error: null,
+    });
+    const beforeReplay =
+      await sql`select attempt_count,lease_expires_at from private.jobs where id=${jobId}`;
+    expect(Number(beforeReplay[0]?.attempt_count)).toBe(3);
+    expect(await admin.rpc('claim_encode_job', finalAttempt)).toMatchObject({
+      data: true,
+      error: null,
+    });
+    const replayed =
+      await sql`select attempt_count,lease_expires_at from private.jobs where id=${jobId}`;
+    expect(Number(replayed[0]?.attempt_count)).toBe(3);
+    expect(String(replayed[0]?.lease_expires_at)).toBe(String(beforeReplay[0]?.lease_expires_at));
+    expect(await userB.client.rpc('claim_encode_job', finalAttempt)).toMatchObject({
+      error: { code: '42501' },
+    });
+    await sql`update private.jobs set lease_expires_at=now()-interval '1 second' where id=${jobId}`;
+    expect(
+      await admin.rpc('claim_encode_job', {
+        p_job_id: jobId,
+        p_attempt_id: 'attempt-fourth',
+      }),
+    ).toMatchObject({ data: false, error: null });
+    expect(await admin.rpc('claim_encode_job', finalAttempt)).toMatchObject({
+      data: false,
+      error: null,
+    });
+    await sql`update private.jobs set lease_expires_at=now()+interval '5 minutes' where id=${jobId}`;
     const stale = await admin.rpc('finish_encode_job', {
       p_job_id: jobId,
       p_attempt_id: `attempt-${firstAttempt}`,
@@ -408,7 +440,7 @@ describe('transactional admission and attempt fencing in Postgres', () => {
     expect(stale.data).toBe(false);
     const current = await admin.rpc('finish_encode_job', {
       p_job_id: jobId,
-      p_attempt_id: 'attempt-reclaimed',
+      p_attempt_id: 'attempt-final',
       p_output_key: 'private/key',
       p_output_bytes: 1,
       p_sha256: 'a'.repeat(64),
@@ -419,7 +451,16 @@ describe('transactional admission and attempt fencing in Postgres', () => {
       p_duration_ms: 1000,
     });
     expect(current.data).toBe(true);
+    expect(await userB.client.rpc('get_encode_job_output', { p_job_id: jobId })).toMatchObject({
+      data: [{ output_key: 'private/key' }],
+      error: null,
+    });
+    expect(await userA.client.rpc('get_encode_job_output', { p_job_id: jobId })).toMatchObject({
+      data: [],
+      error: null,
+    });
     await sql`update private.jobs set output_expires_at=now()-interval '1 second' where id=${jobId}`;
+    expect((await userB.client.rpc('get_encode_job_output', { p_job_id: jobId })).data).toEqual([]);
     const queued = await admin.rpc('queue_expired_job_artifacts', {
       p_cutoff: new Date().toISOString(),
       p_limit: 100,
@@ -492,4 +533,34 @@ test('retention attempts are durable and fresh rows outrank unchanged refusals',
   });
   expect(retired.error).toBeNull();
   expect(retired.data).toBe(true);
+});
+
+test('maintenance evidence is authenticated, scoped to the environment, and omits run identifiers', async () => {
+  const runKey = `manual:${crypto.randomUUID()}`;
+  await sql`insert into private.maintenance_runs(run_key, trigger, status, expired_sessions, idle_rate_limits)
+    values (${runKey}, 'manual', 'succeeded', 2, 3)`;
+  const result = await userB.client.rpc('get_latest_maintenance');
+  expect(result.error).toBeNull();
+  expect(result.data).toMatchObject({
+    schedule: '17 * * * *',
+    latest: {
+      trigger: 'manual',
+      status: 'succeeded',
+      slot: null,
+      counts: { expiredSessions: 2, idleRateLimits: 3 },
+    },
+    latestScheduled: null,
+  });
+  expect(JSON.stringify(result.data)).not.toContain(runKey);
+});
+
+test('anonymous readiness executes the constant database probe without table access', async () => {
+  const response = await fetch(`${url}/rest/v1/rpc/readiness_probe`, {
+    method: 'POST',
+    headers: { apikey: anonKey, 'content-type': 'application/json' },
+    body: '{}',
+    signal: AbortSignal.timeout(2_000),
+  });
+  expect(response.status).toBe(200);
+  expect(await response.json()).toBe(1);
 });

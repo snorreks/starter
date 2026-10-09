@@ -376,7 +376,7 @@ export const guardRegistryIsValid = (root = REPO_ROOT): GuardResult => {
   // somebody else's account.
   //
   // The keys are matched as a set rather than enumerated, because this repository
-  // has one Worker and one D1 database now and the enumeration was `client|api`
+  // has one Worker and one Supabase project now and the enumeration was `client|api`
   // — a pair that no longer exists. Naming the shape keeps the check working when
   // the resource count changes, which is the only property it needs: *some* id set
   // to a string literal in the committed registry is the defect.

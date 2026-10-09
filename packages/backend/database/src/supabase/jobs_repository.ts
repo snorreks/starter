@@ -16,6 +16,8 @@ export interface JobRepository {
   }): Promise<JobAdmission>;
   listForOwner(): Promise<readonly SupabaseJobStatus[]>;
   getForOwner(jobId: string): Promise<SupabaseJobStatus | null>;
+  outputForOwner(jobId: string): Promise<{ key: string; expiresAt: number } | null>;
+  latestMaintenance(): Promise<unknown>;
   disableDispatch(jobId: string): Promise<boolean>;
   markDispatched(jobId: string): Promise<boolean>;
   markDispatchFailed(jobId: string, code: string): Promise<boolean>;
@@ -126,11 +128,36 @@ export const createSupabaseJobRepository = (
     }
     return jobDto(data);
   },
+  async outputForOwner(jobId) {
+    const { data, error } = await userClient.rpc('get_encode_job_output', { p_job_id: jobId });
+    if (error !== null) {
+      throw new Error(`Supabase job output: ${error.message}`);
+    }
+    const row = Array.isArray(data) ? data[0] : null;
+    if (row === undefined || row === null) {
+      return null;
+    }
+    if (typeof row.output_key !== 'string' || typeof row.expires_at !== 'string') {
+      throw new Error('Supabase job output returned an invalid result.');
+    }
+    const expiresAt = Date.parse(row.expires_at);
+    if (!Number.isFinite(expiresAt)) {
+      throw new Error('Supabase job output returned an invalid expiry.');
+    }
+    return { key: row.output_key, expiresAt };
+  },
+  async latestMaintenance() {
+    const { data, error } = await userClient.rpc('get_latest_maintenance');
+    if (error !== null) {
+      throw new Error(`Supabase maintenance status: ${error.message}`);
+    }
+    return data;
+  },
   async disableDispatch(jobId) {
     const { data, error } = await serviceClient.rpc('record_job_dispatch', {
       p_job_id: jobId,
       p_dispatch_state: 'dispatch_failed',
-      p_error_code: 'dispatch_disabled_pending_prompt_06',
+      p_error_code: 'compute_profile_disabled',
     });
     if (error !== null) {
       throw new Error(`Supabase job dispatch state: ${error.message}`);

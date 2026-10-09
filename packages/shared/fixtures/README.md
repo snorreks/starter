@@ -4,7 +4,7 @@
 
 This package provides portable synthetic fixtures for local development. The mock
 user and sample note records are the shared source used by the emulator identity
-and local D1 seed. They run in both the browser and Worker runtimes, with no runtime
+and synthetic local Supabase seed. They run in both the browser and Worker runtimes, with no runtime
 dependencies.
 
 ## Setup and commands

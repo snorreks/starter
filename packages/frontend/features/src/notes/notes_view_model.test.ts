@@ -26,7 +26,7 @@ import { NotesViewModel } from './notes_view_model.svelte.ts';
  */
 const note = (id: string, ageSeconds = 0): Note => ({
   id,
-  ownerId: 'user_1',
+  ownerId: 'f45b2c4a-7919-4f55-ae89-e73f6753e322',
   title: id,
   body: 'body',
   createdAt: 1_700_000_000_000 - ageSeconds * 1000,

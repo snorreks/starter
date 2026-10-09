@@ -5,7 +5,7 @@ const invoke = (request: Request) =>
   POST({
     request,
     params: { id: 'job_a' },
-    platform: { STARTER_BACKEND_PROFILE: 'supabase' },
+    locals: { container: { jobsProfile: 'encode', env: {} } },
     url: new URL(request.url),
   } as unknown as Parameters<typeof POST>[0]);
 
@@ -56,7 +56,9 @@ test('malformed grant bodies and unsupported methods use the shared error shape'
       message: expect.any(String),
     });
   }
-  const disabled = await GET({ platform: {} } as unknown as Parameters<typeof GET>[0]);
+  const disabled = await GET({
+    locals: { container: { jobsProfile: 'disabled', env: {} } },
+  } as unknown as Parameters<typeof GET>[0]);
   expect(disabled.status).toBe(503);
   expect(await disabled.json()).toMatchObject({
     error: 'runner_grants_disabled',

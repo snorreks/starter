@@ -22,7 +22,7 @@ import {
   dispatchTargetFor,
   type WorkflowDispatchPort,
 } from './dispatch_port.ts';
-import { type JobRecord, workflowIdFor } from './job_repository.ts';
+import { workflowIdFor } from './job_identity.ts';
 
 const target = (overrides: Partial<DispatchTarget> = {}): DispatchTarget => ({
   jobId: 'job_1',
@@ -47,38 +47,26 @@ const recordingPort = (
   };
 };
 
-const jobRecord = (overrides: Partial<JobRecord> = {}): JobRecord => {
+interface DispatchRecord {
+  id: string;
+  fixture: 'sample-v1';
+  preset: 'demo-180p-v1';
+  workflowId: string;
+}
+const jobRecord = (overrides: Partial<DispatchRecord> = {}): DispatchRecord => {
   const id = overrides.id ?? 'job_1';
   return {
     id,
-    ownerId: 'user_alice',
-    kind: 'encode',
-    status: 'pending',
     fixture: 'sample-v1',
     preset: 'demo-180p-v1',
-    idempotencyKey: 'key-1',
-    requestFingerprint: '{}',
-    // Derived from whatever id this record carries, so an override cannot leave a
-    // record whose stored Workflow id disagrees with its own id.
     workflowId: workflowIdFor(id),
-    dispatchState: 'pending',
-    dispatchAttempts: 0,
-    dispatchError: null,
-    activeAttemptId: null,
-    attemptCount: 0,
-    outputKey: null,
-    output: null,
-    errorCode: null,
-    createdAt: 0,
-    updatedAt: 0,
-    completedAt: null,
     ...overrides,
   };
 };
 
 describe('the dispatch target', () => {
   test('carries the job, the instance, the fixture, the preset and the attempt — and nothing else', () => {
-    const job = jobRecord({ activeAttemptId: 'attempt-1' });
+    const job = jobRecord();
     const built = dispatchTargetFor(job, 'attempt-1');
 
     expect(Object.keys(built).sort()).toEqual([
@@ -98,10 +86,7 @@ describe('the dispatch target', () => {
 
   test('the instance id is derived from the job id, so a retry addresses the same instance', () => {
     const first = dispatchTargetFor(jobRecord({ id: 'job_abc' }), 'attempt-1');
-    const retry = dispatchTargetFor(
-      jobRecord({ id: 'job_abc', dispatchState: 'dispatch_failed', dispatchAttempts: 1 }),
-      'attempt-2',
-    );
+    const retry = dispatchTargetFor(jobRecord({ id: 'job_abc' }), 'attempt-2');
 
     expect(first.workflowId).toBe('encode-job_abc');
     expect(retry.workflowId).toBe(first.workflowId);
@@ -160,7 +145,7 @@ describe('the disabled dispatch port', () => {
     if (outcome.ok) {
       return;
     }
-    // Retryable, and the reason is the whole point: the job exists in D1 and is
+    // Retryable, and the reason is the whole point: the job exists in Postgres and is
     // owed a dispatch, so enabling the profile and recovering is a real remedy.
     expect(outcome.retryable).toBe(true);
     expect(outcome.message).toContain('recover');

@@ -43,49 +43,24 @@ export const GET: RequestHandler = async ({ locals, url }) => {
     );
   }
 
-  if (container.backendProfile === 'supabase') {
-    if (container.supabase?.mailUrl === undefined) {
-      return jsonError(503, 'mail_unavailable', 'Local Supabase mail capture is not configured.');
-    }
-    try {
-      const messages = await readSupabaseCapturedMail(
-        container.supabase.mailUrl,
-        url.searchParams.get('to'),
-      );
-      return json(200, {
-        mode: 'capture',
-        inbox: container.env.TEST_RUN_ID ?? 'supabase-local',
-        messages,
-      });
-    } catch {
-      return jsonError(
-        503,
-        'mail_unavailable',
-        'Could not read the local Supabase mail capture service.',
-      );
-    }
+  if (container.supabase.mailUrl === undefined) {
+    return jsonError(503, 'mail_unavailable', 'Local Supabase mail capture is not configured.');
   }
-
-  const capture = container.mailCapture;
-  if (capture === undefined) {
-    // Only reachable if `isLocal` and the mail mode disagree, which `resolveMail`
-    // makes impossible. Reported rather than thrown so the mismatch is visible.
-    return jsonError(503, 'mail_unavailable', 'No mail inbox is configured for this run.');
+  try {
+    const messages = await readSupabaseCapturedMail(
+      container.supabase.mailUrl,
+      url.searchParams.get('to'),
+    );
+    return json(200, {
+      mode: 'capture',
+      inbox: container.env.TEST_RUN_ID ?? 'supabase-local',
+      messages,
+    });
+  } catch {
+    return jsonError(
+      503,
+      'mail_unavailable',
+      'Could not read the local Supabase mail capture service.',
+    );
   }
-
-  const to = url.searchParams.get('to');
-  const messages =
-    to === null
-      ? capture.inbox()
-      : [capture.latestFor(to)].filter(
-          (message): message is NonNullable<typeof message> => message !== undefined,
-        );
-
-  return json(200, {
-    mode: capture.mode,
-    // Echoed so a harness can prove the inbox it is reading belongs to its own
-    // run rather than to a leftover container.
-    inbox: capture.inboxId,
-    messages: [...messages],
-  });
 };

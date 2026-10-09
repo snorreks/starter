@@ -5,8 +5,8 @@
 #
 #   static   typecheck, lint, format, guards, workflow policy, Pi loader. Seconds.
 #   unit     every project's unit lane, plus the real-browser lane. Needs Chromium.
-#   worker   the built Worker in real workerd against real local D1.
-#   compute  the built jobs Worker against real Workflows, real D1/R2 and real FFmpeg.
+#   worker   the built Worker in real workerd against local Supabase.
+#   compute  the Cloud Run runner against Docker and real FFmpeg.
 #            Needs Docker, builds the processor image, and is the slowest lane.
 #   database real local Supabase/Postgres, two Auth users, Data API/RLS and concurrent RPCs.
 #   e2e      the built client and the built Worker, one origin, in a browser.
@@ -344,7 +344,7 @@ jobs:
 
       - name: Worker integration tests
         # Builds the Worker, then runs a real `wrangler dev` on the built
-        # `.svelte-kit/cloudflare/_worker.js` against a real local D1, on a port it
+        # `.svelte-kit/cloudflare/_worker.js` against real local Supabase, on a port it
         # allocates, with a run id so a leftover listener cannot be mistaken for
         # this run's server. `wrangler dev` shells out to Node, which the runner
         # image has.
@@ -390,9 +390,7 @@ jobs:
       # filled the cache last, and a Dockerfile change does not reliably invalidate
       # every layer it should.
       - name: Compute integration tests
-        # Starts the real FFmpeg image with Docker, then drives the built jobs Worker
-        # in the local Workers runtime against real local D1 and R2. Docker is present
-        # on the runner image; the lane refuses with a named prerequisite if it is not.
+        # Starts the real FFmpeg image with Docker. The lane names a missing Docker prerequisite.
         run: set -o pipefail; bun run test:compute 2>&1 | tee "$RUNNER_TEMP/compute.log"
 
       - name: Assert the compute lane discovered and passed tests
@@ -450,11 +448,6 @@ jobs:
       - name: Install
         run: bun install --frozen-lockfile
 
-      - name: Apply migrations to local D1
-        # Without this every route fails on a missing table, and the failure reads
-        # as a product bug rather than as a missing step.
-        run: bun run db:migrate
-
       - name: Restore Playwright's browser cache
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
@@ -467,6 +460,8 @@ jobs:
         run: bun run --cwd apps/e2e browsers:install
 
       - name: End-to-end tests
+        # `bun run e2e` owns a fresh local Supabase Auth/Postgres stack, applies
+        # its migrations, and tears down only that run's resources. No D1 setup.
         # `e2e:e2e` is the real Playwright suite. It builds the app, starts the
         # BUILT Worker in workerd on one origin, proves that origin is this run's
         # Worker via a run id, and drives a browser against it.

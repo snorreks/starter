@@ -52,4 +52,7 @@ mock.module('$app/navigation', () => ({
 // The value is a fixture, not a deployment target: nothing in this lane opens a
 // socket, and `bearer_transport.test.ts` injects its own `fetch`.
 process.env.VITE_NATIVE_API_ORIGIN = 'https://api.example.test';
-process.env.VITE_NATIVE_CLIENT_ID = 'starter-native-desktop-test';
+process.env.VITE_NATIVE_SUPABASE_URL = 'https://projectref1234567890.supabase.co';
+process.env.VITE_NATIVE_SUPABASE_PROJECT_REF = 'projectref1234567890';
+process.env.VITE_NATIVE_SUPABASE_ANON_KEY = 'test-publishable-key';
+process.env.VITE_NATIVE_ENVIRONMENT = 'test';

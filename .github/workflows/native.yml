@@ -54,6 +54,11 @@ env:
   # this repository, so this is a reserved name that can never resolve — which is
   # the point: a build that somehow shipped a real origin would show it here.
   VITE_NATIVE_API_ORIGIN: 'https://api.starter.invalid'
+  VITE_NATIVE_SUPABASE_URL: 'https://supabase.starter.invalid'
+  VITE_NATIVE_SUPABASE_PROJECT_REF: 'synthetic-project'
+  VITE_NATIVE_SUPABASE_ANON_KEY: 'synthetic-public-anon-key'
+  VITE_NATIVE_ENVIRONMENT: 'ci'
+  VITE_NATIVE_AUTH_PROFILE: 'supabase'
 
 jobs:
   rust:

@@ -10,11 +10,13 @@
 // other users' data.
 
 import { NoteUpdateSchema } from '@starter/schemas/notes';
+import * as v from 'valibot';
 import { json, jsonError, noteNotFound, readJsonBody, unauthorized } from '#lib/server/http.ts';
 import { createRequestNotesService } from '#lib/server/notes_service.ts';
 import type { RequestHandler } from './$types';
 
 const MAX_BODY_BYTES = 64 * 1024;
+const DATABASE_NOTE_ID = v.pipe(v.string(), v.uuid());
 
 export const PATCH: RequestHandler = async ({ locals, params, request }) => {
   const user = locals.user;
@@ -22,6 +24,9 @@ export const PATCH: RequestHandler = async ({ locals, params, request }) => {
     return unauthorized();
   }
 
+  if (!v.is(DATABASE_NOTE_ID, params.id)) {
+    return noteNotFound();
+  }
   const parsed = await readJsonBody(request, NoteUpdateSchema, { maxBytes: MAX_BODY_BYTES });
   if (!parsed.ok) {
     return parsed.response;
@@ -52,6 +57,9 @@ export const DELETE: RequestHandler = async ({ locals, params }) => {
   const user = locals.user;
   if (user === null) {
     return unauthorized();
+  }
+  if (!v.is(DATABASE_NOTE_ID, params.id)) {
+    return noteNotFound();
   }
 
   // The hook's context, reused: see `#lib/server/request_context.ts`.

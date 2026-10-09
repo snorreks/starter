@@ -17,6 +17,7 @@
 // real detection against the built Worker in workerd.
 
 import { afterEach, describe, expect, test } from 'bun:test';
+import type { VerifiedIdentity } from '@starter/auth/supabase';
 import type { LogEvent } from '@starter/schemas/logging';
 import type { Container } from '#lib/server/container.ts';
 import type { RequestContext, RequestUser } from './request_context.ts';
@@ -69,7 +70,7 @@ afterEach(() => {
 });
 
 const user: RequestUser = {
-  id: 'user-1',
+  id: 'f45b2c4a-7919-4f55-ae89-e73f6753e322',
   email: 'a@example.test',
   displayName: 'A',
   provider: 'email',
@@ -79,23 +80,17 @@ const user: RequestUser = {
 /**
  * A container with a session resolver and nothing else.
  *
- * `resolveUser` asks Better Auth, which would reach D1. What is under test is what
- * happens *after* identity is known, so the session is stubbed and the database is
- * never touched. Building a real container would also require mail configuration
- * this lane deliberately avoids depending on.
+ * Logger tests only need the configured environment and release metadata. Identity
+ * is supplied through the same verified Supabase boundary as production.
  */
 const containerWith = (
   overrides: Partial<Pick<Container, 'environment' | 'isLocal'>> = {},
-  resolved: RequestUser | null = user,
 ): Container =>
   ({
     environment: 'staging',
     isLocal: false,
     env: { RELEASE: 'abc1234' },
     baseUrl: 'https://starter-staging.example',
-    auth: { api: { getSession: async () => (resolved === null ? null : { user }) } },
-    db: {},
-    mail: {},
     ...overrides,
   }) as unknown as Container;
 
@@ -105,12 +100,19 @@ const request = (headers: Record<string, string> = {}): Request =>
 const structured = (calls: [string, unknown[]][]): LogEvent[] =>
   calls.map(([, args]) => JSON.parse(String(args[0])) as LogEvent);
 
+const identity = (requestUser: RequestUser): VerifiedIdentity => ({
+  backend: 'supabase',
+  user: requestUser,
+  accessToken: 'fixture-access-token',
+});
+
 describe('one record, one destination', () => {
   test('a workerd request record reaches the platform console, exactly once', async () => {
     const console = captureConsole();
     try {
       const context = await buildRequestContext(containerWith(), request(), {
         runtime: 'workerd',
+        identity: identity(user),
       });
       context.logger.write({ logLevel: 'INFO', logType: 'info', event: 'notes.create' });
 
@@ -132,6 +134,7 @@ describe('one record, one destination', () => {
     try {
       const context = await buildRequestContext(containerWith(), request(), {
         runtime: 'workerd',
+        identity: identity(user),
       });
       context.logger.write({
         logLevel: 'ERROR',
@@ -159,7 +162,7 @@ describe('one record, one destination', () => {
       const context = await buildRequestContext(
         containerWith({ environment: 'local', isLocal: true }),
         request(),
-        { runtime: 'node' },
+        { runtime: 'node', identity: identity(user) },
       );
       context.logger.write({ logLevel: 'INFO', logType: 'info', event: 'notes.create' });
 
@@ -182,6 +185,7 @@ describe('one record, one destination', () => {
     try {
       const context = await buildRequestContext(containerWith(), request(), {
         runtime: 'workerd',
+        identity: identity(user),
       });
       context.logger.write(
         { logLevel: 'INFO', logType: 'info', event: 'auth.signin' },
@@ -204,6 +208,7 @@ describe('the environment is the one the container resolved', () => {
     try {
       const context = await buildRequestContext(containerWith(), request(), {
         runtime: 'workerd',
+        identity: identity(user),
       });
       context.logger.write({ logLevel: 'INFO', logType: 'info', event: 'notes.create' });
 
@@ -284,22 +289,23 @@ describe('the context belongs to one request', () => {
   });
 
   test('two sessions never share an identity, even concurrently', async () => {
-    const other: RequestUser = { ...user, id: 'user-2', email: 'b@example.test' };
+    const other: RequestUser = {
+      ...user,
+      id: '2c779fc3-468a-4bd9-b9f5-6cbab4e1059d',
+      email: 'b@example.test',
+    };
     const [first, second] = await Promise.all([
-      buildRequestContext(containerWith({}, user), request(), {
+      buildRequestContext(containerWith(), request(), {
         runtime: 'workerd',
+        identity: identity(user),
       }) as Promise<RequestContext>,
-      buildRequestContext(
-        {
-          ...containerWith(),
-          auth: { api: { getSession: async () => ({ user: other }) } },
-        } as unknown as Container,
-        request(),
-        { runtime: 'workerd' },
-      ) as Promise<RequestContext>,
+      buildRequestContext(containerWith(), request(), {
+        runtime: 'workerd',
+        identity: identity(other),
+      }) as Promise<RequestContext>,
     ]);
 
-    expect(first.user?.id).toBe('user-1');
-    expect(second.user?.id).toBe('user-2');
+    expect(first.user?.id).toBe(user.id);
+    expect(second.user?.id).toBe(other.id);
   });
 });

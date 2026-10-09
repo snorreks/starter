@@ -1,31 +1,17 @@
 $schema: 'https://moonrepo.dev/schemas/v2/project.json'
-
-# Tasks are delegations to this project's own package.json script. The one task
-# that is not a bare delegation is `db-generate`, which was
-# `echo "nothing to build (TypeScript source)"`: `bun run db:generate` therefore
-# printed a message instead of generating a migration. A schema change with no
-# generated migration fails at deploy time against a real D1 database.
 layer: 'library'
 
 fileGroups:
   sources:
     - 'src/**/*'
-    - 'drizzle.config.ts'
+    - 'tools/**/*'
   configs:
     - 'package.json'
     - 'tsconfig*.json'
     - 'moon.yml'
   tests:
-    # Declared and referenced so the pattern holds everywhere: a group a task
-    # cannot name is a group nothing checks. `bun test --pass-with-no-tests`
-    # currently discovers nothing here, and when a test lands it must already be
-    # inside the key that decides whether the suite runs.
     - 'src/**/*.test.ts'
-    - 'src/**/*.spec.ts'
     - 'tests/**/*'
-  migrations:
-    - 'drizzle-d1/**/*.sql'
-    - 'drizzle-d1/meta/*.json'
 
 toolchains:
   bun:
@@ -38,61 +24,28 @@ tasks:
   typecheck:
     command: 'bun'
     args: ['run', 'typecheck']
-    inputs:
-      - '@group(sources)'
-      - '@group(configs)'
+    inputs: ['@group(sources)', '@group(configs)']
   lint:
     command: 'bun'
     args: ['run', 'lint']
-    inputs:
-      - '@group(sources)'
-      - '@group(configs)'
+    inputs: ['@group(sources)', '@group(configs)']
   format:
     command: 'bun'
     args: ['run', 'format']
-    inputs:
-      - '@group(sources)'
-      - '@group(configs)'
+    inputs: ['@group(sources)', '@group(configs)']
   fix:
     command: 'bun'
     args: ['run', 'fix']
-    inputs:
-      - '@group(sources)'
-      - '@group(configs)'
+    inputs: ['@group(sources)', '@group(configs)']
   test:
     command: 'bun'
     args: ['run', 'test']
-    inputs:
-      - '@group(sources)'
-      - '@group(configs)'
-      - '@group(tests)'
-
-  # There is deliberately no `build` task here, and there never should be one that
-  # only prints. `moon run :build` used to resolve to an `echo` that reported
-  # success, which is the exact failure this repository's first rule names. The
-  # deployable output of this project is `drizzle-d1/`, and it is produced by
-  # `db-generate` below — a task that writes files and says so.
-  #
-  # If a target needs "build everything", `bun run build` is the one command and
-  # it routes to `client:build`, the only project with a real artifact.
-
-  # Reads the schema, writes `drizzle-d1/`. Never cached: the output is a new set
-  # of SQL files, and a restored "result" would be migrations on disk that this run
-  # did not generate — which is worse than no migrations at all.
-  db-generate:
+    inputs: ['@group(sources)', '@group(configs)', '@group(tests)']
+  db-types:
     command: 'bun'
-    args: ['run', 'db:generate']
-    inputs:
-      - '@group(sources)'
-      - '@group(configs)'
-      - '@group(tests)'
-    outputs:
-      - '@group(migrations)'
+    args: ['run', 'db:types']
+    inputs: ['@group(sources)', '@group(configs)']
     options:
       cache: false
-
   validate:
-    deps:
-      - '~:lint'
-      - '~:format'
-      - '~:typecheck'
+    deps: ['~:lint', '~:format', '~:typecheck']

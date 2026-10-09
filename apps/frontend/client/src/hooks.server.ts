@@ -9,7 +9,7 @@
 //   1. **Bindings -> container.** `cloudflare:workers` is the documented source
 //      for Worker bindings under `@sveltejs/adapter-cloudflare`: the real module
 //      in a deployed Worker, and the emulated binding set read from
-//      `wrangler.jsonc` (D1 included) under `vite dev` and `vite preview`. The
+//      `wrangler.jsonc` (Postgres included) under `vite dev` and `vite preview`. The
 //      container is memoized per binding set and origin, which are the two things
 //      a container is actually derived from; see `#lib/server/container.ts` for
 //      why request identity is not.
@@ -123,11 +123,11 @@ const isApiPath = (pathname: string): boolean =>
  * Prefer Host when the runtime preserves it, falling back to `event.url.origin`.
  * Wrangler 4.142.0 with the launcher's `--host 127.0.0.1` rewrites both the URL and
  * Host to omit the browser's port; this helper cannot recover that port. The
- * launcher supplies `BETTER_AUTH_URL` with the public origin for that reason.
+ * launcher supplies `APP_ORIGIN` with the public origin for that reason.
  * Without `--host`, Wrangler preserves the port in both the URL and Host.
  *
  * This is only a candidate for local loopback derivation. Deployed environments
- * require `BETTER_AUTH_URL`, and a non-loopback candidate is refused locally.
+ * require `APP_ORIGIN`, and a non-loopback candidate is refused locally.
  */
 const requestOriginFor = (event: RequestEvent): string => {
   const host = event.request.headers.get('host');
@@ -165,29 +165,20 @@ export const handle: Handle = async ({ event, resolve }) => {
   // named cause as any other configuration failure.
   let context: RequestContext;
   try {
-    if (container.backendProfile === 'supabase') {
-      if (container.supabase === null) {
-        throw new Error('Supabase preview configuration is missing.');
-      }
-      const requestContext = await createSupabaseRequestContext(event.request, event.cookies, {
-        ...container.supabase,
-        origin: container.baseUrl,
-        allowedCallbacks: ['/verify-email', '/reset-password'],
-        jobsProfile: event.platform?.JOBS_PROFILE,
-        encodeWorkflow: event.platform?.ENCODE_WORKFLOW,
-      });
-      event.locals.supabaseIdentity = requestContext.identity;
-      event.locals.applicationServices = requestContext.services;
-      context = await buildRequestContext(container, event.request, {
-        identity: requestContext.identity,
-        services: requestContext.services,
-        responseHeaders: requestContext.responseHeaders,
-      });
-    } else {
-      event.locals.supabaseIdentity = null;
-      event.locals.applicationServices = null;
-      context = await buildRequestContext(container, event.request);
-    }
+    const requestContext = await createSupabaseRequestContext(event.request, event.cookies, {
+      ...container.supabase,
+      origin: container.baseUrl,
+      allowedCallbacks: ['/verify-email', '/reset-password'],
+      jobsProfile: container.jobsProfile,
+      encodeWorkflow: container.env.ENCODE_WORKFLOW,
+    });
+    event.locals.supabaseIdentity = requestContext.identity;
+    event.locals.applicationServices = requestContext.services;
+    context = await buildRequestContext(container, event.request, {
+      identity: requestContext.identity,
+      services: requestContext.services,
+      responseHeaders: requestContext.responseHeaders,
+    });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     startupLogger.error('request.context_failed', { message });

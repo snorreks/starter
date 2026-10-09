@@ -14,10 +14,7 @@ const GrantRequestSchema = v.union([
 const NO_STORE = { 'cache-control': 'no-store' };
 
 /** Internal runner policy: Google service-account JWT for grant minting; signed method/object token for R2 transfer. */
-export const POST: RequestHandler = async ({ request, params, platform, url }) => {
-  if (platform?.STARTER_BACKEND_PROFILE !== 'supabase') {
-    return jsonError(503, 'runner_grants_disabled', 'Runner grants are disabled.');
-  }
+export const POST: RequestHandler = async ({ request, params, locals, url }) => {
   const parsed = await readJsonBody(request, GrantRequestSchema, {
     maxBytes: 4096,
     invalidStatus: 400,
@@ -25,9 +22,12 @@ export const POST: RequestHandler = async ({ request, params, platform, url }) =
   if (!parsed.ok) {
     return parsed.response;
   }
+  if (locals.container.jobsProfile !== 'encode') {
+    return jsonError(503, 'runner_grants_disabled', 'Runner grants are disabled.');
+  }
   const report = parsed.value;
   try {
-    const service = createRunnerGrantService(platform, url.origin);
+    const service = createRunnerGrantService(locals.container.env, url.origin);
     if ('processorExitCode' in report) {
       const recorded = await service.reportProcessorFailure(
         request,
@@ -59,12 +59,12 @@ export const POST: RequestHandler = async ({ request, params, platform, url }) =
   }
 };
 
-const transfer: RequestHandler = async ({ request, params, platform }) => {
-  if (platform?.STARTER_BACKEND_PROFILE !== 'supabase') {
+const transfer: RequestHandler = async ({ request, params, locals }) => {
+  if (locals.container.jobsProfile !== 'encode') {
     return jsonError(503, 'runner_grants_disabled', 'Runner grants are disabled.');
   }
   try {
-    const service = createRunnerGrantService(platform, new URL(request.url).origin);
+    const service = createRunnerGrantService(locals.container.env, new URL(request.url).origin);
     const result = await service.transfer(request, params.id, request.method as 'GET' | 'PUT');
     return result;
   } catch {

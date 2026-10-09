@@ -1,6 +1,6 @@
-import { runBoundedSync } from '../shared/run_bounded.ts';
-import { REPO_ROOT } from '../shared/paths.ts';
 import { supabaseBin } from '../deploy/providers/supabase.ts';
+import { REPO_ROOT } from '../shared/paths.ts';
+import { runBoundedSync } from '../shared/run_bounded.ts';
 
 const USER_ID = '10000000-0000-4000-8000-000000000001';
 const NOTES = [

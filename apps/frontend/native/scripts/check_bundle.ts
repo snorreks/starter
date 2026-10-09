@@ -44,14 +44,14 @@ const FALLBACK_PAGE = 'index.html';
  * `@starter/schemas`) while the D1 column spellings are present — those exist
  * nowhere else and are in the SQL Drizzle emits.
  *
- * `BETTER_AUTH_URL` is a *name*, not a value, and it is still worth refusing: a
+ * `GOOGLE_DISPATCHER_CREDENTIAL` is a *name*, not a value, and it is still worth refusing: a
  * file that mentions it is a file that imported the server's configuration.
  */
 const SERVER_MARKERS = [
   'cloudflare:workers',
   'workerd',
-  'BETTER_AUTH_SECRET',
-  'BETTER_AUTH_URL',
+  'SUPABASE_SERVICE_ROLE_KEY',
+  'GOOGLE_DISPATCHER_CREDENTIAL',
   'notes_owner_id_idx',
   'notes_owner_updated_idx',
   'device_codes',

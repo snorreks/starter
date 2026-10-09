@@ -68,7 +68,7 @@ May import `@starter/schemas`, `@starter/utils` and `@standard-schema/spec`. May
 
 - `@sveltejs/kit`, `$app/*` — the host's router is injected as `Navigation`
 - `@tauri-apps/*` — that belongs to a native composition root's bridge role
-- `@starter/database`, `@starter/auth`, `drizzle-orm`, `better-auth` — server
+- server database and auth adapters
   implementation, refused by Biome's frontend override
 - `apps/**` or `scripts/**` — a package reaches an application through a published
   export or not at all

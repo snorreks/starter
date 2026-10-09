@@ -13,13 +13,11 @@
 // "who is signed in" with whoever arrived first, which is the identity confusion
 // that per-request identity exists to prevent.
 //
-// The endpoints are the provider's, not ours, so the paths are constants here for
-// the same reason the verification callback is: they are part of one contract with
-// Better Auth, and a screen that could choose them could be pointed at a different
-// one.
+// The paths are part of the application auth API contract, not choices a screen
+// can make independently of the session service.
 
 import { type ApiTransport, parseDto } from '@starter/platform';
-import { type SessionUser, SessionUserWireSchema, toSessionUser } from '@starter/schemas/auth';
+import { type SessionUser, SessionUserSchema } from '@starter/schemas/auth';
 
 /** The signed-in user, plus whether a check has ever completed. */
 export class SessionState {
@@ -68,7 +66,7 @@ export interface AuthSession {
   signOut(): Promise<void>;
 }
 
-/** The credential endpoints Better Auth serves, under the app's `/api/auth` mount. */
+/** The stable credential endpoints under the application's `/api/auth` mount. */
 const AUTH = {
   session: '/api/auth/get-session',
   signIn: '/api/auth/sign-in/email',
@@ -84,11 +82,9 @@ export interface AuthSessionServiceOptions {
 /**
  * Sign in, sign up and sign out, and keep `state` in step with the answer.
  *
- * Responses are checked against the provider's wire schema and projected onto
- * `SessionUser` before they become the signed-in user. The identity that reaches a
- * shell decides what it may show and what it may send, so a body that is not a user
- * is a refusal, not a partially populated object — and `displayName` is filled from
- * the provider's `name` rather than left `undefined`.
+ * Responses are checked directly against the canonical `SessionUser` DTO before
+ * they become the signed-in user. Identity decides what a shell may show and send,
+ * so provider payloads and partially populated objects are refused, not adapted.
  */
 export class AuthSessionService implements AuthSession {
   readonly #transport: ApiTransport;
@@ -129,7 +125,7 @@ export class AuthSessionService implements AuthSession {
   }
 
   async signIn(email: string, password: string): Promise<SessionUser> {
-    const user = await this.#credentials(AUTH.signIn, { email, password, returnHeaders: true });
+    const user = await this.#credentials(AUTH.signIn, { email, password });
     this.#state.set(user);
     return user;
   }
@@ -140,7 +136,8 @@ export class AuthSessionService implements AuthSession {
       password: input.password,
       name: input.name,
     });
-    this.#state.set(user);
+    // Registration returns an account DTO, not an authenticated session.
+    this.#state.set(null);
     return user;
   }
 
@@ -155,17 +152,6 @@ export class AuthSessionService implements AuthSession {
   }
 }
 
-/**
- * Assert a response body really is the provider's user, and project it.
- *
- * One function for `refresh` and both credential paths, so they cannot drift into
- * checking different things — and so a native host inherits the same refusal the
- * web one has, from the same place.
- *
- * The projection is why this is not `as SessionUser`. The provider returns `name`;
- * this application calls it `displayName`. Casting through produced a
- * `SessionUser` whose display name was `undefined`, which nothing noticed until
- * a screen tried to render one.
- */
+/** Validate the same canonical DTO for refresh and both credential paths. */
 const asSessionUser = (value: unknown): SessionUser =>
-  toSessionUser(parseDto(SessionUserWireSchema, value, 'a session user'));
+  parseDto(SessionUserSchema, value, 'a session user');

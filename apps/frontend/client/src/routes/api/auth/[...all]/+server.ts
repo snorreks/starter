@@ -1,6 +1,6 @@
 import { createSupabaseAccountService } from '@starter/auth/supabase';
 import { createAdminDatabaseClient } from '@starter/database/supabase';
-import { SignInInputSchema, SignUpInputSchema } from '@starter/schemas/auth';
+import { AccountErrorCode, SignInInputSchema, SignUpInputSchema } from '@starter/schemas/auth';
 import { checkSchema } from '@starter/schemas/common';
 import { errorTypeForStatus } from '@starter/utils';
 import * as v from 'valibot';
@@ -18,12 +18,10 @@ const USER_IDENTITY = (user: {
   emailVerified: boolean;
 }) => ({
   id: user.id,
-  name: user.displayName,
   email: user.email,
+  displayName: user.displayName,
+  provider: 'email' as const,
   emailVerified: user.emailVerified,
-  image: null,
-  createdAt: Date.now(),
-  updatedAt: Date.now(),
 });
 
 // Wire field names follow the account client; value validation uses the shared schemas below.
@@ -47,7 +45,16 @@ const failure = (error: unknown): Response => {
       ? error.status
       : 400;
   const type = errorTypeForStatus(status);
-  return jsonError(status, type, 'Could not complete that request.');
+  const unverified =
+    typeof error === 'object' &&
+    error !== null &&
+    'error' in error &&
+    error.error === AccountErrorCode.emailNotVerified;
+  return jsonError(
+    status,
+    unverified ? AccountErrorCode.emailNotVerified : type,
+    'Could not complete that request.',
+  );
 };
 
 const handleSupabase = async (event: Parameters<RequestHandler>[0]): Promise<Response> => {
@@ -58,7 +65,11 @@ const handleSupabase = async (event: Parameters<RequestHandler>[0]): Promise<Res
   const cookieWrites: { name: string; value: string; options: Record<string, unknown> }[] = [];
   const responseHeaders = new Headers();
   const client = createSupabaseAuthClient(
-    { ...config, origin: event.url.origin, allowedCallbacks: ['/verify-email', '/reset-password'] },
+    {
+      ...config,
+      origin: event.locals.container.baseUrl,
+      allowedCallbacks: ['/verify-email', '/reset-password'],
+    },
     {
       getAll: () => event.cookies.getAll().map(({ name, value }) => ({ name, value })),
       setAll: (writes, headers) => {
@@ -71,7 +82,7 @@ const handleSupabase = async (event: Parameters<RequestHandler>[0]): Promise<Res
   );
   const admin = createAdminDatabaseClient(config);
   const accounts = createSupabaseAccountService(client, admin, {
-    origin: event.url.origin,
+    origin: event.locals.container.baseUrl,
     allowedCallbacks: ['/verify-email', '/reset-password'],
   });
   const endpoint = event.url.pathname.replace(/^\/api\/auth\//, '');
@@ -177,22 +188,11 @@ const handleSupabase = async (event: Parameters<RequestHandler>[0]): Promise<Res
   }
 };
 
-const handle: RequestHandler = async ({ request, locals, ...event }) => {
-  if (locals.container.backendProfile === 'supabase') {
-    if (request.method !== 'GET' && request.method !== 'POST') {
-      return jsonError(405, 'method_not_allowed', 'Use GET or POST.');
-    }
-    return await handleSupabase({ request, locals, ...event } as Parameters<RequestHandler>[0]);
+const handle: RequestHandler = async (event) => {
+  if (event.request.method !== 'GET' && event.request.method !== 'POST') {
+    return jsonError(405, 'method_not_allowed', 'Use GET or POST.');
   }
-  try {
-    return await locals.container.auth.handler(request);
-  } catch (error) {
-    locals.context.logger.error('auth.handler_failed', {
-      component: 'auth',
-      message: error instanceof Error ? error.message : String(error),
-    });
-    return jsonError(503, 'auth_unconfigured', 'Authentication is not configured.');
-  }
+  return handleSupabase(event);
 };
 
 export const GET = handle;

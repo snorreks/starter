@@ -32,7 +32,7 @@ export const actions: Actions = {
     }
 
     try {
-      // Better Auth's own enumeration protection: a request for an unknown
+      // Supabase Auth's own enumeration protection: a request for an unknown
       // address returns success without sending anything.
       await submitAuthAction(
         locals.container,

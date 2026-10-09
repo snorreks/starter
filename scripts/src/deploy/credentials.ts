@@ -24,7 +24,7 @@
 //     argument somewhere else would be a different command than the one they
 //     asked for.
 
-import { REQUIRED_REMOTE_SECRET_NAMES } from '../registry/app_registry.ts';
+import { REQUIRED_REMOTE_SECRET_NAMES, REQUIRED_TOKEN_SCOPES } from '../registry/app_registry.ts';
 
 /** The credential modes this tooling documents. One, deliberately. */
 export const SUPPORTED_CREDENTIAL_MODES = ['env-api-token'] as const;
@@ -64,7 +64,7 @@ export const describeCredential = (env: NodeJS.ProcessEnv = process.env): Creden
     remedy:
       `  export ${CREDENTIAL_ENV_VAR}=<token>   # never on a command line\n` +
       '  Create one at https://dash.cloudflare.com → My Profile → API Tokens, scoped to\n' +
-      '  the account and the Worker/D1 edit permissions this deployment needs.\n\n' +
+      `  the account with: ${REQUIRED_TOKEN_SCOPES.map((scope) => scope.permission).join(', ')}.\n\n` +
       '  `wrangler login` does not work here by design: this tooling does not read the\n' +
       '  OAuth credentials wrangler writes to a per-user directory, because behaviour that\n' +
       '  depends on hidden machine state cannot be reviewed and does not exist in CI.',

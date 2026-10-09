@@ -199,13 +199,33 @@ describe('request scoped Supabase clients', () => {
     await expect(repository.listForOwner()).rejects.toThrow();
     await expect(repository.listForOwner()).rejects.toThrow();
   });
+
+  test('private output metadata and maintenance evidence are read through the caller identity', async () => {
+    const headers = captureRequests([
+      [{ output_key: 'media/jobs/a.mp4', expires_at: '2026-10-07T12:00:00.000Z' }],
+      { schedule: '17 * * * *', latest: null, latestScheduled: null, serverTime: 1 },
+    ]);
+    const repository = createSupabaseJobRepository(userClient(), adminClient());
+    expect(await repository.outputForOwner('job_a')).toEqual({
+      key: 'media/jobs/a.mp4',
+      expiresAt: Date.parse('2026-10-07T12:00:00.000Z'),
+    });
+    expect(await repository.latestMaintenance()).toMatchObject({
+      latest: null,
+      latestScheduled: null,
+    });
+    expect(headers.map((request) => request.get('Authorization'))).toEqual([
+      'Bearer user-token',
+      'Bearer user-token',
+    ]);
+  });
 });
 
 test('conversation and stored-message lookups constrain the owner and ID in the query', async () => {
   const urls: URL[] = [];
   const row = {
     id: '123',
-    owner_id: 'owner',
+    owner_id: 'f45b2c4a-7919-4f55-ae89-e73f6753e322',
     title: 'Older conversation',
     created_at: '2026-01-01',
     updated_at: '2026-01-01',

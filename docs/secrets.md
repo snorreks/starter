@@ -32,21 +32,24 @@ be a second place to edit and a second place to forget.
 placeholders. `.env` is read automatically by Vite for `PUBLIC_*` values; Worker
 vars come from `wrangler.jsonc` or from `--var`, not from a dotenv file.
 
-Nothing above needs a secret. The local Worker runs on local D1, and
+Nothing above needs a secret. The local Worker runs against an owned local Supabase stack, and
 `--mode local` log queries read a file.
 
 ## What actually needs a secret
 
 | Value | Where | Used for |
 |---|---|---|
-| `BETTER_AUTH_SECRET` | Worker binding | Signing session cookies |
 | `CLOUDFLARE_API_TOKEN` | root gitignored `.env.deploy`, or injected shell/CI environment | authenticated deploy, remote DB/log commands (never offline plan) |
-| `TRUSTED_ORIGINS` | Worker binding | Which origins may send credentials |
+| `SUPABASE_SERVICE_ROLE_KEY` | Worker secret (`wrangler secret put`) | server-only Data and RPC calls; bypasses RLS, so it never reaches a browser or native bundle |
+| `RESEND_API_KEY` | Worker secret | hosted mail delivery for verification and recovery |
+| `GOOGLE_DISPATCHER_CREDENTIAL` | Worker secret, only when compute is enabled | the dispatcher service-account key used to exchange an OAuth token; it is a key, not workload identity federation |
 | Age identity | your machine | Decrypting SOPS files |
 
-`BETTER_AUTH_SECRET` is the only one the application cannot do without. Locally it
-falls back to a development value, with a warning; remotely it is required and the
-Worker refuses to start without it.
+The application secret is `SUPABASE_SERVICE_ROLE_KEY`: the Worker refuses to
+start without it outside local development, where it falls back to the owned
+local Supabase stack. `BETTER_AUTH_SECRET` is gone with the Better Auth
+deployment, and there is no `TRUSTED_ORIGINS` binding — the Supabase client
+receives the application's own origin from `APP_ORIGIN`.
 
 ## Where a secret comes from, in order of preference
 

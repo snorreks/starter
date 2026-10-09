@@ -38,7 +38,6 @@ fileGroups:
     - '/packages/backend/jobs/src/**/*'
     - '/packages/backend/auth/src/**/*'
     - '/packages/backend/database/src/**/*'
-    - '/packages/backend/database/drizzle-d1/**/*'
     - '/packages/shared/schemas/src/**/*'
     - '/packages/shared/logger/src/**/*'
     - '/packages/shared/utils/src/**/*'
@@ -154,7 +153,7 @@ tasks:
       - '@group(tests)'
       - '@group(workspaceSources)'
 
-  # The built Worker, in real workerd, against real local D1. Never cached: it
+  # The built Worker, in real workerd, against local Supabase. Never cached: it
   # asserts against a database and a running runtime, so a restored "pass" would
   # certify processes this run never started.
   test-worker:

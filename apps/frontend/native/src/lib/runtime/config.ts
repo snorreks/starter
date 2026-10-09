@@ -8,10 +8,6 @@
 //                server of its own (see `vite.config.ts`), so this string is the
 //                difference between a working client and one that posts a bearer
 //                token to whatever host happens to answer.
-//   clientId   — the Better Auth device-authorization client identifier. Public:
-//                it is compiled into the bundle and cannot be kept secret, and
-//                treating a public identifier as a credential is how a template
-//                grows a "universal client secret" nobody can rotate.
 //   dev        — whether this bundle is a development build.
 //
 // Why the origin is validated rather than normalized
@@ -29,15 +25,13 @@
 // dev-only relaxation that is keyed on the build mode cannot survive into a
 // packaged app, because the packaged app is not a dev build.
 
-import { DEV_API_HOST_ENV, resolveApiOrigin, resolveClientId } from '@starter/schemas/native';
+import { DEV_API_HOST_ENV, resolveApiOrigin } from '@starter/schemas/native';
 
 export {
-  DEFAULT_CLIENT_ID,
   DEFAULT_DEV_API_ORIGIN,
   DEV_API_HOST_ENV,
   NativeConfigError,
   resolveApiOrigin,
-  resolveClientId,
 } from '@starter/schemas/native';
 
 const readEnv = (key: string): string | undefined => {
@@ -53,35 +47,22 @@ const readEnv = (key: string): string | undefined => {
  */
 const isDevBuild = import.meta.env.DEV === true;
 
-export type NativeAuthProfile = 'legacy' | 'supabase';
-
-const parseAuthProfile = (raw: string | undefined): NativeAuthProfile => {
-  if (raw === undefined || raw === 'legacy') {
-    return 'legacy';
-  }
-  if (raw === 'supabase') {
-    return 'supabase';
-  }
-  throw new Error('VITE_NATIVE_AUTH_PROFILE must be legacy or supabase.');
-};
-
 const requiredEnv = (key: string): string => {
   const value = readEnv(key);
   if (value === undefined) {
-    throw new Error(`Supabase native profile requires ${key}.`);
+    throw new Error(`Native Supabase configuration requires ${key}.`);
   }
   return value;
 };
 
-const profile = parseAuthProfile(readEnv('VITE_NATIVE_AUTH_PROFILE'));
 const apiOrigin = resolveApiOrigin({
   raw: readEnv('VITE_NATIVE_API_ORIGIN'),
   dev: isDevBuild,
   devHost: isDevBuild ? readEnv(DEV_API_HOST_ENV) : undefined,
 });
 
-const supabaseUrl = profile === 'supabase' ? requiredEnv('VITE_NATIVE_SUPABASE_URL') : undefined;
-if (supabaseUrl !== undefined) {
+const supabaseUrl = requiredEnv('VITE_NATIVE_SUPABASE_URL');
+{
   const parsed = new URL(supabaseUrl);
   if (
     parsed.protocol !== 'https:' &&
@@ -101,42 +82,32 @@ if (supabaseUrl !== undefined) {
   }
 }
 
-const supabaseProjectRef =
-  profile === 'supabase' ? requiredEnv('VITE_NATIVE_SUPABASE_PROJECT_REF') : undefined;
-const supabaseAnonKey =
-  profile === 'supabase' ? requiredEnv('VITE_NATIVE_SUPABASE_ANON_KEY') : undefined;
-const environment = profile === 'supabase' ? requiredEnv('VITE_NATIVE_ENVIRONMENT') : undefined;
+const supabaseProjectRef = requiredEnv('VITE_NATIVE_SUPABASE_PROJECT_REF');
+const supabaseAnonKey = requiredEnv('VITE_NATIVE_SUPABASE_ANON_KEY');
+const environment = requiredEnv('VITE_NATIVE_ENVIRONMENT');
 const nativeCallback = 'com.example.starter://auth/callback';
 const webCallback = `${apiOrigin}/auth/callback`;
 
 export interface NativeConfig {
-  readonly authProfile: NativeAuthProfile;
   readonly apiOrigin: string;
-  readonly clientId: string;
   readonly dev: boolean;
-  readonly environment?: string;
-  readonly supabaseUrl?: string;
-  readonly supabaseProjectRef?: string;
-  readonly supabaseAnonKey?: string;
-  readonly nativeCallback?: string;
-  readonly webCallback?: string;
-  readonly allowedCallbacks?: readonly string[];
+  readonly environment: string;
+  readonly supabaseUrl: string;
+  readonly supabaseProjectRef: string;
+  readonly supabaseAnonKey: string;
+  readonly nativeCallback: string;
+  readonly webCallback: string;
+  readonly allowedCallbacks: readonly string[];
 }
 
 export const nativeConfig: NativeConfig = {
-  authProfile: profile,
   apiOrigin,
-  clientId: resolveClientId(readEnv('VITE_NATIVE_CLIENT_ID')),
   dev: isDevBuild,
-  ...(profile === 'supabase'
-    ? {
-        environment,
-        supabaseUrl,
-        supabaseProjectRef,
-        supabaseAnonKey,
-        nativeCallback,
-        webCallback,
-        allowedCallbacks: [nativeCallback, webCallback],
-      }
-    : {}),
+  environment,
+  supabaseUrl,
+  supabaseProjectRef,
+  supabaseAnonKey,
+  nativeCallback,
+  webCallback,
+  allowedCallbacks: [nativeCallback, webCallback],
 };

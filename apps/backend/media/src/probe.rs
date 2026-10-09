@@ -9,9 +9,8 @@
 //!
 //! Nothing here trusts the request, the preset's own argument list, or a
 //! previously produced file: the only input is a path this crate owns, inside a
-//! temp directory that is removed when the request ends.
+//! temp directory that is removed when the encode command ends.
 
-use std::collections::BTreeMap;
 use std::path::Path;
 
 use crate::error::{ErrorCode, ProcessorError, Result};
@@ -226,34 +225,6 @@ pub fn check_duration(summary: &ProbeSummary, preset: &Preset) -> Result<()> {
     Ok(())
 }
 
-/// Header value map for a successful response, derived from one measured
-/// outcome. Exposed so the HTTP layer and the CLI cannot drift in how they
-/// describe the same file.
-pub fn output_headers(
-    success: &crate::protocol::EncodeSuccessDocument,
-) -> BTreeMap<&'static str, String> {
-    use crate::protocol::{
-        HEADER_ATTEMPT, HEADER_OUTPUT_BYTES, HEADER_OUTPUT_CODEC, HEADER_OUTPUT_DIMENSIONS,
-        HEADER_OUTPUT_DURATION_MS, HEADER_OUTPUT_SHA256, HEADER_PRESET, HEADER_PROTOCOL,
-    };
-    BTreeMap::from([
-        (HEADER_PROTOCOL, success.protocol.clone()),
-        (HEADER_PRESET, success.preset.clone()),
-        (HEADER_ATTEMPT, success.attempt_id.clone()),
-        (HEADER_OUTPUT_BYTES, success.output_bytes.to_string()),
-        (HEADER_OUTPUT_SHA256, success.output_sha256.clone()),
-        (
-            HEADER_OUTPUT_DURATION_MS,
-            success.probe.duration_ms.to_string(),
-        ),
-        (HEADER_OUTPUT_CODEC, success.probe.video_codec.clone()),
-        (
-            HEADER_OUTPUT_DIMENSIONS,
-            format!("{}x{}", success.probe.width, success.probe.height),
-        ),
-    ])
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -366,22 +337,5 @@ mod tests {
         assert!(check_container(&document, &preset()).is_err());
         assert!(duration_of(&document).is_err());
         assert!(check_video(&[], &preset()).is_err());
-    }
-
-    #[test]
-    fn response_headers_describe_the_measured_file() {
-        let success = crate::protocol::EncodeSuccessDocument {
-            protocol: crate::protocol::PROTOCOL_ID.into(),
-            preset: crate::protocol::PRESET_ID.into(),
-            attempt_id: "attempt-1".into(),
-            output_bytes: 12_345,
-            output_sha256: "ab".repeat(32),
-            probe: summary(3_012),
-        };
-        let headers = output_headers(&success);
-        assert_eq!(headers["x-output-bytes"], "12345");
-        assert_eq!(headers["x-output-dimensions"], "320x180");
-        assert_eq!(headers["x-output-duration-ms"], "3012");
-        assert_eq!(headers["x-output-codec"], "h264");
     }
 }

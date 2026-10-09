@@ -1,71 +1,18 @@
 import { describe, expect, test } from 'bun:test';
 import { parseCachedArguments } from '../src/commands/cached.ts';
 
-describe('backend selection is consumed by the harness', () => {
-  test('removes the preview option before passing targets to Moon', () => {
-    expect(parseCachedArguments(['--', 'client:test-worker', '--backend', 'supabase'])).toEqual({
-      backend: 'supabase',
+describe('the owning integration harness runs the sole backend', () => {
+  test('detects the Worker preview target', () => {
+    expect(parseCachedArguments(['--', 'client:test-worker'])).toEqual({
       targets: ['client:test-worker'],
-      supabaseCompute: false,
+      integrationRuntime: true,
     });
   });
 
-  test('routes the explicit Supabase Cloud Run local processor selection through Moon', () => {
-    expect(
-      parseCachedArguments([
-        '--',
-        'jobs-worker:test-compute',
-        '--backend',
-        'supabase',
-        '--processor',
-        'cloud-run-local',
-      ]),
-    ).toEqual({
-      backend: 'supabase',
-      targets: [
-        'jobs-worker:test-compute',
-        '--',
-        '--backend',
-        'supabase',
-        '--processor',
-        'cloud-run-local',
-      ],
-      supabaseCompute: true,
+  test('does not enable a local stack for credential-free unit tests', () => {
+    expect(parseCachedArguments(['--', ':test'])).toEqual({
+      targets: [':test'],
+      integrationRuntime: false,
     });
-  });
-
-  test('refuses an unconfigured Supabase compute processor', () => {
-    expect(() =>
-      parseCachedArguments([
-        '--',
-        'jobs-worker:test-compute',
-        '--backend',
-        'supabase',
-        '--processor',
-        'cloud-run',
-      ]),
-    ).toThrow(/requires `--processor cloud-run-local`/);
-  });
-
-  test('requires the mandatory preview integration target', () => {
-    expect(() => parseCachedArguments(['--', ':test', '--backend', 'supabase'])).toThrow(
-      /requires client:test-worker or e2e:e2e/,
-    );
-  });
-
-  test('refuses unknown or repeated backend options', () => {
-    expect(() =>
-      parseCachedArguments(['--backend', 'unknown', '--', 'client:test-worker']),
-    ).toThrow(/legacy or supabase/);
-    expect(() =>
-      parseCachedArguments([
-        '--backend',
-        'legacy',
-        '--backend',
-        'supabase',
-        '--',
-        'client:test-worker',
-      ]),
-    ).toThrow(/appear once/);
   });
 });

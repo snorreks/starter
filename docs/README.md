@@ -13,7 +13,7 @@ Start here. Nothing below is required reading before running a command — the
 | write or run tests, or understand local commit checks and CI feedback | [testing.md](testing.md) |
 | run local Supabase or review its SQL/RLS boundary | [supabase-local.md](supabase-local.md) |
 | review the Supabase web identity and request services | [supabase-web-backend.md](supabase-web-backend.md) |
-| configure and verify the Supabase/Cloud Run compute preview | [supabase-cloud-run-compute.md](supabase-cloud-run-compute.md) |
+| configure and verify optional Cloud Run compute | [supabase-cloud-run-compute.md](supabase-cloud-run-compute.md) |
 | bootstrap a Herdr checkout and scope local settings | [worktrees.md](worktrees.md) |
 | understand a past decision | [first-round-review.md](first-round-review.md) |
 | review the current DX/security repairs and remaining limits | [optimization-review.md](optimization-review.md) |
@@ -29,15 +29,14 @@ Start here. Nothing below is required reading before running a command — the
   verified
 - [worktrees.md](worktrees.md) — the shared terminal/agent bootstrap, environment sources, and per-run ownership
 - [supabase-local.md](supabase-local.md) — local project allocation, migrations, generated types, repositories and policies
+- [the database package](../packages/backend/database/README.md) — Supabase migrations, RLS, generated types and local integration
 - [auth.md](auth.md) — the account lifecycle, the rate limiter, and mail
-- [cloudflare.md](cloudflare.md) — Workers, D1, credentials, and the Worker's
+- [cloudflare.md](cloudflare.md) — Workers, R2, credentials, and the Worker's
   deployment-mode binding
 - [deployment.md](deployment.md) — the one configuration and deployment path: the
   resolved target, the CI variable model, provisioning, secret installation, the
   ordered pipeline, migrations, concurrency, health, rollback and image retention
-- [compute.md](compute.md) — what the shipped compute example does and does not do,
-  when Cloud Run Jobs is the right answer instead and what that would still need,
-  and when managed Cloudflare Stream replaces the container
+- [compute.md](compute.md) — the optional Cloud Run compute example, its local verification, and hosted limits
 - [logs.md](logs.md) — the `bun run logs` family and what each refusal means
 - [secrets.md](secrets.md) — SOPS: the operations, and what each one refuses
 - [lint.md](lint.md) — Biome, the whole-repository guards, and what each refuses

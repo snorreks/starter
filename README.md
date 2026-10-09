@@ -1,293 +1,95 @@
-# Bun + SvelteKit + Cloudflare starter
+# Starter
 
-A full-stack starter with one demo entity, worked end to end: a schema shared by
-client and server, a Cloudflare Worker with D1, a SvelteKit client, and a test
-suite that runs without a single credential.
+## Purpose
 
-The demo is a notes app. It is small on purpose — enough to exercise every
-convention, little enough that you will replace it.
+A typed SvelteKit application for web and native clients. Supabase owns identity and relational data; a Cloudflare Worker owns HTTP operations; optional Cloud Run processing is orchestrated by a private Workflows Worker.
 
-## What you get
+## Stack
 
-| | |
+| Area | Implementation |
 |---|---|
-| **Runtime** | Bun, strict TypeScript, Moon for task orchestration, Biome for lint and format |
-| **App** | SvelteKit 3 + Svelte 5 on Cloudflare Workers via `@sveltejs/adapter-cloudflare`, D1 via Drizzle, Better Auth (email/password) |
-| **Shape** | One application, one Worker, one origin. The pages, the hashed assets and `/api/*` are all served from the same hostname. |
-| **Tests** | Four lanes, all running without credentials |
-| **Tooling** | `logs` CLI, database and deploy scripts, eight architectural guards, Pi agent config |
+| Web | SvelteKit, Svelte 5, Cloudflare Workers |
+| Identity and data | Supabase Auth, Postgres, RLS and transactional RPCs |
+| Native | Tauri, Supabase PKCE, optional Stronghold credential vault |
+| Objects | Private Cloudflare R2 when compute is enabled |
+| Compute | Optional Cloudflare Workflows + Cloud Run Jobs + Rust/FFmpeg |
+| Tooling | Bun, Moon, TypeScript, Biome and portable Pi tools |
 
-There is no separate backend to deploy and no dev proxy to keep honest. The browser
-half and the Worker half are the same package, separated by a path the linter and
-`bun run guard` both check.
-
-There is also a **native client**: [`apps/frontend/native`](apps/frontend/native/README.md)
-is a static SvelteKit app plus a Tauri shell. It bundles the same notes screen
-against the same API, signs in by asking the user's *own browser* to approve a short
-code (RFC 8628), and keeps the session in an opt-in Stronghold vault whose passphrase
-the user types. It adds no second server: the desktop client is an authenticated
-client of the Worker above, and `@starter/features` is the one copy of the screen
-both hosts render. Its lanes are separate on purpose — `bun run native:doctor`
-reports what a machine can build, and none of it is part of `bun run build`,
-`bun run test` or `bun run lint`. See [docs/native.md](docs/native.md).
-
-One Rust crate sits outside both planes:
-[`apps/backend/media`](apps/backend/media/README.md) is a bounded FFmpeg encode
-processor — an internal HTTP entrypoint for Cloudflare Containers and a finite CLI
-for a batch runner, sharing one encoding core. It is not part of `bun run test`,
-`lint` or `typecheck`: the web lanes stay free of a Rust toolchain and of FFmpeg,
-and the compute lane names its own prerequisites.
-
-`/jobs` is the second demo screen, and it is the one with a lifecycle: a signed-in
-user asks for one synthetic sample to be encoded, and the screen shows the job's
-real state (`pending`, `running`, `succeeded`, `failed`), whether its result is
-still downloadable, and what the maintenance schedule last did — with the run's
-trigger, because a hand-triggered sweep is not the schedule firing. Both hosts
-render it from `@starter/features`; the native one fetches the result through its
-bearer transport and plays it from a Blob, so no credential ever reaches a URL.
-The compute profile is **off** by default (`JOBS_PROFILE: disabled`), so a fresh checkout renders the "switched off here" state and notes
-and auth keep working. `bun run test:compute` is the lane that proves a real
-encode, and it needs Docker.
-
-A fresh template copy carries no live Cloudflare resource ids, signing keys,
-domains or plaintext tokens in tracked source — see
-[docs/starter-extraction.md](docs/starter-extraction.md).
-
-## Getting started
+## Setup
 
 ```bash
 bun install
-bun run setup          # checks the toolchain, writes .env from the example
-bun run db:migrate     # applies migrations to local D1
-bun run dev            # the app on PORT (default :5173)
+bun run setup
+bun run setup:doctor
+bun run setup:doctor -- --profile database
 ```
 
-Then sign up at <http://127.0.0.1:5173/login>.
+The fresh template carries no Supabase, Cloudflare or Google resource identifiers. Local Supabase requires Docker or Podman. Hosted credentials are not needed for unit tests.
 
-`bun run dev` runs the server code in Node with the Worker's bindings emulated by
-the adapter from `wrangler.jsonc` — fast, with hot reload, but workerd is not
-involved. When you want the real runtime, build and use the other mode:
+## Develop and build
 
 ```bash
-bun run build          # -> apps/frontend/client/.svelte-kit/cloudflare/
-bun run check:bundle   # verify the artifact
-bun run dev:worker     # the compiled Worker in real workerd, on the same port
+bun run dev                 # SvelteKit with local emulated Worker bindings
+bun run build
+bun run check:bundle
+bun run dev:worker          # built Worker in real workerd
 ```
 
-The dev port comes from `apps/frontend/client/dev_ports.ts`, which reads `PORT` and
-defaults to 5173.
+## Test
 
-Nothing above needs a Cloudflare account. The local Worker runs against Wrangler's
-local D1.
+```bash
+bun run test                # credential free unit lane
+bun run test:browser        # Chromium
+bun run test:worker         # built Worker + local Supabase
+bun run e2e                 # real browser and Worker
+bun run test:all             # unit, browser, Worker and E2E once each
+bun run test:database       # Docker: Postgres, Auth, Data API/RLS, concurrency
+bun run test:compute        # Docker: finite Cloud Run runner and real FFmpeg
+```
+
+Missing runtime prerequisites fail with a named nonzero result. Hosted Supabase, Resend, Cloud Run and physical-device checks are separate live operations and are not certified by local tests.
+
+## Verify, smoke and evidence
+
+```bash
+bun run typecheck
+bun run lint
+bun run format
+bun run guard:whole-repo
+bun run workflows
+bun run db:types:check
+bun run smoke
+bun run smoke -- --without-heavy
+bun run evidence
+```
+
+The web-only smoke runs on a fresh copy after removing native and compute application examples. Current capability evidence is recorded in [docs/evidence/current.json](docs/evidence/current.json) and its table is generated in [docs/capability-matrix.md](docs/capability-matrix.md).
 
 ## Commands
 
-Every command runs from the repository root unless it says otherwise. AGENTS.md is
-the authority and the full list; these are the ones a first hour needs, and each one
-names what is missing rather than failing obscurely:
+Run the commands in this guide from the repository root unless a package directory is stated.
 
-| Command | What it does |
-|---|---|
-| `bun install` | Install from the committed lockfile. |
-| `bun run setup` | Check the toolchain and write `.env` from the example. |
-| `bun run setup:doctor` | Prove the browser prerequisites actually launch. |
-| `bun run update` | Offline preview of Nix + Bun + all workspace package updates. |
-| `bun run update --yes --verify` | Apply latest releases, reconcile pins, and run guards/lint/typecheck/unit tests. |
-| `bun run setup:doctor -- --profile compute` | What *one lane* needs here, and the exact remedy when it is missing. |
-| `bun run dev` | The app in Node with emulated bindings. `apps/frontend/client` has its own ports. |
-| `bun run dev:worker` | The **built** Worker in real workerd. Requires `bun run build` first. |
-| `bun run test:all` | The four test lanes, no duplicates. |
-| `bun run guard` | Eight whole-repository invariants. |
-| `bun run native:doctor` | What this host can build for the desktop client. |
-| `bun run deploy:check --env staging` | The offline deployment plan. No credential, no network. |
-| `bun run deploy:provision --env staging --yes` | Check the configured D1; provision optional private storage/fixture. Add `--install-secrets` explicitly. |
-| `bun run deploy:apply --env staging --yes` | schema → storage → image → jobs → web → verify → record. |
-| `bun run smoke -- --without-heavy` | Rehearse a downstream copy with the native app and the Rust processor deleted. |
-| `bun run evidence` | Check the capability matrix against the evidence manifest. |
-
-## One selective updater
-
-Borrowed from Aikami's DX, but integrated into this repository's existing dispatcher:
+## Deploy
 
 ```bash
-bun run update                              # preview; no writes or network
-bun run update --yes --verify                # Nix → Bun → all workspace packages
-bun run update --packages --yes              # packages only, including .pi
-bun run update --nix --yes                   # flake inputs only
-bun run update --bun --yes                   # Bun pin + verified runtime + lockfile
-bun run update --no-nix --yes                # Bun and packages
-bun run update --bun-version 1.4.2 --yes     # select a reviewed exact Bun release
+bun run deploy:check --env staging
+bun run deploy:preflight --env staging
+bun run deploy:provision --env staging --yes
+bun run deploy:apply --env staging --yes
+bun run deploy verify --env staging
 ```
 
-Selection is additive; without selectors all lanes run. Apply requires `--yes`.
-Package updates include majors and preserve exact pins. Bun is built with Nix from
-hash-verified release archives; config, CI mirrors and `.bun-version` move together.
-No global `bun upgrade` or unpinned `bunx` is used. Re-enter `nix develop`/reload
-direnv afterwards: a running shell cannot replace itself. Non-Nix hosts can use the
-package lane; the Nix/Bun lanes name their Nix prerequisite rather than pretending
-to upgrade a runtime. Agent extension dependencies in the `.pi` workspace are
-included; global Pi packages and externally installed skills are deliberately not.
-Review the diff and run browser/Worker/E2E lanes before committing an update.
+Planning is offline; preflight is read only; provisioning and apply are explicit. Keep the old live deployment until its replacement has been separately validated and authorized. This migration does not move existing users or data and does not delete hosted resources.
 
-For deployment, keep the local token in gitignored root `.env.deploy` (mode 600),
-not a global config directory or runtime secrets file. Follow
-[deployment.md](docs/deployment.md).
+## Architecture and operations
 
-## Tests
-
-Four lanes. Each is a separate command, and each is verified to fail when it should:
-
-```bash
-bun run test             # unit, every project
-bun run test:browser     # real Svelte in Chromium
-bun run test:worker      # build, then the built Worker in workerd + real D1
-bun run e2e              # built client + built Worker + real browser
-bun run test:all         # all four, no duplicates
-
-bun run typecheck
-bun run lint
-bun run guard            # whole-repository invariants
-```
-
-| Lane | Runs | Proves |
-|---|---|---|
-| Unit | Bun | Pure logic, schema refusals, flag parsing, deploy plans, state machines |
-| Browser | Chromium | Reactivity through the real Svelte compiler |
-| Worker | `wrangler dev` + D1 | Routing, auth, cross-user authorization, 404 shapes |
-| E2E | built client + built Worker + Chromium | The whole path, through a real build and one origin |
-
-The E2E lane runs the *built* Worker in real workerd, so it catches a bundling
-mistake, an Svelte SSR crash, and a dev-only success — none of which the unit or
-browser lane can see. It also earns its keep on things no other lane would notice:
-`assets.not_found_handling: "404-page"` answered a browser *navigation* with 404
-while the same URL answered 200 from `curl`, and only the browser specs noticed.
-See [docs/testing.md](docs/testing.md).
-
-`bun run e2e:visual` captures four screens to a local directory. Vision inspection
-reports as **SKIPPED** with a reason — never as a pass.
-
-Some lanes need a system prerequisite: `node` on PATH for anything starting
-`wrangler dev`, and Chromium's shared libraries for the browser lanes. Each command
-names what is missing rather than failing obscurely. See
-[docs/capability-matrix.md](docs/capability-matrix.md) for what is verified, what is
-fixture-verified, and what has not been run at all. Its current table is **generated**
-from [docs/evidence/current.json](docs/evidence/current.json): every row carries the
-revision, platform, command, count, timestamp and artifact it was observed on, and
-`bun run evidence` fails when the two files disagree. Hand-editing a count is not a
-documentation nit; it is a failing check.
-
-Two further lanes are separate because their prerequisites are separate, and each
-refuses with the exact remedy rather than failing obscurely:
-
-```bash
-bun run test:compute      # real Workflows + emulated D1/R2 + a real FFmpeg container. Needs Docker.
-bun run setup:doctor -- --profile native     # web + the Rust toolchain + WebKitGTK on Linux
-bun run setup:doctor -- --profile android    # + Android SDK, JDK, NDK
-bun run setup:doctor -- --profile ios        # macOS with the full Xcode; cannot pass elsewhere
-```
-
-Exit **3** from a profile means *this host cannot run that lane*. It is a different
-answer from a broken repository, and it is reported as one.
-
-## Architecture
-
-```
-apps/
-  frontend/client    ONE SvelteKit app — browser half and Worker half
-  frontend/native    a static SvelteKit app + Tauri shell; the same features, a
-                     bearer transport, an opt-in Stronghold vault
-  e2e                Playwright
-packages/
-  shared/            schemas, logger, utils — portable, no dependencies
-  frontend/          ui, platform, features — browser code
-  backend/           database, auth — server code
-scripts/             CLI: logs, db, deploy, guards, contract, setup
-.pi/                 agent settings, skills, prompts, the log tool
-```
-
-The dependency direction is one-way and enforced:
-
-```
-shared   →  (nothing)
-backend  →  shared
-frontend →  shared
-client   →  shared, frontend        (the browser half)
-           shared, backend           (src/lib/server/** and route adapters)
-```
-
-`apps/frontend/client/src` holds two runtimes. Everything under `src/lib/server/`,
-`hooks.server.ts`, and the `+server.ts` / `+page.server.ts` / `+layout.server.ts`
-adapters may import the database and auth packages. Everything else in the same
-directory — components, ViewModels, client services — may not. `bun run guard` and
-Biome both draw that line.
-
-`bun run guard` fails on the reverse. The linter enforces the same boundaries at
-the import level; the guards additionally cover what a linter cannot see.
-
-### Conventions
-
-- **A route page owns one thing**: constructing a ViewModel. Logic goes in a
-  ViewModel behind it.
-- **A ViewModel holds state**, a service performs I/O, a component formats.
-- **`status` is a tagged union** (`loading | ready | error`), never a boolean plus a
-  separate error field.
-- **Ownership is enforced in the query**, never after the fetch.
-- **A server load calls the service directly.** A `+page.server.ts` imports
-  `#lib/server/…`; it never fetches its own origin. There is one mutation path.
-- **One application contract.** Valibot schemas implement Standard Schema and are
-  validated identically by the browser and the Worker. `.pi/` keeps TypeBox because
-  Pi's tool registration API requires TypeBox schemas.
-- **No `as unknown as`, no `as any`.** If a cast is needed, the boundary is wrong.
-
-## Documentation
-
-Start at [AGENTS.md](AGENTS.md) for commands and navigation.
-
-| | |
-|---|---|
-| [AGENTS.md](AGENTS.md) | Commands, layout, and the conventions that matter |
-| [docs/README.md](docs/README.md) | Documentation index |
-| [docs/capability-matrix.md](docs/capability-matrix.md) | What is verified, fixture-verified, or **not run** |
-| [docs/first-round-review.md](docs/first-round-review.md) | Fixed and open findings |
-| [docs/architecture.md](docs/architecture.md) | The canonical decision record: exact versions, why the adapter and not the Vite plugin, runtime boundaries, route ownership |
-| [docs/adding-a-feature.md](docs/adding-a-feature.md) | Adding an entity, in the order that works |
-| [docs/testing.md](docs/testing.md) | The four lanes, and how each is verified |
-| [docs/logs.md](docs/logs.md) | `bun run logs`, and what each refusal means |
-| [docs/lint.md](docs/lint.md) | Biome, and the rules that are off and why |
-| [docs/toolchain.md](docs/toolchain.md) | Version pinning, and what Moon is for |
-| [docs/cloudflare.md](docs/cloudflare.md) | Workers, D1, credentials, the deployment-mode binding |
-| [docs/deployment.md](docs/deployment.md) | The one deployment path: the resolved target, the CI variable model, provisioning, secret installation, the ordered pipeline, migrations, concurrency, health, rollback and image retention |
-| [docs/compute.md](docs/compute.md) | What the compute example does and does not, when Cloud Run Jobs is the right answer instead, and when managed Stream replaces the container |
-| [docs/secrets.md](docs/secrets.md) | SOPS, what is not implemented, and what never goes in the repository |
-| [docs/agent.md](docs/agent.md) | The Pi setup, skills, and the log tool |
-| [docs/rename-checklist.md](docs/rename-checklist.md) | Everything to change to make this yours |
-
-## Before you publish
-
-Run through [docs/rename-checklist.md](docs/rename-checklist.md). The short version:
-
-```bash
-bun run deploy:configure -- --account <32-hex>
-bun run deploy:configure -- --env staging --worker <name>
-bun run deploy:configure -- --env staging --origin https://<host>
-bun run deploy:configure -- --env staging --mail-from no-reply@your-verified-domain
-bun run deploy:configure -- --env staging --provision
-
-bun run deploy:check --env staging     # the plan, offline. Reads nothing secret.
-bun run deploy preflight --env staging # the account, read-only. Needs a token.
-bun run deploy provision --env staging --yes
-bun run deploy apply --env staging --yes
-```
-
-For CI, put the **nonsecret** target map in a **repository** variable
-(`STARTER_DEPLOYMENT_TARGETS`) and keep every credential on the protected
-environment. The plan job deliberately has no environment, and therefore no secrets —
-and GitHub only exposes environment-scoped variables to a job that declares one.
-
-The template provisions nothing on purpose. A fresh clone reaches a working local
-state and refuses, clearly, to deploy anywhere. Deployment is manual and
-per-environment: see [docs/deployment.md](docs/deployment.md).
-
-## License
-
-MIT
+- [Architecture](docs/architecture.md)
+- [Authentication](docs/auth.md)
+- [Database](packages/backend/database/README.md)
+- [Cloudflare](docs/cloudflare.md)
+- [Optional compute](docs/compute.md)
+- [Deployment](docs/deployment.md)
+- [Testing](docs/testing.md)
+- [Native](docs/native.md)
+- [Toolchain](docs/toolchain.md)
+- [Documentation index](docs/README.md)

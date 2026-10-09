@@ -15,15 +15,6 @@
 // `--cache off` and every task re-runs.
 
 import { purgeMoonCache, resolveCacheMode, writeStamp } from '../ci/cache_scope.ts';
-import {
-  allocateSupabaseLocal,
-  hasSupabaseOwnership,
-  readSupabaseOwnership,
-  removeOwnedWorkerVars,
-  startSupabaseLocal,
-  stopSupabaseLocal,
-  writeOwnedWorkerVars,
-} from '../db/supabase_local.ts';
 import type { Command } from '../shared/command.ts';
 import { EXIT, fail, wantsHelp } from '../shared/command.ts';
 import { REPO_ROOT } from '../shared/paths.ts';
@@ -31,67 +22,27 @@ import { publicToolEnvironment } from '../shared/private_environment.ts';
 import { runBounded } from '../shared/run_bounded.ts';
 import { resolveWorkspaceBin } from '../shared/tools.ts';
 
-const USAGE = `cached [--backend legacy|supabase] [--] <moon targets...>
+const USAGE = `cached [--] <moon targets...>
 
 Runs Moon over the given targets with a cache mode chosen from the files Moon
-cannot see. --backend supabase owns a local Auth/Postgres stack for the mandatory
-Worker or E2E preview lane. Backend options are consumed here and never reach Moon.
+cannot see. Worker and E2E integration targets own a local Supabase stack.
 
   bun run scripts/src/cli.ts cached -- :test
   bun run scripts/src/cli.ts cached -- client:test-browser
   bun run scripts/src/cli.ts cached -- --affected :typecheck`;
 
 export interface CachedArguments {
-  backend: 'legacy' | 'supabase';
   targets: string[];
-  supabaseCompute: boolean;
+  integrationRuntime: boolean;
 }
 
 export const parseCachedArguments = (args: readonly string[]): CachedArguments => {
-  const remaining = [...args];
-  let backend: CachedArguments['backend'] = 'legacy';
-  let seen = false;
-  for (let index = 0; index < remaining.length; index += 1) {
-    if (remaining[index] !== '--backend') {
-      continue;
-    }
-    const value = remaining[index + 1];
-    if (seen || (value !== 'legacy' && value !== 'supabase')) {
-      throw new Error('--backend must appear once and be legacy or supabase.');
-    }
-    backend = value;
-    seen = true;
-    remaining.splice(index, 2);
-    index -= 1;
-  }
-  const separator = remaining.indexOf('--');
-  const targets = (separator === -1 ? remaining : remaining.slice(separator + 1)).filter(Boolean);
-  if (remaining.some((arg) => arg === '--backend')) {
-    throw new Error('--backend requires legacy or supabase.');
-  }
-  const computeTarget = targets[0] === 'jobs-worker:test-compute';
-  const previewIntegrationTarget = targets.some(
+  const separator = args.indexOf('--');
+  const targets = (separator === -1 ? args : args.slice(separator + 1)).filter(Boolean);
+  const integrationRuntime = targets.some(
     (target) => target === 'client:test-worker' || target === 'e2e:e2e',
   );
-  if (backend === 'supabase' && !previewIntegrationTarget && !computeTarget) {
-    throw new Error(
-      '--backend supabase requires client:test-worker or e2e:e2e; the preview integration is mandatory.',
-    );
-  }
-  if (computeTarget && backend === 'supabase') {
-    const processorArgs = targets.slice(1);
-    if (processorArgs.join(' ') !== '--processor cloud-run-local') {
-      throw new Error(
-        'Supabase compute requires `--processor cloud-run-local` and accepts no other lane options.',
-      );
-    }
-    return {
-      backend,
-      targets: ['jobs-worker:test-compute', '--', '--backend', 'supabase', ...processorArgs],
-      supabaseCompute: true,
-    };
-  }
-  return { backend, targets, supabaseCompute: false };
+  return { targets, integrationRuntime };
 };
 
 const run = async (args: readonly string[]): Promise<number> => {
@@ -106,7 +57,7 @@ const run = async (args: readonly string[]): Promise<number> => {
   } catch (error) {
     return fail(`${String(error)}\n\n${USAGE}`, EXIT.usage);
   }
-  const { targets, backend, supabaseCompute } = parsed;
+  const { targets, integrationRuntime } = parsed;
   if (targets.length === 0) {
     return fail(USAGE, EXIT.usage);
   }
@@ -121,14 +72,13 @@ const run = async (args: readonly string[]): Promise<number> => {
   }
 
   const resolvedScope = resolveCacheMode();
-  const scope =
-    backend === 'supabase' && !supabaseCompute
-      ? {
-          ...resolvedScope,
-          mode: 'off' as const,
-          reason: 'Supabase integration targets are mandatory and uncached.',
-        }
-      : resolvedScope;
+  const scope = integrationRuntime
+    ? {
+        ...resolvedScope,
+        mode: 'off' as const,
+        reason: 'Supabase integration targets own their runtime and are always uncached.',
+      }
+    : resolvedScope;
 
   // A changed fingerprint means Moon holds entries computed against a tree that no
   // longer exists. `--cache off` for this run does not remove them, so the *next*
@@ -179,70 +129,7 @@ const run = async (args: readonly string[]): Promise<number> => {
     });
     return result.code;
   };
-  if (backend === 'legacy') {
-    return invoke(publicToolEnvironment(process.env));
-  }
-
-  // The Cloud Run local lane uses its own authenticated metadata/grant fixtures;
-  // it deliberately does not start a second local Supabase stack.
-  if (supabaseCompute) {
-    return invoke(publicToolEnvironment(process.env));
-  }
-
-  const allocation = allocateSupabaseLocal(
-    REPO_ROOT,
-    `web_${process.pid}_${crypto.randomUUID().slice(0, 8)}`,
-  );
-  let exitCode: number = EXIT.failed;
-  let ownedEnvFile: { path: string; contents: string } | undefined;
-  try {
-    const supabaseEnv = await startSupabaseLocal(allocation, {
-      emailConfirmations: targets.includes('e2e:e2e'),
-      jwtExpirySeconds: targets.includes('client:test-worker') ? 2 : 3600,
-    });
-    const workerVars: Record<string, string> = {
-      ...supabaseEnv,
-      STARTER_BACKEND_PROFILE: 'supabase',
-    };
-    const varsFile = await writeOwnedWorkerVars(allocation, workerVars);
-    workerVars.STARTER_DEV_VARS_PATH = varsFile.path;
-    ownedEnvFile = varsFile;
-    const childEnvironment = {
-      ...publicToolEnvironment(process.env),
-      ...Object.fromEntries(
-        Object.entries(workerVars).filter(([key]) => key !== 'SUPABASE_SERVICE_ROLE_KEY'),
-      ),
-    };
-    exitCode = await invoke(childEnvironment);
-  } catch (error) {
-    return fail(
-      `Supabase preview setup failed: ${error instanceof Error ? error.message : String(error)}`,
-      EXIT.unavailable,
-    );
-  } finally {
-    if (ownedEnvFile !== undefined) {
-      try {
-        await removeOwnedWorkerVars(ownedEnvFile.path, ownedEnvFile.contents);
-      } catch {
-        process.stderr.write(
-          'Supabase preview could not remove its unchanged run-owned environment file.\n',
-        );
-        exitCode = EXIT.failed;
-      }
-    }
-    try {
-      if (await hasSupabaseOwnership(allocation)) {
-        const owned = await readSupabaseOwnership(allocation);
-        await stopSupabaseLocal(allocation, owned);
-      }
-    } catch (error) {
-      process.stderr.write(
-        `Owned Supabase preview teardown failed: ${error instanceof Error ? error.message : String(error)}\n`,
-      );
-      exitCode = EXIT.failed;
-    }
-  }
-  return exitCode;
+  return invoke(publicToolEnvironment(process.env));
 };
 
 export const cachedCommand: Command = {

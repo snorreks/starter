@@ -7,9 +7,8 @@
 //!    that is concatenated into a command line, so a fixture whose container
 //!    metadata contains `; rm -rf /` is a filename and nothing more.
 //! 2. **A preset is data.** The accepted configuration is a `const`, so the
-//!    same value produces the same document in `/health`, the same argv, and the
-//!    same golden fixture. Nothing reads it from a file, a request body or an
-//!    environment variable at request time.
+//!    same value produces the same argv and golden fixture. Nothing reads it
+//!    from a file or an environment variable at runtime.
 //!
 //! Determinism: `bitexact` flags remove encoder version strings and run metadata
 //! so the same input produces the same bytes on the same FFmpeg build. That is
@@ -23,7 +22,7 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use crate::error::{ErrorCode, ProcessorError, Result};
-use crate::protocol::{PresetSummary, MAX_ENCODE_THREADS, PRESET_ID};
+use crate::protocol::{MAX_ENCODE_THREADS, PRESET_ID};
 
 /// A complete, immutable encode configuration.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -90,8 +89,7 @@ pub const PRESETS: &[Preset] = &[DEMO_180P_V1];
 /// Resolve a preset id, or refuse it.
 ///
 /// The comparison is exact: no case folding, no trimming, no prefix matching. An
-/// unknown id is a terminal error, because a caller that reached the wrong
-/// process should hear about it rather than be served a default.
+/// unknown id is a terminal error, because an unsupported preset must be named explicitly.
 pub fn lookup(id: &str) -> Result<&'static Preset> {
     PRESETS
         .iter()
@@ -103,19 +101,6 @@ pub fn lookup(id: &str) -> Result<&'static Preset> {
 }
 
 impl Preset {
-    /// The document a caller sees in `/health`.
-    pub fn summary(&self) -> PresetSummary {
-        PresetSummary {
-            id: self.id.to_string(),
-            width: self.width,
-            height: self.height,
-            fps: self.fps,
-            video_codec: self.video_codec.to_string(),
-            audio_codec: self.audio_codec.map(str::to_string),
-            container: self.container.to_string(),
-        }
-    }
-
     /// FFmpeg arguments for one encode. Returns owned values so non-UTF-8 paths
     /// are passed through untouched instead of being lossy-converted.
     ///

@@ -4,13 +4,19 @@ ARG RUNTIME_IMAGE=docker.io/library/debian@sha256:3783cc01769c7b2b1b83a5c5ad96c8
 
 FROM ${RUST_IMAGE} AS build
 WORKDIR /src
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      ffmpeg=7:5.1.9-0+deb12u1 \
+    && rm -rf /var/lib/apt/lists/*
 COPY Cargo.toml Cargo.lock rust-toolchain.toml ./
 RUN mkdir -p src && printf 'fn main() {}\n' > src/main.rs && printf '\n' > src/lib.rs \
     && cargo build --release --locked && rm -rf src
 COPY src ./src
+COPY tests ./tests
+COPY fixtures ./fixtures
 ARG BUILD_GIT_REVISION=""
 ENV BUILD_GIT_REVISION=${BUILD_GIT_REVISION}
-RUN touch src/*.rs && cargo build --release --locked --offline \
+RUN touch src/*.rs && cargo test --locked --offline \
+    && cargo build --release --locked --offline \
     && cp target/release/starter-media /usr/local/bin/starter-media \
     && strip /usr/local/bin/starter-media \
     && test -n "$(/usr/local/bin/starter-media --version)"

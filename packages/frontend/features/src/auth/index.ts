@@ -30,11 +30,3 @@ export {
   AuthViewModel,
   type AuthViewModelOptions,
 } from './auth_view_model.svelte.ts';
-export {
-  createDeviceAuthorizationService,
-  type DeviceAuthorizationEvent,
-  type DeviceAuthorizationOutcome,
-  type DeviceAuthorizationService,
-  type DeviceAuthorizationServiceOptions,
-  type Sleeper,
-} from './device_authorization_service.ts';

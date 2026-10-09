@@ -1,6 +1,6 @@
 // apps/e2e/tests/notes.spec.ts
 //
-// The full path, through the built Worker, in a real browser, against real D1.
+// The full path, through the built Worker, in a real browser, against Supabase Postgres.
 //
 // One test file on purpose. These tests share one local database and one set of
 // seeded users, and they run in declaration order (`workers: 1`), so the file
@@ -23,8 +23,6 @@
 // makes the "a deep link renders" assertion in this file mean something.
 
 import { expect, type Page, test } from '@playwright/test';
-
-const SUPABASE_PREVIEW = process.env.STARTER_BACKEND_PROFILE === 'supabase';
 
 /**
  * A fresh account.
@@ -65,10 +63,6 @@ const verificationLink = async (page: Page, email: string): Promise<string> => {
   if (line === undefined) {
     throw new Error('No link in the verification mail');
   }
-  if (!SUPABASE_PREVIEW) {
-    return line.trim();
-  }
-
   // GoTrue's browser callback cannot resolve its loopback Auth host in Chromium.
   // Redeem only the verification request in Node's request context, then let the
   // browser navigate the real application callback and receive its session cookie.
@@ -88,8 +82,7 @@ const verificationLink = async (page: Page, email: string): Promise<string> => {
 /**
  * Sign up, confirm the address, then sign in — and land on the notes screen.
  *
- * Supabase exchanges its confirmation code at the application callback; legacy
- * Better Auth confirms the address, then requires a separate sign-in.
+ * Supabase exchanges its confirmation code at the application callback.
  */
 const signUp = async (page: Page, account = newAccount()): Promise<void> => {
   await page.goto('/login');
@@ -110,14 +103,7 @@ const signUp = async (page: Page, account = newAccount()): Promise<void> => {
 
   await page.goto(await verificationLink(page, account.email));
   await expect(page).toHaveURL(/\/verify-email/);
-  if (SUPABASE_PREVIEW) {
-    await expect(page.getByTestId('current-user')).toHaveText(account.email);
-  } else {
-    await page.goto('/login');
-    await page.getByTestId('auth-email-input').fill(account.email);
-    await page.getByTestId('auth-password-input').fill(account.password);
-    await page.getByTestId('auth-submit').click();
-  }
+  await expect(page.getByTestId('current-user')).toHaveText(account.email);
   await page.goto('/notes');
 };
 

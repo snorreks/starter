@@ -1,6 +1,6 @@
 // scripts/src/commands/db.ts
 //
-// Thin adapter over the D1 domain modules. `db` owns the subcommand word so the
+// Thin adapter over the Postgres domain modules. `db` owns the subcommand word so the
 // three entrypoints are one command with three actions rather than three commands
 // with overlapping names.
 
@@ -20,7 +20,7 @@ const USAGE = [
 
 export const dbCommand: Command = {
   name: 'db',
-  summary: 'D1 migrations, status and seed',
+  summary: 'Postgres migrations, status and seed',
   usage: USAGE,
 
   run(argv) {
