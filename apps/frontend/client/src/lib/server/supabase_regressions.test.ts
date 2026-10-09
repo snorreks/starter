@@ -292,11 +292,10 @@ const jobsFixture = () => {
   const event = {
     locals: {
       user,
-      container: { jobsProfile: 'encode' },
+      container: { jobsProfile: 'encode', env: { MEDIA: bucket } },
       applicationServices: { identity: { user }, jobs },
     },
     params: { id: 'job' },
-    platform: { MEDIA: bucket },
     request: new Request('http://localhost/api/jobs/job/output'),
   };
   return { jobs, bucket, event };

@@ -27,6 +27,25 @@ export interface DispatchPort {
   find(jobId: string, attemptId: string): Promise<{ execution: string; state: string } | null>;
 }
 
+interface CloudRunExecution {
+  name?: unknown;
+  conditions?: Array<{ type?: unknown; state?: unknown; executionReason?: unknown }>;
+  template?: { containers?: Array<{ args?: string[] }> };
+}
+
+const executionState = (execution: CloudRunExecution): string => {
+  const completed = Array.isArray(execution.conditions)
+    ? execution.conditions.find((condition) => condition?.type === 'Completed')
+    : undefined;
+  if (completed?.state === 'CONDITION_SUCCEEDED') {
+    return 'SUCCEEDED';
+  }
+  if (completed?.state === 'CONDITION_FAILED') {
+    return completed.executionReason === 'CANCELLED' ? 'CANCELLED' : 'FAILED';
+  }
+  return 'PENDING';
+};
+
 /** An ambiguous POST is reconciled by deterministic execution identity before retrying. */
 export const createCloudRunDispatch = (options: {
   project: string;
@@ -45,7 +64,8 @@ export const createCloudRunDispatch = (options: {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), deadlineMs);
     try {
-      return await fetcher(url, { ...init, signal: controller.signal, redirect: 'error' });
+      // Each caller rejects non-2xx; manual prevents redirecting bearer credentials in workerd.
+      return await fetcher(url, { ...init, signal: controller.signal, redirect: 'manual' });
     } finally {
       clearTimeout(timer);
     }
@@ -53,7 +73,7 @@ export const createCloudRunDispatch = (options: {
   const find = async (jobId: string, attemptId: string) => {
     reconcileExecutionName(jobId, attemptId);
     const token = await options.token();
-    const matching: Array<{ name?: unknown; state?: unknown }> = [];
+    const matching: CloudRunExecution[] = [];
     let pageToken: string | undefined;
     for (let page = 0; page < 10; page += 1) {
       const query = new URLSearchParams({ pageSize: '100' });
@@ -68,11 +88,7 @@ export const createCloudRunDispatch = (options: {
       }
       const body: unknown = await response.json();
       const document = body as {
-        executions?: Array<{
-          name?: unknown;
-          state?: unknown;
-          template?: { containers?: Array<{ args?: string[] }> };
-        }>;
+        executions?: CloudRunExecution[];
         nextPageToken?: unknown;
       };
       if (!Array.isArray(document.executions)) {
@@ -97,7 +113,7 @@ export const createCloudRunDispatch = (options: {
     }
     const row = matching[0];
     return row && typeof row.name === 'string' && row.name.startsWith(`${resourceBase}/executions/`)
-      ? { execution: row.name, state: typeof row.state === 'string' ? row.state : 'PENDING' }
+      ? { execution: row.name, state: executionState(row) }
       : null;
   };
 

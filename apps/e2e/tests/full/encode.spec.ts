@@ -28,6 +28,18 @@ test('a verified owner encodes real fixture bytes and can replay, range-read and
   const created = (await admission?.json()) as { id: string };
   expect(created.id).toBeTruthy();
 
+  const grantsUrl = `${appBaseUrl}/api/internal/jobs/${created.id}/grants`;
+  const forgedIdentity = await page.request.post(grantsUrl, {
+    data: {
+      attemptId: 'attempt_forged',
+      executionName: 'projects/e2e-fixture/locations/local/jobs/runner/executions/forged',
+    },
+    headers: { authorization: 'Bearer forged-google-identity', origin: appBaseUrl },
+  });
+  expect(forgedIdentity.status()).toBe(401);
+  const forgedGrant = await page.request.get(`${grantsUrl}?object=input&grant=forged`);
+  expect(forgedGrant.status()).toBe(403);
+
   const row = page.locator(`[data-testid="job-row"][data-job-id="${created.id}"]`);
   await expect(row).toHaveAttribute('data-status', 'succeeded', { timeout: 120_000 });
   await page.reload();
@@ -65,9 +77,6 @@ test('a verified owner encodes real fixture bytes and can replay, range-read and
   expect(Number(outputResponse.headers()['x-output-duration-ms'])).toBeGreaterThanOrEqual(1_000);
   expect(Number(outputResponse.headers()['x-output-duration-ms'])).toBeLessThanOrEqual(60_000);
 
-  const container = `starter-e2e-${process.env.E2E_RUN_ID}`
-    .toLowerCase()
-    .replace(/[^a-z0-9_.-]/g, '-');
   const scratch = await mkdtemp(join(tmpdir(), 'starter-e2e-output-'));
   let probeResult: {
     format?: { duration?: string };
@@ -76,27 +85,25 @@ test('a verified owner encodes real fixture bytes and can replay, range-read and
   try {
     const localOutput = join(scratch, 'output.mp4');
     await writeFile(localOutput, output, { flag: 'wx', mode: 0o600 });
-    const copy = await runBounded({
-      command: process.env.DOCKER ?? 'docker',
-      args: ['cp', localOutput, `${container}:/tmp/e2e-output.mp4`],
-      cwd: process.cwd(),
-      timeoutMs: 30_000,
-      maxBytes: 128_000,
-    });
-    expect(copy.code, copy.stderr).toBe(0);
     const probe = await runBounded({
       command: process.env.DOCKER ?? 'docker',
       args: [
-        'exec',
-        container,
+        'run',
+        '--rm',
+        '--user',
+        '0',
+        '--mount',
+        `type=bind,src=${scratch},dst=/probe,readonly`,
+        '--entrypoint',
         'ffprobe',
+        'starter-cloud-run-job:local',
         '-v',
         'error',
         '-show_entries',
         'format=duration:stream=codec_name,width,height',
         '-of',
         'json',
-        '/tmp/e2e-output.mp4',
+        '/probe/output.mp4',
       ],
       cwd: process.cwd(),
       timeoutMs: 30_000,

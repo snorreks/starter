@@ -85,7 +85,8 @@ const run = async () => {
         const body = JSON.parse((await readBody(request, 1024)).toString());
         if (
           body.attemptId !== 'attempt_fixture' ||
-          body.executionName !== 'projects/local/locations/local/jobs/runner/executions/run-fixture'
+          body.executionName !==
+            'projects/local/locations/local/jobs/runner/executions/runner-fixture'
         ) {
           response.writeHead(409);
           response.end();
@@ -192,7 +193,11 @@ const run = async () => {
         '-e',
         `STARTER_METADATA_URL=http://host.docker.internal:${port}/metadata`,
         '-e',
-        'CLOUD_RUN_EXECUTION=projects/local/locations/local/jobs/runner/executions/run-fixture',
+        'STARTER_CLOUD_RUN_JOB_RESOURCE=projects/local/locations/local/jobs/runner',
+        '-e',
+        'CLOUD_RUN_JOB=runner',
+        '-e',
+        'CLOUD_RUN_EXECUTION=runner-fixture',
         image,
         'job_fixture',
         'attempt_fixture',

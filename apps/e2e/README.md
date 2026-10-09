@@ -17,7 +17,7 @@ bun run e2e:visual -- --update-snapshots  # explicit local baseline update
 bun run e2e:visual:review -- --run <run-id> # optional structured vision review
 bun run e2e:visual:review -- --capture     # capture and review using .env.e2e
 bun run e2e:audit                   # three Lighthouse samples per public target/viewport
-bun run e2e:full                    # built client + local Supabase; compute disabled
+bun run e2e:full                    # browser + built Workers/Workflows + Supabase/R2 + finite FFmpeg
 bun run e2e:doctor                  # Chromium, Node/Lighthouse and Docker checks
 bun run test:compute                # Docker compute lane; the real-encode proof
 ```
@@ -43,16 +43,22 @@ not run; the HTTP adapter is covered with a local fixture. Review output and its
 content-addressed cache remain local. System One scoring and design-reference
 comparison are not implemented yet.
 
-`e2e:full` provisions an isolated local Supabase stack, builds only the client,
-and serves its built web Worker in Miniflare using the committed Wrangler
-configuration. The runtime reports that compute is disabled. The existing full
-encode spec still expects enabled jobs and a media container, so this command
-cannot currently pass that spec or provide real-encode evidence.
+`e2e:full` provisions an isolated local Supabase stack, builds the web and jobs
+Workers, and binds real Miniflare Workflows and R2 to both. A test-only outbound
+service fixtures Google's OAuth, JWKS and Cloud Run API boundary. Each accepted
+execution runs `Dockerfile.job` to completion: no terminal success is returned
+without a zero-exit finite runner. The built web Worker verifies the signed runner
+identity, active Postgres attempt, scoped object grants and uploaded artifact;
+the Workflow independently validates R2 metadata before its fenced Postgres commit.
+The Docker transport proxy translates loopback grant URLs to `host.docker.internal`
+without changing signed tokens or the application-origin JWT audience.
 
-`bun run test:compute` is the only real-encode proof: the Docker compute lane
-builds `Dockerfile.job` and runs the finite media runner against local protocol
-fixtures. It requires a running Docker-compatible engine and image build access.
-Local tests do not prove Cloud Run's managed lifecycle or Cloudflare cron delivery.
+The full browser spec checks admission, success, idempotent replay, range reads,
+owner download and nonowner/anonymous denial. A separate finite FFprobe invocation
+checks the downloaded bytes' codec, dimensions and duration. It requires a running
+Docker-compatible engine and image build access. `bun run test:compute` also runs
+the finite media runner against local protocol fixtures. Neither lane proves
+Google IAM, Cloud Run's managed lifecycle or Cloudflare cron delivery.
 
 Lighthouse runs only public durable routes represented in the scenario manifest
 (`web-landing` and `web-login` currently), on desktop and mobile, with three

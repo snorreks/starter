@@ -1,4 +1,4 @@
-import type { Page } from '@playwright/test';
+import { expect, type Page } from '@playwright/test';
 import { UI_SCENARIOS } from '@starter/fixtures';
 import { appBaseUrl } from '../../preflight.ts';
 
@@ -15,7 +15,7 @@ const capturedLink = async (page: Page, email: string, subject: RegExp): Promise
   const body = (await response.json()) as {
     messages: Array<{ subject: string; text: string }>;
   };
-  const message = body.messages.find((item) => subject.test(item.subject));
+  const message = body.messages.find((item) => subject.test(`${item.subject} ${item.text}`));
   const link = message?.text.split('\n').find((line) => line.startsWith('http'));
   if (link === undefined) {
     throw new Error(`No ${subject} message with a link was captured for ${email}.`);
@@ -33,12 +33,28 @@ export const createVerifiedAccount = async (page: Page): Promise<{ email: string
   if (!created.ok()) {
     throw new Error(`Sign-up failed: ${created.status()} ${await created.text()}`);
   }
-  const createdBody = (await created.json()) as { token?: string | null };
-  if (createdBody.token !== null) {
-    throw new Error('A new unverified account unexpectedly received an authenticated session.');
-  }
+  expect(await created.json()).toMatchObject({ session: null, user: { emailVerified: false } });
+  const anonymous = await page.request.get(`${appBaseUrl}/api/auth/get-session`);
+  expect(await anonymous.json()).toEqual({ user: null });
 
-  await page.goto(await capturedLink(page, email, /verify/i));
+  const link = await capturedLink(page, email, /verify|confirm|sign.?up/i);
+  const redemption = await page.request.get(link, { maxRedirects: 0 });
+  expect(redemption.status()).toBe(303);
+  const location = redemption.headers().location;
+  expect(location).toBeDefined();
+  const callback = new URL(location ?? '', link);
+  await page.goto(
+    new URL(`${callback.pathname}${callback.search}${callback.hash}`, appBaseUrl).href,
+  );
+  await expect(page).toHaveURL(/\/verify-email/);
+  await expect(page.getByTestId('current-user')).toHaveText(email);
+  const verified = await page.request.get(`${appBaseUrl}/api/auth/get-session`);
+  expect(await verified.json()).toMatchObject({ user: { email, emailVerified: true } });
+  const logout = await page.request.post(`${appBaseUrl}/api/auth/sign-out`, {
+    data: {},
+    headers: ORIGIN,
+  });
+  expect(logout.ok()).toBe(true);
   await page.goto('/login');
   await page.getByTestId('auth-email-input').fill(email);
   await page.getByTestId('auth-password-input').fill(PASSWORD);
