@@ -18,6 +18,7 @@ import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { installHooks } from '../hooks/install.ts';
 import { resolveBrowser } from '../shared/browser_path.ts';
 import { CLIENT_DIR, REPO_ROOT } from '../shared/paths.ts';
 import { playwrightBin } from '../shared/tools.ts';
@@ -183,8 +184,22 @@ export const performSetup = (options: { force?: boolean; quiet?: boolean } = {})
     readFileSync(stampPath, 'utf8').trim() === current &&
     cachesStillExist();
 
+  // Hooks must be checked on warm setup too: Git configuration is not part of
+  // the readiness fingerprint, and core.hooksPath belongs to each worktree.
+  if (report.ok) {
+    try {
+      if (installHooks(REPO_ROOT)) {
+        performed.push('pre-commit hook installed');
+      }
+    } catch (error) {
+      const warning = `Pre-commit hook not installed: ${error instanceof Error ? error.message : String(error)}`;
+      performed.push(warning);
+      log(`  Warning: ${warning}`);
+    }
+  }
+
   if (cached) {
-    return { cached: true, created: [], performed: [], report };
+    return { cached: true, created: [], performed, report };
   }
 
   // A required capability missing means setup cannot complete. Say which, and stop
@@ -295,13 +310,28 @@ export const renderReport = (report: Report): string =>
 export const runSetup = (args: readonly string[] = []): number => {
   const force = args.includes('--force');
   const quiet = args.includes('--quiet');
-  const outcome = performSetup({ force, quiet });
+  let outcome: SetupOutcome;
+  try {
+    outcome = performSetup({ force, quiet });
+  } catch (error) {
+    process.stderr.write(
+      `Setup failed: ${error instanceof Error ? error.message : String(error)}\n`,
+    );
+    return 1;
+  }
 
   if (outcome.cached) {
     if (!quiet) {
       process.stdout.write('Toolchain\n');
       process.stdout.write(`${renderReport(outcome.report)}\n`);
-      process.stdout.write('\nSetup\n  ok    already prepared (nothing to do)\n');
+      process.stdout.write('\nSetup\n');
+      if (outcome.performed.length === 0) {
+        process.stdout.write('  ok    already prepared (nothing to do)\n');
+      } else {
+        for (const step of outcome.performed) {
+          process.stdout.write(`  ran   ${step}\n`);
+        }
+      }
     }
     return outcome.report.ok ? 0 : 1;
   }

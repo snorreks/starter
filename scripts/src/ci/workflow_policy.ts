@@ -225,6 +225,26 @@ export const auditWorkflow = (name: string, source: string): Finding[] => {
       );
     }
 
+    // A completion reporter has write authority. Its checkout must be the
+    // workflow's trusted revision, never the revision from the triggering PR.
+    if (triggersOf(doc).has('workflow_run')) {
+      const steps = Array.isArray(job.steps) ? job.steps : [];
+      for (const step of steps) {
+        if (typeof step?.uses !== 'string' || !step.uses.startsWith('actions/checkout@')) {
+          continue;
+        }
+        if (
+          step.with?.ref !== `\${{ github.workflow_sha }}` ||
+          step.with?.repository !== undefined
+        ) {
+          add(
+            `trusted-workflow-run-checkout:${id}`,
+            'workflow_run checkout must use github.workflow_sha in this repository, never triggering PR code',
+          );
+        }
+      }
+    }
+
     const labels = runLabels(job);
     if (labels.some((label) => /self-hosted/.test(label))) {
       // A self-hosted runner executes pull-request code on a machine that is

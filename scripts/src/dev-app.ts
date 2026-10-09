@@ -9,7 +9,7 @@
 // which ran `wrangler dev` for a separate API Worker while a Vite dev server
 // served the pages and proxied `/api` to it. Both halves are now one SvelteKit
 // server: `vite dev` serves the pages, the assets and `/api/*` from a single
-// origin, and the adapter emulates the Worker's bindings (D1 included) from
+// origin, and the adapter emulates the Worker's bindings from
 // `apps/frontend/client/wrangler.jsonc`.
 //
 // **Why there are still two modes.** The dev server runs the server code in Node,
@@ -34,7 +34,7 @@
 //     Playwright's `webServer` among them — needs to know the server died rather
 //     than reporting success.
 //   * **Signals are forwarded.** Ctrl-C reaches the child, which is what lets
-//     workerd flush D1 writes instead of losing them.
+//     workerd finish its request lifecycle instead of losing pending writes.
 //
 // Log capture is unchanged in shape: the child's output interleaves banners with
 // the log stream, so it is recorded as-is and the log reader skips non-JSON lines.

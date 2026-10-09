@@ -23,8 +23,8 @@
   },
   "dependencies": {
     "@starter/schemas": "workspace:*",
-    "@supabase/supabase-js": "2.117.2",
-    "postgres": "3.4.7"
+    "@supabase/supabase-js": "2.117.3",
+    "postgres": "3.4.9"
   },
   "devDependencies": {
     "supabase": "2.120.0"

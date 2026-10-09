@@ -95,6 +95,10 @@ projects:
 vcs:
   # `manager` was renamed to `client` in Moon 2.x.
   client: 'git'
+  # Setup installs the committed hook with a worktree-specific relative
+  # `core.hooksPath`. Moon hook sync is disabled because its generated script would
+  # replace the repo-managed, portable hook.
+  sync: false
   # `origin/main`, not `main`. A pull-request checkout is a detached HEAD: it has
   # no local `main`, so every job died with
   #   fatal: ambiguous argument 'main': unknown revision or path not in the working tree

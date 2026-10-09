@@ -243,6 +243,11 @@ never as a state transition; every status line for a running job says so outrigh
 
 State lives in `.pi/background-tasks/` (gitignored, with a `README.md` kept), so a
 session that dies mid-build leaves a record rather than an orphan process.
+The selected project `dev_process` owner reports completion through its durable
+job status and logs; it does not trigger a captain follow-up turn. When work must
+continue after a process wait, the active captain checks the job and proceeds, or
+writes a handoff before session shutdown. This behavior is independent of the
+global quota auto-continue feature.
 
 Three details that are load-bearing:
 

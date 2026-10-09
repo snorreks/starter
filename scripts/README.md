@@ -34,13 +34,15 @@ a lockfile pinned at 4.142.0 ends up running 4.144.0.
 Run from the repository root (the root scripts delegate here).
 
 ```bash
-bun run setup && bun run setup:doctor     # install prerequisites, prove the browser launches
+bun run setup && bun run setup:doctor     # prepare this checkout and install its relative Git hook
 bun run setup:doctor -- --profile compute # what one lane needs here, and the remedy when it is missing
 bun run dev | dev:worker                  # run the app
 bun run test | test:browser | test:worker | e2e
 bun run typecheck | lint | format | fix
 bun run guard | guard:whole-repo          # repository invariants
 bun run workflows                        # CI workflow policy
+bun run pre-commit                       # run the local staged-change gate
+bun run hooks:install                    # explicitly install it for this checkout
 bun run db:generate | db:migrate | db:status | db:seed
 bun run deploy:status | deploy:check | deploy:preflight | deploy:provision | deploy:apply | deploy verify
 bun run deploy:apply -- --only jobs      # a subset of the pipeline, in dependency order

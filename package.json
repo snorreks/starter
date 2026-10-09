@@ -88,11 +88,13 @@
     "test:browser": "bun run scripts/src/cli.ts cached -- client:test-browser",
     "test:browser-launch": "bun run scripts/src/cli.ts cached -- scripts:test-browser-launch",
     "test:e2e": "bun run scripts/src/cli.ts cached -- e2e:e2e",
-    "test:all": "bun run test && bun run test:browser && bun run test:worker && bun run test:e2e"
+    "test:all": "bun run test && bun run test:browser && bun run test:worker && bun run test:e2e",
+    "pre-commit": "bun run scripts/src/hooks/pre_commit.ts",
+    "hooks:install": "bun run scripts/src/hooks/install.ts"
   },
   "devDependencies": {
     "@biomejs/biome": "2.5.14",
-    "@moonrepo/cli": "2.6.0",
+    "@moonrepo/cli": "2.6.1",
     "@types/bun": "1.4.2",
     "@typescript/native-preview": "7.0.0-dev.20260707.2",
     "typescript": "6.0.3"

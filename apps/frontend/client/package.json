@@ -40,25 +40,25 @@
     "@starter/utils": "workspace:*",
     "@supabase/ssr": "0.12.7",
     "better-auth": "1.7.7",
-    "drizzle-orm": "0.45.3",
+    "drizzle-orm": "0.45.4",
     "jose": "6.2.12",
     "valibot": "1.5.0"
   },
   "devDependencies": {
-    "@cloudflare/workers-types": "5.20261006.1",
+    "@cloudflare/workers-types": "5.20261009.1",
     "@sveltejs/adapter-cloudflare": "8.0.0",
     "@sveltejs/kit": "3.0.1",
     "@sveltejs/vite-plugin-svelte": "7.3.1",
     "@tailwindcss/vite": "4.3.3",
     "@vitest/browser": "5.0.3",
     "@vitest/browser-playwright": "5.0.3",
-    "playwright": "1.63.0",
+    "playwright": "1.64.0",
     "svelte": "5.57.2",
     "svelte-check": "4.7.6",
     "tailwindcss": "4.3.3",
     "typescript": "6.0.3",
-    "vite": "8.3.3",
+    "vite": "8.3.4",
     "vitest": "5.0.3",
-    "wrangler": "4.148.0"
+    "wrangler": "4.149.0"
   }
 }

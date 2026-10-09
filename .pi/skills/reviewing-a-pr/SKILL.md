@@ -5,9 +5,12 @@ description: Use when asked to review a pull request, address review comments, o
 
 # Reviewing a pull request
 
-Use `gh` directly. It is installed, authenticated, and its output is the
-authority on what a PR actually says — a wrapper tool that caches or reshapes
-that data is a second thing to keep correct.
+Before concluding a GitHub or review capability is unavailable, search deferred
+tools with `tool_search` (query `code_rabbit` and `gh_pr`) and use `/helpers` to
+check which registered owner and exposure this session selected. These tools stay
+deferred to keep their schemas out of every turn; subagents are directly available
+in the captain session. Then use `gh` for independent, complete paginated evidence
+and exact-head decisions. A helper result does not replace that evidence.
 
 ## Never do these
 
@@ -57,6 +60,16 @@ For a failing check, read the log rather than guessing:
 ```bash
 gh run view <run-id-from-the-failed-check-link> --log-failed
 ```
+
+After any bounded CodeRabbit wait, continue in this captain turn and re-read the
+PR head, cooldown, current-head review state, and check snapshot. A new comment is
+not a completed review or approval. A non-main-base skip is an eligibility result,
+not a quota timer. Allow one retry after an initially rate-limited review request;
+do not request another completed review for every patched head.
+If the wait times out or is cancelled, or this session must reload or shut down,
+write a durable handoff with the PR, observed head, wait outcome, and last evidence.
+On resume, discard that evidence as a claim and re-read the current head, review,
+cooldown, and checks before continuing.
 
 ## 3. Read every review thread — including the later pages
 

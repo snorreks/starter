@@ -43,3 +43,30 @@ bun run evidence
 ```
 
 Fresh-template smoke starts from copied source with no credentials. The web-only variant removes native and compute application examples and reruns task discovery and required checks. `docs/evidence/current.json` records command, revision, timestamp, discovered count and artifact; the capability table is derived from it. Previous evidence stays dated. Hosted Supabase, Resend, Cloud Run and physical-device observations remain NOT RUN without their actual prerequisites.
+
+## Local commit checks and CI feedback
+
+`bun run setup` installs `.moon/hooks/pre-commit` by setting a worktree-specific
+`core.hooksPath=.moon/hooks`. Git resolves that relative path in the active checkout,
+so each Herdr linked worktree executes its own revision's hook. Existing worktrees
+keep their hook settings until they run setup; the worktree bootstrap command does
+that for fresh checkouts. Moon's automatic hook sync stays disabled; setup owns each
+worktree's Git setting and preserves the committed hook.
+
+The hook checks staged source blobs with the pinned Biome binary in memory, rejects
+plaintext environment files and malformed `secrets/*.enc.env` files from the index,
+runs the uncached whole-repository guards, and typechecks affected Moon projects.
+Changes to root or shared workspace configuration run all typechecks. It never
+rewrites or re-stages files, so partially staged hunks stay as staged. Typechecking
+uses the active working tree because Moon cannot typecheck a temporary index snapshot;
+CI remains the authority on the exact committed tree. A missing tool or failed check
+blocks the commit with its command and remedy.
+
+The `CI Feedback` workflow runs after `CI` completes. It checks the reported commit
+against the open PR head, confirms the run is still current, and updates one
+bot-owned comment with failed jobs, links, local commands, and a copyable fix prompt.
+A passing run updates an existing failure comment and does not create a new one.
+The reporter checks GitHub job results directly; it does not download PR artifacts
+or run pull-request code with a write token. Its job is informational and cannot
+change the required `CI` gate. Forks get the same comment through the separate,
+least-privilege workflow.

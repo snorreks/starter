@@ -79,6 +79,21 @@ describe('the rehearsal cannot inherit this machine', () => {
     rmSync(dir, { recursive: true, force: true });
   });
 
+  test('a Git execution error is reported instead of silently walking files', () => {
+    const result = spawnSync(
+      process.execPath,
+      [
+        '--eval',
+        `import { committedFiles } from ${JSON.stringify(join(REPO_ROOT, 'scripts/src/smoke/template_smoke.ts'))};
+         committedFiles(${JSON.stringify(dir)});`,
+      ],
+      { env: { ...process.env, PATH: dir }, encoding: 'utf8', timeout: 10_000 },
+    );
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain('Could not list template files:');
+    expect(result.stderr).toContain('Executable not found in $PATH: "git"');
+  });
+
   test('the copy itself excludes node_modules and every warm cache', () => {
     const root = join(dir, 'mini');
     writeMiniRepo(root);

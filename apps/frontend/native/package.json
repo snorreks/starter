@@ -27,7 +27,7 @@
     "@starter/platform": "workspace:*",
     "@starter/schemas": "workspace:*",
     "@starter/ui": "workspace:*",
-    "@tauri-apps/api": "2.12.1",
+    "@tauri-apps/api": "2.12.2",
     "@tauri-apps/plugin-deep-link": "2.6.1",
     "@tauri-apps/plugin-opener": "2.7.0",
     "@tauri-apps/plugin-stronghold": "2.4.0"
@@ -42,6 +42,6 @@
     "svelte-check": "4.7.6",
     "tailwindcss": "4.3.3",
     "typescript": "6.0.3",
-    "vite": "8.3.3"
+    "vite": "8.3.4"
   }
 }

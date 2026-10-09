@@ -322,3 +322,29 @@ jobs:
     );
   });
 });
+
+test('privileged workflow_run checkout cannot use the triggering PR revision', () => {
+  const source = `
+name: feedback
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+permissions:
+  contents: read
+jobs:
+  report:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: \${{ github.event.workflow_run.head_sha }}
+`;
+  expect(rulesFor(source)).toContain('trusted-workflow-run-checkout:report');
+  expect(
+    rulesFor(source.replace('github.event.workflow_run.head_sha', 'github.workflow_sha')),
+  ).not.toContain('trusted-workflow-run-checkout:report');
+});
