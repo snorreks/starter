@@ -610,6 +610,22 @@ export const resolveTarget = (
         'Set the hosted project HTTPS origins from the same Supabase project.',
       );
     }
+    // Migrations address the project by ref; the runtime addresses it by origin.
+    // Two correct answers about different projects is how one environment migrates
+    // staging and serves production, so the origin must carry the same project ref.
+    const projectRef = topology.supabaseProjectRef as string;
+    for (const [label, origin] of [
+      ['API', apiOrigin.origin],
+      ['Auth', authOrigin.origin],
+    ] as const) {
+      if (new URL(origin).hostname !== `${projectRef}.supabase.co`) {
+        return fail(
+          `The Supabase ${label} origin does not belong to project ${projectRef}.`,
+          `Set supabase${label === 'API' ? 'Url' : 'AuthUrl'} to https://${projectRef}.supabase.co. ` +
+            'A custom domain cannot be resolved to a project ref here, so this template does not support one.',
+        );
+      }
+    }
     const callbacks = (topology.nativeRedirectAllowlist as string)
       .split(',')
       .map((v) => v.trim())

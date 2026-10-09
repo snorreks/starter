@@ -59,8 +59,9 @@ bun run db:migrate      # applies to local Supabase
 bun run db:status
 ```
 
-Commit the generated SQL. Never edit it by hand: Drizzle records applied
-migrations by hash, so an edited file is applied a second time.
+Commit the generated SQL. Never edit it by hand: Supabase records applied
+migrations in `schema_migrations` by version, so an edited file that keeps its
+version is never re-applied and the database silently diverges from the repo.
 
 ## 3. Server service
 

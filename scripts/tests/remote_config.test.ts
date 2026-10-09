@@ -117,6 +117,39 @@ test('disabled compute needs no Google identity to render a web config', () => {
   expect(() => renderRemoteConfig({ root, target: testTarget() })).not.toThrow();
 });
 
+test('enabled compute refuses a web config without the runner identity, not only the jobs config', () => {
+  const base = testTarget();
+  const target = testTarget({
+    compute: {
+      enabled: true,
+      profile: 'encode',
+      jobsWorkerName: 'starter-jobs-staging',
+      mediaBucketName: 'starter-media-staging',
+      encodeWorkflowName: 'starter-encode-staging',
+      maintenanceWorkflowName: 'starter-maintenance-staging',
+      containerImage: base.supabase.image,
+      imageProtocol: 'sample-v1',
+      containerProfile: null,
+    },
+  });
+  // The web Worker mints the grants the runner calls, so it needs the same
+  // identity. A web config that renders without it fails later, at request time.
+  expect(() => renderRemoteConfig({ root: fixture(), target, kind: 'web' })).toThrow(
+    'runner service-account uniqueId',
+  );
+  expect(() =>
+    renderRemoteConfig({ root: fixture(), target, kind: 'web', runnerSubject: 'not-a-subject' }),
+  ).toThrow('runner service-account uniqueId');
+  expect(() =>
+    renderRemoteConfig({
+      root: fixture(),
+      target,
+      kind: 'web',
+      runnerSubject: '12345678901234567890',
+    }),
+  ).not.toThrow();
+});
+
 test('the generated config is exactly the reviewed render and is nonsecret', () => {
   const root = fixture();
   const target = testTarget();

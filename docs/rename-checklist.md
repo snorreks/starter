@@ -17,6 +17,21 @@ bun run db:types
 
 Set independent staging and production values with `bun run deploy:configure`, or configure the repository variable `STARTER_DEPLOYMENT_TARGETS`. The offline plan must resolve each environment to its own Worker, Supabase project and origin before any authenticated operation.
 
+`deploy:configure` only sets the Cloudflare-facing values (`--account`,
+`--worker`, `--origin`, `--mail-from`, `--native-api-origin`) and the compute
+flags. The Supabase and Cloud Run fields it has no flag for must be written
+directly into the gitignored `.starter/deployment.local.json`, or supplied
+through `STARTER_DEPLOYMENT_TARGETS`: `supabaseProjectRef`, `supabaseUrl`,
+`supabaseAuthUrl`, `supabasePublishableKey`, `nativeRedirectAllowlist`, and —
+for an enabled environment — `googleProjectId`, `googleRegion`,
+`cloudRunJobName`, `artifactImage` (pinned by digest), `runnerServiceAccount`,
+`dispatcherServiceAccount`, `processorProtocol`, `processorCpu`,
+`processorMemory`, `processorTimeoutSeconds`, `jobsWorkerName`,
+`mediaBucketName`, `encodeWorkflowName` and `maintenanceWorkflowName`. The
+Supabase origins must be `https://<supabaseProjectRef>.supabase.co`, because
+migrations address the project by ref and the runtime by origin, and the
+resolver refuses a target where those two disagree.
+
 ```bash
 bun run deploy:check --env staging
 bun run deploy:preflight --env staging

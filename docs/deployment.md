@@ -14,7 +14,7 @@ bun run deploy:apply --env staging --yes
 bun run deploy verify --env staging
 ```
 
-The offline plan needs no credentials. Authenticated preflight is read only. Provisioning creates only the configured Cloudflare resources and installs secrets only with the explicit install option. Apply is an explicit migration and release operation. Supabase migration push uses the resolved project and never carries a password in argv. The local seed remains synthetic and is not a hosted migration path.
+The offline plan needs no credentials. Authenticated preflight is read only. Provisioning creates the configured Cloudflare resources, and — when that environment's compute is enabled — it also enables the required Google APIs, creates the runner and dispatcher service accounts, creates or patches the Cloud Run Job, and writes that job's IAM policy. An operator approving a provision for an enabled environment is approving those Google changes too. Secrets are installed only with the explicit install option. Apply is an explicit migration and release operation. Supabase migration push uses the resolved project and never carries a password in argv. The local seed remains synthetic and is not a hosted migration path.
 
 The repository environment map is nonsecret and visible to credential free CI planning. API tokens, Supabase access/service keys, Resend keys and Google dispatcher credentials are secrets. Secret values travel on stdin, never argv, logs or artifacts. Supabase project configuration is not a substitute for a hosted migration authorization.
 
@@ -31,3 +31,29 @@ The dispatcher receives `roles/run.jobsExecutorWithOverrides` and `roles/run.vie
 This change does not migrate existing accounts or data and does not delete the old hosted Workers, databases, buckets or provider resources. Preserve the old live deployment until its replacement has been separately validated and an operator authorizes retirement. Hosted Supabase, Resend delivery and Cloud Run actions are NOT RUN unless recorded from an authorized live operation.
 
 The former Better Auth/D1 deployment path and native device flow are removed. Existing users must sign in through the new Supabase project; no automatic identity mapping is provided. See [docs/auth.md](auth.md), [docs/compute.md](compute.md), and [docs/secrets.md](secrets.md).
+
+## Recovery order
+
+Apply runs ordered phases, and a failure leaves the environment between them. The
+rule is **schema ahead of code, then the jobs Worker last**: the database accepts
+every migration in this repository, so a rollback that reverts the Worker without
+reverting the schema leaves code that expects columns the database still has.
+Roll back in the reverse of the phase list, one environment at a time.
+
+1. **Schema.** Check what actually applied before reverting anything:
+   `select version, name from supabase_migrations.schema_migrations order by version desc`.
+   A migration that applied but whose feature was never enabled can stay; the code
+   that ignores an extra column is not the problem.
+2. **Web Worker.** Redeploy the previous Worker revision only after the schema
+   question is settled. `bun run deploy:apply --env <env> --yes --only web` is the
+   narrowest phase.
+3. **Jobs Worker and compute.** Stop admitting new jobs before reverting it: set
+   `jobsProfile` to `disabled` for that environment and apply, so in-flight
+   Workflows finish against the code that owns their state. Then, and only then,
+   revert the jobs Worker or the Cloud Run Job.
+4. **Image retention.** The pinned digest in the resolved target is what every
+   rollback restores. Keep the previous digest configured until the environment
+   has run green; deleting it leaves nothing to roll back to.
+
+Never roll back a hosted database by dropping objects to "undo" a migration. The
+old deployment stays up for exactly this reason.

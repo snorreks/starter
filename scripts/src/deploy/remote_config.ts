@@ -54,13 +54,9 @@ export const renderRemoteConfig = (options: {
   const scoped =
     environments[target.environment] === undefined ? {} : object(environments[target.environment]);
   const config = { ...source, ...scoped };
-  if (
-    kind === 'jobs' &&
-    target.compute.enabled &&
-    !/^\d{8,32}$/.test(options.runnerSubject ?? '')
-  ) {
+  if (target.compute.enabled && !/^\d{8,32}$/.test(options.runnerSubject ?? '')) {
     throw new Error(
-      'Supabase Worker configuration needs the runner service-account uniqueId from authenticated provider discovery.',
+      'Supabase configuration needs the runner service-account uniqueId from authenticated provider discovery.',
     );
   }
   config.env = undefined;

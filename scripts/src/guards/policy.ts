@@ -220,9 +220,9 @@ export const CAPABILITY_RULES: readonly CapabilityRule[] = [
   },
   {
     capability: 'worker-runtime',
-    root: 'Supabase Auth',
+    root: '@supabase/supabase-js',
     reason:
-      'Supabase Auth owns sessions, password hashing and the database adapter. ' +
+      'The Supabase client owns sessions, password hashing and the database adapter. ' +
       'It is the auth implementation, not a contract.',
   },
   {

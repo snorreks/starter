@@ -91,6 +91,22 @@ describe('Supabase is the only deployable application backend', () => {
     ],
     ['mismatched Auth origin', { supabaseAuthUrl: 'https://other-project.supabase.co' }, 'origins'],
     [
+      'an origin that belongs to another Supabase project',
+      {
+        supabaseUrl: 'https://prodprojectref000001.supabase.co',
+        supabaseAuthUrl: 'https://prodprojectref000001.supabase.co',
+      },
+      'does not belong to project stageprojectref00001',
+    ],
+    [
+      'a custom domain that cannot be resolved to a project ref',
+      {
+        supabaseUrl: 'https://api.starter.example',
+        supabaseAuthUrl: 'https://api.starter.example',
+      },
+      'does not belong to project stageprojectref00001',
+    ],
+    [
       'API path instead of origin',
       {
         supabaseUrl: 'https://stageprojectref00001.supabase.co/rest/v1',

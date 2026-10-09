@@ -30,22 +30,35 @@ describe('Supabase migration target selection', () => {
     const target = {
       supabase: { projectRef: 'project-ref' },
     } as unknown as ResolvedTarget;
-    const plan = planMigrate('staging', target);
-    expect(plan).toMatchObject({
-      ok: true,
-      target: 'staging',
-      args: [
-        'db',
-        'push',
-        '--project-ref',
-        'project-ref',
-        '--include-all',
-        '--workdir',
-        expect.any(String),
-      ],
-    });
-    if (plan.ok) {
-      expect(plan.args.join(' ')).not.toContain('SUPABASE_ACCESS_TOKEN');
+    // The plan builds argv from the project ref and constants, so a credential
+    // value planted in the environment must never reach it.
+    const sentinel = 'sbp_sentinel_value_that_must_not_reach_argv';
+    const previous = process.env.SUPABASE_ACCESS_TOKEN;
+    process.env.SUPABASE_ACCESS_TOKEN = sentinel;
+    try {
+      const plan = planMigrate('staging', target);
+      expect(plan).toMatchObject({
+        ok: true,
+        target: 'staging',
+        args: [
+          'db',
+          'push',
+          '--project-ref',
+          'project-ref',
+          '--include-all',
+          '--workdir',
+          expect.any(String),
+        ],
+      });
+      if (plan.ok) {
+        expect(plan.args.join(' ')).not.toContain(sentinel);
+      }
+    } finally {
+      if (previous === undefined) {
+        delete process.env.SUPABASE_ACCESS_TOKEN;
+      } else {
+        process.env.SUPABASE_ACCESS_TOKEN = previous;
+      }
     }
   });
 });
