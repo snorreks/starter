@@ -33,7 +33,7 @@
   },
   "devDependencies": {
     "svelte": "5.57.2",
-    "typescript": "6.0.3",
+    "typescript": "7.0.2",
     "wrangler": "4.149.0"
   }
 }
