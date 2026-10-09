@@ -1,7 +1,23 @@
 import { describe, expect, it } from 'bun:test';
-import { run } from './runner.mjs';
+import { executionIdentity, run } from './runner.mjs';
 
 describe('finite runner configuration', () => {
+  const env = {
+    STARTER_CLOUD_RUN_JOB_RESOURCE: 'projects/p/locations/r/jobs/runner',
+    CLOUD_RUN_JOB: 'runner',
+    CLOUD_RUN_EXECUTION: 'runner-abc',
+  };
+  it('uses the documented platform short name with its configured resource', () => {
+    expect(executionIdentity(env)).toBe('projects/p/locations/r/jobs/runner/executions/runner-abc');
+  });
+  it.each([
+    { CLOUD_RUN_EXECUTION: '../foreign' },
+    { CLOUD_RUN_EXECUTION: 'projects/p/locations/r/jobs/runner/executions/runner-abc' },
+    { CLOUD_RUN_JOB: 'foreign' },
+    { STARTER_CLOUD_RUN_JOB_RESOURCE: '' },
+  ])('rejects missing or contradictory platform execution context %j', (changes) => {
+    expect(() => executionIdentity({ ...env, ...changes })).toThrow('execution identity');
+  });
   it('refuses callback destinations that could receive identity tokens insecurely', async () => {
     await expect(
       run(['job_a', 'attempt_a'], {

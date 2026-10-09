@@ -1,5 +1,5 @@
 import { resolve } from 'node:path';
-import type { V4WorkerOptions } from 'miniflare';
+import type { V4FetchHandler, V4WorkerOptions } from 'miniflare';
 
 type JsonRecord = Record<string, unknown>;
 
@@ -38,6 +38,11 @@ export interface WorkerGraphOptions {
   supabaseAnonKey: string;
   supabaseServiceRoleKey: string;
   supabaseMailUrl?: string;
+  compute?: {
+    jobsRoot: string;
+    bindings: Record<string, string>;
+    outbound: V4FetchHandler;
+  };
 }
 
 export interface WorkerGraph {
@@ -97,5 +102,38 @@ export const buildWorkerGraph = (options: WorkerGraphOptions): WorkerGraph => {
       },
     },
   };
-  return { workers: [worker], workerName: name, assetsDirectory };
+  if (!options.compute) {
+    return { workers: [worker], workerName: name, assetsDirectory };
+  }
+  const jobsName = `${name}-jobs`;
+  const sharedBindings = {
+    ...worker.bindings,
+    ...options.compute.bindings,
+    JOBS_PROFILE: 'encode',
+  };
+  const workflows = {
+    ENCODE_WORKFLOW: { name: 'e2e-encode', className: 'EncodeWorkflow', scriptName: jobsName },
+    MAINTENANCE_WORKFLOW: {
+      name: 'e2e-maintenance',
+      className: 'MaintenanceWorkflow',
+      scriptName: jobsName,
+    },
+  };
+  const r2Buckets = { MEDIA: `e2e-media-${options.testRunId}` };
+  worker.bindings = sharedBindings;
+  worker.workflows = workflows;
+  worker.r2Buckets = r2Buckets;
+  worker.outboundService = options.compute.outbound;
+  const jobsWorker: V4WorkerOptions = {
+    name: jobsName,
+    scriptPath: resolve(options.compute.jobsRoot, 'dist/index.js'),
+    modules: true,
+    compatibilityDate,
+    compatibilityFlags: worker.compatibilityFlags,
+    bindings: sharedBindings,
+    workflows,
+    r2Buckets,
+    outboundService: options.compute.outbound,
+  };
+  return { workers: [worker, jobsWorker], workerName: name, assetsDirectory };
 };

@@ -1,4 +1,5 @@
 import { expect, test } from 'bun:test';
+import { Response as MiniflareResponse } from 'miniflare';
 import { buildWorkerGraph, parseWranglerJsonc } from './worker_graph.ts';
 
 const config = (extra = '') =>
@@ -41,6 +42,38 @@ test('the built web Worker uses local Supabase and explicitly disables optional 
   expect(worker?.d1Databases).toBeUndefined();
   expect(worker?.durableObjects).toBeUndefined();
   expect(worker?.assets).toMatchObject({ binding: 'ASSETS', run_worker_first: true });
+});
+
+test('full compute shares real R2 and cross-Worker Workflows, never a processor service replacement', () => {
+  const outbound = async () => new MiniflareResponse(null, { status: 500 });
+  const result = buildWorkerGraph({
+    client: config(),
+    clientRoot: '/repo/apps/frontend/client',
+    testRunId: 'full_compute',
+    appOrigin: 'http://127.0.0.1:4183',
+    supabaseUrl: 'http://127.0.0.1:54321',
+    supabaseAnonKey: 'local-anon',
+    supabaseServiceRoleKey: 'local-service-role',
+    compute: {
+      jobsRoot: '/repo/apps/backend/jobs',
+      bindings: { COMPUTE_PROTOCOL: 'sample-v1' },
+      outbound,
+    },
+  });
+  expect(result.workers).toHaveLength(2);
+  const [web, jobs] = result.workers;
+  expect(jobs?.scriptPath).toBe('/repo/apps/backend/jobs/dist/index.js');
+  for (const worker of result.workers) {
+    expect(worker.bindings?.JOBS_PROFILE).toBe('encode');
+    expect(worker.r2Buckets).toEqual({ MEDIA: 'e2e-media-full_compute' });
+    expect(worker.outboundService).toBe(outbound);
+    expect(worker.serviceBindings).toBeUndefined();
+    expect(worker.workflows?.ENCODE_WORKFLOW).toMatchObject({
+      className: 'EncodeWorkflow',
+      scriptName: 'web-jobs',
+    });
+  }
+  expect(web?.workflows).toEqual(jobs?.workflows);
 });
 
 test('a web Worker with a legacy D1 application binding is refused', () => {

@@ -118,6 +118,20 @@ const runProcessor = (input, output, attemptId, deadline) =>
     });
   });
 
+/** Compose the configured job resource with Cloud Run's reserved short execution name. */
+export const executionIdentity = (env) => {
+  const resource = env.STARTER_CLOUD_RUN_JOB_RESOURCE ?? '';
+  const execution = env.CLOUD_RUN_EXECUTION ?? '';
+  if (
+    !/^projects\/[a-z0-9-]+\/locations\/[a-z0-9-]+\/jobs\/[a-z0-9-]+$/.test(resource) ||
+    resource.split('/').at(-1) !== env.CLOUD_RUN_JOB ||
+    !/^[A-Za-z0-9-]{1,128}$/.test(execution)
+  ) {
+    throw new Error('Cloud Run execution identity is missing or inconsistent.');
+  }
+  return `${resource}/executions/${execution}`;
+};
+
 export const run = async ([jobId, attemptId], env = process.env) => {
   if (!idPattern.test(jobId ?? '') || !idPattern.test(attemptId ?? '')) {
     throw new Error('Job and attempt ids are required opaque identifiers.');
@@ -135,17 +149,10 @@ export const run = async ([jobId, attemptId], env = process.env) => {
   if (callback.username || callback.password || callback.search || callback.hash) {
     throw new Error('Grant callback must be an origin URL.');
   }
+  const executionName = executionIdentity(env);
   const directory = await mkdtemp(join(tmpdir(), `starter-runner-${randomUUID()}-`));
   try {
     const identity = await metadataIdentity(env.STARTER_GRANT_AUDIENCE ?? callback.origin, env);
-    const executionName = env.CLOUD_RUN_EXECUTION;
-    if (
-      !/^projects\/[a-z0-9-]+\/locations\/[a-z0-9-]+\/jobs\/[a-z0-9-]+\/executions\/[A-Za-z0-9-]+$/.test(
-        executionName ?? '',
-      )
-    ) {
-      throw new Error('Cloud Run execution identity is missing.');
-    }
     let response;
     for (let retry = 0; retry < 20; retry += 1) {
       response = await fetch(
