@@ -84,7 +84,7 @@
     "secrets:exec": "bun run scripts/src/cli.ts secrets exec",
     "secrets:update-recipients": "bun run scripts/src/cli.ts secrets update-recipients",
     "test:worker": "bun run scripts/src/cli.ts cached -- client:test-worker",
-    "test:compute": "bun run --cwd apps/backend/jobs test:compute -- --backend supabase --processor cloud-run-local",
+    "test:compute": "bun run --cwd apps/backend/jobs test:compute",
     "test:browser": "bun run scripts/src/cli.ts cached -- client:test-browser",
     "test:browser-launch": "bun run scripts/src/cli.ts cached -- scripts:test-browser-launch",
     "test:e2e": "bun run scripts/src/cli.ts cached -- e2e:e2e",
