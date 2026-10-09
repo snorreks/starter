@@ -1,6 +1,7 @@
 import { describe, expect, mock, test } from 'bun:test';
 import type { SupabaseLocalAllocation } from '../src/db/supabase_local.ts';
 import {
+  applyBackendVarsPath,
   buildTarget,
   callerSupabaseValues,
   type DevBackendDependencies,
@@ -26,6 +27,10 @@ const recorder = () => {
   const calls: string[] = [];
   let written: Record<string, string> = {};
   let stopFailure: string | undefined;
+  const readVarsMock = mock((): Record<string, string> => {
+    calls.push('readVars');
+    return {};
+  });
   const dependencies: Partial<DevBackendDependencies> = {
     allocate: mock(() => {
       calls.push('allocate');
@@ -47,6 +52,7 @@ const recorder = () => {
         return { path: '/owned/run/supabase.dev.vars', contents: 'contents' };
       },
     ) as unknown as DevBackendDependencies['writeVars'],
+    readVars: readVarsMock as unknown as DevBackendDependencies['readVars'],
     hasOwnership: mock(async () => {
       calls.push('hasOwnership');
       return true;
@@ -66,6 +72,13 @@ const recorder = () => {
     calls,
     dependencies,
     written: () => written,
+    /** Pretend an existing owned file already carries these bindings. */
+    withExistingFile: (values: Record<string, string>) => {
+      readVarsMock.mockImplementation(() => {
+        calls.push('readVars');
+        return values;
+      });
+    },
     /** Make the engine refuse the stop, without reaching for a mock's own type. */
     refuseStop: (message: string) => {
       stopFailure = message;
@@ -98,17 +111,44 @@ describe('the dev server has a backend to talk to', () => {
       SUPABASE_ANON_KEY: 'anon',
       SUPABASE_SERVICE_ROLE_KEY: 'service',
     });
-    expect(recorder_.calls).toEqual(['allocate', 'writeVars']);
+    expect(recorder_.calls).toEqual([]);
     expect(backend.owned).toBe(false);
     expect(backend.summary.join('\n')).toContain('https://abc.supabase.co');
-    expect(recorder_.written()).toMatchObject({
-      SUPABASE_URL: 'https://abc.supabase.co',
-      DEPLOYMENT_ENV: 'local',
-      APP_ORIGIN: 'http://127.0.0.1:5173',
-    });
-    // Nothing was started, so nothing is stopped: this run owns no stack.
+    // The caller's bindings are already complete, so this run writes nothing and
+    // owns nothing to tear down.
+    expect(recorder_.calls).not.toContain('writeVars');
+    expect(backend.varsPath).toBeUndefined();
     expect(await backend.dispose()).toEqual([]);
     expect(recorder_.calls).not.toContain('stop');
+  });
+
+  // The E2E lane's shape: URL and anon key in the environment, service-role key in
+  // the owned file. Deciding on the environment alone calls this configuration
+  // incomplete, and overwriting the file drops the credential it depends on.
+  test('a backend split across the environment and the caller own file is left alone', async () => {
+    const recorder_ = recorder();
+    recorder_.withExistingFile({ SUPABASE_SERVICE_ROLE_KEY: 'file-service-role' });
+    const backend = await prepareDevBackend('http://127.0.0.1:5173', recorder_.dependencies, {
+      SUPABASE_URL: 'http://127.0.0.1:54321',
+      SUPABASE_ANON_KEY: 'local-anon',
+      STARTER_DEV_VARS_PATH: '/caller/owned.vars',
+    });
+    expect(recorder_.calls).toEqual(['readVars']);
+    expect(backend.owned).toBe(false);
+    expect(backend.varsPath).toBe('/caller/owned.vars');
+    expect(recorder_.calls).not.toContain('writeVars');
+    expect(await backend.dispose()).toEqual([]);
+  });
+
+  test('a named project missing a key is refused, not served from a local stack', async () => {
+    const recorder_ = recorder();
+    await expect(
+      prepareDevBackend('http://127.0.0.1:5173', recorder_.dependencies, {
+        SUPABASE_URL: 'https://abc.supabase.co',
+      }),
+    ).rejects.toThrow('SUPABASE_ANON_KEY, SUPABASE_SERVICE_ROLE_KEY');
+    // Starting a stack here would serve a different database than the one named.
+    expect(recorder_.calls).toEqual([]);
   });
 
   test('disposing stops the stack it started', async () => {
@@ -151,6 +191,27 @@ describe('both dev modes read the owned file', () => {
     expect(app).toContain('--strictPort');
     // The port is this checkout's, not a literal: worktrees run independently.
     expect(app[app.indexOf('--port') + 1]).toMatch(/^\d+$/);
+  });
+});
+
+describe('the child reads the file in both modes dialects', () => {
+  test('an owned file is pointed at wrangler and the Vite platform proxy', () => {
+    const environment: NodeJS.ProcessEnv = {};
+    applyBackendVarsPath('/owned/run/supabase.dev.vars', environment);
+    expect(environment.STARTER_DEV_VARS_PATH).toBe('/owned/run/supabase.dev.vars');
+    expect(environment.STARTER_RUNTIME_ENV_FILE).toBe('/owned/run/supabase.dev.vars');
+  });
+
+  // The E2E lane's service-role key lives in the file it owns. Pointing the child
+  // at a different file is what broke that lane before this guard existed.
+  test('a caller own file is not replaced by one this run did not write', () => {
+    const environment: NodeJS.ProcessEnv = {
+      STARTER_DEV_VARS_PATH: '/caller/owned.vars',
+      STARTER_RUNTIME_ENV_FILE: '/caller/owned.vars',
+    };
+    applyBackendVarsPath(undefined, environment);
+    expect(environment.STARTER_DEV_VARS_PATH).toBe('/caller/owned.vars');
+    expect(environment.STARTER_RUNTIME_ENV_FILE).toBe('/caller/owned.vars');
   });
 });
 
