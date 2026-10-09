@@ -35,6 +35,7 @@
       },
       "devDependencies": {
         "@cloudflare/workers-types": "5.20261006.1",
+        "@starter/scripts": "workspace:*",
         "@types/bun": "1.4.2",
         "miniflare": "5.20261006.0-alpha",
         "typescript": "6.0.3",

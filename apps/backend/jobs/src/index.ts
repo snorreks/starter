@@ -1,13 +1,13 @@
 // apps/backend/jobs/src/index.ts
 //
-// The jobs Worker: two Workflows, one container Durable Object, and no public API.
+// The jobs Worker: two Workflows, Cloud Run dispatch, and no public API.
 //
 // What is exported, and why each export exists
 // --------------------------------------------
 //   `EncodeWorkflow`      named by `wrangler.jsonc`'s ENCODE_WORKFLOW binding
 //   `MaintenanceWorkflow` named by MAINTENANCE_WORKFLOW, and the schedule that
 //                         triggers it
-//   `EncodeContainer`     named by CONTAINER, and by the container's own entry
+//   `scheduled`           starts the maintenance Workflow on its configured cron
 //
 // What is *not* exported is the second thing this repository used to have: a REST
 // API for jobs. The public job API belongs to the web Worker, which owns the
@@ -30,16 +30,19 @@
 // instant it gets its 202 and the encode still finishes.
 
 import '#logger';
-import { EncodeContainer } from './encode_container.ts';
-import type { JobsEnv } from './env.ts';
+import {
+  type JobsEnv,
+  requireJobsBindings,
+  requireJobsDeploymentEnvironment,
+  resolveJobsProfile,
+} from './env.ts';
 import { EncodeWorkflow } from './workflows/encode_workflow.ts';
 import { MaintenanceWorkflow } from './workflows/maintenance_workflow.ts';
 
-export { EncodeContainer, EncodeWorkflow, MaintenanceWorkflow };
+export { EncodeWorkflow, MaintenanceWorkflow };
 
 const NO_ROUTE_BODY =
-  "This Worker has no HTTP API. Jobs are started through the web Worker's /api/jobs, " +
-  'and maintenance runs on the schedule declared in wrangler.jsonc.';
+  "This Worker has no HTTP API. Jobs are started through the web Worker's /api/jobs.";
 
 export default {
   fetch(): Response {
@@ -51,5 +54,40 @@ export default {
         'cache-control': 'no-store',
       },
     });
+  },
+  async scheduled(controller: ScheduledController, rawEnv: JobsEnv): Promise<void> {
+    const profile = resolveJobsProfile(rawEnv);
+    if (!profile.ok) {
+      throw new Error(`${profile.problem} ${profile.remedy}`);
+    }
+    requireJobsDeploymentEnvironment(rawEnv);
+    if (profile.profile === 'disabled') {
+      return;
+    }
+    const env = requireJobsBindings(rawEnv);
+    const scheduledAt = new Date(controller.scheduledTime);
+    const slot = scheduledAt.toISOString();
+    const id = `maintenance-${controller.scheduledTime}`;
+    try {
+      await env.MAINTENANCE_WORKFLOW?.create({
+        id,
+        params: { runKey: `scheduled:${slot}`, trigger: 'scheduled', slot, scheduledTime: slot },
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (!message.includes('already_exists')) {
+        throw error;
+      }
+      const existing = await env.MAINTENANCE_WORKFLOW?.get(id);
+      const state = await existing?.status();
+      if (
+        !state ||
+        !['queued', 'running', 'waiting', 'paused', 'waitingForPause', 'complete'].includes(
+          state.status,
+        )
+      ) {
+        throw new Error(`Scheduled maintenance instance ${id} exists in an unexpected state.`);
+      }
+    }
   },
 } satisfies ExportedHandler<JobsEnv>;

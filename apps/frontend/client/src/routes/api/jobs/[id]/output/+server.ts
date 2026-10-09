@@ -38,7 +38,7 @@ const byteRange = (
   return { offset: start, length: end - start + 1 };
 };
 
-export const GET: RequestHandler = async ({ locals, params, request, platform }) => {
+export const GET: RequestHandler = async ({ locals, params, request }) => {
   const services = locals.applicationServices;
   if (!locals.user || !services || services.identity.user.id !== locals.user.id) {
     return unauthorized();
@@ -61,7 +61,7 @@ export const GET: RequestHandler = async ({ locals, params, request, platform })
   if (!artifact) {
     return jsonError(410, 'output_expired', 'The output is no longer available.');
   }
-  const bucket = platform?.MEDIA;
+  const bucket = locals.container.env.MEDIA;
   if (!bucket) {
     return jsonError(503, 'output_unavailable', 'The private artifact store is not configured.');
   }
@@ -87,6 +87,8 @@ export const GET: RequestHandler = async ({ locals, params, request, platform })
     'cache-control': 'private, no-store',
     'content-type': object.httpMetadata?.contentType ?? 'video/mp4',
     'content-length': String(range?.length ?? metadata.size),
+    'x-output-sha256': metadata.customMetadata?.sha256 ?? '',
+    'x-output-duration-ms': metadata.customMetadata?.durationMs ?? '',
   });
   if (range) {
     headers.set(

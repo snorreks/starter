@@ -53,7 +53,15 @@ export const retireSupabaseArtifacts = async (options: {
 };
 
 /** R2-aware half of Supabase maintenance; SQL Cron owns database-only history. */
-export const runSupabaseArtifactRetention = async (env: JobsEnv) => {
+export const runSupabaseArtifactRetention = async (
+  env: JobsEnv,
+  run: {
+    runKey: string;
+    trigger: 'scheduled' | 'manual';
+    slot: string | null;
+    scheduledTime: string | null;
+  },
+) => {
   const missing = [
     ['SUPABASE_URL', env.SUPABASE_URL],
     ['SUPABASE_ANON_KEY', env.SUPABASE_ANON_KEY],
@@ -76,27 +84,56 @@ export const runSupabaseArtifactRetention = async (env: JobsEnv) => {
     anonKey: config.SUPABASE_ANON_KEY,
     serviceRoleKey: config.SUPABASE_SERVICE_ROLE_KEY,
   });
-  return retireSupabaseArtifacts({
-    media: config.MEDIA,
-    queue: async (limit) => {
-      const { data, error } = await admin.rpc('queue_expired_job_artifacts', {
-        p_cutoff: new Date().toISOString(),
-        p_limit: limit,
-      });
-      if (error || !Array.isArray(data)) {
-        throw new Error('Postgres could not queue expired media artifacts.');
-      }
-      return data;
-    },
-    retire: async (jobId, outputKey) => {
-      const { data, error } = await admin.rpc('retire_job_artifact', {
-        p_job_id: jobId,
-        p_output_key: outputKey,
-      });
-      if (error) {
-        throw new Error('Postgres could not close the media artifact retirement.');
-      }
-      return data === true;
-    },
+  const { error: startError } = await admin.rpc('begin_maintenance_run', {
+    p_run_key: run.runKey,
+    p_trigger: run.trigger,
+    ...(run.slot === null ? {} : { p_slot: run.slot }),
+    ...(run.scheduledTime === null ? {} : { p_scheduled_time: run.scheduledTime }),
   });
+  if (startError) {
+    throw new Error('Postgres could not record the maintenance run start.');
+  }
+  let result: Awaited<ReturnType<typeof retireSupabaseArtifacts>> | undefined;
+  let failure: unknown;
+  try {
+    result = await retireSupabaseArtifacts({
+      media: config.MEDIA,
+      queue: async (limit) => {
+        const { data, error } = await admin.rpc('queue_expired_job_artifacts', {
+          p_cutoff: new Date().toISOString(),
+          p_limit: limit,
+        });
+        if (error || !Array.isArray(data)) {
+          throw new Error('Postgres could not queue expired media artifacts.');
+        }
+        return data;
+      },
+      retire: async (jobId, outputKey) => {
+        const { data, error } = await admin.rpc('retire_job_artifact', {
+          p_job_id: jobId,
+          p_output_key: outputKey,
+        });
+        if (error) {
+          throw new Error('Postgres could not close the media artifact retirement.');
+        }
+        return data === true;
+      },
+    });
+  } catch (error) {
+    failure = error;
+  }
+  const { data: finished, error: finishError } = await admin.rpc('finish_maintenance_run', {
+    p_run_key: run.runKey,
+    p_status: failure === undefined ? 'succeeded' : 'failed',
+    p_artifacts_queued: result?.considered ?? 0,
+    p_artifacts_retired: result?.deleted ?? 0,
+    ...(failure === undefined ? {} : { p_error_code: 'sweep_failed' }),
+  });
+  if (finishError || finished !== true) {
+    throw new Error('Postgres could not record the maintenance run result.');
+  }
+  if (failure !== undefined) {
+    throw failure;
+  }
+  return result;
 };

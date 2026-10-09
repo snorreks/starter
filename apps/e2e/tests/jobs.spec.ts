@@ -18,7 +18,7 @@
 //
 //   * A *successful* encode, a real container and real FFmpeg bytes are the compute
 //     lane's claim: `bun run test:compute` drives the built jobs Worker, real local
-//     D1 and R2, the real Workflows engine and a real FFmpeg container. That lane
+//     Postgres and R2, the real Workflows engine and a real FFmpeg container. That lane
 //     has no browser and no HTTP API, so it cannot be merged into this file
 //     without inventing an API. Both are reported separately, and neither is
 //     allowed to stand in for the other.

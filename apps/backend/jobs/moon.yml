@@ -2,8 +2,8 @@ $schema: 'https://moonrepo.dev/schemas/project.json'
 
 # apps/backend/jobs/moon.yml
 #
-# The scheduled jobs Worker: two Workflows, one container Durable Object, and the
-# bounded maintenance they run.
+# The scheduled jobs Worker: two Workflows dispatch finite Cloud Run jobs and
+# run bounded maintenance.
 #
 # Task names follow the media crate's precedent and its reason: this project
 # publishes no `test`/`lint` task for the *compute* lane, because the root
@@ -11,13 +11,13 @@ $schema: 'https://moonrepo.dev/schemas/project.json'
 # `:lint`). A project named `test` would silently join the credential-free web
 # lanes, and the compute lane needs a Docker engine. So:
 #
-#   test              unit lane (src/**/*.test.ts) — no Docker, no D1, no network
-#   test-compute      the real local Workflows + D1 + R2 + a real FFmpeg container
+#   test              unit lane (src/**/*.test.ts) — no Docker, no database, no network
+#   test-compute      the real Cloud Run finite runner and FFmpeg in Docker
 #   build             the Worker bundle `wrangler deploy` would ship
 #   check-config      the schedule invariants, read from the committed config
 #
-# `test-compute` is never cached: it asserts against a running runtime, a real
-# database, a real bucket and a real container, so a restored "pass" would
+# `test-compute` is never cached: it asserts against a container engine and a
+# real FFmpeg encode, so a restored "pass" would
 # certify processes this run never started.
 
 layer: 'application'
@@ -34,7 +34,6 @@ fileGroups:
     - '/packages/backend/jobs/src/**/*'
     - '/packages/backend/database/src/**/*'
     - '/packages/backend/database/src/supabase/**/*'
-    - '/packages/backend/database/drizzle-d1/**/*'
     - '/packages/shared/schemas/src/**/*'
     - '/packages/shared/utils/src/**/*'
     - '/packages/shared/logger/src/**/*'
@@ -53,6 +52,7 @@ dependsOn:
   - jobs
   - schemas
   - utils
+  - scripts
 
 tasks:
   build:
@@ -121,18 +121,11 @@ tasks:
       - '@group(configs)'
       - '@group(workspaceSources)'
 
-  # The compute lane. Requires a Docker-compatible engine and runs the built
-  # Worker in the real local Workers runtime (wrangler's own miniflare) with real
-  # local D1 and R2, a real Workflows engine and the real FFmpeg image.
+  # The compute lane builds and runs the finite Cloud Run runner image in Docker
+  # with a real FFmpeg encode and local grant fixtures.
   test-compute:
     command: 'bun'
     args: ['run', 'test:compute']
-    # The lane drives the **built** bundle, so the build is a real dependency rather
-    # than a step somebody has to remember. `client:test-worker` does the same, and a
-    # lane that silently tested the previous build is exactly what `check:bundle`
-    # exists to prevent in the other direction.
-    dependsOn:
-      - '~:build'
     options:
       cache: false
     inputs:

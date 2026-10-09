@@ -3,17 +3,16 @@
 //! Two strings travel with every failure and only one of them leaves the process:
 //!
 //! * `public_message` is a fixed, hand-written sentence per [`ErrorCode`]. It is
-//!   the only text that may appear in an HTTP error body, a CLI stderr line or a
+//!   the only text that may appear in a CLI stderr line or a
 //!   log record that a caller can read.
 //! * `detail` is the internal context: an `io::Error`, an exit status, a bounded
 //!   tail of FFmpeg's stderr. FFmpeg's stderr is attacker-influenced (it echoes
 //!   container metadata and file names) and can be megabytes of banner text, so
 //!   it is recorded for an operator and never returned to a caller.
 //!
-//! `retryable` is the retry contract from the round-2 design: invalid media, an
-//! unsupported preset and a protocol mismatch are terminal, and a caller that
-//! retries them loops forever on a deterministic failure. Transport, deadline
-//! and cancellation are retryable, bounded by the caller's own attempt budget.
+//! `retryable` marks transient process outcomes. Deterministic media and
+//! configuration failures are terminal; deadlines and cancellation can be
+//! retried by the owning job within its attempt budget.
 
 use std::fmt;
 use std::io;
@@ -27,18 +26,8 @@ pub enum ErrorCode {
     InputEmpty,
     /// Input exceeded `MAX_INPUT_BYTES`, refused before any work was done.
     PayloadTooLarge,
-    /// A framing this server does not implement. Refusing is the safe answer:
-    /// accepting an unbounded chunked body would move the limit into a loop.
-    UnsupportedTransferEncoding,
-    /// `x-protocol` named a protocol this build does not implement.
-    ProtocolMismatch,
     /// `x-preset` named a preset this build does not implement.
     UnsupportedPreset,
-    /// `x-attempt-id` was empty, longer than the bound, or contained bytes
-    /// outside `[A-Za-z0-9._-]`.
-    InvalidAttemptId,
-    /// The single in-flight encode slot was already taken.
-    Busy,
     /// FFmpeg refused the input, or produced nothing. Terminal: the same bytes
     /// will fail the same way.
     InvalidMedia,
@@ -51,8 +40,6 @@ pub enum ErrorCode {
     DeadlineExceeded,
     /// The caller disconnected, or the process was asked to shut down.
     Cancelled,
-    /// No route matches this method and path.
-    NotFound,
     /// A filesystem or subprocess error with no more specific classification.
     Internal,
 }
@@ -63,17 +50,12 @@ impl ErrorCode {
         match self {
             Self::InputEmpty => "input_empty",
             Self::PayloadTooLarge => "payload_too_large",
-            Self::UnsupportedTransferEncoding => "unsupported_transfer_encoding",
-            Self::ProtocolMismatch => "protocol_mismatch",
             Self::UnsupportedPreset => "unsupported_preset",
-            Self::InvalidAttemptId => "invalid_attempt_id",
-            Self::Busy => "busy",
             Self::InvalidMedia => "invalid_media",
             Self::OutputTooLarge => "output_too_large",
             Self::InvalidOutput => "invalid_output",
             Self::DeadlineExceeded => "deadline_exceeded",
             Self::Cancelled => "cancelled",
-            Self::NotFound => "not_found",
             Self::Internal => "internal_error",
         }
     }
@@ -83,39 +65,13 @@ impl ErrorCode {
         match self {
             Self::InputEmpty => "input body was empty",
             Self::PayloadTooLarge => "input body exceeds the configured maximum",
-            Self::UnsupportedTransferEncoding => {
-                "this endpoint requires a Content-Length framed request body"
-            }
-            Self::ProtocolMismatch => "unsupported protocol version",
             Self::UnsupportedPreset => "unsupported preset",
-            Self::InvalidAttemptId => "malformed or missing attempt id",
-            Self::Busy => "an encode is already in flight on this container",
             Self::InvalidMedia => "input media could not be decoded",
             Self::OutputTooLarge => "encoded output exceeds the configured maximum",
             Self::InvalidOutput => "encoded output failed validation",
             Self::DeadlineExceeded => "encoding exceeded its deadline",
             Self::Cancelled => "encoding was cancelled",
-            Self::NotFound => "no route matches this request",
             Self::Internal => "internal processor error",
-        }
-    }
-
-    /// The HTTP status this failure maps to.
-    pub const fn http_status(self) -> u16 {
-        match self {
-            Self::InputEmpty
-            | Self::PayloadTooLarge
-            | Self::UnsupportedTransferEncoding
-            | Self::ProtocolMismatch
-            | Self::UnsupportedPreset
-            | Self::InvalidAttemptId
-            | Self::InvalidMedia
-            | Self::InvalidOutput
-            | Self::OutputTooLarge => 400,
-            Self::NotFound => 404,
-            Self::Busy => 429,
-            Self::DeadlineExceeded | Self::Cancelled => 503,
-            Self::Internal => 500,
         }
     }
 
@@ -123,7 +79,7 @@ impl ErrorCode {
     pub const fn retryable(self) -> bool {
         matches!(
             self,
-            Self::Busy | Self::DeadlineExceeded | Self::Cancelled | Self::Internal
+            Self::DeadlineExceeded | Self::Cancelled | Self::Internal
         )
     }
 }
@@ -204,7 +160,6 @@ mod tests {
             ErrorCode::InvalidMedia,
             ErrorCode::InvalidOutput,
             ErrorCode::UnsupportedPreset,
-            ErrorCode::ProtocolMismatch,
         ] {
             assert!(!code.retryable(), "{} must be terminal", code.wire());
         }
@@ -229,11 +184,7 @@ mod tests {
         for code in [
             ErrorCode::InputEmpty,
             ErrorCode::PayloadTooLarge,
-            ErrorCode::UnsupportedTransferEncoding,
-            ErrorCode::ProtocolMismatch,
             ErrorCode::UnsupportedPreset,
-            ErrorCode::InvalidAttemptId,
-            ErrorCode::Busy,
             ErrorCode::InvalidMedia,
             ErrorCode::OutputTooLarge,
             ErrorCode::InvalidOutput,

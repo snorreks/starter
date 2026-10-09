@@ -31,7 +31,6 @@ fileGroups:
     - 'rust-toolchain.toml'
     - 'rustfmt.toml'
     - 'moon.yml'
-    - 'Dockerfile'
     - 'Dockerfile.job'
   tests:
     - 'tests/**/*'
@@ -93,15 +92,3 @@ tasks:
     inputs:
       - '@group(sources)'
       - '@group(tests)'
-
-  # The container lane. Separate from the Cargo lanes above because it needs a
-  # Docker-compatible engine, and a missing engine is a named failure, not a
-  # skip. `scripts/measure.sh` builds the image, measures it, and asserts the
-  # numbers in the crate README.
-  cargo-image:
-    command: 'bash'
-    args: ['scripts/measure.sh']
-    inputs:
-      - '@group(sources)'
-      - '@group(configs)'
-      - '@group(fixtures)'

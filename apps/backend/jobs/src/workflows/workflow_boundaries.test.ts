@@ -1,222 +1,141 @@
 import { expect, mock, test } from 'bun:test';
 import type { WorkflowEvent, WorkflowStep } from 'cloudflare:workers';
 import type { JobsEnv } from '../env.ts';
+import type { EncodeWorkflowParams } from './encode_workflow.ts';
+import type { MaintenanceWorkflowParams } from './maintenance_workflow.ts';
 
-// Only the platform base class is substituted. Workflow decisions and repository
-// writes execute normally; step failures are injected without provider retry delays.
 mock.module('cloudflare:workers', () => ({
   WorkflowEntrypoint: class {},
-  DurableObject: class {},
+  env: { DEPLOYMENT_ENV: 'local' },
 }));
 const { EncodeWorkflow } = await import('./encode_workflow.ts');
 const { MaintenanceWorkflow } = await import('./maintenance_workflow.ts');
 
-const params = {
-  requestId: 'boundary',
-  jobId: 'job-boundary',
-  attemptId: 'attempt-boundary',
-  fixture: 'sample-v1' as const,
-  preset: 'demo-180p-v1' as const,
-};
-const event = { payload: params, instanceId: 'boundary' } as WorkflowEvent<typeof params>;
-const report = {
-  cutoffAt: 0,
-  expiredSessions: 0,
-  idleRateLimits: 0,
-  artifactsQueued: 0,
-  artifactsRetired: 0,
-  pendingDispatches: 0,
-};
-
-const environment = () => {
-  const writes: unknown[][] = [];
-  const deleted: string[] = [];
-  const env = {
-    DEPLOYMENT_ENV: 'local',
-    JOBS_PROFILE: 'encode',
-    DB: {
-      prepare: () => ({
-        bind: (...values: unknown[]) => ({
-          run: async () => {
-            writes.push(values);
-            return { meta: { changes: 1 } };
-          },
-          all: async () => ({ results: [] }),
-        }),
-      }),
-    },
-    MEDIA: {
-      delete: async (key: string) => {
-        deleted.push(key);
-      },
-      head: async () => null,
-    },
-    CONTAINER: { idFromName: () => 'id', get: () => ({ fetch: async () => new Response() }) },
-    ENCODE_WORKFLOW: {
-      create: async () => {
-        throw new Error('unexpected dispatch');
-      },
-    },
-    MAINTENANCE_WORKFLOW: {},
-  } as unknown as JobsEnv;
-  return { env, writes, deleted };
-};
-
+const event = {
+  payload: {
+    jobId: 'job-boundary',
+    fixture: 'sample-v1',
+    preset: 'demo-180p-v1',
+    attemptId: 'attempt-boundary',
+  },
+} as WorkflowEvent<EncodeWorkflowParams>;
 const workflow = <T extends object>(prototype: T, env: JobsEnv): T =>
   Object.assign(Object.create(prototype), { env }) as T;
-const steps = (run: (name: string, callback: () => Promise<unknown>) => Promise<unknown>) =>
+const steps = (run: (callback: () => Promise<unknown>) => Promise<unknown>) =>
   ({
-    do: (name: string, ...args: unknown[]) => run(name, args.at(-1) as () => Promise<unknown>),
-  }) as unknown as WorkflowStep;
+    do: (_name: string, ...args: unknown[]) => run(args.at(-1) as () => Promise<unknown>),
+  }) as WorkflowStep;
 
-test('workflow entries reject missing bindings and invalid deployment mode before any step', async () => {
-  for (const prototype of [EncodeWorkflow.prototype, MaintenanceWorkflow.prototype]) {
-    for (const overrides of [
-      { DB: undefined },
-      { DEPLOYMENT_ENV: undefined },
-      { DEPLOYMENT_ENV: 'typo' },
-    ]) {
-      const { env } = environment();
-      const entry = workflow(prototype, { ...env, ...overrides } as JobsEnv);
-      let calls = 0;
-      await expect(
-        entry.run(
-          event,
-          steps(async () => {
-            calls += 1;
-          }),
-        ),
-      ).rejects.toThrow();
-      expect(calls).toBe(0);
-    }
-  }
-});
-
-test('disabled or invalid encoding profiles never claim an encode', async () => {
-  for (const profile of [undefined, 'disabled', 'typo']) {
-    const { env } = environment();
-    const entry = workflow(EncodeWorkflow.prototype, { ...env, JOBS_PROFILE: profile });
-    let calls = 0;
-    const result = entry.run(
+test('missing jobs profile refuses before running a workflow step', async () => {
+  const entry = workflow(EncodeWorkflow.prototype, { DEPLOYMENT_ENV: 'local' });
+  let calls = 0;
+  await expect(
+    entry.run(
       event,
       steps(async () => {
         calls += 1;
       }),
+    ),
+  ).rejects.toThrow('JOBS_PROFILE');
+  expect(calls).toBe(0);
+});
+
+test.each(['disabled', ' disabled \n'])(
+  'disabled profile %j never starts workflow steps',
+  async (profile) => {
+    const env = { DEPLOYMENT_ENV: 'local', JOBS_PROFILE: profile } as JobsEnv;
+    const noSteps = steps(async () => {
+      throw new Error('Disabled workflow started a step');
+    });
+    const encode = await workflow(EncodeWorkflow.prototype, env).run(event, noSteps);
+    const maintenanceEvent = { payload: {} } as WorkflowEvent<MaintenanceWorkflowParams>;
+    const maintenance = await workflow(MaintenanceWorkflow.prototype, env).run(
+      maintenanceEvent,
+      noSteps,
     );
-    if (profile === 'typo') {
-      await expect(result).rejects.toThrow('JOBS_PROFILE');
-    } else {
-      expect(await result).toMatchObject({ outcome: 'compute_profile_disabled' });
-    }
-    expect(calls).toBe(0);
-  }
-});
+    expect(encode).toMatchObject({ outcome: 'compute_profile_disabled' });
+    expect(maintenance).toMatchObject({ outcome: 'compute_profile_disabled' });
+  },
+);
 
-test('disabled encoding still permits maintenance cleanup and completion', async () => {
-  const { env, writes } = environment();
-  const visited: string[] = [];
-  const result = await workflow(MaintenanceWorkflow.prototype, {
-    ...env,
-    JOBS_PROFILE: 'disabled',
-  }).run(
-    event,
-    steps(async (name, callback) => {
-      visited.push(name);
-      if (name === 'claim') {
-        return { claimed: true, runKey: 'manual:boundary', tookOver: false };
-      }
-      if (name === 'sweep') {
-        return { ok: true, report };
-      }
-      return callback();
-    }),
-  );
-  expect(result.outcome).toBe('succeeded');
-  expect(visited).toContain('delete-expired-bytes');
-  expect(visited).toContain('recover-dispatches');
-  expect(writes).toHaveLength(1);
-});
-
-test('byte deletion and dispatch recovery errors record a failed run before propagating', async () => {
-  for (const failingStep of ['delete-expired-bytes', 'recover-dispatches']) {
-    const { env, writes } = environment();
-    const failure = new Error('step failed');
-    await expect(
-      workflow(MaintenanceWorkflow.prototype, env).run(
-        event,
-        steps(async (name, callback) => {
-          if (name === 'claim') {
-            return { claimed: true, runKey: 'manual:boundary', tookOver: false };
-          }
-          if (name === 'sweep') {
-            return { ok: true, report };
-          }
-          if (name === failingStep) {
-            throw failure;
-          }
-          return callback();
-        }),
-      ),
-    ).rejects.toBe(failure);
-    expect(writes).toHaveLength(1);
-    expect(writes[0]).toContain('dispatch_recovery_failed');
-    expect(writes[0]).toContain('manual:boundary');
-  }
-});
-
-test('unverified or fenced commit output is deleted using the encoded key', async () => {
-  for (const outcome of ['missing_output', 'size_mismatch', 'fenced']) {
-    const { env, deleted } = environment();
-    const key = 'media/v1/jobs/job-boundary/attempts/attempt-boundary.mp4';
-    const media = env.MEDIA as unknown as { head: () => Promise<unknown> };
-    media.head = async () =>
-      outcome === 'missing_output' ? null : { size: outcome === 'size_mismatch' ? 2 : 1 };
-    if (outcome === 'fenced') {
-      env.DB.prepare = (() => ({
-        bind: () => ({ all: async () => ({ results: [] }), first: async () => null }),
-      })) as unknown as D1Database['prepare'];
-    }
-    const result = await workflow(EncodeWorkflow.prototype, env).run(
+test('enabled compute refuses when Cloud Run prerequisites are missing', async () => {
+  const entry = workflow(EncodeWorkflow.prototype, {
+    DEPLOYMENT_ENV: 'local',
+    JOBS_PROFILE: 'encode',
+  } as JobsEnv);
+  await expect(
+    entry.run(
       event,
-      steps(async (name, callback) => {
-        if (name === 'admit') {
-          return { outcome: 'claimed', status: 'running' };
-        }
-        if (name === 'encode') {
-          return {
-            ok: true,
-            artifact: {
-              key,
-              bytes: 1,
-              sha256: '0'.repeat(64),
-              videoCodec: 'h264',
-              width: 320,
-              height: 180,
-              durationMs: 3000,
-            },
-          };
-        }
-        if (name === 'fail-unverified-output') {
-          return true;
-        }
-        return callback();
-      }),
-    );
-    expect(result.outcome).toBe(outcome);
-    expect(deleted).toEqual([key]);
-  }
+      steps(async () => null),
+    ),
+  ).rejects.toThrow('Cloud Run compute configuration is incomplete');
 });
 
-const { EncodeContainer } = await import('../encode_container.ts');
+const enabledEnv = (status: string): JobsEnv => ({
+  DEPLOYMENT_ENV: 'local',
+  JOBS_PROFILE: 'encode',
+  SUPABASE_URL: 'https://supabase.invalid',
+  SUPABASE_ANON_KEY: 'anon',
+  SUPABASE_SERVICE_ROLE_KEY: 'service',
+  MEDIA: {} as R2Bucket,
+  ENCODE_WORKFLOW: {
+    create: async () => ({ id: 'encode' }),
+    get: async () => ({ status: async () => ({ status }) }),
+  },
+  MAINTENANCE_WORKFLOW: {
+    create: async () => {
+      throw new Error('already_exists');
+    },
+    get: async () => ({ status: async () => ({ status }) }),
+  },
+  GOOGLE_CLOUD_PROJECT: 'project',
+  GOOGLE_CLOUD_REGION: 'region',
+  GOOGLE_CLOUD_RUN_JOB: 'job',
+  GOOGLE_RUNNER_SERVICE_ACCOUNT: 'account',
+  GOOGLE_RUNNER_SUBJECT: 'subject',
+  GOOGLE_RUNNER_AUDIENCE: 'audience',
+  GOOGLE_DISPATCHER_CREDENTIAL: 'fixture',
+  COMPUTE_PROTOCOL: 'sample-v1',
+});
 
-test('the container validates its origin without requiring Workflow bindings', async () => {
-  for (const origin of ['not-a-url', 'ftp://processor', 'http://processor/path']) {
-    const container = Object.assign(Object.create(EncodeContainer.prototype), {
-      env: { PROCESSOR_ORIGIN: origin },
-      ctx: {},
-    }) as InstanceType<typeof EncodeContainer>;
-    await expect(container.fetch(new Request('http://container/health'))).rejects.toThrow(
-      'PROCESSOR_ORIGIN',
+test('retention work cannot be replayed by automatic workflow retries', async () => {
+  const doStep = mock(async () => ({ outcome: 'artifact_retention' }));
+  await workflow(MaintenanceWorkflow.prototype, enabledEnv('running')).run(
+    { payload: {} } as WorkflowEvent<MaintenanceWorkflowParams>,
+    { do: doStep } as unknown as WorkflowStep,
+  );
+  expect(doStep).toHaveBeenCalledWith(
+    'supabase-r2-artifact-retention',
+    expect.objectContaining({ retries: expect.objectContaining({ limit: 0 }) }),
+    expect.any(Function),
+  );
+});
+
+const { default: handler } = await import('../index.ts');
+const controller = { scheduledTime: 0 } as ScheduledController;
+test.each(['queued', 'running', 'waiting', 'paused', 'waitingForPause', 'complete'])(
+  'duplicate scheduled maintenance accepts %s',
+  async (status) => {
+    await handler.scheduled(controller, enabledEnv(status));
+  },
+);
+test.each(['completed', 'errored', 'terminated', 'unknown', ''])(
+  'duplicate scheduled maintenance refuses %s',
+  async (status) => {
+    await expect(handler.scheduled(controller, enabledEnv(status))).rejects.toThrow(
+      'unexpected state',
     );
-  }
+  },
+);
+test('duplicate scheduled maintenance refuses a missing state', async () => {
+  const env: JobsEnv = {
+    ...enabledEnv('running'),
+    MAINTENANCE_WORKFLOW: {
+      create: async () => {
+        throw new Error('already_exists');
+      },
+      get: async () => ({ status: async () => undefined }) as never,
+    },
+  };
+  await expect(handler.scheduled(controller, env)).rejects.toThrow('unexpected state');
 });

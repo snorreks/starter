@@ -50,6 +50,28 @@ describe('isolated local Supabase allocation', () => {
     }
   });
 
+  test('email confirmation is explicitly enabled only for the E2E stack', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'supabase-confirmation-'));
+    const allocation = { ...allocateSupabaseLocal(root, 'email-mode'), root };
+    try {
+      await persistSupabaseOwnership(allocation);
+      const unitConfig = await readFile(
+        join(root, 'supabase-project/supabase/config.toml'),
+        'utf8',
+      );
+      expect(unitConfig.split('[auth.email]')[1]?.split('\n[')[0]).toContain(
+        'enable_confirmations = false',
+      );
+      await persistSupabaseOwnership(allocation, { emailConfirmations: true });
+      const e2eConfig = await readFile(join(root, 'supabase-project/supabase/config.toml'), 'utf8');
+      expect(e2eConfig.split('[auth.email]')[1]?.split('\n[')[0]).toContain(
+        'enable_confirmations = true',
+      );
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   test('two checkout allocations have distinct project ids and every exposed port', () => {
     const first = allocateSupabaseLocal('/checkouts/first', 'run-one');
     const second = allocateSupabaseLocal('/checkouts/second', 'run-two');
@@ -112,7 +134,7 @@ describe('isolated local Supabase allocation', () => {
     try {
       await writeFile(userFile, userContents, { mode: 0o600 });
       const generated = await writeOwnedWorkerVars(allocation, {
-        STARTER_BACKEND_PROFILE: 'supabase',
+        SUPABASE_URL: 'http://127.0.0.1:54321',
       });
       expect(generated.path).toBe(join(allocation.root, 'supabase.dev.vars'));
       expect((await stat(generated.path)).mode & 0o777).toBe(0o600);

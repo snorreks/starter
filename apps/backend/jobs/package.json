@@ -10,15 +10,14 @@
   "main": "./src/index.ts",
   "scripts": {
     "build": "bun run scripts/build.ts",
-    "dev": "bun run scripts/compute_lane.ts serve",
-    "lint": "biome lint src tests scripts",
-    "format": "biome format src tests scripts",
-    "fix": "biome check --write src tests scripts --error-on-warnings",
+    "dev": "bun run scripts/compute_lane.ts dev",
+    "lint": "biome lint src scripts",
+    "format": "biome format src scripts",
+    "fix": "biome check --write src scripts --error-on-warnings",
     "typecheck": "tsgo --noemit",
     "test": "bun run test:unit",
     "test:unit": "bun test src",
-    "test:worker": "bun run test:compute",
-    "test:compute": "bun run scripts/compute_lane.ts test",
+    "test:compute": "bun run scripts/cloud_run_local.ts",
     "check:config": "bun run scripts/check_config.ts"
   },
   "dependencies": {
@@ -30,6 +29,7 @@
     "jose": "6.2.12"
   },
   "devDependencies": {
+    "@starter/scripts": "workspace:*",
     "@cloudflare/workers-types": "5.20261006.1",
     "@types/bun": "1.4.2",
     "miniflare": "5.20261006.0-alpha",
