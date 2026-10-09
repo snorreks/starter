@@ -42,7 +42,6 @@ import {
   effectiveDeploymentValues,
   topologyFor,
 } from '../registry/deployment_values.ts';
-import { resolveBackendProfile } from '../shared/backend_profile.ts';
 import { CLIENT_DIR_RELATIVE } from '../shared/paths.ts';
 import { targetCompatibilityProblem } from './compatibility.ts';
 

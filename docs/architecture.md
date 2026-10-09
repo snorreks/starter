@@ -45,4 +45,4 @@ A target is resolved once by `scripts/src/deploy/target.ts`; plan, preflight, pr
 
 `docs/evidence/current.json` is the evidence source; `docs/capability-matrix.md` is generated from it. TypeBox remains only at the Pi SDK registration boundary that requires TypeBox/JSON Schema; first party application DTOs use Valibot.
 
-See [docs/auth.md](auth.md), [docs/database.md](database.md), [docs/testing.md](testing.md), [docs/deployment.md](deployment.md) and [docs/native.md](native.md).
+See [docs/auth.md](auth.md), [the database package](../packages/backend/database/README.md), [docs/testing.md](testing.md), [docs/deployment.md](deployment.md) and [docs/native.md](native.md).

@@ -4,8 +4,6 @@ import {
   supabaseBin,
 } from '../deploy/providers/supabase.ts';
 import { resolveTarget } from '../deploy/target.ts';
-import { resolveBackendProfile } from '../shared/backend_profile.ts';
-import { CLIENT_DIR, REPO_ROOT } from '../shared/paths.ts';
 
 export const main = (args: readonly string[] = []): number => {
   if (

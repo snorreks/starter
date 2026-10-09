@@ -19,4 +19,4 @@ bun run test:database
 
 The browser lane exercises the real Svelte UI. Worker integration and E2E start an owned local Supabase stack and use a built Worker; database integration exercises migrations, Postgres, Auth, Data API/RLS and concurrent RPCs. These commands require a Docker-compatible runtime. Teardown is scoped to each run's ownership record. Hosted Supabase and Resend behavior are NOT RUN by these local checks.
 
-See [auth.md](auth.md), [database.md](database.md), and [testing.md](testing.md).
+See [auth.md](auth.md), [the database package](../packages/backend/database/README.md), and [testing.md](testing.md).

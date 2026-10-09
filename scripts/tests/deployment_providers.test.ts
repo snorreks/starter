@@ -107,6 +107,11 @@ describe('provider boundaries use the resolved target and fail closed', () => {
   test('Google plan is private and derives only capability-required APIs', () => {
     const plan = googleResourcePlan(target);
     expect(plan.publicAccess).toBe(false);
+    expect(plan.dispatcherRoles).toEqual([
+      'roles/run.jobsExecutorWithOverrides',
+      'roles/run.viewer',
+    ]);
+    expect(plan.runnerRole).toBe('platform-metadata-only');
     expect(plan.requiredApis).toContain('run.googleapis.com');
     expect(plan.requiredApis).not.toContain('compute.googleapis.com');
   });
@@ -272,35 +277,67 @@ describe('provider boundaries use the resolved target and fail closed', () => {
     expect(requestedUrl).toContain(`dockerImages/runner%2Fnested@sha256:${'a'.repeat(64)}`);
   });
 
-  test('job apply sends a private finite job on the runner identity', async () => {
-    const calls: { url: string; method: string; body?: string }[] = [];
-    const fetcher = async (url: string | URL | Request, init?: RequestInit) => {
-      calls.push({
-        url: String(url),
-        method: init?.method ?? 'GET',
-        body: typeof init?.body === 'string' ? init.body : undefined,
-      });
-      if (String(url).includes('artifactregistry')) {
-        return response({ name: `x@sha256:${'a'.repeat(64)}` });
-      }
-      if (init?.method === undefined) {
+  test.each([
+    { exists: false, method: 'POST' },
+    { exists: true, method: 'PATCH' },
+  ])(
+    'job $method includes required nonsecret runner configuration without platform overrides',
+    async ({ exists, method }) => {
+      const calls: { url: string; method: string; body?: string }[] = [];
+      const fetcher = async (url: string | URL | Request, init?: RequestInit) => {
+        calls.push({
+          url: String(url),
+          method: init?.method ?? 'GET',
+          body: typeof init?.body === 'string' ? init.body : undefined,
+        });
+        if (String(url).includes('artifactregistry')) {
+          return response({ name: `x@sha256:${'a'.repeat(64)}` });
+        }
+        if ((init?.method ?? 'GET') === 'GET') {
+          return response(exists ? { name: 'job' } : { error: 'not found' }, exists ? 200 : 404);
+        }
         return response({ name: 'job' });
-      }
-      return response({ name: 'job' });
-    };
-    await applyGoogleJob({ target, accessToken: 'token', fetcher });
-    const patch = calls.find((call) => call.method === 'PATCH');
-    expect(patch).toBeDefined();
-    expect(patch?.body).toContain(target.supabase?.runnerServiceAccount);
-    expect(patch?.body).toContain('600s');
-    const body = JSON.parse(patch?.body ?? '{}');
-    expect(body.template.taskCount).toBe(1);
-    expect(body.template.template.taskCount).toBeUndefined();
-  });
+      };
+      await applyGoogleJob({ target, accessToken: 'token', fetcher });
+      const mutation = calls.find((call) => call.method === method);
+      expect(mutation).toBeDefined();
+      expect(mutation?.url).toBe(
+        exists
+          ? 'https://run.googleapis.com/v2/projects/starter-stage/locations/europe-north1/jobs/starter-encode?updateMask=template'
+          : 'https://run.googleapis.com/v2/projects/starter-stage/locations/europe-north1/jobs?jobId=starter-encode',
+      );
+      expect(JSON.parse(mutation?.body ?? '{}')).toEqual({
+        template: {
+          taskCount: 1,
+          template: {
+            serviceAccount: 'runner@starter-stage.iam.gserviceaccount.com',
+            timeout: '600s',
+            maxRetries: 0,
+            containers: [
+              {
+                image: `europe-north1-docker.pkg.dev/starter-stage/media/runner@sha256:${'a'.repeat(64)}`,
+                resources: { limits: { cpu: '2', memory: '4Gi' } },
+                args: ['encode'],
+                env: [
+                  { name: 'STARTER_GRANT_ORIGIN', value: 'https://staging.example' },
+                  {
+                    name: 'STARTER_CLOUD_RUN_JOB_RESOURCE',
+                    value: 'projects/starter-stage/locations/europe-north1/jobs/starter-encode',
+                  },
+                ],
+              },
+            ],
+          },
+        },
+      });
+    },
+  );
 
-  test('dispatcher IAM mutation grants only the target dispatcher invoker access', async () => {
+  test('dispatcher IAM mutation grants job-scoped execution reads and overrides only to the dispatcher', async () => {
     let captured: unknown;
-    const fetcher = async (_url: string | URL | Request, init?: RequestInit) => {
+    const urls: string[] = [];
+    const fetcher = async (url: string | URL | Request, init?: RequestInit) => {
+      urls.push(String(url));
       if ((init?.method ?? 'GET') === 'POST') {
         captured = JSON.parse(String(init?.body));
       }
@@ -312,12 +349,76 @@ describe('provider boundaries use the resolved target and fail closed', () => {
         etag: 'e1',
         bindings: [
           {
-            role: 'roles/run.invoker',
+            role: 'roles/run.jobsExecutorWithOverrides',
+            members: ['serviceAccount:dispatch@starter-stage.iam.gserviceaccount.com'],
+          },
+          {
+            role: 'roles/run.viewer',
             members: ['serviceAccount:dispatch@starter-stage.iam.gserviceaccount.com'],
           },
         ],
       },
     });
     expect(JSON.stringify(captured)).not.toContain('runner@starter-stage.iam.gserviceaccount.com');
+    expect(urls).toEqual([
+      'https://run.googleapis.com/v2/projects/starter-stage/locations/europe-north1/jobs/starter-encode:getIamPolicy',
+      'https://run.googleapis.com/v2/projects/starter-stage/locations/europe-north1/jobs/starter-encode:setIamPolicy',
+    ]);
+  });
+
+  test('existing dispatcher grants need no IAM write, and a partial grant is completed', async () => {
+    const complete: string[] = [];
+    await applyDispatcherGrant({
+      target,
+      accessToken: 'token',
+      fetcher: async (_url, init) => {
+        complete.push(init.method ?? 'GET');
+        return response({
+          bindings: [
+            {
+              role: 'roles/run.jobsExecutorWithOverrides',
+              members: ['serviceAccount:dispatch@starter-stage.iam.gserviceaccount.com'],
+            },
+            {
+              role: 'roles/run.viewer',
+              members: ['serviceAccount:dispatch@starter-stage.iam.gserviceaccount.com'],
+            },
+          ],
+        });
+      },
+    });
+    expect(complete).toEqual(['GET']);
+
+    const partial: { url: string; method: string; body?: string }[] = [];
+    await applyDispatcherGrant({
+      target,
+      accessToken: 'token',
+      fetcher: async (url, init) => {
+        partial.push({
+          url: String(url),
+          method: init?.method ?? 'GET',
+          ...(init?.body === undefined ? {} : { body: String(init.body) }),
+        });
+        return response({
+          bindings: [
+            {
+              role: 'roles/run.jobsExecutorWithOverrides',
+              members: ['serviceAccount:dispatch@starter-stage.iam.gserviceaccount.com'],
+            },
+          ],
+        });
+      },
+    });
+    expect(partial.map((call) => call.method)).toEqual(['GET', 'POST']);
+    expect(JSON.parse(partial[1]?.body ?? '{}')).toMatchObject({
+      policy: {
+        bindings: expect.arrayContaining([
+          {
+            role: 'roles/run.viewer',
+            members: ['serviceAccount:dispatch@starter-stage.iam.gserviceaccount.com'],
+          },
+        ]),
+      },
+    });
   });
 });

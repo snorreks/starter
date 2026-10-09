@@ -29,7 +29,7 @@ Start here. Nothing below is required reading before running a command — the
   verified
 - [worktrees.md](worktrees.md) — the shared terminal/agent bootstrap, environment sources, and per-run ownership
 - [supabase-local.md](supabase-local.md) — local project allocation, migrations, generated types, repositories and policies
-- [database.md](database.md) — Supabase migrations, RLS, generated types and local integration
+- [the database package](../packages/backend/database/README.md) — Supabase migrations, RLS, generated types and local integration
 - [auth.md](auth.md) — the account lifecycle, the rate limiter, and mail
 - [cloudflare.md](cloudflare.md) — Workers, R2, credentials, and the Worker's
   deployment-mode binding

@@ -11,26 +11,13 @@
 // There is one Worker, so there is one thing to name, and a target word that
 // silently defaulted to "everything" is the behaviour these tests exist to prevent.
 
-import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
+import { describe, expect, test } from 'bun:test';
 import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { DEPLOY_PHASES, parseDeployArgs, planDeploy, renderPlan } from '../src/deploy/deploy.ts';
 import { targets } from '../src/registry/app_registry.ts';
 import type { DeploymentValues } from '../src/registry/deployment_values.ts';
-
-// These fixtures exercise the retained D1 deployment path, not the Supabase default.
-const originalBackendProfile = process.env.STARTER_BACKEND_PROFILE;
-beforeEach(() => {
-  process.env.STARTER_BACKEND_PROFILE = 'legacy';
-});
-afterEach(() => {
-  if (originalBackendProfile === undefined) {
-    delete process.env.STARTER_BACKEND_PROFILE;
-    return;
-  }
-  process.env.STARTER_BACKEND_PROFILE = originalBackendProfile;
-});
 
 const ACCOUNT = 'abcdef0123456789abcdef0123456789';
 

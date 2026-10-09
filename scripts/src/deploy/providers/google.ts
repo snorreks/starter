@@ -21,7 +21,9 @@ export interface GoogleResourcePlan {
   memory: string;
   timeoutSeconds: number;
   publicAccess: false;
-  dispatcherRole: 'roles/run.invoker';
+  // Execute with overrides plus read-only reconciliation, both grantable on this one job.
+  // run.developer would also allow the dispatcher to rewrite or delete the job image.
+  dispatcherRoles: readonly ['roles/run.jobsExecutorWithOverrides', 'roles/run.viewer'];
   runnerRole: 'platform-metadata-only';
 }
 
@@ -47,7 +49,7 @@ export const googleResourcePlan = (target: ResolvedTarget): GoogleResourcePlan =
     memory: config.memory,
     timeoutSeconds: config.timeoutSeconds,
     publicAccess: false,
-    dispatcherRole: 'roles/run.invoker',
+    dispatcherRoles: ['roles/run.jobsExecutorWithOverrides', 'roles/run.viewer'],
     runnerRole: 'platform-metadata-only',
   };
 };
@@ -223,6 +225,10 @@ export const applyGoogleJob = async (options: {
             image: plan.image,
             resources: { limits: { cpu: plan.cpu, memory: plan.memory } },
             args: ['encode'],
+            env: [
+              { name: 'STARTER_GRANT_ORIGIN', value: options.target.origin },
+              { name: 'STARTER_CLOUD_RUN_JOB_RESOURCE', value: name },
+            ],
           },
         ],
       },
@@ -245,7 +251,7 @@ export const applyGoogleJob = async (options: {
   });
 };
 
-/** Only the dispatch identity receives job invocation; the runner gets platform identity only. */
+/** Only the dispatcher receives job-scoped execution reads/overrides; the runner gets no grant. */
 export const applyDispatcherGrant = async (options: {
   target: ResolvedTarget;
   accessToken: string;
@@ -260,14 +266,20 @@ export const applyDispatcherGrant = async (options: {
   const current = policy as { etag?: string; bindings?: { role: string; members?: string[] }[] };
   const member = `serviceAccount:${plan.dispatcher}`;
   const bindings = [...(current.bindings ?? [])];
-  const invoker = bindings.find((binding) => binding.role === plan.dispatcherRole);
-  if (invoker?.members?.includes(member)) {
+  const missing = plan.dispatcherRoles.filter(
+    (role) =>
+      !bindings.some((binding) => binding.role === role && binding.members?.includes(member)),
+  );
+  if (missing.length === 0) {
     return;
   }
-  if (invoker === undefined) {
-    bindings.push({ role: plan.dispatcherRole, members: [member] });
-  } else {
-    invoker.members = [...new Set([...(invoker.members ?? []), member])];
+  for (const role of missing) {
+    const existing = bindings.find((binding) => binding.role === role);
+    if (existing === undefined) {
+      bindings.push({ role, members: [member] });
+    } else {
+      existing.members = [...new Set([...(existing.members ?? []), member])];
+    }
   }
   await request({
     ...options,
@@ -397,7 +409,8 @@ export const provisionGoogleTarget = async (options: {
     await applyGoogleJob(options);
     completed.push(`job:${googleResourcePlan(options.target).job}`);
     await applyDispatcherGrant(options);
-    completed.push(`iam:${googleResourcePlan(options.target).dispatcher}:roles/run.invoker`);
+    const plan = googleResourcePlan(options.target);
+    completed.push(`iam:${plan.dispatcher}:${plan.dispatcherRoles.join('+')}`);
     return { completed, error: null, runnerSubject };
   } catch (error) {
     return {

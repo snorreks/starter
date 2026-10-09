@@ -105,7 +105,12 @@ const HOST = process.env.DEV_HOST ?? '127.0.0.1';
  * stale run id or a test-only rate limit from a previous run.
  */
 // Credentials belong in the run-owned environment file, never command arguments.
-const FORWARDED_VARS = ['TEST_RUN_ID', 'DEPLOYMENT_ENV', 'SUPABASE_MAIL_URL'] as const;
+const FORWARDED_VARS = [
+  'TEST_RUN_ID',
+  'DEPLOYMENT_ENV',
+  'SUPABASE_MAIL_URL',
+  'APP_ORIGIN',
+] as const;
 
 /**
  * Stop the server.

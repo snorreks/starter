@@ -392,6 +392,38 @@ describe('transactional admission and attempt fencing in Postgres', () => {
       p_attempt_id: 'attempt-reclaimed',
     });
     expect(reclaimed.data).toBe(true);
+    await sql`update private.jobs set lease_expires_at=now()-interval '1 second' where id=${jobId}`;
+    const finalAttempt = { p_job_id: jobId, p_attempt_id: 'attempt-final' };
+    expect(await admin.rpc('claim_encode_job', finalAttempt)).toMatchObject({
+      data: true,
+      error: null,
+    });
+    const beforeReplay =
+      await sql`select attempt_count,lease_expires_at from private.jobs where id=${jobId}`;
+    expect(Number(beforeReplay[0]?.attempt_count)).toBe(3);
+    expect(await admin.rpc('claim_encode_job', finalAttempt)).toMatchObject({
+      data: true,
+      error: null,
+    });
+    const replayed =
+      await sql`select attempt_count,lease_expires_at from private.jobs where id=${jobId}`;
+    expect(Number(replayed[0]?.attempt_count)).toBe(3);
+    expect(String(replayed[0]?.lease_expires_at)).toBe(String(beforeReplay[0]?.lease_expires_at));
+    expect(await userB.client.rpc('claim_encode_job', finalAttempt)).toMatchObject({
+      error: { code: '42501' },
+    });
+    await sql`update private.jobs set lease_expires_at=now()-interval '1 second' where id=${jobId}`;
+    expect(
+      await admin.rpc('claim_encode_job', {
+        p_job_id: jobId,
+        p_attempt_id: 'attempt-fourth',
+      }),
+    ).toMatchObject({ data: false, error: null });
+    expect(await admin.rpc('claim_encode_job', finalAttempt)).toMatchObject({
+      data: false,
+      error: null,
+    });
+    await sql`update private.jobs set lease_expires_at=now()+interval '5 minutes' where id=${jobId}`;
     const stale = await admin.rpc('finish_encode_job', {
       p_job_id: jobId,
       p_attempt_id: `attempt-${firstAttempt}`,
@@ -408,7 +440,7 @@ describe('transactional admission and attempt fencing in Postgres', () => {
     expect(stale.data).toBe(false);
     const current = await admin.rpc('finish_encode_job', {
       p_job_id: jobId,
-      p_attempt_id: 'attempt-reclaimed',
+      p_attempt_id: 'attempt-final',
       p_output_key: 'private/key',
       p_output_bytes: 1,
       p_sha256: 'a'.repeat(64),

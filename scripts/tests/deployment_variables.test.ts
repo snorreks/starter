@@ -8,7 +8,7 @@
 // bug this file exists for is exactly that a plan can be *wrong* about a fully
 // configured project.
 
-import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
+import { afterEach, describe, expect, test } from 'bun:test';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -52,19 +52,6 @@ const cloudSettings = (name: string) => ({
   processorCpu: '2',
   processorMemory: '2Gi',
   processorTimeoutSeconds: '900',
-});
-
-// These fixtures exercise the retained D1 deployment path, not the Supabase default.
-const originalBackendProfile = process.env.STARTER_BACKEND_PROFILE;
-beforeEach(() => {
-  process.env.STARTER_BACKEND_PROFILE = 'legacy';
-});
-afterEach(() => {
-  if (originalBackendProfile === undefined) {
-    delete process.env.STARTER_BACKEND_PROFILE;
-    return;
-  }
-  process.env.STARTER_BACKEND_PROFILE = originalBackendProfile;
 });
 
 const created: string[] = [];

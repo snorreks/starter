@@ -40,6 +40,7 @@ import {
   applyDispatcherGrant,
   applyGoogleJob,
   getGoogleRunnerSubject,
+  googleResourcePlan,
   verifyGoogleArtifactImage,
 } from './providers/google.ts';
 import {
@@ -831,7 +832,7 @@ export const apply = async (options: ApplyOptions): Promise<ApplyResult> => {
         )(target);
         components.push({
           phase: 'jobs',
-          identity: `${target.supabase.dispatcherServiceAccount}:roles/run.invoker`,
+          identity: `${target.supabase.dispatcherServiceAccount}:${googleResourcePlan(target).dispatcherRoles.join('+')}`,
           source: revision.sha,
         });
       }

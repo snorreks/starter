@@ -85,7 +85,7 @@ Planning is offline; preflight is read only; provisioning and apply are explicit
 
 - [Architecture](docs/architecture.md)
 - [Authentication](docs/auth.md)
-- [Database](docs/database.md)
+- [Database](packages/backend/database/README.md)
 - [Cloudflare](docs/cloudflare.md)
 - [Optional compute](docs/compute.md)
 - [Deployment](docs/deployment.md)
