@@ -8,12 +8,10 @@ import { renderRemoteConfig } from '../src/deploy/remote_config.ts';
 import type { ResolvedTarget } from '../src/deploy/target.ts';
 
 const target: ResolvedTarget = {
-  deploymentProfile: 'supabase',
   environment: 'staging',
   project: 'starter',
   accountId: 'a'.repeat(32),
   workerName: 'web-staging',
-  d1DatabaseId: '',
   origin: 'https://staging.example',
   wranglerConfig: 'apps/frontend/client/wrangler.jsonc',
   jobsWranglerConfig: 'apps/backend/jobs/wrangler.jsonc',
@@ -89,9 +87,12 @@ describe('disabled compute remains optional through deployment consumers', () =>
   test('web configuration needs no runner identity or Google variables', () => {
     const config = renderRemoteConfig({ target, root: fixture() });
     expect(config.vars).toMatchObject({
-      STARTER_BACKEND_PROFILE: 'supabase',
+      DEPLOYMENT_ENV: 'staging',
+      APP_ORIGIN: 'https://staging.example',
       JOBS_PROFILE: 'disabled',
     });
+    // The legacy D1 profile was removed with the legacy backend; it must not return.
+    expect(config.vars).not.toHaveProperty('STARTER_BACKEND_PROFILE');
     expect(JSON.stringify(config.vars)).not.toContain('GOOGLE_');
     expect(config.workflows).toBeUndefined();
     expect(config.r2_buckets).toBeUndefined();

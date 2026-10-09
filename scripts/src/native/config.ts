@@ -48,21 +48,18 @@ export const nativeConfiguration = (
     dev: mode === 'dev',
     devHost,
   });
-  const additionalOrigins: string[] = [];
-  if (env.VITE_NATIVE_AUTH_PROFILE === 'supabase') {
-    const rawSupabaseUrl = env.VITE_NATIVE_SUPABASE_URL;
-    if (rawSupabaseUrl === undefined || rawSupabaseUrl.length === 0) {
-      throw new Error('Supabase native profile requires VITE_NATIVE_SUPABASE_URL.');
-    }
-    const supabaseUrl = new URL(rawSupabaseUrl);
-    const loopback = mode === 'dev' && ['localhost', '127.0.0.1'].includes(supabaseUrl.hostname);
-    if (supabaseUrl.origin !== rawSupabaseUrl || (supabaseUrl.protocol !== 'https:' && !loopback)) {
-      throw new Error(
-        'VITE_NATIVE_SUPABASE_URL must be an HTTPS origin, or a loopback HTTP origin in development.',
-      );
-    }
-    additionalOrigins.push(supabaseUrl.origin);
+  const rawSupabaseUrl = env.VITE_NATIVE_SUPABASE_URL;
+  if (rawSupabaseUrl === undefined || rawSupabaseUrl.length === 0) {
+    throw new Error('Native Supabase configuration requires VITE_NATIVE_SUPABASE_URL.');
   }
+  const supabaseUrl = new URL(rawSupabaseUrl);
+  const loopback = mode === 'dev' && ['localhost', '127.0.0.1'].includes(supabaseUrl.hostname);
+  if (supabaseUrl.origin !== rawSupabaseUrl || (supabaseUrl.protocol !== 'https:' && !loopback)) {
+    throw new Error(
+      'VITE_NATIVE_SUPABASE_URL must be an HTTPS origin, or a loopback HTTP origin in development.',
+    );
+  }
+  const additionalOrigins = [supabaseUrl.origin];
   const base = JSON.parse(
     readFileSync(join(root, NATIVE_DIR, 'src-tauri/tauri.conf.json'), 'utf8'),
   ) as { app: { security: { csp: string } } };

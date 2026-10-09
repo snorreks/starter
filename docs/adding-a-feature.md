@@ -54,13 +54,14 @@ agree — see step 7.
 ## 2. Migration
 
 ```bash
-bun run db:generate     # writes SQL into packages/backend/database/drizzle-d1
-bun run db:migrate      # applies to local D1
+bun run db:generate     # updates the Supabase migration inputs
+bun run db:migrate      # applies to local Supabase
 bun run db:status
 ```
 
-Commit the generated SQL. Never edit it by hand: Drizzle records applied
-migrations by hash, so an edited file is applied a second time.
+Commit the generated SQL. Never edit it by hand: Supabase records applied
+migrations in `schema_migrations` by version, so an edited file that keeps its
+version is never re-applied and the database silently diverges from the repo.
 
 ## 3. Server service
 
@@ -236,7 +237,7 @@ In order of value:
    lifecycle through the real Svelte compiler. This is the only lane that can catch
    a `$state` write that does not reach the DOM.
 3. **Worker** (`apps/frontend/client/tests/worker_integration.test.ts`) — the route
-   over real workerd and real D1: ownership denial, oversized bodies, the JSON 404
+   through the built Worker and local Supabase: ownership denial, oversized bodies, the JSON 404
    shape. This is the lane that catches a query that compiles and returns the wrong
    rows.
 4. **Unit** (`packages/**/src/**/*.test.ts`, `scripts/tests/**`) — schema refusals,

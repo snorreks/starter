@@ -33,7 +33,6 @@ import {
   type EnvironmentTargets,
   JOBS_PROFILES,
   type JobsProfile,
-  REQUIRED_REMOTE_SECRET_NAMES,
   REQUIRED_REMOTE_VAR_NAMES,
   SUPABASE_REMOTE_SECRET_NAMES,
 } from '../registry/app_registry.ts';
@@ -43,7 +42,6 @@ import {
   effectiveDeploymentValues,
   topologyFor,
 } from '../registry/deployment_values.ts';
-import { resolveBackendProfile } from '../shared/backend_profile.ts';
 import { CLIENT_DIR_RELATIVE } from '../shared/paths.ts';
 import { targetCompatibilityProblem } from './compatibility.ts';
 
@@ -63,13 +61,11 @@ export const DEPLOYABLE_ENVIRONMENTS = ['staging', 'production'] as const;
 export type TargetEnvironment = (typeof DEPLOYABLE_ENVIRONMENTS)[number];
 
 export interface ResolvedTarget {
-  deploymentProfile: 'legacy' | 'supabase';
   environment: TargetEnvironment;
   /** Project identity, from the committed registry. Never a secret. */
   project: string;
   accountId: string;
   workerName: string;
-  d1DatabaseId: string;
   /** Absolute https origin verification is made against. */
   origin: string;
   /** Canonical Wrangler input. Bindings and generated types are read from this. */
@@ -101,7 +97,7 @@ export interface ResolvedTarget {
   mailFrom: string;
   /** The https origin a packaged native build targets. Nullable: not every project ships one. */
   nativeApiOrigin: string | null;
-  supabase: null | {
+  supabase: {
     projectRef: string;
     url: string;
     authUrl: string;
@@ -149,7 +145,7 @@ const fail = (reason: string, remedy: string): TargetFailure => ({ ok: false, re
  * An absolute `https://` origin with no path, query or fragment.
  *
  * Rejecting the extras is not pedantry: the origin is used both as the base URL
- * Better Auth issues cookies for and as the address verification fetches. A
+ * Supabase Auth issues cookies for and as the address verification fetches. A
  * trailing path would make `/api/health` resolve somewhere the operator did not
  * intend, and the mismatch would only show up as a confusing verification
  * failure after the deploy succeeded.
@@ -191,7 +187,6 @@ const OVERRIDABLE_DESTINATIONS: ReadonlyArray<[keyof EnvironmentTargets, string,
     'jobs Worker',
     "Staging's maintenance sweep would operate on production jobs.",
   ],
-  ['d1DatabaseId', 'D1 database', 'A staging migration would be a production migration.'],
   ['mediaBucketName', 'R2 bucket', "Staging's retention sweep would delete production's output."],
   [
     'encodeWorkflowName',
@@ -254,7 +249,6 @@ export const environmentIsolationProblem = (
   interface Destinations {
     worker: string | null;
     jobsWorker: string | null;
-    database: string | null;
     bucket: string | null;
     encodeWorkflow: string | null;
     maintenanceWorkflow: string | null;
@@ -273,7 +267,6 @@ export const environmentIsolationProblem = (
     resolved.set(environment, {
       worker: topology?.workerName ?? null,
       jobsWorker: topology?.jobsWorkerName ?? null,
-      database: topology?.d1DatabaseId ?? null,
       bucket: topology?.mediaBucketName ?? null,
       encodeWorkflow: topology?.encodeWorkflowName ?? null,
       maintenanceWorkflow: topology?.maintenanceWorkflowName ?? null,
@@ -387,7 +380,6 @@ export const environmentIsolationProblem = (
           'jobs Worker',
           'A staging maintenance run would operate on production jobs.',
         ) ??
-        shared('database', 'D1 database', 'A staging migration is then a production migration.') ??
         shared(
           'bucket',
           'R2 bucket',
@@ -456,22 +448,9 @@ export const resolveTarget = (
     values?: DeploymentValues;
     project?: string;
     requiredSecretNames?: readonly string[];
-    profile?: 'legacy' | 'supabase';
   } = {},
 ): TargetResult => {
   const values = options.values ?? effectiveDeploymentValues();
-  let profile = options.profile;
-  if (profile === undefined) {
-    try {
-      profile = resolveBackendProfile(process.env.STARTER_BACKEND_PROFILE);
-    } catch (error) {
-      return fail(
-        error instanceof Error ? error.message : String(error),
-        'Select an explicit supported deployment profile.',
-      );
-    }
-  }
-
   // Refused before any other work, so an unknown word can never be resolved
   // against a default. `--env prod` must not reach the production entry it
   // resembles, and `--env local` must not reach anything at all: `local` is a
@@ -500,7 +479,7 @@ export const resolveTarget = (
   if (isolated !== null) {
     return fail(
       isolated,
-      'Give each environment its own Worker name and D1 database id. This is refused ' +
+      'Give each environment its own Worker name and Supabase project reference. This is refused ' +
         'before anything is changed, because the alternative is a staging release ' +
         'reaching live traffic.\n' +
         '  bun run deploy:configure -- --env staging --worker <name>\n' +
@@ -572,7 +551,7 @@ export const resolveTarget = (
     );
   }
 
-  if (profile === 'supabase') {
+  {
     const required = [
       'supabaseProjectRef',
       'supabaseUrl',
@@ -630,6 +609,22 @@ export const resolveTarget = (
         'Supabase API and Auth URLs must be absolute HTTPS origins without paths.',
         'Set the hosted project HTTPS origins from the same Supabase project.',
       );
+    }
+    // Migrations address the project by ref; the runtime addresses it by origin.
+    // Two correct answers about different projects is how one environment migrates
+    // staging and serves production, so the origin must carry the same project ref.
+    const projectRef = topology.supabaseProjectRef as string;
+    for (const [label, origin] of [
+      ['API', apiOrigin.origin],
+      ['Auth', authOrigin.origin],
+    ] as const) {
+      if (new URL(origin).hostname !== `${projectRef}.supabase.co`) {
+        return fail(
+          `The Supabase ${label} origin does not belong to project ${projectRef}.`,
+          `Set supabase${label === 'API' ? 'Url' : 'AuthUrl'} to https://${projectRef}.supabase.co. ` +
+            'A custom domain cannot be resolved to a project ref here, so this template does not support one.',
+        );
+      }
     }
     const callbacks = (topology.nativeRedirectAllowlist as string)
       .split(',')
@@ -758,12 +753,10 @@ export const resolveTarget = (
       timeoutSeconds: timeoutSeconds || 0,
     };
     const target: ResolvedTarget = {
-      deploymentProfile: 'supabase',
       environment: environment as TargetEnvironment,
       project: options.project ?? DEPLOYMENT_CONFIG.projectName,
       accountId: accountId.toLowerCase(),
       workerName,
-      d1DatabaseId: '',
       origin: parsed.origin,
       wranglerConfig: `${CLIENT_DIR_RELATIVE}/wrangler.jsonc`,
       jobsWranglerConfig: `${JOBS_DIR_RELATIVE}/wrangler.jsonc`,
@@ -794,58 +787,6 @@ export const resolveTarget = (
     }
     return { ok: true, target };
   }
-
-  const databaseId = topology.d1DatabaseId;
-  if (databaseId === null) {
-    return fail(
-      `No D1 database id is configured for ${environment}.`,
-      `bun run deploy:configure -- --env ${environment} --provision`,
-    );
-  }
-
-  const computeEnabled = jobsProfile === 'encode';
-
-  const resolvedTarget: ResolvedTarget = {
-    deploymentProfile: 'legacy',
-    environment: environment as TargetEnvironment,
-    project: options.project ?? DEPLOYMENT_CONFIG.projectName,
-    accountId: accountId.toLowerCase(),
-    workerName,
-    d1DatabaseId: databaseId,
-    origin: parsed.origin,
-    wranglerConfig: `${CLIENT_DIR_RELATIVE}/wrangler.jsonc`,
-    jobsWranglerConfig: `${JOBS_DIR_RELATIVE}/wrangler.jsonc`,
-    compute: {
-      enabled: computeEnabled,
-      profile: jobsProfile as JobsProfile,
-      jobsWorkerName: topology.jobsWorkerName,
-      mediaBucketName: topology.mediaBucketName,
-      encodeWorkflowName: topology.encodeWorkflowName,
-      maintenanceWorkflowName: topology.maintenanceWorkflowName,
-      containerImage: topology.containerImage,
-      imageProtocol: topology.imageProtocol,
-      containerProfile: topology.containerProfile,
-    },
-    mailFrom: topology.mailFrom ?? '',
-    nativeApiOrigin: topology.nativeApiOrigin,
-    supabase: null,
-    requiredSecretNames: options.requiredSecretNames ?? REQUIRED_REMOTE_SECRET_NAMES,
-    requiredVarNames: REQUIRED_REMOTE_VAR_NAMES,
-  };
-
-  // The target's own coherence, checked after the individual fields so the
-  // complaint names the resource that is missing rather than a later symptom.
-  // `targetCompatibilityProblem` imports this module's type only, so this is not
-  // a runtime cycle.
-  const incoherent = targetCompatibilityProblem(resolvedTarget);
-  if (incoherent !== null) {
-    return fail(incoherent.reason, incoherent.remedy);
-  }
-
-  return {
-    ok: true,
-    target: resolvedTarget,
-  };
 };
 
 /**

@@ -89,7 +89,7 @@ export type MutatingCommand = (
  *
  * Exported so the negative control in the test suite is the same check the module
  * runs, rather than a second implementation of "does this look like a secret".
- * The patterns are the ones Cloudflare, Resend and Better Auth actually use; the
+ * The patterns are the ones Cloudflare, Resend and Supabase Auth actually uses; the
  * check is about *shape*, because a token this repository does not know about is
  * still a token.
  */
@@ -121,26 +121,7 @@ export interface ProvisionDefinition {
 }
 
 export const provisionSteps = (target: ResolvedTarget): ProvisionDefinition[] => {
-  const steps: ProvisionDefinition[] =
-    target.deploymentProfile === 'legacy'
-      ? [
-          {
-            name: 'database',
-            description: `D1 database ${target.d1DatabaseId}`,
-            // A *list*, not `d1 info <id>`.
-            //
-            // `d1 info` reports a database that does not exist by exiting nonzero — the
-            // same signal it gives for a revoked token or the wrong account. An exit code
-            // cannot separate those, so "absent" could not be told from "cannot tell", and
-            // the second one creates a duplicate. Listing makes presence a question about
-            // the *data*, and a nonzero exit unambiguously means "could not tell".
-            exists: ['d1', 'list', '--json'],
-            present: (stdout) => databaseExists(stdout, target.d1DatabaseId),
-            create: null,
-            cwd: REPO_ROOT,
-          },
-        ]
-      : [];
+  const steps: ProvisionDefinition[] = [];
 
   const bucket = target.compute.mediaBucketName;
   if (target.compute.enabled && bucket !== null) {
@@ -279,9 +260,7 @@ export const secretPlan = (
 ): { name: string; workerName: string; envVar: string; source: SecretSource; argv: string[] }[] =>
   target.requiredSecretNames.flatMap((name) => {
     let workers: string[];
-    if (target.deploymentProfile !== 'supabase') {
-      workers = [target.workerName];
-    } else if (name === 'SUPABASE_SERVICE_ROLE_KEY') {
+    if (name === 'SUPABASE_SERVICE_ROLE_KEY') {
       workers = [target.workerName, target.compute.jobsWorkerName].filter(
         (value): value is string => value !== null,
       );
@@ -445,7 +424,7 @@ export const provision = (
         name: definition.name,
         description: definition.description,
         outcome: 'failed',
-        detail: `The configured D1 ID is absent. Refusing to create a replacement with a different ID. Run deploy:configure -- --env ${target.environment} --provision, then review a new plan.`,
+        detail: `The configured ${definition.name} resource is absent and cannot be created without changing its identity. Reconfigure the target, then review a new plan.`,
         argv,
       });
       return stop(definition.name);
@@ -529,7 +508,7 @@ export const provision = (
         '  This module already handles a value without ever naming it, so the simpler\n' +
         '  composition is to let the existing SOPS runner decrypt and export, and install\n' +
         '  from the environment:\n' +
-        '    bun run secrets:exec --env BETTER_AUTH_SECRET=<ct> --env RESEND_API_KEY=<ct> -- \\\n' +
+        '    bun run secrets:exec --env SUPABASE_SERVICE_ROLE_KEY=<ct> --env RESEND_API_KEY=<ct> -- \\\n' +
         '      bun run deploy:secrets --env ' +
         target.environment +
         ' --install\n' +
@@ -658,9 +637,5 @@ export const renderProvision = (result: ProvisionResult): string => {
  * requirement from the tool that needs it rather than from documentation that may
  * have drifted from the code.
  */
-export const describeTokenScopes = (target?: ResolvedTarget): string =>
-  REQUIRED_TOKEN_SCOPES.filter(
-    (scope) => !(target?.deploymentProfile === 'supabase' && scope.permission === 'D1: Edit'),
-  )
-    .map((scope) => `  ${scope.permission} — ${scope.neededBy}`)
-    .join('\n');
+export const describeTokenScopes = (_target?: ResolvedTarget): string =>
+  REQUIRED_TOKEN_SCOPES.map((scope) => `  ${scope.permission} — ${scope.neededBy}`).join('\n');

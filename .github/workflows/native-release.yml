@@ -107,7 +107,6 @@ jobs:
     outputs:
       origin: ${{ steps.config.outputs.origin }}
       sign: ${{ steps.config.outputs.sign }}
-      profile: ${{ steps.config.outputs.profile }}
       environment: ${{ steps.config.outputs.environment }}
       supabase_url: ${{ steps.config.outputs.supabase_url }}
       supabase_project_ref: ${{ steps.config.outputs.supabase_project_ref }}
@@ -125,17 +124,15 @@ jobs:
         id: resolve-target
         env:
           DEPLOY_ENVIRONMENT: ${{ inputs.environment }}
-          STARTER_BACKEND_PROFILE: supabase
           STARTER_DEPLOYMENT_TARGETS: ${{ vars.STARTER_DEPLOYMENT_TARGETS }}
           CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
           TARGET_FILE: ${{ runner.temp }}/native-target.json
         run: |
           bun run deploy:check --env "$DEPLOY_ENVIRONMENT" --json > "$TARGET_FILE"
-          node -e 'const fs=require("node:fs");const t=JSON.parse(fs.readFileSync(process.env.TARGET_FILE,"utf8")).target;if(!t||t.deploymentProfile!=="supabase"||!t.nativeApiOrigin||!t.supabase?.publishableKey)process.exit(1);for(const [k,v] of Object.entries({origin:t.nativeApiOrigin,supabase_url:t.supabase.url,supabase_project_ref:t.supabase.projectRef,supabase_publishable_key:t.supabase.publishableKey}))fs.appendFileSync(process.env.GITHUB_OUTPUT,k+"="+v+"\n");'
+          node -e 'const fs=require("node:fs");const t=JSON.parse(fs.readFileSync(process.env.TARGET_FILE,"utf8")).target;if(!t||!t.nativeApiOrigin||!t.supabase?.publishableKey)process.exit(1);for(const [k,v] of Object.entries({origin:t.nativeApiOrigin,supabase_url:t.supabase.url,supabase_project_ref:t.supabase.projectRef,supabase_publishable_key:t.supabase.publishableKey}))fs.appendFileSync(process.env.GITHUB_OUTPUT,k+"="+v+"\n");'
       - name: Record the requested configuration and what is missing
         id: config
         env:
-          BACKEND_PROFILE: supabase
           ENVIRONMENT: ${{ inputs.environment }}
           RESOLVED_ORIGIN: ${{ steps.resolve-target.outputs.origin }}
           SUPABASE_URL: ${{ steps.resolve-target.outputs.supabase_url }}
@@ -205,7 +202,6 @@ jobs:
           {
             echo "origin=$API_ORIGIN"
             echo "sign=$SIGN"
-            echo "profile=$BACKEND_PROFILE"
             echo "environment=$ENVIRONMENT"
             echo "supabase_url=$SUPABASE_URL"
             echo "supabase_project_ref=$SUPABASE_PROJECT_REF"
@@ -269,7 +265,6 @@ jobs:
         # does not build the wrong thing — it builds nothing, several minutes in.
         env:
           VITE_NATIVE_API_ORIGIN: ${{ needs.preflight.outputs.origin }}
-          VITE_NATIVE_AUTH_PROFILE: ${{ needs.preflight.outputs.profile }}
           VITE_NATIVE_ENVIRONMENT: ${{ needs.preflight.outputs.environment }}
           VITE_NATIVE_SUPABASE_URL: ${{ needs.preflight.outputs.supabase_url }}
           VITE_NATIVE_SUPABASE_PROJECT_REF: ${{ needs.preflight.outputs.supabase_project_ref }}
@@ -389,7 +384,6 @@ jobs:
       - name: Build the app bundle and the DMG
         env:
           VITE_NATIVE_API_ORIGIN: ${{ needs.preflight.outputs.origin }}
-          VITE_NATIVE_AUTH_PROFILE: ${{ needs.preflight.outputs.profile }}
           VITE_NATIVE_ENVIRONMENT: ${{ needs.preflight.outputs.environment }}
           VITE_NATIVE_SUPABASE_URL: ${{ needs.preflight.outputs.supabase_url }}
           VITE_NATIVE_SUPABASE_PROJECT_REF: ${{ needs.preflight.outputs.supabase_project_ref }}
@@ -573,7 +567,6 @@ jobs:
       - name: Build the binary, the AppImage and the .deb
         env:
           VITE_NATIVE_API_ORIGIN: ${{ needs.preflight.outputs.origin }}
-          VITE_NATIVE_AUTH_PROFILE: ${{ needs.preflight.outputs.profile }}
           VITE_NATIVE_ENVIRONMENT: ${{ needs.preflight.outputs.environment }}
           VITE_NATIVE_SUPABASE_URL: ${{ needs.preflight.outputs.supabase_url }}
           VITE_NATIVE_SUPABASE_PROJECT_REF: ${{ needs.preflight.outputs.supabase_project_ref }}
@@ -736,7 +729,6 @@ jobs:
       - name: Build the release bundle
         env:
           VITE_NATIVE_API_ORIGIN: ${{ needs.preflight.outputs.origin }}
-          VITE_NATIVE_AUTH_PROFILE: ${{ needs.preflight.outputs.profile }}
           VITE_NATIVE_ENVIRONMENT: ${{ needs.preflight.outputs.environment }}
           VITE_NATIVE_SUPABASE_URL: ${{ needs.preflight.outputs.supabase_url }}
           VITE_NATIVE_SUPABASE_PROJECT_REF: ${{ needs.preflight.outputs.supabase_project_ref }}
@@ -768,7 +760,6 @@ jobs:
         env:
           SIGN: ${{ inputs.sign }}
           VITE_NATIVE_API_ORIGIN: ${{ needs.preflight.outputs.origin }}
-          VITE_NATIVE_AUTH_PROFILE: ${{ needs.preflight.outputs.profile }}
           VITE_NATIVE_ENVIRONMENT: ${{ needs.preflight.outputs.environment }}
           VITE_NATIVE_SUPABASE_URL: ${{ needs.preflight.outputs.supabase_url }}
           VITE_NATIVE_SUPABASE_PROJECT_REF: ${{ needs.preflight.outputs.supabase_project_ref }}
@@ -934,7 +925,6 @@ jobs:
           # shell source.
           SIGN: ${{ inputs.sign }}
           VITE_NATIVE_API_ORIGIN: ${{ needs.preflight.outputs.origin }}
-          VITE_NATIVE_AUTH_PROFILE: ${{ needs.preflight.outputs.profile }}
           VITE_NATIVE_ENVIRONMENT: ${{ needs.preflight.outputs.environment }}
           VITE_NATIVE_SUPABASE_URL: ${{ needs.preflight.outputs.supabase_url }}
           VITE_NATIVE_SUPABASE_PROJECT_REF: ${{ needs.preflight.outputs.supabase_project_ref }}
@@ -962,7 +952,6 @@ jobs:
         env:
           SIGN: ${{ inputs.sign }}
           VITE_NATIVE_API_ORIGIN: ${{ needs.preflight.outputs.origin }}
-          VITE_NATIVE_AUTH_PROFILE: ${{ needs.preflight.outputs.profile }}
           VITE_NATIVE_ENVIRONMENT: ${{ needs.preflight.outputs.environment }}
           VITE_NATIVE_SUPABASE_URL: ${{ needs.preflight.outputs.supabase_url }}
           VITE_NATIVE_SUPABASE_PROJECT_REF: ${{ needs.preflight.outputs.supabase_project_ref }}

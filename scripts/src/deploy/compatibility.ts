@@ -6,7 +6,7 @@
 // that decides whether a *rollback* is safe. Three facts about a Cloudflare
 // deployment make it its own question:
 //
-//   1. **A Worker rollback does not undo a D1 migration.** Wrangler versions the
+//   1. **A Worker rollback does not undo a Postgres migration.** Wrangler versions the
 //      code; it does not version the schema. Rolling the Worker back after
 //      `apply` migrated leaves the previous release running against the newer
 //      schema, and the only safe move is a *forward* migration.

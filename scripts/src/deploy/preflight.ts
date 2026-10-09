@@ -17,7 +17,7 @@
 //   * **Wrong account.** A token for account B, a configured account id for A.
 //     Wrangler would happily act on B; the plan said A. Everything after that
 //     succeeds and the data lands somewhere nobody was looking.
-//   * **Wrong or missing resource.** The D1 id is stale, was deleted, or belongs
+//   * **Wrong or missing resource.** The Postgres id is stale, was deleted, or belongs
 //     to another account.
 //   * **Wrong Worker.** The name is configured but no such Worker exists in this
 //     account, which is the normal state for a first staging deploy and a
@@ -96,9 +96,7 @@ export interface PreflightReport {
 export const preflightCommands = (target: ResolvedTarget): { check: string; args: string[] }[] => {
   const commands: { check: string; args: string[] }[] = [
     { check: 'account', args: ['whoami'] },
-    ...(target.deploymentProfile === 'legacy'
-      ? [{ check: 'database', args: ['d1', 'info', target.d1DatabaseId, '--json'] }]
-      : [{ check: 'supabase migrations', args: supabaseMigrationArgs(target, 'list') }]),
+    { check: 'supabase migrations', args: supabaseMigrationArgs(target, 'list') },
     { check: 'worker', args: ['deployments', 'list', '--name', target.workerName, '--json'] },
     // Names only, never values: `wrangler secret list` reports what is installed
     // and nothing else. That is the property that makes this check safe to run
@@ -110,7 +108,7 @@ export const preflightCommands = (target: ResolvedTarget): { check: string; args
     { check: 'secrets', args: secretListArgv(target.workerName, target.environment) },
   ];
 
-  if (target.deploymentProfile === 'supabase' && target.compute.jobsWorkerName !== null) {
+  if (target.compute.enabled && target.compute.jobsWorkerName !== null) {
     commands.push({
       check: 'jobs secrets',
       args: secretListArgv(target.compute.jobsWorkerName, target.environment),
@@ -119,12 +117,6 @@ export const preflightCommands = (target: ResolvedTarget): { check: string; args
 
   if (target.compute.enabled && target.compute.mediaBucketName !== null) {
     commands.push({ check: 'bucket', args: ['r2', 'bucket', 'list', '--json'] });
-    if (target.deploymentProfile === 'legacy') {
-      commands.push({
-        check: 'container',
-        args: ['deployments', 'list', '--name', target.compute.jobsWorkerName ?? '', '--json'],
-      });
-    }
   }
 
   return commands;
@@ -309,43 +301,6 @@ export const preflight = (
     return { ok: false, findings, commands };
   }
 
-  // ── database ───────────────────────────────────────────────────────────────
-  if (target.deploymentProfile === 'legacy') {
-    const database = run(['d1', 'info', target.d1DatabaseId, '--json']);
-
-    if (!database.ok) {
-      findings.push({
-        check: 'database',
-        ok: false,
-        detail: `The D1 database ${target.d1DatabaseId} is not readable in this account.`,
-        remedy:
-          'It does not exist, it belongs to another account, or this token cannot read it.\n' +
-          `  Provision the ${target.environment} database with:\n` +
-          `    bun run deploy:configure -- --env ${target.environment} --provision\n` +
-          '  Nothing has been changed.',
-      });
-      return { ok: false, findings, commands };
-    }
-
-    // A D1 database that exists but belongs to a different account still answers
-    // `d1 info`, so the exit code alone is not the check. When wrangler reports a
-    // different account for the database, that is the mismatch this layer is for.
-    const databaseAccounts = accountsIn(database.stdout).filter((id) => id !== target.accountId);
-    if (databaseAccounts.length > 0) {
-      findings.push({
-        check: 'database',
-        ok: false,
-        detail:
-          `The D1 database ${target.d1DatabaseId} reports account ` +
-          `${databaseAccounts.join(', ')}, not ${target.accountId}.`,
-        remedy:
-          'Staging and production must be separate databases. Refusing before anything is ' +
-          'changed, because migrating the wrong one is the outcome this prevents.',
-      });
-      return { ok: false, findings, commands };
-    }
-  }
-
   // ── worker ─────────────────────────────────────────────────────────────────
   const worker = run(['deployments', 'list', '--name', target.workerName, '--json']);
 
@@ -413,10 +368,9 @@ export const preflight = (
     });
   } else {
     const installed = new Set(installedSecretNames(secrets.stdout));
-    const webSecretNames =
-      target.deploymentProfile === 'supabase'
-        ? target.requiredSecretNames.filter((name) => name !== 'GOOGLE_DISPATCHER_CREDENTIAL')
-        : target.requiredSecretNames;
+    const webSecretNames = target.requiredSecretNames.filter(
+      (name) => name !== 'GOOGLE_DISPATCHER_CREDENTIAL',
+    );
     const missing = webSecretNames.filter((name) => !installed.has(name));
     if (missing.length > 0) {
       findings.push({
@@ -441,7 +395,7 @@ export const preflight = (
     }
   }
 
-  if (target.deploymentProfile === 'supabase' && target.compute.jobsWorkerName !== null) {
+  if (target.compute.enabled && target.compute.jobsWorkerName !== null) {
     const jobsName = target.compute.jobsWorkerName;
     const jobsSecrets = run(secretListArgv(jobsName, target.environment));
     const requiredJobsSecrets = target.requiredSecretNames.filter(
@@ -497,57 +451,11 @@ export const preflight = (
       });
     }
 
-    const jobsName = target.compute.jobsWorkerName;
-    if (target.deploymentProfile === 'supabase') {
-      findings.push({
-        check: 'cloud-run',
-        ok: true,
-        detail: `Cloud Run Job ${target.supabase?.jobName} is checked through the authenticated Google provider preflight.`,
-      });
-    } else {
-      if (jobsName === null) {
-        findings.push({
-          check: 'container',
-          ok: false,
-          detail: `The ${target.environment} jobs profile is "encode" but names no jobs Worker.`,
-          remedy: `    bun run deploy:configure -- --env ${target.environment} --jobs-worker <name>`,
-        });
-      } else {
-        const deployments = run(['deployments', 'list', '--name', jobsName, '--json']);
-        if (!deployments.ok) {
-          findings.push({
-            check: 'container',
-            ok: false,
-            detail: `The jobs Worker "${jobsName}" has no deployments in this account.`,
-            remedy:
-              'Containers require the Workers Paid plan and an accepted container image.\n' +
-              `  Deploy it once, then re-run this preflight:\n` +
-              `    bun run deploy:apply --env ${target.environment} --yes --only jobs\n` +
-              '  Nothing has been changed.',
-          });
-        } else if (!containerEntitlementProven(deployments.stdout)) {
-          // Reported as unproven rather than as a refusal, and the distinction is
-          // deliberate: an empty deployment list on a first deploy says nothing
-          // about the account, and refusing here would block the deploy that would
-          // establish it.
-          findings.push({
-            check: 'container',
-            ok: true,
-            detail:
-              `No deployed ${jobsName} version carries a container binding yet, so the container ` +
-              'entitlement is NOT PROVEN by this preflight. It is established by the first ' +
-              'successful jobs deploy, not by a check this tooling can run read-only.',
-            warn: true,
-          });
-        } else {
-          findings.push({
-            check: 'container',
-            ok: true,
-            detail: `${jobsName} has a deployed version carrying a container binding.`,
-          });
-        }
-      }
-    }
+    findings.push({
+      check: 'cloud-run',
+      ok: true,
+      detail: `Cloud Run Job ${target.supabase.jobName} is checked through the authenticated Google provider preflight.`,
+    });
   }
 
   // ── mail ─────────────────────────────────────────────────────────────────────
@@ -586,19 +494,6 @@ export const preflightSupabaseProviders = async (
   target: ResolvedTarget,
   options: { env?: NodeJS.ProcessEnv } = {},
 ): Promise<PreflightReport> => {
-  if (target.deploymentProfile !== 'supabase' || target.supabase === null) {
-    return {
-      ok: false,
-      findings: [
-        {
-          check: 'target',
-          ok: false,
-          detail: 'Supabase provider preflight requires the resolved Supabase target.',
-        },
-      ],
-      commands: [],
-    };
-  }
   const env = options.env ?? process.env;
   const commands = [
     supabaseMigrationArgs(target, 'list'),

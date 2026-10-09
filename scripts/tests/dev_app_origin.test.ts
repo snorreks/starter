@@ -132,7 +132,7 @@ describe('other forwarded vars stay opt-in', () => {
     expect(vars.AUTH_RATE_LIMIT_MAX).toBeUndefined();
     // Present because it is a real deployment decision, and it names what the
     // application was told to do. Never a secret: it is a name.
-    expect(vars.BETTER_AUTH_SECRET).toBeUndefined();
+    expect(vars.SUPABASE_SERVICE_ROLE_KEY).toBeUndefined();
   });
 
   test('every var is passed as two argv elements, never one combined string', () => {

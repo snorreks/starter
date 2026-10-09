@@ -72,7 +72,6 @@ test('CI runs the Supabase-owned E2E entrypoint without a second database setup'
 describe('deployment workload identity follows resolved compute policy', () => {
   test('disabled compute requires no Google project', () => {
     const { result, output } = runTargetExtraction({
-      deploymentProfile: 'supabase',
       compute: { enabled: false },
       supabase: {},
     });
@@ -84,7 +83,6 @@ describe('deployment workload identity follows resolved compute policy', () => {
 
   test('enabled compute exports the resolved Google project', () => {
     const { result, output } = runTargetExtraction({
-      deploymentProfile: 'supabase',
       compute: { enabled: true },
       supabase: { googleProjectId: 'starter-staging' },
     });
@@ -98,7 +96,6 @@ describe('deployment workload identity follows resolved compute policy', () => {
     'missing compute policy or project refuses without outputs',
     (compute) => {
       const { result, output } = runTargetExtraction({
-        deploymentProfile: 'supabase',
         compute,
         supabase: {},
       });
@@ -112,7 +109,7 @@ describe('deployment workload identity follows resolved compute policy', () => {
     const authentication = workflowSteps().find((value) => value.id === 'google-auth');
     expect(authentication?.if).toBe(
       // biome-ignore lint/suspicious/noTemplateCurlyInString: GitHub expressions are literal workflow configuration, not JavaScript interpolation.
-      "${{ inputs.backend_profile == 'supabase' && steps.target.outputs.compute_enabled == 'true' }}",
+      "${{ steps.target.outputs.compute_enabled == 'true' }}",
     );
   });
 });

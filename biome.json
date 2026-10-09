@@ -1,5 +1,5 @@
 {
-  "$schema": "https://biomejs.dev/schemas/2.5.13/schema.json",
+  "$schema": "https://biomejs.dev/schemas/2.5.14/schema.json",
   "vcs": {
     "enabled": true,
     "clientKind": "git",
@@ -16,7 +16,6 @@
       "!**/test-results",
       "!**/playwright-report",
       "!**/.evidence",
-      "!**/drizzle-d1/meta",
       "!packages/backend/database/src/supabase/database.types.ts",
       "!**/*.min.js"
     ],
@@ -287,10 +286,6 @@
                   {
                     "group": ["@starter/database", "@starter/auth"],
                     "message": "The frontend must not import backend implementation. Share the contract through @starter/schemas instead."
-                  },
-                  {
-                    "group": ["drizzle-orm", "better-auth"],
-                    "message": "Database and auth implementation belongs to the server plane. The frontend speaks HTTP."
                   }
                 ]
               }
@@ -345,7 +340,13 @@
     },
     {
       "includes": ["packages/shared/logger/src/lib/console_logger.ts"],
-      "linter": { "rules": { "suspicious": { "noConsole": "off" } } }
+      "linter": {
+        "rules": {
+          "suspicious": {
+            "noConsole": "off"
+          }
+        }
+      }
     },
     {
       "includes": ["scripts/src/lib/guards/**/*.ts"],
@@ -362,8 +363,12 @@
       "includes": ["apps/frontend/native/src/lib/test_setup.ts"],
       "linter": {
         "rules": {
-          "suspicious": { "noConsole": "off" },
-          "style": { "noRestrictedImports": "off" }
+          "suspicious": {
+            "noConsole": "off"
+          },
+          "style": {
+            "noRestrictedImports": "off"
+          }
         }
       }
     },
@@ -371,8 +376,12 @@
       "includes": ["apps/frontend/client/src/lib/test_setup.ts"],
       "linter": {
         "rules": {
-          "suspicious": { "noConsole": "off" },
-          "style": { "noRestrictedImports": "off" }
+          "suspicious": {
+            "noConsole": "off"
+          },
+          "style": {
+            "noRestrictedImports": "off"
+          }
         }
       }
     },
@@ -384,7 +393,9 @@
             "noUnusedVariables": "off",
             "noUnusedImports": "off"
           },
-          "style": { "useConsistentTypeDefinitions": "off" }
+          "style": {
+            "useConsistentTypeDefinitions": "off"
+          }
         }
       }
     },
@@ -392,7 +403,9 @@
       "includes": ["apps/frontend/client/src/lib/server/container.ts"],
       "linter": {
         "rules": {
-          "style": { "useConsistentTypeDefinitions": "off" }
+          "style": {
+            "useConsistentTypeDefinitions": "off"
+          }
         }
       }
     },
@@ -401,7 +414,13 @@
         "apps/frontend/client/src/routes/+layout.svelte",
         "packages/frontend/ui/src/screen_container.svelte"
       ],
-      "linter": { "rules": { "suspicious": { "noConsole": "off" } } }
+      "linter": {
+        "rules": {
+          "suspicious": {
+            "noConsole": "off"
+          }
+        }
+      }
     },
     {
       "includes": [

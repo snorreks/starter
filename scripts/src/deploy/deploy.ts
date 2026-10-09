@@ -412,7 +412,7 @@ export const planDeploy = (
   // deploy omitted `--var RELEASE` and `--meta`. A dry run that renders different
   // argv from the real run is a dry run that can lie, which is the whole claim
   // being tested.
-  const migration = migrationStep(target, options.root ?? REPO_ROOT);
+  const migration = migrationStep(target);
   if (!migration.ok) {
     return { ok: false, reason: migration.detail, remedy: 'Fix the migration plan, then re-run.' };
   }
@@ -422,7 +422,7 @@ export const planDeploy = (
   const steps: Step[] = [
     {
       description: migration.description,
-      command: target.deploymentProfile === 'supabase' ? 'supabase' : 'wrangler',
+      command: 'supabase',
       args: migration.args,
       cwd: CLIENT_DIR,
       remote: true,
@@ -494,24 +494,22 @@ export const planDeploy = (
     );
   }
 
-  if (target.deploymentProfile === 'supabase' && target.supabase !== null) {
+  notices.push(
+    `Supabase project ${target.supabase.projectRef} at ${target.supabase.url}; native API ${target.nativeApiOrigin}; callbacks ${target.supabase.nativeRedirectAllowlist.join(', ')}.`,
+  );
+  if (target.compute.enabled) {
     notices.push(
-      `Supabase project ${target.supabase.projectRef} at ${target.supabase.url}; native API ${target.nativeApiOrigin}; callbacks ${target.supabase.nativeRedirectAllowlist.join(', ')}.`,
+      `Google Cloud ${target.supabase.googleProjectId}/${target.supabase.googleRegion}, Cloud Run Job ${target.supabase.jobName}, image ${target.supabase.image}, protocol ${target.supabase.protocol}; runner and dispatcher identities are separate.`,
     );
-    if (target.compute.enabled) {
-      notices.push(
-        `Google Cloud ${target.supabase.googleProjectId}/${target.supabase.googleRegion}, Cloud Run Job ${target.supabase.jobName}, image ${target.supabase.image}, protocol ${target.supabase.protocol}; runner and dispatcher identities are separate.`,
-      );
-      notices.push('Google API discovery and Cloud Run configuration are authenticated phases.');
-    } else {
-      notices.push(
-        'Compute is disabled: no Google discovery, credentials or resource mutations are required.',
-      );
-    }
+    notices.push('Google API discovery and Cloud Run configuration are authenticated phases.');
+  } else {
     notices.push(
-      'The offline plan reads no credentials and performs no provider requests. Supabase project creation is a separate, potentially billable operator action.',
+      'Compute is disabled: no Google discovery, credentials or resource mutations are required.',
     );
   }
+  notices.push(
+    'The offline plan reads no credentials and performs no provider requests. Supabase project creation is a separate, potentially billable operator action.',
+  );
 
   notices.push(
     `CLOUDFLARE_API_TOKEN is the deployment credential and is NOT a runtime secret. The Worker needs\n  ` +
@@ -549,7 +547,7 @@ export const renderPlan = (plan: Extract<Plan, { ok: true }>): string => {
     `  project     ${target.project}`,
     `  account     ${target.accountId}`,
     `  worker      ${target.workerName}`,
-    `  database    ${target.d1DatabaseId}`,
+    `  data project ${target.supabase.projectRef}`,
     `  origin      ${target.origin}`,
     `  mail from   ${target.mailFrom}`,
     `  native api  ${target.nativeApiOrigin ?? '(this project ships no packaged client)'}`,
@@ -645,7 +643,7 @@ const runStatus = (json: boolean): number => {
       const target = resolved.target;
       process.stdout.write(`  ok       ${environment}: ${target.workerName} -> ${target.origin}\n`);
       process.stdout.write(
-        `           account ${target.accountId}, database ${target.d1DatabaseId}\n`,
+        `           account ${target.accountId}, Supabase ${target.supabase.projectRef}\n`,
       );
     } else {
       process.stdout.write(`  missing  ${environment}: ${resolved.reason}\n`);
@@ -679,7 +677,7 @@ export const main = async (argv: readonly string[]): Promise<number> => {
   //
   // It used to run *after* `parseDeployArgs`, which meant the usage error for an
   // unknown flag quoted the token back: `bun run deploy apply --var
-  // BETTER_AUTH_SECRET:hunter2` printed the value it was refusing. A refusal that
+  // SUPABASE_SERVICE_ROLE_KEY:hunter2` printed the value it was refusing. A refusal that
   // echoes the secret it is refusing is the worst of both, so the check runs first
   // and the parser never sees the token.
   const leak = secretInArgvProblem(argv);
@@ -759,7 +757,7 @@ export const main = async (argv: readonly string[]): Promise<number> => {
     }
 
     let report = preflight(resolved.target, { allowMissingWorker: parsed.allowNewWorker });
-    if (resolved.target.deploymentProfile === 'supabase' && report.ok) {
+    if (resolved.ok && report.ok) {
       const providers = await preflightSupabaseProviders(resolved.target);
       report = {
         ok: report.ok && providers.ok,
@@ -828,7 +826,7 @@ export const main = async (argv: readonly string[]): Promise<number> => {
       }
     }
     let runnerSubject: string | undefined;
-    if (resolved.target.deploymentProfile === 'supabase' && resolved.target.compute.enabled) {
+    if (resolved.target.compute.enabled) {
       const token = process.env.GOOGLE_ACCESS_TOKEN;
       if (!token) {
         return fail(

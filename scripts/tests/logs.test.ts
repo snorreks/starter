@@ -50,7 +50,6 @@ beforeEach(() =>
       staging: {
         ...targets(),
         workerName: 'fixture-staging',
-        d1DatabaseId: 'db-staging',
         origin: 'https://staging.example',
         mailFrom: 'no-reply@staging.example',
         jobsProfile: 'disabled',
@@ -58,7 +57,6 @@ beforeEach(() =>
       production: {
         ...targets(),
         workerName: 'fixture-production',
-        d1DatabaseId: 'db-production',
         origin: 'https://production.example',
         mailFrom: 'no-reply@production.example',
         jobsProfile: 'disabled',

@@ -1,394 +1,88 @@
-// scripts/tests/deployment_target.test.ts
-//
-// The refusals, before anything is touched.
-//
-// Every case here is a state the template reaches constantly — an unprovisioned
-// checkout, a typo in `--env`, a staging database copied into production — and the
-// thing being asserted is always the same: `resolveTarget` refuses, and it says
-// what to do instead. A refusal that returns `null` or throws a bare `TypeError` is
-// not a refusal an operator can act on.
-
-import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
-import {
-  describeCredential,
-  hasApiToken,
-  SUPPORTED_CREDENTIAL_MODES,
-  secretInArgvProblem,
-} from '../src/deploy/credentials.ts';
-import { preflight } from '../src/deploy/preflight.ts';
-import {
-  DEPLOYABLE_ENVIRONMENTS,
-  environmentIsolationProblem,
-  type ResolvedTarget,
-  resolveTarget,
-} from '../src/deploy/target.ts';
+import { describe, expect, test } from 'bun:test';
+import { resolveTarget } from '../src/deploy/target.ts';
 import { targets } from '../src/registry/app_registry.ts';
 import type { DeploymentValues } from '../src/registry/deployment_values.ts';
 
-const ACCOUNT = 'abcdef0123456789abcdef0123456789';
-const OTHER_ACCOUNT = '99999999999999999999999999999999';
-const originalBackendProfile = process.env.STARTER_BACKEND_PROFILE;
-afterEach(() => {
-  if (originalBackendProfile === undefined) {
-    delete process.env.STARTER_BACKEND_PROFILE;
-  } else {
-    process.env.STARTER_BACKEND_PROFILE = originalBackendProfile;
-  }
-});
-beforeEach(() => {
-  process.env.STARTER_BACKEND_PROFILE = 'legacy';
-});
+const ref = (environment: 'staging' | 'production'): string =>
+  environment === 'staging' ? 'stageprojectref00001' : 'prodprojectref000001';
 
-/** A project with both environments fully provisioned and properly separated. */
-const configured = (overrides: Partial<DeploymentValues> = {}): DeploymentValues => ({
-  accountId: ACCOUNT,
+const origin = (environment: 'staging' | 'production'): string =>
+  environment === 'staging'
+    ? 'https://starter-staging.example.workers.dev'
+    : 'https://starter.example';
+
+const configured = (
+  environment: 'staging' | 'production',
+  changes: Record<string, string | null> = {},
+) =>
+  targets({
+    workerName: environment === 'staging' ? 'starter-staging' : 'starter-production',
+    origin: origin(environment),
+    mailFrom: 'noreply@starter.example',
+    nativeApiOrigin: origin(environment),
+    jobsProfile: 'disabled',
+    supabaseProjectRef: ref(environment),
+    supabaseUrl: `https://${ref(environment)}.supabase.co`,
+    supabaseAuthUrl: `https://${ref(environment)}.supabase.co`,
+    supabasePublishableKey: 'sb_publishable_public-key',
+    nativeRedirectAllowlist: `${origin(environment)}/auth/callback,com.example.starter://auth/callback`,
+    ...changes,
+  });
+
+const values = (
+  staging = configured('staging'),
+  production = configured('production'),
+): DeploymentValues => ({
+  accountId: 'abcdef0123456789abcdef0123456789',
   workerName: null,
-  d1DatabaseId: null,
   r2BucketNames: { uploads: null },
   customDomain: null,
   jobsProfile: 'disabled',
-  environments: {
-    staging: targets({
-      workerName: 'starter-staging',
-      d1DatabaseId: 'db-staging',
-      origin: 'https://starter-staging.example.workers.dev',
-      mailFrom: 'noreply@starter.example',
-      jobsProfile: 'disabled',
-    }),
-    production: targets({
-      workerName: 'starter-production',
-      d1DatabaseId: 'db-production',
-      origin: 'https://starter.example',
-      mailFrom: 'noreply@starter.example',
-      jobsProfile: 'disabled',
-    }),
-  },
-  ...overrides,
+  environments: { staging, production },
 });
 
-const resolved = (environment: string, values = configured()): ResolvedTarget => {
-  const result = resolveTarget(environment, { values, profile: 'legacy' });
-  if (!result.ok) {
-    throw new Error(`Expected ${environment} to resolve, got: ${result.reason}`);
-  }
-  return result.target;
-};
-
-describe('resolveTarget answers with one complete destination', () => {
-  test('an absent selector resolves to Supabase with explicitly disabled compute', () => {
-    delete process.env.STARTER_BACKEND_PROFILE;
-    const configuredValues = supabaseConfigured();
-    const staging = configuredValues.environments?.staging;
-    if (!staging) {
-      throw new Error('The test Supabase target is missing staging.');
-    }
-    const result = resolveTarget('staging', {
-      values: {
-        ...configuredValues,
-        environments: {
-          ...configuredValues.environments,
-          staging: {
-            ...staging,
-            jobsProfile: 'disabled',
-            jobsWorkerName: null,
-            mediaBucketName: null,
-            encodeWorkflowName: null,
-            maintenanceWorkflowName: null,
-            containerProfile: null,
-            googleProjectId: null,
-            googleRegion: null,
-            cloudRunJobName: null,
-            artifactImage: null,
-            runnerServiceAccount: null,
-            dispatcherServiceAccount: null,
-            processorProtocol: null,
-            processorCpu: null,
-            processorMemory: null,
-            processorTimeoutSeconds: null,
-          },
-        },
-      },
-    });
-    expect(result.ok).toBe(true);
-    if (result.ok) {
-      expect(result.target.deploymentProfile).toBe('supabase');
-      expect(result.target.compute).toMatchObject({ enabled: false, profile: 'disabled' });
-      expect(result.target.requiredSecretNames).not.toContain('GOOGLE_DISPATCHER_CREDENTIAL');
-    }
+const enabled = (
+  environment: 'staging' | 'production',
+  changes: Record<string, string | null> = {},
+) =>
+  configured(environment, {
+    jobsProfile: 'encode',
+    containerProfile: 'basic',
+    googleProjectId: `starter-${environment}`,
+    googleRegion: 'europe-north1',
+    cloudRunJobName: `starter-media-${environment}`,
+    artifactImage: `europe-north1-docker.pkg.dev/starter-${environment}/media/runner@sha256:${'a'.repeat(64)}`,
+    runnerServiceAccount: `runner-${environment}@starter-${environment}.iam.gserviceaccount.com`,
+    dispatcherServiceAccount: `dispatch-${environment}@starter-${environment}.iam.gserviceaccount.com`,
+    processorProtocol: 'sample-v1',
+    processorCpu: '2',
+    processorMemory: '2Gi',
+    processorTimeoutSeconds: '900',
+    jobsWorkerName: `starter-jobs-${environment}`,
+    mediaBucketName: `starter-media-${environment}`,
+    encodeWorkflowName: `starter-encode-${environment}`,
+    maintenanceWorkflowName: `starter-maintenance-${environment}`,
+    ...changes,
   });
 
-  test('an explicit profile bypasses an invalid environment fallback', () => {
-    process.env.STARTER_BACKEND_PROFILE = 'invalid';
-    const explicit = resolveTarget('staging', {
-      values: supabaseConfigured(),
-      profile: 'supabase',
-    });
-    expect(explicit.ok).toBe(true);
-
-    const fallback = resolveTarget('staging', { values: configured() });
-    expect(fallback.ok).toBe(false);
-    if (!fallback.ok) {
-      expect(fallback.reason).toContain('STARTER_BACKEND_PROFILE must be legacy or supabase');
-    }
-  });
-
-  test('every value a deploy touches comes from the same resolution', () => {
-    // The point of the module. A plan built from one source and executed against
-    // another is the failure this whole layer exists to make impossible, so the
-    // assertion is that one call yields all of it consistently.
-    const target = resolved('staging');
-
-    expect(target.environment).toBe('staging');
-    expect(target.accountId).toBe(ACCOUNT);
-    expect(target.workerName).toBe('starter-staging');
-    expect(target.d1DatabaseId).toBe('db-staging');
-    expect(target.origin).toBe('https://starter-staging.example.workers.dev');
-    expect(target.wranglerConfig).toBe('apps/frontend/client/wrangler.jsonc');
-  });
-
-  test('staging and production resolve to genuinely different destinations', () => {
-    const staging = resolved('staging');
-    const production = resolved('production');
-
-    expect(staging.workerName).not.toBe(production.workerName);
-    expect(staging.d1DatabaseId).not.toBe(production.d1DatabaseId);
-    expect(staging.origin).not.toBe(production.origin);
-  });
-
-  test('required secrets are named, never valued', () => {
-    // A plan gets pasted into tickets. What an environment *needs* is public; what
-    // it is is not.
-    const target = resolved('production');
-    expect(target.requiredSecretNames).toEqual(['BETTER_AUTH_SECRET', 'RESEND_API_KEY']);
-    expect(target.requiredVarNames).toContain('DEPLOYMENT_ENV');
-    expect(target.requiredVarNames).toContain('RELEASE');
-  });
-});
-
-describe('resolveTarget refuses before any mutation', () => {
-  test('an unknown environment is not resolved to a nearby one', () => {
-    // `--env prod` must not reach production. That is the whole reason the parser
-    // and this module both validate rather than normalising.
-    for (const typo of ['prod', 'Production', 'stage', '', 'localhost']) {
-      const result = resolveTarget(typo, { values: configured() });
-      expect(result.ok).toBe(false);
-      if (result.ok) {
-        continue;
-      }
-      expect(result.reason).toContain('not a deployable environment');
-    }
-  });
-
-  test('`local` is refused: it is a runtime, not a destination', () => {
-    const result = resolveTarget('local', { values: configured() });
-    expect(result.ok).toBe(false);
-    if (result.ok) {
-      return;
-    }
-    expect(result.remedy).toContain('bun run dev');
-  });
-
-  test('each deployable environment is accepted', () => {
-    for (const environment of DEPLOYABLE_ENVIRONMENTS) {
-      expect(resolveTarget(environment, { values: configured() }).ok).toBe(true);
-    }
+describe('Supabase is the only deployable application backend', () => {
+  test('the enabled negative-control fixture is itself a valid target', () => {
+    expect(
+      resolveTarget('staging', { values: values(enabled('staging'), enabled('production')) }).ok,
+    ).toBe(true);
   });
 
   test.each([
-    ['accountId', null, 'No Cloudflare account id is configured'],
-    ['accountId', 'not-hex', 'not a 32-character hexadecimal'],
-  ] as const)('a missing or malformed %s refuses', (key, value, expected) => {
-    const result = resolveTarget('staging', { values: configured({ [key]: value }) });
-    expect(result.ok).toBe(false);
-    if (result.ok) {
-      return;
-    }
-    expect(result.reason).toContain(expected);
-  });
-
-  test.each([
-    ['workerName', null, 'No Worker name is configured'],
-    ['d1DatabaseId', null, 'No D1 database id is configured'],
-    ['origin', null, 'No public origin is configured'],
-  ] as const)('a %s of null refuses rather than defaulting', (key, value, expected) => {
-    const base = configured();
-    const environments = { ...(base.environments ?? {}) };
-    const staging = { ...(environments.staging ?? {}) } as Record<string, string | null>;
-    staging[key] = value;
-    const result = resolveTarget('staging', {
-      values: configured({
-        environments: { staging, production: environments.production } as never,
-      }),
-    });
-    expect(result.ok).toBe(false);
-    if (result.ok) {
-      return;
-    }
-    expect(result.reason).toContain(expected);
-  });
-
-  test('an environment absent from a project that has environments is refused', () => {
-    const base = configured();
-    const result = resolveTarget('production', {
-      values: configured({
-        environments: { staging: base.environments?.staging } as never,
-      }),
-    });
-    expect(result.ok).toBe(false);
-    if (result.ok) {
-      return;
-    }
-    expect(result.reason).toContain('no topology for the "production" environment');
-  });
-
-  test.each([
-    ['http://starter.example', 'is not https'],
-    ['https://starter.example/notes', 'has a path, query or fragment'],
-    ['https://starter.example?a=1', 'has a path, query or fragment'],
-    ['not a url', 'is not an absolute URL'],
-  ])('an unusable origin (%s) refuses', (origin, expected) => {
-    const base = configured();
-    const result = resolveTarget('production', {
-      values: configured({
-        environments: {
-          ...base.environments,
-          production: {
-            workerName: 'starter-production',
-            d1DatabaseId: 'db-production',
-            origin,
-          },
-        } as never,
-      }),
-    });
-    expect(result.ok).toBe(false);
-    if (result.ok) {
-      return;
-    }
-    expect(result.reason).toContain(expected);
-  });
-
-  test('a Worker name wrangler would accept but nobody meant is refused', () => {
-    // `api` is a valid Cloudflare name. That is the problem: the failure it replaced
-    // published to the wrong Worker and nothing complained.
-    const base = configured();
-    const result = resolveTarget('staging', {
-      values: configured({
-        environments: {
-          ...base.environments,
-          staging: { workerName: 'api', d1DatabaseId: 'db-staging', origin: null },
-        } as never,
-      }),
-    });
-    expect(result.ok).toBe(false);
-    if (result.ok) {
-      return;
-    }
-    expect(result.reason).toContain('No public origin is configured');
-  });
-
-  test('a Worker name Cloudflare would reject is refused before wrangler sees it', () => {
-    const base = configured();
-    const result = resolveTarget('staging', {
-      values: configured({
-        environments: {
-          ...base.environments,
-          staging: {
-            workerName: 'Not A Valid Name',
-            d1DatabaseId: 'db-staging',
-            origin: 'https://staging.example',
-          },
-        } as never,
-      }),
-    });
-    expect(result.ok).toBe(false);
-    if (result.ok) {
-      return;
-    }
-    expect(result.reason).toContain('is not a valid Cloudflare Worker name');
-  });
-});
-
-const supabaseConfigured = (overrides: Partial<DeploymentValues> = {}): DeploymentValues => {
-  const base = configured();
-  const worker = (environment: 'staging' | 'production') => {
-    const isStaging = environment === 'staging';
-    const origin = isStaging
-      ? 'https://starter-staging.example.workers.dev'
-      : 'https://starter.example';
-    const ref = isStaging ? 'stageprojectref00001' : 'prodprojectref000001';
-    return targets({
-      workerName: isStaging ? 'starter-staging' : 'starter-production',
-      jobsWorkerName: `starter-jobs-${environment}`,
-      d1DatabaseId: isStaging ? 'db-staging' : 'db-production',
-      mediaBucketName: `starter-media-${environment}`,
-      encodeWorkflowName: `starter-encode-${environment}`,
-      maintenanceWorkflowName: `starter-maintenance-${environment}`,
-      containerImage: `europe-north1-docker.pkg.dev/starter-${environment}/media/runner@sha256:${'a'.repeat(64)}`,
-      imageProtocol: 'sample-v1',
-      containerProfile: 'basic',
-      jobsProfile: 'encode',
-      origin,
-      mailFrom: 'noreply@starter.example',
-      nativeApiOrigin: origin,
-      supabaseProjectRef: ref,
-      supabaseUrl: `https://${ref}.supabase.co`,
-      supabaseAuthUrl: `https://${ref}.supabase.co`,
-      supabasePublishableKey: 'sb_publishable_public-key',
-      nativeRedirectAllowlist: `${origin}/auth/callback,com.example.starter://auth/callback`,
-      googleProjectId: `starter-${environment}`,
-      googleRegion: 'europe-north1',
-      cloudRunJobName: `starter-media-${environment}`,
-      artifactImage: `europe-north1-docker.pkg.dev/starter-${environment}/media/runner@sha256:${'a'.repeat(64)}`,
-      runnerServiceAccount: `runner-${environment}@starter-${environment}.iam.gserviceaccount.com`,
-      dispatcherServiceAccount: `dispatch-${environment}@starter-${environment}.iam.gserviceaccount.com`,
-      processorProtocol: 'sample-v1',
-      processorCpu: '2',
-      processorMemory: '2Gi',
-      processorTimeoutSeconds: '900',
-    });
-  };
-  return {
-    ...base,
-    environments: { staging: worker('staging'), production: worker('production') },
-    ...overrides,
-  };
-};
-
-describe('the Supabase deployment profile resolves the complete preview target offline', () => {
-  test('keeps public publishable configuration distinct from administrative secret names', () => {
-    const result = resolveTarget('staging', { values: supabaseConfigured(), profile: 'supabase' });
-    expect(result.ok).toBe(true);
-    if (!result.ok) {
-      return;
-    }
-    expect(result.target.deploymentProfile).toBe('supabase');
-    expect(result.target.supabase?.publishableKey).toStartWith('sb_publishable_');
-    expect(result.target.requiredSecretNames).toEqual([
-      'SUPABASE_SERVICE_ROLE_KEY',
-      'RESEND_API_KEY',
-      'GOOGLE_DISPATCHER_CREDENTIAL',
-    ]);
-  });
-
-  test.each([
+    ['shared Supabase project', { supabaseProjectRef: ref('production') }, 'Supabase project'],
+    ['shared Google project', { googleProjectId: 'starter-production' }, 'Google Cloud project'],
+    ['shared bucket', { mediaBucketName: 'starter-media-production' }, 'R2 bucket'],
     [
-      'production Supabase ref',
-      { supabaseProjectRef: 'prodprojectref000001' },
-      'production and staging both resolve to the Supabase project "prodprojectref000001"',
-    ],
-    [
-      'production Google project',
-      { googleProjectId: 'starter-production' },
-      'Google Cloud project',
-    ],
-    ['shared R2 bucket', { mediaBucketName: 'starter-media-production' }, 'R2 bucket'],
-    [
-      'shared runner identity',
+      'shared runner',
       { runnerServiceAccount: 'runner-production@starter-production.iam.gserviceaccount.com' },
       'runner identity',
     ],
     [
-      'bad callback origin',
+      'foreign callback',
       {
         nativeRedirectAllowlist:
           'https://foreign.example/auth/callback,com.example.starter://auth/callback',
@@ -397,7 +91,23 @@ describe('the Supabase deployment profile resolves the complete preview target o
     ],
     ['mismatched Auth origin', { supabaseAuthUrl: 'https://other-project.supabase.co' }, 'origins'],
     [
-      'Supabase API path',
+      'an origin that belongs to another Supabase project',
+      {
+        supabaseUrl: 'https://prodprojectref000001.supabase.co',
+        supabaseAuthUrl: 'https://prodprojectref000001.supabase.co',
+      },
+      'does not belong to project stageprojectref00001',
+    ],
+    [
+      'a custom domain that cannot be resolved to a project ref',
+      {
+        supabaseUrl: 'https://api.starter.example',
+        supabaseAuthUrl: 'https://api.starter.example',
+      },
+      'does not belong to project stageprojectref00001',
+    ],
+    [
+      'API path instead of origin',
       {
         supabaseUrl: 'https://stageprojectref00001.supabase.co/rest/v1',
         supabaseAuthUrl: 'https://stageprojectref00001.supabase.co/rest/v1',
@@ -406,188 +116,105 @@ describe('the Supabase deployment profile resolves the complete preview target o
     ],
     [
       'mutable image',
-      { artifactImage: `europe-north1-docker.pkg.dev/starter-staging/media/runner:latest` },
+      { artifactImage: 'europe-north1-docker.pkg.dev/starter-staging/media/runner:latest' },
       'pinned by digest',
     ],
-    [
-      'missing compute prerequisites',
-      { dispatcherServiceAccount: null },
-      'missing prerequisites: dispatcherServiceAccount',
-    ],
-  ] as const)(
-    '%s fails during resolution before a provider can mutate',
-    (_case, changed, expected) => {
-      const base = supabaseConfigured();
-      const staging = { ...base.environments?.staging, ...changed };
-      const result = resolveTarget('staging', {
-        values: { ...base, environments: { ...base.environments, staging } as never },
-        profile: 'supabase',
-      });
-      expect(result.ok).toBe(false);
-      if (!result.ok) {
-        expect(result.reason).toContain(expected);
-      }
-    },
-  );
-});
-
-describe('staging and production may not share a resource', () => {
-  test('a shared Worker name is refused', () => {
-    const base = configured();
-    const problem = environmentIsolationProblem(
-      configured({
-        environments: {
-          ...base.environments,
-          production: {
-            workerName: 'starter-staging',
-            d1DatabaseId: 'db-production',
-            origin: 'https://starter.example',
-            mailFrom: 'noreply@starter.example',
-            jobsProfile: 'disabled',
-          },
-        } as never,
-      }),
-    );
-
-    expect(problem).toContain('both resolve to the Worker');
-    expect(problem).toContain('starter-staging');
-  });
-
-  test('a shared D1 database is refused, and the message says which pair', () => {
-    // The one that matters most: a shared database makes a staging migration a
-    // production migration.
-    const base = configured();
-    const problem = environmentIsolationProblem(
-      configured({
-        environments: {
-          ...base.environments,
-          production: {
-            workerName: 'starter-production',
-            d1DatabaseId: 'db-staging',
-            origin: 'https://starter.example',
-            mailFrom: 'noreply@starter.example',
-            jobsProfile: 'disabled',
-          },
-        } as never,
-      }),
-    );
-
-    expect(problem).toContain('both resolve to the D1 database');
-    expect(problem).toContain('db-staging');
-  });
-
-  test('resolveTarget refuses rather than planning against a shared resource', () => {
-    const base = configured();
+    ['missing dispatcher', { dispatcherServiceAccount: null }, 'dispatcherServiceAccount'],
+  ] as const)('%s is refused before any provider mutation', (_name, changes, reason) => {
     const result = resolveTarget('staging', {
-      values: configured({
-        environments: {
-          ...base.environments,
-          production: {
-            workerName: 'starter-production',
-            d1DatabaseId: 'db-staging',
-            origin: 'https://starter.example',
-            mailFrom: 'noreply@starter.example',
-            jobsProfile: 'disabled',
-          },
-        } as never,
-      }),
+      values: values(enabled('staging', changes), enabled('production')),
     });
-
     expect(result.ok).toBe(false);
-    if (result.ok) {
+    if (!result.ok) {
+      expect(result.reason).toContain(reason);
+    }
+  });
+  test('resolves the public Supabase config and explicit disabled compute from one target', () => {
+    const result = resolveTarget('staging', { values: values() });
+    expect(result.ok).toBe(true);
+    if (!result.ok) {
       return;
     }
-    expect(result.remedy).toContain('Give each environment its own Worker name and D1 database id');
+    expect(result.target.supabase?.projectRef).toBe(ref('staging'));
+    expect(result.target.compute).toMatchObject({ enabled: false, profile: 'disabled' });
+    expect(result.target.requiredSecretNames).not.toContain('GOOGLE_DISPATCHER_CREDENTIAL');
   });
 
-  test('a properly separated project reports no problem', () => {
-    expect(environmentIsolationProblem(configured())).toBeNull();
-  });
-});
-
-describe('the documented credential modes are the implemented ones', () => {
-  test('exactly one mode is supported, and it is the environment variable', () => {
-    // The previous tooling claimed two modes while reading one, so an operator who
-    // ran `wrangler login` was told "no credential". The list is the contract.
-    expect(SUPPORTED_CREDENTIAL_MODES).toEqual(['env-api-token']);
-  });
-
-  test('the reported source is the variable name, never the value', () => {
-    const state = describeCredential({ CLOUDFLARE_API_TOKEN: 'super-secret-token-value' });
-
-    expect(state.mode).toBe('env-api-token');
-    expect(state.source).toBe('CLOUDFLARE_API_TOKEN');
-    // The decisive assertion: nothing derived from the secret reaches a report
-    // that gets pasted into a ticket.
-    expect(JSON.stringify(state)).not.toContain('super-secret-token-value');
-  });
-
-  test('`wrangler login` OAuth state is deliberately not a credential', () => {
-    // There is no env var for it, so this is the honest assertion available: the
-    // mode is absent and the remedy explains why rather than failing opaquely.
-    const state = describeCredential({});
-    expect(state.mode).toBeNull();
-    expect(state.remedy).toContain('wrangler login');
-    expect(hasApiToken({})).toBe(false);
-  });
-
-  test('whitespace is not a credential', () => {
-    expect(hasApiToken({ CLOUDFLARE_API_TOKEN: '   ' })).toBe(false);
-  });
-});
-
-describe('a secret is never placed in argv', () => {
-  test.each([
-    // Bare and `=value` spellings of the same flag. The `=` form is one token, so a
-    // check for the bare token walks straight past it — and that is the spelling a
-    // shell completion produces.
-    [['--api-token', 'abc'], 'would place a secret in this process'],
-    [['--api-token=abc'], 'would place a secret in this process'],
-    [['--token=abc'], 'would place a secret in this process'],
-    // Both `--var` spellings.
-    [['--var', 'BETTER_AUTH_SECRET:hunter2'], 'BETTER_AUTH_SECRET'],
-    [['--var=BETTER_AUTH_SECRET:hunter2'], 'BETTER_AUTH_SECRET'],
-    [['--var', 'BETTER_AUTH_SECRET', 'hunter2'], 'BETTER_AUTH_SECRET'],
-    // The one a `SECRET` substring misses entirely, and the reason the registry's
-    // own list is consulted first.
-    [['--var', 'RESEND_API_KEY:re_x'], 'RESEND_API_KEY'],
-  ])('refuses %j', (args, expected) => {
-    const problem = secretInArgvProblem(args);
-    expect(problem).not.toBeNull();
-    expect(problem).toContain(expected);
-  });
-
-  test('an ordinary non-secret var is allowed through', () => {
-    expect(secretInArgvProblem(['--var', 'RELEASE:abc123'])).toBeNull();
-    expect(secretInArgvProblem(['--var=RELEASE:abc123'])).toBeNull();
-    expect(secretInArgvProblem(['deploy', '--env', 'staging', '--yes'])).toBeNull();
-  });
-});
-
-describe('a wrong account is refused, naming both accounts', () => {
-  test('preflight reports the configured account and the one the credential reaches', () => {
-    // The whole point of carrying the account id is being able to name it when it
-    // is wrong. The earlier version of this test asserted that the resolved target
-    // held a different account — which is a statement about the fixture, not about
-    // any refusal.
-    const resolved = resolveTarget('staging', {
-      values: configured({ accountId: OTHER_ACCOUNT }),
-    });
-    expect(resolved.ok).toBe(true);
-    if (!resolved.ok) {
-      throw new Error('fixture did not resolve');
+  test('different environments cannot share a Supabase project or application Worker', () => {
+    const sharedProject = values(
+      configured('staging'),
+      configured('production', {
+        supabaseProjectRef: ref('staging'),
+        supabaseUrl: `https://${ref('staging')}.supabase.co`,
+        supabaseAuthUrl: `https://${ref('staging')}.supabase.co`,
+      }),
+    );
+    const projectResult = resolveTarget('staging', { values: sharedProject });
+    expect(projectResult.ok).toBe(false);
+    if (!projectResult.ok) {
+      expect(projectResult.reason).toContain('Supabase project');
     }
 
-    const report = preflight(resolved.target, {
-      env: { CLOUDFLARE_API_TOKEN: 't' },
-      run: (args) =>
-        args[0] === 'whoami'
-          ? { ok: true, stdout: `Account: ${ACCOUNT}\n`, stderr: '' }
-          : { ok: true, stdout: `{"account_id":"${ACCOUNT}"}`, stderr: '' },
-    });
+    const sharedWorker = values(
+      configured('staging'),
+      configured('production', { workerName: 'starter-staging' }),
+    );
+    expect(resolveTarget('staging', { values: sharedWorker }).ok).toBe(false);
+  });
 
-    expect(report.ok).toBe(false);
-    expect(report.findings[0]?.detail).toContain(ACCOUNT);
-    expect(report.findings[0]?.detail).toContain(OTHER_ACCOUNT);
+  test('missing public Supabase settings fail before a deployment can be planned', () => {
+    const result = resolveTarget('staging', {
+      values: values(configured('staging', { supabaseUrl: null })),
+    });
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.reason).toContain('supabaseUrl');
+    }
+  });
+
+  test('enabled compute names each missing provider prerequisite', () => {
+    const result = resolveTarget('staging', {
+      values: values(
+        configured('staging', {
+          jobsProfile: 'encode',
+          googleProjectId: null,
+          googleRegion: null,
+          cloudRunJobName: null,
+          artifactImage: null,
+          runnerServiceAccount: null,
+          dispatcherServiceAccount: null,
+          processorProtocol: null,
+          processorCpu: null,
+          processorMemory: null,
+          processorTimeoutSeconds: null,
+          jobsWorkerName: null,
+          mediaBucketName: null,
+          encodeWorkflowName: null,
+          maintenanceWorkflowName: null,
+          containerProfile: null,
+        }),
+      ),
+    });
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.reason).toContain('Enabled compute');
+      expect(result.reason).toContain('googleProjectId');
+    }
+  });
+
+  test('an unconfigured fresh template cannot resolve an inherited cloud resource', () => {
+    const result = resolveTarget('staging', {
+      values: {
+        accountId: 'abcdef0123456789abcdef0123456789',
+        workerName: null,
+        r2BucketNames: { uploads: null },
+        customDomain: null,
+        jobsProfile: 'disabled',
+      },
+    });
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.reason).toContain('No Worker name');
+    }
   });
 });

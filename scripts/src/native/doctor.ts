@@ -171,46 +171,34 @@ const crateCheck = (): Check => {
   };
 };
 
-/** Check the public configuration required by the Supabase-only native app. */
-export const inspectNativeAuthProfile = (
-  options: { profile?: string; env?: NodeJS.ProcessEnv } = {},
-): Check => {
-  const { profile, env = process.env } = options;
-  if (profile === undefined || profile === '' || profile === 'supabase') {
-    const required = [
-      'VITE_NATIVE_API_ORIGIN',
-      'VITE_NATIVE_ENVIRONMENT',
-      'VITE_NATIVE_SUPABASE_URL',
-      'VITE_NATIVE_SUPABASE_PROJECT_REF',
-      'VITE_NATIVE_SUPABASE_ANON_KEY',
-    ];
-    const missing = required.filter((key) => !env[key]);
-    return missing.length === 0
-      ? {
-          name: 'native auth profile',
-          severity: 'required',
-          ok: true,
-          detail: 'Supabase target configured',
-        }
-      : {
-          name: 'native auth profile',
-          severity: 'required',
-          ok: false,
-          detail: `Supabase profile missing ${missing.join(', ')}`,
-          remedy: 'Set the public Supabase target values before building the native app.',
-        };
-  }
-  return {
-    name: 'native auth profile',
-    severity: 'required',
-    ok: false,
-    detail: 'Unsupported native auth profile',
-    remedy: 'Remove VITE_NATIVE_AUTH_PROFILE or set it to supabase.',
-  };
+export const inspectNativeSupabaseConfiguration = (env: NodeJS.ProcessEnv = process.env): Check => {
+  const required = [
+    'VITE_NATIVE_API_ORIGIN',
+    'VITE_NATIVE_ENVIRONMENT',
+    'VITE_NATIVE_SUPABASE_URL',
+    'VITE_NATIVE_SUPABASE_PROJECT_REF',
+    'VITE_NATIVE_SUPABASE_ANON_KEY',
+  ];
+  const missing = required.filter((key) => !env[key]);
+  return missing.length === 0
+    ? {
+        name: 'native auth profile',
+        severity: 'required',
+        ok: true,
+        detail: 'Supabase native target configured',
+      }
+    : {
+        name: 'native auth profile',
+        severity: 'required',
+        ok: false,
+        detail: `Supabase target missing ${missing.join(', ')}`,
+        remedy:
+          'Set these public target values before building; callbacks are fixed by the native target configuration.',
+      };
 };
 
 const CHECKS = [
-  () => inspectNativeAuthProfile({ profile: process.env.VITE_NATIVE_AUTH_PROFILE }),
+  () => inspectNativeSupabaseConfiguration(),
   crateCheck,
   tauriCheck,
   cargoCheck,

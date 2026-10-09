@@ -11,11 +11,11 @@ import { main as configureMain } from '../deploy/configure.ts';
 import { type Command, EXIT, wantsHelp } from '../shared/command.ts';
 
 const USAGE = [
-  'Usage: configure [--check | --provision]',
+  'Usage: configure [--check]',
   '',
   'No flag        report what is configured and what is missing',
   '--check        exit nonzero unless every value is present',
-  '--provision    create the D1 database named in the registry (remote)',
+  '--provision is removed; use bun run deploy:provision for explicit remote resources',
 ].join('\n');
 
 export const configureCommand: Command = {

@@ -59,7 +59,7 @@ the server plane in two places rather than one:
 |---|---|---|
 | server plane | `packages/backend/**`, `scripts/**` | Svelte, `@sveltejs/kit`, `@sveltejs/vite-plugin-svelte`, the frontend packages, and the DOM globals |
 | server half of the app | `src/lib/server/**`, `src/hooks.server.ts`, `src/routes/**/+server.ts`, `+page.server.ts`, `+layout.server.ts` | Svelte's client runtime, the Vite plugin, the frontend packages, and the DOM globals |
-| browser half of the app | `packages/frontend/**` and the rest of `apps/frontend/**` | `node:*`/`bun:*`, `@starter/database`, `@starter/auth`, `drizzle-orm`, `better-auth`, and `Bun` |
+| browser half of the app | `packages/frontend/**` and the rest of `apps/frontend/**` | `node:*`/`bun:*`, `@starter/database`, `@starter/auth`, server database and auth adapters, and `Bun` |
 
 The app's server override deliberately does **not** deny `@sveltejs/kit`. The Worker
 half *is* SvelteKit — `error`, `redirect`, `json`, `Handle` — so denying the
@@ -135,7 +135,7 @@ Each is a file whose purpose is to violate the rule it would trip.
 | `packages/shared/logger/src/lib/console_logger.ts` | `noConsole` | This is the logger's console backend. The rule exists to stop ad-hoc console calls in favour of the logger. |
 | `scripts/src/guards/**/*.ts` | `useBlockStatements`, `useConsistentTypeDefinitions` | The guards contain the literal patterns they search for, and a table of the specifiers they resolve. A guard that failed on its own source would never report anything. `guardNoLeftovers` already exempts them for the same reason. |
 | `apps/frontend/client/src/lib/test_setup.ts` | `noConsole`, `noRestrictedImports` | The Bun unit lane's preload. It mocks `bun:test` and silences the logger — both are the file's job. |
-| `apps/frontend/client/src/lib/server/container.ts` | `useConsistentTypeDefinitions` | `DrizzleD1Database<T>` constrains `T` to `Record<string, unknown>`, and an interface has no implicit index signature. This one is a type error, not a preference. |
+| `apps/frontend/client/src/lib/server/container.ts` | `useConsistentTypeDefinitions` | The server container now exposes request scoped Supabase clients; browser modules cannot reach those server adapters. |
 | `**/*.svelte` | `noUnusedVariables`, `noUnusedImports` | Biome does not resolve Svelte 5's `$props()` destructuring, so every prop and every component import reads as unused. Running its autofix over these files **deletes live imports**. |
 | `**/*.svelte` | `useConsistentTypeDefinitions` | `interface Props` is the form every Svelte 5 codebase writes. Converting nine declarations would make the components less recognisable for no gain. |
 | two files (listed in `biome.json`) | `noConsole` | One `console.info` each, with the reason in a comment at the call site. |
@@ -153,7 +153,7 @@ The overrides that remain carry the architectural weight:
   in the browser plane. Each denial carries the reason, which Biome prints on
   violation.
 - **`noRestrictedImports`** — neither server plane may import the frontend packages;
-  the browser plane may not import the database, auth, `drizzle-orm`, `better-auth`,
+  the browser plane may not import the database, auth, server database and auth adapters,
   or `node:*`/`bun:*`.
 - **`noExplicitAny`**, **`noNonNullAssertion`**, **`noParameterAssign`**,
   **`noConsole`** outside the exemptions.
@@ -306,7 +306,6 @@ One tree is excluded, because formatting it is undone by the tool that owns it:
 
 | Exempt | Why |
 |---|---|
-| `**/drizzle-d1/meta` | `drizzle-kit generate` rewrites every snapshot and `_journal.json` without a trailing newline, so `biome format` re-adds one and the next `db:generate` removes it. The file belongs to drizzle-kit, not to this repository's style. |
 
 `GENERATED_TREES` in `scripts/src/guards/policy.ts` is deliberately **not** extended to
 cover it: that list decides what the module graph and the README guard refuse to

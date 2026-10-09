@@ -77,10 +77,7 @@ export const PACKAGE_SOURCE_DIRS = [
 ] as const;
 
 /** Inputs consumed outside TypeScript source roots but used by migrations/builds. */
-export const AUXILIARY_INPUT_DIRS = [
-  'packages/backend/database/drizzle-d1',
-  'apps/backend/media/fixtures',
-] as const;
+export const AUXILIARY_INPUT_DIRS = ['supabase/migrations', 'apps/backend/media/fixtures'] as const;
 
 export interface CacheScope {
   /** Moon's `--cache` value for this run. */

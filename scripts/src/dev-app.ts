@@ -105,7 +105,12 @@ const HOST = process.env.DEV_HOST ?? '127.0.0.1';
  * stale run id or a test-only rate limit from a previous run.
  */
 // Credentials belong in the run-owned environment file, never command arguments.
-const FORWARDED_VARS = ['TEST_RUN_ID', 'DEPLOYMENT_ENV', 'SUPABASE_MAIL_URL'] as const;
+const FORWARDED_VARS = [
+  'TEST_RUN_ID',
+  'DEPLOYMENT_ENV',
+  'SUPABASE_MAIL_URL',
+  'APP_ORIGIN',
+] as const;
 
 /**
  * Stop the server.
@@ -166,8 +171,12 @@ const varFlags = (): string[] => {
   const args: string[] = [];
 
   for (const name of FORWARDED_VARS) {
-    const value =
-      name === 'TEST_RUN_ID' ? (process.env.TEST_RUN_ID ?? E2E_SCOPE?.runId) : process.env[name];
+    let value = process.env[name];
+    if (name === 'APP_ORIGIN') {
+      value = value || `http://${HOST}:${PORT}`;
+    } else if (name === 'TEST_RUN_ID') {
+      value = process.env.TEST_RUN_ID ?? E2E_SCOPE?.runId;
+    }
     if (value !== undefined && value.length > 0) {
       args.push('--var', `${name}:${value}`);
     }
@@ -316,7 +325,7 @@ export const main = (mode: DevMode = 'app'): Promise<number> => {
     cwd: target.cwd,
     detached: false,
     stdio: ['ignore', 'pipe', 'pipe'],
-    env: process.env,
+    env: { ...process.env },
   });
 
   const childPid = child.pid ?? 0;

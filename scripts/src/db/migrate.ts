@@ -1,19 +1,4 @@
-// scripts/src/db/migrate.ts
-//
-// Apply Drizzle migrations to D1.
-//
-//   bun run db:migrate          -> local (wrangler's local state)
-//   bun run db:migrate:remote   -> the remote database for the current env
-//
-// Local and remote are separate commands, not separate flags on one code path,
-// because "apply migrations" is the single most consequential thing a developer
-// can do to someone else's data. Making the destination a separate invocation
-// means the local case cannot grow a `--remote` by accident.
-
-import { existsSync } from 'node:fs';
-import { join } from 'node:path';
 import { isDeploymentEnvironment } from '@starter/schemas';
-import { runWrangler, wranglerAvailable } from '../cloudflare/wrangler.ts';
 import {
   runSupabaseLocalMigration,
   runSupabaseMigration,
@@ -21,225 +6,89 @@ import {
   supabaseLocalMigrationArgs,
   supabaseMigrationArgs,
 } from '../deploy/providers/supabase.ts';
-import { writeRemoteConfig } from '../deploy/remote_config.ts';
-import { resolveTarget } from '../deploy/target.ts';
-import { targetsFor } from '../registry/deployment_values.ts';
-import { resolveBackendProfile } from '../shared/backend_profile.ts';
-import { CLIENT_DIR, REPO_ROOT } from '../shared/paths.ts';
-
-const MIGRATIONS_DIR = join(REPO_ROOT, 'packages/backend/database/drizzle-d1');
+import { type ResolvedTarget, resolveTarget } from '../deploy/target.ts';
+import { EXIT } from '../shared/command.ts';
+import { REPO_ROOT } from '../shared/paths.ts';
 
 export { REPO_ROOT };
-
 export type MigrateTarget = 'local' | 'staging' | 'production';
 
 export const parseTarget = (args: readonly string[]): MigrateTarget | null => {
-  const hasLocal = args.includes('--local');
   const remoteIndex = args.indexOf('--remote');
-
   if (remoteIndex === -1) {
-    // No --remote at all: local, which is the safe destination. `--local` and no
-    // flag are the same request, so there is nothing to reconcile.
-    return 'local';
+    return args.includes('--local') ? 'local' : 'local';
   }
-
-  const remote = args[remoteIndex + 1];
-
-  // `--remote` with no value is a mistake. Previously this fell through to the
-  // "no --remote" branch and migrated *local*, so a typo'd invocation quietly did
-  // something other than what was asked — the opposite of what a mutating
-  // command should do with an unrecognised argument.
-  if (remote === undefined || remote.startsWith('-')) {
+  if (args.includes('--local')) {
     return null;
   }
-
-  if (hasLocal) {
-    return null;
-  }
-
-  // `--remote local` is a contradiction, not a synonym for `--local`.
-  if (remote === 'local') {
-    return null;
-  }
-
-  return isDeploymentEnvironment(remote) ? remote : null;
+  const value = args[remoteIndex + 1];
+  return value !== undefined && isDeploymentEnvironment(value) && value !== 'local' ? value : null;
 };
 
 export type Plan =
   | { ok: true; target: MigrateTarget; args: string[] }
   | { ok: false; reason: string; remedy: string };
 
-/**
- * Decide what would run, without running it.
- *
- * Separated from execution so `--dry-run` and the test suite can assert on the
- * exact arguments, and so a missing prerequisite is reported before a mutation.
- *
- * `options.databaseId` lets a caller supply a destination it has already validated
- * through `resolveTarget`. It exists because of a real divergence: this function
- * resolved the database itself, so a caller holding a *validated* target could still
- * have this one silently disagree — and the pipeline would then migrate one database
- * while deploying to another. Passing the validated id in makes the migration
- * destination and the deploy destination the same value by construction.
- * `bun run db:migrate` keeps working on its own.
- *
- * `args` are wrangler subcommand arguments only. The binary is supplied by
- * `runWrangler`, which resolves the pinned workspace copy; naming an executable
- * here is how `bunx` ended up running an unpinned wrangler fetched from npm.
- */
-export const planMigrate = (target: MigrateTarget, options: { databaseId?: string } = {}): Plan => {
-  if (!existsSync(MIGRATIONS_DIR)) {
-    return {
-      ok: false,
-      reason: `No migrations found at ${MIGRATIONS_DIR}.`,
-      remedy: 'Run `bun run db:generate` to create them from the Drizzle schema.',
-    };
-  }
-
+export const planMigrate = (target: MigrateTarget, resolvedTarget?: ResolvedTarget): Plan => {
   if (target === 'local') {
-    return {
-      ok: true,
-      target,
-      args: [
-        'd1',
-        'migrations',
-        'apply',
-        'DB',
-        '--local',
-        '--config',
-        join(CLIENT_DIR, 'wrangler.jsonc'),
-      ],
-    };
+    return { ok: true, target, args: supabaseLocalMigrationArgs() };
   }
-
-  const targets = targetsFor(target);
-  const databaseId = options.databaseId ?? targets?.d1DatabaseId ?? null;
-  if (targets === null || databaseId === null) {
-    return {
-      ok: false,
-      reason: 'No D1 database id is configured, so there is no safe target to migrate.',
-      remedy:
-        `Run \`bun run deploy:configure -- --env ${target} --provision\` to create the database, ` +
-        'then re-run. Nothing has been changed.',
-    };
+  const resolved =
+    resolvedTarget === undefined
+      ? resolveTarget(target)
+      : { ok: true as const, target: resolvedTarget };
+  if (!resolved.ok) {
+    return { ok: false, reason: resolved.reason, remedy: resolved.remedy };
   }
-
-  return {
-    ok: true,
-    target,
-    args: [
-      'd1',
-      'migrations',
-      'apply',
-      'DB',
-      '--remote',
-      '--config',
-      join(REPO_ROOT, '.starter/deploy', `${target}-web.json`),
-    ],
-  };
+  return { ok: true, target, args: supabaseMigrationArgs(resolved.target, 'push') };
 };
 
 export const main = (args: readonly string[]): number => {
   const target = parseTarget(args);
-  if (target === null) {
-    process.stderr.write(
-      'Specify exactly one target: --local, or --remote <staging|production>.\n',
-    );
-    return 2;
+  if (
+    target === null ||
+    args.some((arg) => !['--local', '--remote', target, '--dry-run', '--yes'].includes(arg))
+  ) {
+    process.stderr.write('Specify `--local`, or `--remote <staging|production>`.\n');
+    return EXIT.usage;
   }
-
-  let profile: 'legacy' | 'supabase';
-  try {
-    profile = resolveBackendProfile(process.env.STARTER_BACKEND_PROFILE);
-  } catch (error) {
-    process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
-    return 2;
-  }
-  if (profile === 'supabase') {
-    if (target === 'local') {
-      if (args.includes('--dry-run')) {
-        process.stdout.write(`would run: supabase ${supabaseLocalMigrationArgs().join(' ')}\n`);
-        return 0;
-      }
-      if (supabaseBin() === null) {
-        process.stderr.write('Pinned Supabase CLI is unavailable; run `bun install`.\n');
-        return 1;
-      }
-      const result = runSupabaseLocalMigration();
-      if (result.stderr) {
-        process.stderr.write(result.stderr);
-      }
-      if (result.stdout) {
-        process.stdout.write(result.stdout);
-      }
-      return result.code;
-    }
-    const resolvedSupabase = resolveTarget(target, { profile: 'supabase' });
-    if (!resolvedSupabase.ok) {
-      process.stderr.write(`${resolvedSupabase.reason}\n${resolvedSupabase.remedy}\n`);
-      return 1;
-    }
-    const argv = supabaseMigrationArgs(resolvedSupabase.target, 'push');
-    if (args.includes('--dry-run')) {
-      process.stdout.write(`would run: supabase ${argv.join(' ')}\n`);
-      return 0;
-    }
-    if (!args.includes('--yes')) {
-      process.stderr.write(
-        `Refusing to migrate Supabase project ${resolvedSupabase.target.supabase?.projectRef} without --yes.\n`,
-      );
-      return 2;
-    }
-    if (!process.env.SUPABASE_ACCESS_TOKEN) {
-      process.stderr.write(
-        'SUPABASE_ACCESS_TOKEN is required for remote migration; it is read from the environment and never passed on argv.\n',
-      );
-      return 1;
-    }
-    const result = runSupabaseMigration(resolvedSupabase.target, 'push');
-    if (result.stderr) {
-      process.stderr.write(result.stderr);
-    }
-    if (result.stdout) {
-      process.stdout.write(result.stdout);
-    }
-    return result.code;
-  }
-
   const resolved = target === 'local' ? undefined : resolveTarget(target);
   if (resolved !== undefined && !resolved.ok) {
     process.stderr.write(`${resolved.reason}\n${resolved.remedy}\n`);
-    return 1;
+    return EXIT.failed;
   }
-  const plan = planMigrate(
-    target,
-    resolved?.ok ? { databaseId: resolved.target.d1DatabaseId } : {},
-  );
+  const plan = planMigrate(target, resolved?.ok ? resolved.target : undefined);
   if (!plan.ok) {
-    process.stderr.write(`${plan.reason}\n  ${plan.remedy}\n`);
-    return 1;
+    process.stderr.write(`${plan.reason}\n${plan.remedy}\n`);
+    return EXIT.failed;
   }
-
-  if (!wranglerAvailable()) {
-    process.stderr.write('wrangler is not available. Run `bun install` first.\n');
-    return 1;
-  }
-
   if (args.includes('--dry-run')) {
-    process.stdout.write(`would run: wrangler ${plan.args.join(' ')}\n`);
-    return 0;
+    process.stdout.write(`would run: supabase ${plan.args.join(' ')}\n`);
+    return EXIT.ok;
   }
-
+  if (supabaseBin() === null) {
+    process.stderr.write('Pinned Supabase CLI is unavailable; run `bun install`.\n');
+    return EXIT.failed;
+  }
   if (target !== 'local' && !args.includes('--yes')) {
+    process.stderr.write(`Refusing to migrate Supabase environment ${target} without --yes.\n`);
+    return EXIT.usage;
+  }
+  if (target !== 'local' && !process.env.SUPABASE_ACCESS_TOKEN) {
     process.stderr.write(
-      `Refusing to migrate ${target} without confirmation.\n` +
-        'Re-run with --yes if you are certain, or use --dry-run to see the command.\n',
+      'SUPABASE_ACCESS_TOKEN is required for remote migration and is never passed on argv.\n',
     );
-    return 2;
+    return EXIT.failed;
   }
-
-  if (resolved?.ok) {
-    writeRemoteConfig({ target: resolved.target });
+  const result =
+    target === 'local'
+      ? runSupabaseLocalMigration()
+      : runSupabaseMigration((resolved as { ok: true; target: ResolvedTarget }).target, 'push');
+  if (result.stdout) {
+    process.stdout.write(result.stdout);
   }
-  return runWrangler(plan.args, { cwd: REPO_ROOT });
+  if (result.stderr) {
+    process.stderr.write(result.stderr);
+  }
+  return result.code;
 };

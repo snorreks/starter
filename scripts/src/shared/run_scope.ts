@@ -6,7 +6,7 @@
 // 4183, and the second one either fails confusingly or, worse, succeeds against
 // the *first* one's process. The E2E suite caught exactly that: a leftover
 // listener answers `/api/health` as readily as the right one, so twenty specs
-// pass against a stale D1 and nobody learns anything.
+// pass against a stale Postgres and nobody learns anything.
 //
 // Three rules, applied here rather than re-derived in each harness:
 //
@@ -18,7 +18,7 @@
 //      find a candidate, then reports whether the final port is owned by this
 //      run. A port already in use is a refusal, never a silent reuse: see
 //      `PortUnavailable`.
-//   3. **Directories are per worktree and per run.** D1 state, logs and artefacts
+//   3. **Directories are per worktree and per run.** Postgres state, logs and artefacts
 //      live under the checkout's own `.wrangler/`, keyed by run id, so a failed
 //      run leaves evidence beside it and a second run cannot read the first's.
 
@@ -142,7 +142,7 @@ export interface RunScope {
   runId: string;
   /** Root for everything this run writes. */
   dir: string;
-  /** Local D1 state and `wrangler dev` scratch. */
+  /** Local Postgres state and `wrangler dev` scratch. */
   stateDir: string;
   /** Captured stdout/stderr. */
   logDir: string;

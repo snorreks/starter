@@ -8,7 +8,7 @@ const USAGE = `smoke [--keep] [--steps <n>] [--without-heavy]
 
 Rehearses a fresh checkout of this template in a temporary directory: no .git, no
 node_modules, no build output, no local state, no credential. Installs with a
-frozen lockfile, runs setup, migrates and seeds a local D1, builds, checks the
+frozen lockfile, runs setup, verifies fresh local Supabase, builds, checks the
 artifact, typechecks, lints and runs the whole-repository guards.
 
   --keep            leave the temporary checkout on disk and print its path

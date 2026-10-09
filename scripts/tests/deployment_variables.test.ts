@@ -8,7 +8,7 @@
 // bug this file exists for is exactly that a plan can be *wrong* about a fully
 // configured project.
 
-import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
+import { afterEach, describe, expect, test } from 'bun:test';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -33,18 +33,25 @@ import { resolveDeploymentValues } from '../src/registry/deployment_values.ts';
 import { REPO_ROOT } from '../src/shared/paths.ts';
 
 const ACCOUNT = 'a'.repeat(32);
-
-// These fixtures exercise the retained D1 deployment path, not the Supabase default.
-const originalBackendProfile = process.env.STARTER_BACKEND_PROFILE;
-beforeEach(() => {
-  process.env.STARTER_BACKEND_PROFILE = 'legacy';
+const publicSettings = (origin: string, projectRef: string) => ({
+  nativeApiOrigin: origin,
+  supabaseProjectRef: projectRef,
+  supabaseUrl: `https://${projectRef}.supabase.co`,
+  supabaseAuthUrl: `https://${projectRef}.supabase.co`,
+  supabasePublishableKey: `sb_publishable_${projectRef}`,
+  nativeRedirectAllowlist: `${origin}/auth/callback,com.example.starter://auth/callback`,
 });
-afterEach(() => {
-  if (originalBackendProfile === undefined) {
-    delete process.env.STARTER_BACKEND_PROFILE;
-    return;
-  }
-  process.env.STARTER_BACKEND_PROFILE = originalBackendProfile;
+const cloudSettings = (name: string) => ({
+  googleProjectId: `starter-${name}`,
+  googleRegion: 'europe-north1',
+  cloudRunJobName: `starter-processor-${name}`,
+  artifactImage: `europe-north1-docker.pkg.dev/starter-${name}/processor@sha256:${name === 'staging' ? 'a' : 'b'}${'a'.repeat(63)}`,
+  runnerServiceAccount: `runner@starter-${name}.iam.gserviceaccount.com`,
+  dispatcherServiceAccount: `dispatcher@starter-${name}.iam.gserviceaccount.com`,
+  processorProtocol: 'sample-v1',
+  processorCpu: '2',
+  processorMemory: '2Gi',
+  processorTimeoutSeconds: '900',
 });
 
 const created: string[] = [];
@@ -59,18 +66,30 @@ const repositoryMap = (extra: Record<string, unknown> = {}): string =>
   JSON.stringify({
     staging: {
       workerName: 'starter-staging',
-      d1DatabaseId: 'db-staging',
       origin: 'https://staging.example',
+      nativeApiOrigin: 'https://staging.example',
       mailFrom: 'noreply@staging.example',
       jobsProfile: 'disabled',
+      supabaseProjectRef: 'stageprojectref00001',
+      supabaseUrl: 'https://stageprojectref00001.supabase.co',
+      supabaseAuthUrl: 'https://stageprojectref00001.supabase.co',
+      supabasePublishableKey: 'sb_publishable_staging',
+      nativeRedirectAllowlist:
+        'https://staging.example/auth/callback,com.example.starter://auth/callback',
       ...extra,
     },
     production: {
       workerName: 'starter-production',
-      d1DatabaseId: 'db-production',
       origin: 'https://app.example',
+      nativeApiOrigin: 'https://app.example',
       mailFrom: 'noreply@app.example',
       jobsProfile: 'disabled',
+      supabaseProjectRef: 'prodprojectref000001',
+      supabaseUrl: 'https://prodprojectref000001.supabase.co',
+      supabaseAuthUrl: 'https://prodprojectref000001.supabase.co',
+      supabasePublishableKey: 'sb_publishable_production',
+      nativeRedirectAllowlist:
+        'https://app.example/auth/callback,com.example.starter://auth/callback',
     },
   });
 
@@ -94,7 +113,7 @@ describe('the repository environment map', () => {
 
     expect(staging.target.workerName).toBe('starter-staging');
     expect(production.target.workerName).toBe('starter-production');
-    expect(staging.target.d1DatabaseId).not.toBe(production.target.d1DatabaseId);
+    expect(staging.target.supabase.projectRef).not.toBe(production.target.supabase.projectRef);
     expect(staging.target.origin).toBe('https://staging.example');
     expect(production.target.origin).toBe('https://app.example');
   });
@@ -236,7 +255,6 @@ describe('a malformed map is refused, not half-read', () => {
         [ENVIRONMENT_MAP_VARIABLE]: JSON.stringify({
           staging: {
             workerName: 'starter-staging',
-            d1DatabaseId: 'db',
             workrName: 'typo',
             origin: 'https://a.example',
             mailFrom: 'n@x.example',
@@ -244,7 +262,6 @@ describe('a malformed map is refused, not half-read', () => {
           },
           production: {
             workerName: 'starter-prod',
-            d1DatabaseId: 'db2',
             origin: 'https://b.example',
             mailFrom: 'n@x.example',
             jobsProfile: 'disabled',
@@ -270,18 +287,18 @@ describe('a malformed map is refused, not half-read', () => {
         [ENVIRONMENT_MAP_VARIABLE]: JSON.stringify({
           staging: {
             workerName: 'starter-staging',
-            d1DatabaseId: 'db',
             origin: 'https://a.example',
             mailFrom: 'n@x.example',
             jobsProfile: 'disabled',
+            ...publicSettings('https://a.example', 'stageprojectref00001'),
           },
           production: {
             workerName: 'starter-prod',
-            d1DatabaseId: 'db2',
             origin: 'https://b.example',
             mailFrom: 'n@x.example',
             jobsProfile: 'disabled',
             workrName: 'typo',
+            ...publicSettings('https://b.example', 'prodprojectref000001'),
           },
         }),
       },
@@ -291,6 +308,9 @@ describe('a malformed map is refused, not half-read', () => {
     // Staging is plannable; production names its own mistake. Blocking both would
     // mean one typo stops a working environment from shipping.
     const staging = resolveTarget('staging', { values });
+    if (!staging.ok) {
+      throw new Error(staging.reason);
+    }
     expect(staging.ok).toBe(true);
     const production = resolveTarget('production', { values });
     expect(production.ok).toBe(false);
@@ -321,11 +341,9 @@ describe('the unsuffixed overrides apply to one environment, never to both', () 
   test('with it, the override lands on that environment only', () => {
     const overrides = deployOverridesFor('staging', {
       CLOUDFLARE_WORKER_NAME: 'ci-staging',
-      CLOUDFLARE_D1_DATABASE_ID: 'ci-db',
     });
 
     expect(overrides.workerName).toBe('ci-staging');
-    expect(overrides.d1DatabaseId).toBe('ci-db');
   });
 
   test('a CI run that sets the overrides still plans both environments without claiming they are shared', () => {
@@ -335,7 +353,6 @@ describe('the unsuffixed overrides apply to one environment, never to both', () 
         [ENVIRONMENT_MAP_VARIABLE]: repositoryMap(),
         DEPLOY_ENVIRONMENT: 'staging',
         CLOUDFLARE_WORKER_NAME: 'starter-staging',
-        CLOUDFLARE_D1_DATABASE_ID: 'db-staging',
       },
       REPO_ROOT,
     );
@@ -425,7 +442,6 @@ describe('the unsuffixed overrides apply to one environment, never to both', () 
     const fields: string[] = [
       'workerName',
       'jobsWorkerName',
-      'd1DatabaseId',
       'mediaBucketName',
       'origin',
       'mailFrom',
@@ -486,7 +502,6 @@ describe('the compute half resolves from the same variables', () => {
       staging: {
         workerName: 'starter-staging',
         jobsWorkerName: 'starter-jobs-staging',
-        d1DatabaseId: 'db-staging',
         mediaBucketName: 'starter-media-staging',
         encodeWorkflowName: 'starter-encode-staging',
         maintenanceWorkflowName: 'starter-maintenance-staging',
@@ -496,6 +511,8 @@ describe('the compute half resolves from the same variables', () => {
         jobsProfile: 'encode',
         origin: 'https://staging.example',
         mailFrom: 'noreply@staging.example',
+        ...publicSettings('https://staging.example', 'stageprojectref00001'),
+        ...cloudSettings('staging'),
       },
     });
 
@@ -524,7 +541,6 @@ describe('the compute half resolves from the same variables', () => {
     const values = {
       accountId: ACCOUNT,
       workerName: null,
-      d1DatabaseId: null,
       r2BucketNames: { uploads: null },
       customDomain: null,
       jobsProfile: 'disabled' as const,
@@ -532,7 +548,6 @@ describe('the compute half resolves from the same variables', () => {
         staging: targets({
           workerName: 'web-staging',
           jobsWorkerName: 'jobs-staging',
-          d1DatabaseId: 'db-staging',
           mediaBucketName: 'media-staging',
           encodeWorkflowName: 'encode-staging',
           maintenanceWorkflowName: 'maint-staging',
@@ -542,11 +557,12 @@ describe('the compute half resolves from the same variables', () => {
           jobsProfile: 'encode',
           origin: 'https://staging.example',
           mailFrom: 'noreply@staging.example',
+          ...publicSettings('https://staging.example', 'stageprojectref00001'),
+          ...cloudSettings('staging'),
         }),
         production: targets({
           workerName: 'web-production',
           jobsWorkerName: 'jobs-production',
-          d1DatabaseId: 'db-production',
           mediaBucketName: 'media-production',
           encodeWorkflowName: 'encode-production',
           maintenanceWorkflowName: 'maint-production',
@@ -556,11 +572,16 @@ describe('the compute half resolves from the same variables', () => {
           jobsProfile: 'encode',
           origin: 'https://app.example',
           mailFrom: 'noreply@app.example',
+          ...publicSettings('https://app.example', 'prodprojectref000001'),
+          ...cloudSettings('production'),
         }),
       },
     };
 
     const staging = resolveTarget('staging', { values });
+    if (!staging.ok) {
+      throw new Error(staging.reason);
+    }
     expect(staging.ok).toBe(true);
 
     const pinned: typeof values = {
@@ -603,7 +624,6 @@ describe('the plan names everything the pipeline will change', () => {
       staging: {
         workerName: 'starter-staging',
         jobsWorkerName: 'starter-jobs-staging',
-        d1DatabaseId: 'db-staging',
         mediaBucketName: 'starter-media-staging',
         encodeWorkflowName: 'starter-encode-staging',
         maintenanceWorkflowName: 'starter-maintenance-staging',
@@ -613,6 +633,8 @@ describe('the plan names everything the pipeline will change', () => {
         jobsProfile: 'encode',
         origin: 'https://staging.example',
         mailFrom: 'noreply@staging.example',
+        ...publicSettings('https://staging.example', 'stageprojectref00001'),
+        ...cloudSettings('staging'),
       },
     });
 
@@ -679,10 +701,10 @@ describe('the plan names everything the pipeline will change', () => {
           [ENVIRONMENT_MAP_VARIABLE]: JSON.stringify({
             staging: {
               workerName: 'starter-staging',
-              d1DatabaseId: 'db-staging',
               origin: 'https://staging.example',
               mailFrom: 'noreply@staging.example',
               jobsProfile: 'disabled',
+              ...publicSettings('https://staging.example', 'stageprojectref00001'),
             },
           }),
         },
@@ -708,11 +730,16 @@ describe('the target keeps every value a plan and a release record print', () =>
         [ENVIRONMENT_MAP_VARIABLE]: JSON.stringify({
           staging: {
             workerName: 'starter-staging',
-            d1DatabaseId: 'db-staging',
             origin: 'https://staging.example',
             mailFrom: 'noreply@staging.example',
             jobsProfile: 'disabled',
             nativeApiOrigin: 'https://staging.example',
+            supabaseProjectRef: 'stageprojectref00001',
+            supabaseUrl: 'https://stageprojectref00001.supabase.co',
+            supabaseAuthUrl: 'https://stageprojectref00001.supabase.co',
+            supabasePublishableKey: 'sb_publishable_stageprojectref00001',
+            nativeRedirectAllowlist:
+              'https://staging.example/auth/callback,com.example.starter://auth/callback',
           },
         }),
       },
