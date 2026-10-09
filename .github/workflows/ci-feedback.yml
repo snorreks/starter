@@ -1,0 +1,41 @@
+name: CI Feedback
+
+# This workflow uses default-branch code only. No PR checkout, dependency install,
+# log download, or artifact execution occurs with its comment-writing token.
+# workflow_run also supports fork PRs whose CI token cannot write comments.
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-feedback-${{ github.event.workflow_run.head_repository.full_name }}-${{ github.event.workflow_run.head_branch }}
+  cancel-in-progress: false
+
+jobs:
+  comment:
+    if: github.event.workflow_run.event == 'pull_request' && github.event.workflow_run.conclusion != 'cancelled'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      actions: read
+      pull-requests: write
+    steps:
+      - name: Checkout trusted reporter
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.workflow_sha }}
+          persist-credentials: false
+          sparse-checkout: |
+            .github/workflows
+            scripts
+          sparse-checkout-cone-mode: true
+
+      - name: Update CI feedback
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: node scripts/src/ci/ci_feedback.cjs

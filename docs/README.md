@@ -10,7 +10,7 @@ Start here. Nothing below is required reading before running a command — the
 | configure GitHub branches, protections and automation | [github.md](github.md) |
 | run something | [../AGENTS.md](../AGENTS.md) |
 | know what is actually verified | [capability-matrix.md](capability-matrix.md) |
-| write or run tests | [testing.md](testing.md) |
+| write or run tests, or understand local commit checks and CI feedback | [testing.md](testing.md) |
 | run local Supabase or review its SQL/RLS boundary | [supabase-local.md](supabase-local.md) |
 | review the Supabase web identity and request services | [supabase-web-backend.md](supabase-web-backend.md) |
 | configure and verify the Supabase/Cloud Run compute preview | [supabase-cloud-run-compute.md](supabase-cloud-run-compute.md) |

@@ -145,6 +145,19 @@ export interface SmokeReport {
 
 /** Every file a clone of this repository would contain, as relative paths. */
 export const committedFiles = (root: string = REPO_ROOT): string[] => {
+  // Git already knows exactly what a clone contains: tracked files plus
+  // non-ignored additions. One NUL-delimited query is both more accurate and
+  // much cheaper than walking every file in every local Herdr checkout and
+  // spawning `git check-ignore` for each one. Non-Git fixtures use the walker.
+  const listed = spawnSync(
+    'git',
+    ['ls-files', '--cached', '--others', '--exclude-standard', '-z'],
+    { cwd: root, encoding: 'utf8', timeout: 30_000, maxBuffer: 16 * 1024 * 1024 },
+  );
+  if (listed.status === 0) {
+    return listed.stdout.split('\0').filter(Boolean).sort();
+  }
+
   const out: string[] = [];
   const walk = (dir: string): void => {
     for (const entry of readdirSync(dir)) {
@@ -152,10 +165,21 @@ export const committedFiles = (root: string = REPO_ROOT): string[] => {
         continue;
       }
       const path = join(dir, entry);
+      const stats = lstatSync(path);
+      // Skip an ignored local directory in one Git query instead of spawning
+      // `git check-ignore` once per file beneath node_modules, worktrees, or
+      // another large local checkout. Keep traversing if the directory contains
+      // tracked files; a clone includes those even when an ignore pattern matches.
+      if (
+        stats.isDirectory() &&
+        isGitIgnored(root, relative(root, path)) &&
+        !hasTrackedFiles(root, relative(root, path))
+      ) {
+        continue;
+      }
       // `lstat`, so a symlinked directory is listed as the symlink it is and is
       // never walked into. `stat` would follow it and enumerate a tree that no
       // clone of this repository would contain.
-      const stats = lstatSync(path);
       if (stats.isSymbolicLink() || stats.isFile()) {
         out.push(relative(root, path));
       } else if (stats.isDirectory()) {

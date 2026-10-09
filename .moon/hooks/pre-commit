@@ -1,0 +1,3 @@
+#!/bin/sh
+# Git starts commit hooks at the active checkout root, including linked worktrees.
+exec bun run pre-commit

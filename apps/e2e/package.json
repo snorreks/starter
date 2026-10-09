@@ -22,9 +22,9 @@
   },
   "devDependencies": {
     "@axe-core/playwright": "4.13.0",
-    "@playwright/test": "1.63.0",
+    "@playwright/test": "1.64.0",
     "lighthouse": "13.5.0",
-    "miniflare": "5.20261006.0-alpha",
+    "miniflare": "5.20261006.1-alpha",
     "valibot": "1.5.0"
   },
   "dependencies": {
