@@ -210,14 +210,16 @@ so: `apps/backend/media` is not a server, and modelling it as a listener would m
 inventing a port and a health endpoint it does not have so a developer could see
 something green that never runs a container.
 
-The build is layer-cached (a dev run should be fast) and its output is parsed for
-`test result: ok. N passed`. **A build that reports no passing Cargo test is
-refused**, because a successful `docker build` proves the code compiled and nothing
-else — a cache hit or a removed build stage looks identical.
+Development builds can reuse a current image when its content-addressed stamp
+matches the source inputs and the image identity. Otherwise they build with layer
+caching and read the passing Rust test count recorded in the image at
+`MEDIA_RUST_TESTS_PATH`; build-log parsing is only a fallback. A build with no
+positive count is refused. `Dockerfile.job` does not use BuildKit cache mounts.
 
-`bun run test:compute` builds the same image with `--no-cache` and drives a real
-FFmpeg encode through it. Both paths now share one definition of the tag, the
-Dockerfile, the context and the assertion.
+`bun run test:compute` always builds with `--no-cache`, runs the Rust tests, and
+drives a real FFmpeg encode through the image. The development path prepares the
+image without running that integration scenario. Both use `buildMediaImage` for
+the tag, Dockerfile, context, recorded count and stamp validation.
 
 ### `jobs`
 

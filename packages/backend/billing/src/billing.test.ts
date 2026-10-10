@@ -9,7 +9,7 @@
 // that a constant is equal to itself.
 
 import { describe, expect, test } from 'bun:test';
-import { BILLING_PLANS } from '@starter/billing';
+import { BILLING_WEBHOOK_EVENTS } from '@starter/billing';
 import {
   createBillingPortalSession,
   createCreditPackCheckout,
@@ -200,15 +200,7 @@ describe('events this application acts on come from the catalogue', () => {
     // One list: the endpoint's `enabled_events` and the router's dispatch table
     // are both derived from `BILLING_WEBHOOK_EVENTS`, so an event cannot be
     // enabled on the endpoint and ignored by the handler.
-    for (const event of Object.keys(BILLING_PLANS).length > 0
-      ? [
-          'checkout.session.completed',
-          'customer.subscription.created',
-          'customer.subscription.updated',
-          'customer.subscription.deleted',
-          'invoice.paid',
-        ]
-      : []) {
+    for (const event of BILLING_WEBHOOK_EVENTS) {
       expect(isSupportedWebhookEvent(event)).toBe(true);
     }
     expect(isSupportedWebhookEvent('payment_intent.succeeded')).toBe(false);
@@ -224,6 +216,10 @@ describe('a checkout names what it wants and never an amount', () => {
     const client: StripeClient = {
       apiBase: 'https://api.stripe.test',
       secretKey: 'sk_test',
+      async get(path) {
+        const lookupKey = new URL(path, 'https://stripe.test').searchParams.get('lookup_keys[]');
+        return { data: [{ id: `price_${lookupKey}`, lookup_key: lookupKey, active: true }] };
+      },
       async post(_path, form) {
         calls.push(form);
         return result;
@@ -234,14 +230,14 @@ describe('a checkout names what it wants and never an amount', () => {
 
   const request = { origin: 'https://app.test', customerId: 'cus_1', reference: 'org_1' };
 
-  test('a subscription checkout carries the plan lookup key and no amount', async () => {
+  test('a subscription checkout carries the resolved price ID and no amount', async () => {
     const { client, calls } = stub();
     const result = await createSubscriptionCheckout(client, request, 'team', 'month');
 
     expect(result.ok).toBe(true);
     // The catalogue resolved the price; the caller supplied no amount at all, so
     // there is no path by which one can be forged.
-    expect(calls[0]?.['line_items[0][price]']).toBe('team_month');
+    expect(calls[0]?.['line_items[0][price]']).toBe('price_team_month');
     expect(Object.keys(calls[0] ?? {}).some((key) => key.includes('unit_amount'))).toBe(false);
     expect(calls[0]?.['metadata[plan_id]']).toBe('team');
   });
@@ -271,7 +267,7 @@ describe('a checkout names what it wants and never an amount', () => {
     const result = await createCreditPackCheckout(client, request, 'credits_100');
     expect(result.ok).toBe(true);
     expect(calls[0]?.mode).toBe('payment');
-    expect(calls[0]?.['line_items[0][price]']).toBe('credits_100');
+    expect(calls[0]?.['line_items[0][price]']).toBe('price_credits_100');
   });
 
   test('a session with no URL is a refusal, not a redirect to undefined', async () => {
@@ -287,4 +283,64 @@ describe('a checkout names what it wants and never an amount', () => {
     await createBillingPortalSession(client, { origin: 'https://app.test', customerId: 'cus_1' });
     expect(calls[0]?.return_url).toBe('https://app.test/billing');
   });
+});
+
+for (const timestamp of ['', '+1800000000', '1.8e9', '1800000000.0', '0x6b49d200']) {
+  test(`non-decimal timestamp ${JSON.stringify(timestamp)} is refused`, async () => {
+    expect(
+      await verifyStripeEvent({
+        rawBody: body,
+        secret: SECRET,
+        nowSeconds: NOW,
+        signatureHeader: `t=${timestamp},v1=${await sign(`${NOW}.${body}`)}`,
+      }),
+    ).toEqual({ ok: false, reason: 'malformed-signature' });
+  });
+}
+test('the signature uses the original decimal timestamp text', async () => {
+  const timestamp = `0${NOW}`;
+  expect(
+    (
+      await verifyStripeEvent({
+        rawBody: body,
+        secret: SECRET,
+        nowSeconds: NOW,
+        signatureHeader: `t=${timestamp},v1=${await sign(`${timestamp}.${body}`)}`,
+      })
+    ).ok,
+  ).toBe(true);
+});
+
+test('checkout refuses absent, inactive, mismatched and ambiguous prices before posting', async () => {
+  const price = { id: 'price_team', lookup_key: 'team_month', active: true };
+  for (const list of [
+    { data: [] },
+    { data: [price, price] },
+    { data: [{ ...price, active: false }] },
+    { data: [{ ...price, lookup_key: 'other' }] },
+    { data: [price], has_more: true },
+    { data: null },
+  ]) {
+    let posted = false;
+    const client: StripeClient = {
+      apiBase: 'https://stripe.test',
+      secretKey: 'fixture',
+      get: async () => list,
+      post: async () => {
+        posted = true;
+        return { id: 'unexpected' };
+      },
+    };
+    expect(
+      (
+        await createSubscriptionCheckout(
+          client,
+          { origin: 'https://app.test', customerId: 'cus_1', reference: 'user_1' },
+          'team',
+          'month',
+        )
+      ).ok,
+    ).toBe(false);
+    expect(posted).toBe(false);
+  }
 });

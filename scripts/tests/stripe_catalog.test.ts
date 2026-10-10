@@ -348,3 +348,50 @@ describe('the webhook endpoint is opt-in and reconciled by URL', () => {
     expect(JSON.stringify(outcome)).not.toContain('whsec');
   });
 });
+
+test('products beyond the first page are reused', async () => {
+  const stripe = fakeStripe();
+  await syncStripeCatalog(REAL, { fetcher: stripe.fetcher });
+  const products = [...stripe.state.products];
+  let pages = 0;
+  const fetcher = (async (input, init) => {
+    const url = new URL(String(input));
+    if (url.pathname === '/v1/products' && init?.method === 'GET') {
+      pages += 1;
+      return jsonResponse(
+        url.searchParams.has('starting_after')
+          ? { data: products, has_more: false }
+          : { data: [{ id: 'prod_unrelated', metadata: {} }], has_more: true },
+      );
+    }
+    return stripe.fetcher(input, init);
+  }) as typeof fetch;
+  const report = await syncStripeCatalog(REAL, { fetcher });
+  expect(report.ok).toBe(true);
+  expect(pages).toBe(2);
+  expect(stripe.state.products).toHaveLength(products.length);
+  expect(report.outcomes.some((outcome) => outcome.action === 'created')).toBe(false);
+});
+
+test('a credit price archive failure is reported as failed', async () => {
+  const stripe = fakeStripe();
+  await syncStripeCatalog(REAL, { fetcher: stripe.fetcher });
+  const old = stripe.state.prices.find((price) => price.lookup_key === 'credits_100');
+  if (!old) {
+    throw new Error('missing fixture pack');
+  }
+  old.unit_amount -= 1;
+  const fetcher = (async (input, init) => {
+    if (new URL(String(input)).pathname === `/v1/prices/${old.id}`) {
+      return jsonResponse({ error: 'archive refused' }, 500);
+    }
+    return stripe.fetcher(input, init);
+  }) as typeof fetch;
+  const report = await syncStripeCatalog(REAL, { fetcher });
+  expect(report.ok).toBe(false);
+  expect(
+    report.outcomes.some(
+      (outcome) => outcome.action === 'failed' && outcome.reason.includes('could not archive'),
+    ),
+  ).toBe(true);
+});

@@ -119,7 +119,7 @@ export const resolveCreditPack = (
   if (pack.amount <= 0) {
     return refuse(
       `Credit pack "${pack.packId}" has a non-positive price.`,
-      `Set BILLING_CATALOG.plans... creditPacks.${pack.packId}.amount to a positive amount in minor units.`,
+      `Set CREDIT_PACKS.${pack.packId}.amount to a positive amount in minor units.`,
     );
   }
   return {

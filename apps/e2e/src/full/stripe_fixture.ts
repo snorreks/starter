@@ -15,7 +15,7 @@
 // assertion would be about the emulator. This fixture keeps what it was told, which
 // is what makes "the app did not send an amount" observable: the amount in the
 // recorded session came from the catalogue, and the request that produced it
-// carried a lookup key.
+// carried a resolved price ID.
 //
 // **It is a fixture, and it says so.** It implements the endpoints this
 // application calls and no others. It does not model tax, proration, trials,
@@ -58,9 +58,9 @@ export interface RecordedCheckout {
   readonly id: string;
   readonly mode: string;
   readonly customer: string;
-  /** The `line_items[0][price]` the application sent — a lookup key, never a number. */
+  /** The `line_items[0][price]` the application sent — a Stripe price ID, never a number. */
   readonly requestedPrice: string;
-  /** What that lookup key resolved to in the catalogue, in minor units. */
+  /** What that price ID resolved to in the catalogue, in minor units. */
   readonly resolvedAmount: number;
   readonly currency: string;
   readonly recurring: BillingInterval | null;
@@ -129,12 +129,16 @@ const formToRecord = (body: string): Record<string, string[]> => {
 export const startStripeFixture = (options: {
   appOrigin: string;
   runId: string;
+  evidenceRoot?: string;
 }): StripeFixture => {
   const prices = cataloguePrices();
   const recorded: RecordedCheckout[] = [];
   const endpoints: { id: string; url: string; enabled_events: string[] }[] = [];
   const webhookSecret = stripeFixtureSecret(options.runId);
-  const evidenceDirectory = join(runScope(options.runId).artifactDir, 'stripe');
+  const evidenceDirectory = join(
+    options.evidenceRoot ?? runScope(options.runId).artifactDir,
+    'stripe',
+  );
   const evidencePath = join(evidenceDirectory, 'checkouts.jsonl');
   let counter = 0;
 
@@ -165,7 +169,7 @@ export const startStripeFixture = (options: {
     if (url.pathname === '/v1/checkout/sessions' && request.method === 'POST') {
       const form = formToRecord(await request.text());
       const requestedPrice = form['line_items[0][price]']?.[0] ?? '';
-      const price = prices.get(requestedPrice);
+      const price = [...prices.entries()].find(([key]) => `price_${key}` === requestedPrice)?.[1];
 
       // Stripe answers an unknown price with a 400 rather than inventing one. A
       // fixture that resolved anything would hide a lookup key the catalogue does
@@ -195,9 +199,11 @@ export const startStripeFixture = (options: {
         currency: CURRENCY,
         recurring: price.recurring,
         metadata,
-        // The load-bearing assertion: a `unit_amount` anywhere in a line item would
-        // mean the application chose what it charges rather than naming a price.
-        carriedAmount: Object.keys(form).some((key) => key.includes('unit_amount')),
+        // Flag amount fields and whole inline price-data objects, while unrelated
+        // nested fields such as price_data[currency] are not amounts.
+        carriedAmount: Object.keys(form).some(
+          (key) => key.includes('amount') || /(?:^|\[)price_data\]?$/.test(key),
+        ),
       });
 
       return json({

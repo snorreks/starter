@@ -104,7 +104,7 @@ test.describe('opening a checkout', () => {
     expect(session.url.startsWith(appBaseUrl)).toBe(true);
 
     // And what the account was told, observed from the account's side.
-    const record = (await accountRecord()).find((row) => row.requestedPrice === 'team_month');
+    const record = (await accountRecord()).find((row) => row.id === session.sessionId);
     expect(record, 'the account never saw a team_month checkout').toBeDefined();
     if (!record) {
       return;

@@ -304,16 +304,18 @@ describe('a build that is already current is reused, and says so', () => {
         build({
           engine: 'docker',
           reuse: true,
+          checksum: 'failed-build',
           stampPath: stamp.path,
           execute: async () => ({ code: 1, output: 'failed' }),
         }),
       ).rejects.toThrow('failed to build');
       // A stamp written on failure would satisfy the next reuse for an image that
       // was never produced.
+      expect(await Bun.file(stamp.path).exists()).toBe(false);
       const reuse = await buildMediaImage({
         engine: 'docker',
         reuse: true,
-        inputsChecksum: async () => 'unused',
+        inputsChecksum: async () => 'failed-build',
         stampPath: stamp.path,
         imageExists: async () => true,
         execute: async () => ({ code: 0, output: 'test result: ok. 1 passed' }),

@@ -302,7 +302,7 @@ export const prepareStripeService = async (
     `  image ${image} via ${engine.command}`,
     ...STRIPE_MOCK_LIMITS.map((limit) => `  ${limit}`),
     bridge.available
-      ? `  Webhook bridge available: run \`stripe listen --forward-to ${context.origin}/api/webhooks/stripe\``
+      ? `  Webhook bridge available: run \`stripe listen --forward-to ${context.origin}/api/webhooks/stripe\` and set STRIPE_WEBHOOK_SECRET to its signing secret.`
       : `  Webhook delivery NOT RUN — ${bridge.reason}\n  ${bridge.remedy}`,
   ];
 

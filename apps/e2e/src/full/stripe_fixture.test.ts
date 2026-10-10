@@ -6,7 +6,10 @@
 // unfalsifiable, because the number in the record would come from the fixture
 // rather than from the catalogue.
 
-import { describe, expect, test } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { BILLING_CATALOG, resolveSubscription } from '@starter/billing';
 import {
   type RecordedCheckout,
@@ -26,6 +29,14 @@ const unusedMiniflare = undefined as unknown as Parameters<
   ReturnType<typeof startStripeFixture>['outbound']
 >[1];
 
+let evidenceRoot: string;
+beforeEach(async () => {
+  evidenceRoot = await mkdtemp(join(tmpdir(), 'stripe-fixture-'));
+});
+afterEach(async () => {
+  await rm(evidenceRoot, { recursive: true, force: true });
+});
+
 const origin = 'http://127.0.0.1:5000';
 const form = (fields: Record<string, string>): string => new URLSearchParams(fields).toString();
 
@@ -44,14 +55,14 @@ const call = async (
 
 describe('the fixture resolves prices from the catalogue, not from the request', () => {
   test('a lookup key resolves to the catalogue amount', async () => {
-    const fixture = startStripeFixture({ appOrigin: origin, runId: 'fixture_unit' });
+    const fixture = startStripeFixture({ appOrigin: origin, runId: 'fixture_unit', evidenceRoot });
     await call(
       fixture,
       '/v1/checkout/sessions',
       form({
         mode: 'subscription',
         customer: 'cus_1',
-        'line_items[0][price]': 'team_month',
+        'line_items[0][price]': 'price_team_month',
       }),
     );
 
@@ -67,7 +78,7 @@ describe('the fixture resolves prices from the catalogue, not from the request',
   });
 
   test('an unknown lookup key is refused rather than invented', async () => {
-    const fixture = startStripeFixture({ appOrigin: origin, runId: 'fixture_unit' });
+    const fixture = startStripeFixture({ appOrigin: origin, runId: 'fixture_unit', evidenceRoot });
     const result = await call(
       fixture,
       '/v1/checkout/sessions',
@@ -82,11 +93,11 @@ describe('the fixture resolves prices from the catalogue, not from the request',
   });
 
   test('a request carrying a unit_amount is recorded as having carried one', async () => {
-    const fixture = startStripeFixture({ appOrigin: origin, runId: 'fixture_unit' });
+    const fixture = startStripeFixture({ appOrigin: origin, runId: 'fixture_unit', evidenceRoot });
     await call(
       fixture,
       '/v1/checkout/sessions',
-      form({ mode: 'subscription', 'line_items[0][price]': 'team_month', unit_amount: '1' }),
+      form({ mode: 'subscription', 'line_items[0][price]': 'price_team_month', unit_amount: '1' }),
     );
     // The assertion the whole lane rests on. A fixture that could not express this
     // would make `carriedAmount` a constant `false` and the check vacuous.
@@ -94,14 +105,14 @@ describe('the fixture resolves prices from the catalogue, not from the request',
   });
 
   test('a well-formed request records no amount', async () => {
-    const fixture = startStripeFixture({ appOrigin: origin, runId: 'fixture_unit' });
+    const fixture = startStripeFixture({ appOrigin: origin, runId: 'fixture_unit', evidenceRoot });
     await call(
       fixture,
       '/v1/checkout/sessions',
       form({
         mode: 'payment',
         customer: 'cus_1',
-        'line_items[0][price]': 'credits_100',
+        'line_items[0][price]': 'price_credits_100',
         'metadata[plan_id]': 'team',
       }),
     );
@@ -112,7 +123,7 @@ describe('the fixture resolves prices from the catalogue, not from the request',
   });
 
   test('a non-Stripe host is not answered', async () => {
-    const fixture = startStripeFixture({ appOrigin: origin, runId: 'fixture_unit' });
+    const fixture = startStripeFixture({ appOrigin: origin, runId: 'fixture_unit', evidenceRoot });
     const request = new Request('https://evil.example/v1/prices') as unknown as Parameters<
       typeof fixture.outbound
     >[0];
@@ -122,7 +133,7 @@ describe('the fixture resolves prices from the catalogue, not from the request',
   });
 
   test('an unimplemented endpoint is a 404, not a silent success', async () => {
-    const fixture = startStripeFixture({ appOrigin: origin, runId: 'fixture_unit' });
+    const fixture = startStripeFixture({ appOrigin: origin, runId: 'fixture_unit', evidenceRoot });
     const result = await call(fixture, '/v1/refunds', form({ charge: 'ch_1' }));
     expect(result.status).toBe(404);
   });
@@ -136,3 +147,33 @@ describe('the fixture secret is a constant, not a credential', () => {
     expect(stripeFixtureSecret('')).toMatch(/^whsec_fixture_[0-9]*$/);
   });
 });
+
+test('price lookup returns an ID and checkout rejects a raw lookup key', async () => {
+  const fixture = startStripeFixture({ appOrigin: origin, runId: 'fixture_unit', evidenceRoot });
+  const listed = await call(fixture, '/v1/prices?active=true&lookup_keys[]=team_month');
+  expect(listed.json).toMatchObject({
+    data: [{ id: 'price_team_month', lookup_key: 'team_month', active: true }],
+  });
+  expect(
+    (await call(fixture, '/v1/checkout/sessions', form({ 'line_items[0][price]': 'team_month' })))
+      .status,
+  ).toBe(400);
+});
+
+for (const [key, expected] of [
+  ['amount', true],
+  ['line_items[0][price_data]', true],
+  ['price_data', true],
+  ['line_items[0][price_data][unit_amount_decimal]', true],
+  ['line_items[0][price_data][currency]', false],
+] as const) {
+  test(`amount evidence for ${key} is ${expected}`, async () => {
+    const fixture = startStripeFixture({ appOrigin: origin, runId: 'fixture_unit', evidenceRoot });
+    await call(
+      fixture,
+      '/v1/checkout/sessions',
+      form({ 'line_items[0][price]': 'price_team_month', [key]: '1' }),
+    );
+    expect(fixture.checkouts()[0]?.carriedAmount).toBe(expected);
+  });
+}

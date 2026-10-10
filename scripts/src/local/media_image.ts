@@ -8,23 +8,14 @@
 // different tag that happened to be stale — so the tag, the Dockerfile, the build
 // context and the Rust-test assertion now live here and both callers read them.
 //
-// **Why the Rust test count is parsed out of the build.** `Dockerfile.job` runs
-// `cargo test --locked --offline` as a build stage. A build that succeeds proves
-// the code compiled; it does not prove the tests ran, and a cache hit or an
-// accidentally removed stage produces a green build with no evidence that the
-// encode, cancellation and failure tests ever executed. The compute lane was the
-// first thing in this repository to check the count, and this module makes that
-// check available to every caller rather than leaving it to whoever remembers.
-//
-// **Two kinds of cold start, handled differently.** A build is slow because
-// compiling the dependency tree in release mode is slow, and `Dockerfile.job` keeps
-// that work in BuildKit cache mounts so it survives `--no-cache`. That fixes the
-// cost without weakening anything: the crate's own code and its tests are still
-// compiled and run on every build.
+// `Dockerfile.job` runs Cargo tests and records their passing count in the image at
+// `MEDIA_RUST_TESTS_PATH`. Builds read that count from the image; build-log parsing
+// is a fallback when the recorded count cannot be read. A build without a positive
+// count is refused. The Dockerfile uses ordinary layers, not BuildKit cache mounts.
 //
 // On top of that, a caller that only needs the image to *exist* can ask whether it
-// is already current — see {@link buildMediaImage}'s `reuse`. That is the second,
-// larger saving, and it is deliberately opt-in and explicitly reported: a lane that
+// is already current — see {@link buildMediaImage}'s `reuse`. Reuse is
+// deliberately opt-in and explicitly reported: a lane that
 // skipped a build without saying so would be indistinguishable from one that ran
 // it, which is the failure this repository treats as worse than an error.
 
@@ -87,14 +78,6 @@ const IMAGE_INPUT_FILES = [
 const IMAGE_INPUT_DIRECTORIES = ['src', 'tests', 'fixtures'] as const;
 
 /**
- * Passing Cargo tests the image build reported, summed over every test binary.
- *
- * Returns 0 when the output contains no passing test line at all — including when
- * the build output was truncated — which is the signal the callers refuse on. A
- * `?.` on the count would turn that into `NaN`, and `NaN` compares false against
- * everything, so a build that tested nothing would slip past a `=== 0` check.
- */
-/**
  * Read the recorded count, and refuse anything that is not a positive integer.
  *
  * Returns `null` for a missing file, a blank file, or anything non-numeric: all
@@ -120,6 +103,14 @@ export const readRecordedRustTestCount = async (
   return Number.isSafeInteger(recorded) && recorded > 0 ? recorded : null;
 };
 
+/**
+ * Passing Cargo tests the image build reported, summed over every test binary.
+ *
+ * Returns 0 when the output contains no passing test line at all — including when
+ * the build output was truncated — which is the signal the callers refuse on. A
+ * `?.` on the count would turn that into `NaN`, and `NaN` compares false against
+ * everything, so a build that tested nothing would slip past a `=== 0` check.
+ */
 export const parseRustTestCount = (output: string): number =>
   [...output.matchAll(/test result: ok\. (\d+) passed/g)].reduce(
     (total, match) => total + Number(match[1]),

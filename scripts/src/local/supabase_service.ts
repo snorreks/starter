@@ -156,23 +156,36 @@ export const prepareSupabaseService = async (
   // Email confirmations off: a developer's own loop should reach the app after
   // sign-up. The verified-email flow is covered by the E2E lane, which turns
   // confirmations on because it redeems real links.
-  const started = await dependencies.start(allocation, { emailConfirmations: false });
+  let started: Awaited<ReturnType<SupabaseServiceDependencies['start']>>;
+  let seeded: Awaited<ReturnType<SupabaseServiceDependencies['seed']>>;
+  try {
+    started = await dependencies.start(allocation, { emailConfirmations: false });
 
-  // Seed the stack this run started, so the developer's first page shows their own
-  // notes rather than an empty list they have to type into. `--workdir` the
-  // generated project directory, because `supabase status` reads the project id
-  // and ports out of the config in there — pointing it at the repository root
-  // names a different stack, which is why `bun run db:seed` cannot see this one.
-  //
-  // A failure here fails the command. A dev server that starts against an empty
-  // database and says nothing is the failure mode this repository treats as worse
-  // than an error.
-  const seeded = await dependencies.seed({
-    root: supabaseProjectDir(allocation),
-    // The run directory has no manifest of its own, so the binary is resolved from
-    // the checkout that declares it rather than from the directory being seeded.
-    binary: supabaseBin() ?? undefined,
-  });
+    // Seed the stack this run started, so the developer's first page shows their own
+    // notes rather than an empty list they have to type into. `--workdir` the
+    // generated project directory, because `supabase status` reads the project id
+    // and ports out of the config in there — pointing it at the repository root
+    // names a different stack, which is why `bun run db:seed` cannot see this one.
+    //
+    // A failure here fails the command. A dev server that starts against an empty
+    // database and says nothing is the failure mode this repository treats as worse
+    // than an error.
+    seeded = await dependencies.seed({
+      root: supabaseProjectDir(allocation),
+      // The run directory has no manifest of its own, so the binary is resolved from
+      // the checkout that declares it rather than from the directory being seeded.
+      binary: supabaseBin() ?? undefined,
+    });
+  } catch (error) {
+    try {
+      if (await dependencies.hasOwnership(allocation)) {
+        await dependencies.stop(allocation, await dependencies.readOwnership(allocation));
+      }
+    } catch {
+      // Cleanup must not replace the startup or seed failure.
+    }
+    throw error;
+  }
 
   const vars: Record<string, string> = { ...started };
   if (options.autoSignIn) {

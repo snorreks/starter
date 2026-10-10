@@ -313,3 +313,37 @@ describe('a genuinely incomplete backend is still refused', () => {
     ).rejects.toThrow('SUPABASE_ANON_KEY, SUPABASE_SERVICE_ROLE_KEY');
   });
 });
+
+for (const failure of ['merge', 'write'] as const) {
+  test(`a post-start ${failure} failure disposes all services`, async () => {
+    const rec = recorder();
+    producedRunIds.push(rec.runId);
+    const disposed: string[] = [];
+    const dependencies: Partial<DevStackDependencies> = {
+      ...rec.dependencies,
+      createService: async (id, context): Promise<LocalService> => {
+        if (failure === 'write') {
+          const { mkdir } = await import('node:fs/promises');
+          const dir = join(REPO_ROOT, '.wrangler', 'runs', context.runId);
+          await mkdir(dir, { recursive: true });
+          await writeFile(join(dir, 'stack.dev.vars'), 'already owned');
+        }
+        return {
+          id,
+          label: id,
+          owned: true,
+          vars: failure === 'merge' ? { CONTESTED: id } : {},
+          summary: [],
+          dispose: async () => {
+            disposed.push(id);
+            return [];
+          },
+        };
+      },
+    };
+    await expect(
+      prepareDevStack(['supabase', 'stripe'], 'http://127.0.0.1:5173', {}, dependencies),
+    ).rejects.toThrow();
+    expect(disposed).toEqual(['stripe', 'supabase']);
+  });
+}

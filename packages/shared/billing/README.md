@@ -38,8 +38,7 @@ in `stripe-mock` and the command says so; nothing is provisioned remotely.
 would otherwise be unwritten conventions: that no two prices share a Stripe
 lookup key, that a purchasable plan has a positive price on every interval it is
 sold on, that a free plan is granted rather than bought, and that every refusal
-names both the cause and the remedy. The file also asserts its own discovery
-count, so it cannot match nothing and report green.
+names both the cause and the remedy.
 
 `bun run guard` checks the package boundaries and this README.
 

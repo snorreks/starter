@@ -285,3 +285,29 @@ describe('the seeded account is offered to a developer, not to a harness', () =>
     expect(recorder_.written().DEV_AUTO_LOGIN).toBeUndefined();
   });
 });
+
+for (const stage of ['start', 'seed'] as const) {
+  for (const owned of [true, false]) {
+    test(`${stage} failure cleans up only persisted ownership (${owned})`, async () => {
+      const { prepareSupabaseService } = await import('../src/local/supabase_service.ts');
+      const rec = recorder();
+      const failure = new Error(`${stage} failed`);
+      await expect(
+        prepareSupabaseService({
+          origin: 'http://localhost:5173',
+          callerVars: {},
+          autoSignIn: false,
+          environment: {},
+          dependencies: {
+            ...rec.dependencies,
+            [stage]: async () => {
+              throw failure;
+            },
+            hasOwnership: async () => owned,
+          },
+        }),
+      ).rejects.toBe(failure);
+      expect(rec.calls.includes('stop')).toBe(owned);
+    });
+  }
+}

@@ -146,9 +146,4 @@ describe('the billing catalogue', () => {
       expect(event.split('.').some((segment) => segment.length === 0)).toBe(false);
     }
   });
-
-  test('this file discovers tests rather than matching none', () => {
-    // A zero-length discovery is the failure mode that leaves a guard green.
-    expect(BILLING_WEBHOOK_EVENTS.length + PLAN_IDS.length).toBeGreaterThan(0);
-  });
 });

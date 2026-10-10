@@ -156,22 +156,12 @@ const run = async () => {
   }
   port = address.port;
   try {
-    // Reuse is sound here because the decision is content-addressed: the recorded
-    // build ran against this checksum, and a change to the Dockerfile, the lockfile
-    // or any source invalidates it. `--no-cache` still applies whenever a build
-    // actually happens, so a first run on a fresh checkout verifies for real rather
-    // than trusting a claim this checkout has never made.
-    const { rustTests, reused } = await buildMediaImage({
+    // Verification always builds and reruns the Rust tests, even after a dev build.
+    const { rustTests } = await buildMediaImage({
       engine: 'docker',
       noCache: true,
-      reuse: true,
       execute: async (args) => execute(args, 20 * 60_000),
     });
-    if (reused) {
-      process.stdout.write(
-        `Finite runner image is current for these sources; build reused (${rustTests} Cargo tests verified by the recorded build).\n`,
-      );
-    }
     const result = await execute(
       [
         'run',

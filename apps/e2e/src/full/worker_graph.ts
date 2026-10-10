@@ -114,9 +114,6 @@ export const buildWorkerGraph = (options: WorkerGraphOptions): WorkerGraph => {
       },
     },
   };
-  if (!options.compute) {
-    return { workers: [worker], workerName: name, assetsDirectory };
-  }
 
   /**
    * Stripe bindings, mapped from the option's field names to the Worker's.
@@ -134,14 +131,20 @@ export const buildWorkerGraph = (options: WorkerGraphOptions): WorkerGraph => {
   const stripeBindings: Record<string, string> = {};
   if (options.stripe !== undefined) {
     const { apiBase, secretKey, webhookSecret } = options.stripe;
-    const complete = [apiBase, secretKey, webhookSecret].every(
-      (value) => typeof value === 'string' && value.trim().length > 0,
-    );
-    if (complete) {
-      stripeBindings.STRIPE_API_BASE = apiBase;
-      stripeBindings.STRIPE_SECRET_KEY = secretKey;
-      stripeBindings.STRIPE_WEBHOOK_SECRET = webhookSecret;
+    const missing = Object.entries({ apiBase, secretKey, webhookSecret })
+      .filter(([, value]) => typeof value !== 'string' || value.trim().length === 0)
+      .map(([name]) => name);
+    if (missing.length > 0) {
+      throw new Error(`Incomplete Stripe configuration: missing or blank ${missing.join(', ')}.`);
     }
+    stripeBindings.STRIPE_API_BASE = apiBase;
+    stripeBindings.STRIPE_SECRET_KEY = secretKey;
+    stripeBindings.STRIPE_WEBHOOK_SECRET = webhookSecret;
+  }
+
+  if (!options.compute) {
+    worker.bindings = { ...worker.bindings, ...stripeBindings };
+    return { workers: [worker], workerName: name, assetsDirectory };
   }
 
   const jobsName = `${name}-jobs`;

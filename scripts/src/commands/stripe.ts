@@ -127,7 +127,7 @@ export const stripeCommand: Command = {
         continue;
       }
       if (arg === '--webhook-url') {
-        webhookUrl = rest[index + 1];
+        webhookUrl = rest[index + 1] ?? '';
         index += 1;
         continue;
       }
@@ -136,6 +136,16 @@ export const stripeCommand: Command = {
         continue;
       }
       return fail(`Unknown option "${arg}".\n${USAGE}`, EXIT.usage);
+    }
+
+    if (webhookUrl !== undefined) {
+      try {
+        if (new URL(webhookUrl).protocol !== 'https:') {
+          throw new Error('HTTPS required');
+        }
+      } catch {
+        return fail('--webhook-url requires a valid HTTPS URL.', EXIT.usage);
+      }
     }
 
     const credentials = resolveCredentials();
@@ -154,8 +164,12 @@ export const stripeCommand: Command = {
       process.stdout.write(`  [${ICON[outcome.action] ?? '?'}] ${outcome.name} — ${detail}\n`);
     }
 
+    const outcomes = [...report.outcomes];
+    let webhookFailed = false;
     if (webhookUrl !== undefined) {
       const endpoint = await syncWebhookEndpoint(credentials, { url: webhookUrl, dryRun });
+      webhookFailed = endpoint.action === 'failed';
+      outcomes.push(endpoint);
       process.stdout.write(
         `  [${ICON[endpoint.action] ?? '?'}] ${'name' in endpoint ? endpoint.name : ''} — ${
           'reason' in endpoint ? endpoint.reason : endpoint.id
@@ -163,11 +177,16 @@ export const stripeCommand: Command = {
       );
     }
 
-    const failures = report.outcomes.filter((outcome) => outcome.action === 'failed');
+    const failures = outcomes.filter((outcome) => outcome.action === 'failed');
     const created = report.outcomes.filter((outcome) => outcome.action === 'created').length;
 
     process.stdout.write('\n');
-    if (report.emulated) {
+    if (failures.length > 0) {
+      process.stdout.write(
+        `Incomplete: ${failures.length} of ${outcomes.length} objects failed. Re-run to finish; ` +
+          'objects already created are recognised and left alone.\n',
+      );
+    } else if (report.emulated) {
       process.stdout.write(
         'Target is a local emulator. The API calls above succeeded, but stripe-mock keeps\n' +
           'nothing, so no Stripe object exists as a result of this run.\n' +
@@ -176,11 +195,6 @@ export const stripeCommand: Command = {
       );
     } else if (dryRun) {
       process.stdout.write('Dry run complete. Nothing was written.\n');
-    } else if (failures.length > 0) {
-      process.stdout.write(
-        `Incomplete: ${failures.length} of ${report.outcomes.length} objects failed. Re-run to finish; ` +
-          'objects already created are recognised and left alone.\n',
-      );
     } else {
       process.stdout.write(
         created === 0
@@ -200,6 +214,6 @@ export const stripeCommand: Command = {
     if (report.emulated && !dryRun) {
       return EXIT.refused;
     }
-    return report.ok ? EXIT.ok : EXIT.failed;
+    return report.ok && !webhookFailed ? EXIT.ok : EXIT.failed;
   },
 };

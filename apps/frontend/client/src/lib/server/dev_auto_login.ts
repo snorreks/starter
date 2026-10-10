@@ -141,6 +141,7 @@ export type DevAutoSignInOutcome =
   | 'applied'
   | 'not-configured'
   | 'signed-out'
+  | 'existing-session'
   | 'not-a-page'
   | 'failed';
 
@@ -161,6 +162,9 @@ export const applyDevAutoSignIn = async (
   }
   if (devSignedOut(cookies)) {
     return 'signed-out';
+  }
+  if (cookies.getAll().some(({ name }) => /^sb-.+-auth-token(?:\.\d+)?$/.test(name))) {
+    return 'existing-session';
   }
   const url = new URL(request.url);
   // A page load, not a mutation: a POST must never acquire a session behind the

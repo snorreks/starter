@@ -134,20 +134,32 @@ const listProducts = async (
   credentials: StripeCredentials,
   fetcher: typeof fetch,
 ): Promise<StripeResult<StripeProduct[]>> => {
-  const result = await request<{ data?: unknown }>(
-    credentials,
-    '/v1/products?limit=100&active=true',
-    { method: 'GET' },
-    fetcher,
-  );
-  if (!result.ok) {
-    return result;
+  const products: StripeProduct[] = [];
+  let cursor: string | undefined;
+  while (true) {
+    const result = await request<{ data?: unknown; has_more?: boolean }>(
+      credentials,
+      `/v1/products?limit=100&active=true${cursor === undefined ? '' : `&starting_after=${encodeURIComponent(cursor)}`}`,
+      { method: 'GET' },
+      fetcher,
+    );
+    if (!result.ok) {
+      return result;
+    }
+    const { data, has_more } = result.value;
+    if (!Array.isArray(data)) {
+      return { ok: false, reason: 'Stripe returned a product list without data.' };
+    }
+    products.push(...(data as StripeProduct[]));
+    if (!has_more) {
+      return { ok: true, value: products };
+    }
+    const next = (data.at(-1) as StripeProduct | undefined)?.id;
+    if (typeof next !== 'string' || next.length === 0 || next === cursor) {
+      return { ok: false, reason: 'Stripe returned a product page without a next cursor.' };
+    }
+    cursor = next;
   }
-  const { data } = result.value;
-  if (!Array.isArray(data)) {
-    return { ok: false, reason: 'Stripe returned a product list without data.' };
-  }
-  return { ok: true, value: data as StripeProduct[] };
 };
 
 const findPriceByLookupKey = async (
@@ -318,12 +330,19 @@ const syncCreditPrice = async (
     };
   }
   if (existing.value !== null) {
-    await request(
+    const archived = await request(
       credentials,
       `/v1/prices/${existing.value.id}`,
       { method: 'POST', body: { active: false } },
       fetcher,
     );
+    if (!archived.ok) {
+      return {
+        action: 'failed',
+        name,
+        reason: `created ${created.value.id} but could not archive ${existing.value.id}: ${archived.reason}`,
+      };
+    }
   }
   return { action: 'created', name, id: created.value.id };
 };

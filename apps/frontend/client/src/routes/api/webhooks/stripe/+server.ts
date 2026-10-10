@@ -7,7 +7,7 @@
 // four decisions this route adds are transport-shaped, and each is stated below
 // because each one has a counterpart that looks right and is not.
 //
-//   1. **The raw body, not a parsed one.** `request.text()` hands the exact bytes
+//   1. **The raw body, not a parsed one.** The bounded reader preserves the text
 //      Stripe signed. Parsing and re-serialising changes key order and whitespace,
 //      and the digest no longer matches — which presents as "Stripe's signature
 //      verification keeps failing" rather than as a bug here.
@@ -31,7 +31,7 @@ import {
   verifyStripeEvent,
   webhookRejectionStatus,
 } from '@starter/billing-server';
-import { json } from '#lib/server/http.ts';
+import { json, jsonError, readBoundedText } from '#lib/server/http.ts';
 import type { RequestHandler } from './$types';
 
 /**
@@ -45,12 +45,19 @@ import type { RequestHandler } from './$types';
 const MAX_DELIVERY_BYTES = 256 * 1024;
 
 export const POST: RequestHandler = async ({ request, locals }) => {
-  const rawBody = await request.text();
-  if (rawBody.length > MAX_DELIVERY_BYTES) {
-    return json(413, {
-      error: 'payload_too_large',
-      message: `A Stripe delivery may not exceed ${MAX_DELIVERY_BYTES} bytes.`,
-    });
+  const tooLarge = () =>
+    jsonError(
+      413,
+      'payload_too_large',
+      `A Stripe delivery may not exceed ${MAX_DELIVERY_BYTES} bytes.`,
+    );
+  const declared = request.headers.get('content-length');
+  if (declared !== null && Number(declared) > MAX_DELIVERY_BYTES) {
+    return tooLarge();
+  }
+  const rawBody = await readBoundedText(request, MAX_DELIVERY_BYTES);
+  if (rawBody === null) {
+    return tooLarge();
   }
 
   const verified = await verifyStripeEvent({

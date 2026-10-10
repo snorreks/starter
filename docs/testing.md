@@ -19,11 +19,19 @@ bun run test:compute         # Docker runner image and real FFmpeg
 ## The development server
 
 ```bash
-bun run dev                  # starts a local Supabase, seeds it, signs in
-bun run dev:worker           # the same, serving the built Worker in workerd
+bun run dev                 # prompts for a stack on a TTY
+bun run dev --stack client  # local seeded Supabase and the Vite client
+bun run dev:worker          # serves the built Worker in workerd; requires a build
 ```
 
-`bun run dev` provisions a checkout-owned local stack when `SUPABASE_URL` is unset, seeds one synthetic account into it (`seed@example.invalid`, two notes), and writes that account into the run-owned Worker vars file so the first page load is already signed in. Stopping the server stops the stack and removes the file.
+Without an explicit stack, `bun run dev` prompts on a TTY and exits with
+`EXIT.usage` (2) without a TTY or when `CI=true`.
+
+`bun run dev --stack client` provisions a checkout-owned local Supabase stack when
+`SUPABASE_URL` is unset, seeds one synthetic account into it
+(`seed@example.invalid`, two notes), and writes that account into the run-owned
+Worker vars file so the first page load is already signed in. Stopping the server
+stops the stack and removes the file.
 
 Three properties keep that from reaching anything real:
 

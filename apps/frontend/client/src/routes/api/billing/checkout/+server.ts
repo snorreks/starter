@@ -111,7 +111,12 @@ export const POST: RequestHandler = async ({ locals, request }) => {
       );
     }
 
-    const result = await createSubscriptionCheckout(client, billing, body.planId, body.interval);
+    let result: Awaited<ReturnType<typeof createSubscriptionCheckout>>;
+    try {
+      result = await createSubscriptionCheckout(client, billing, body.planId, body.interval);
+    } catch {
+      return jsonError(502, 'checkout_unavailable', 'Unable to start checkout. Please try again.');
+    }
     if (!result.ok) {
       return jsonError(422, 'checkout_refused', `${result.problem} ${result.remedy}`);
     }
@@ -119,14 +124,19 @@ export const POST: RequestHandler = async ({ locals, request }) => {
       kind: 'subscription',
       sessionId: result.sessionId,
       url: result.url,
-      lookupKey: `${body.planId}_${body.interval}`,
+      lookupKey: result.lookupKey,
     } satisfies CheckoutSession);
   }
 
   if (body.packId === undefined) {
     return jsonError(400, 'incomplete_checkout', 'A credit checkout names a pack.');
   }
-  const pack = await createCreditPackCheckout(client, billing, body.packId);
+  let pack: Awaited<ReturnType<typeof createCreditPackCheckout>>;
+  try {
+    pack = await createCreditPackCheckout(client, billing, body.packId);
+  } catch {
+    return jsonError(502, 'checkout_unavailable', 'Unable to start checkout. Please try again.');
+  }
   if (!pack.ok) {
     return jsonError(422, 'checkout_refused', `${pack.problem} ${pack.remedy}`);
   }
@@ -134,6 +144,6 @@ export const POST: RequestHandler = async ({ locals, request }) => {
     kind: 'credit_pack',
     sessionId: pack.sessionId,
     url: pack.url,
-    lookupKey: body.packId,
+    lookupKey: pack.lookupKey,
   } satisfies CheckoutSession);
 };

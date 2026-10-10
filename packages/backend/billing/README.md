@@ -34,8 +34,10 @@ STRIPE_WEBHOOK_SECRET  whsec_…              # the endpoint's signing secret
 STRIPE_API_BASE        https://api.stripe.com
 ```
 
-Locally, `bun run dev --stack stripe` writes all three into the run-owned 0600
+Locally, `bun run dev --stack stripe` writes STRIPE_API_BASE and STRIPE_SECRET_KEY into the run-owned 0600
 vars file, pointing at stripe-mock.
+For `stripe listen` deliveries, set STRIPE_WEBHOOK_SECRET to the signing secret
+reported by the listener.
 
 To declare the catalogue in an account:
 

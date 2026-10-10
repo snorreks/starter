@@ -201,6 +201,7 @@ export const prepareJobsService = async (
     if (child.pid !== undefined) {
       killTree(child.pid, { graceMs: 300, attempts: 10 });
     }
+    await removeOwnedVars(owned.path, owned.contents).catch(() => {});
     throw error;
   }
 

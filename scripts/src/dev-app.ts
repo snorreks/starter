@@ -623,41 +623,45 @@ export const prepareDevStack = async (
   //
   // So the caller's bindings are the base of this file, not a competitor to it. The
   // caller's own file is never written to or removed; only what this run wrote is.
-  const merged = mergeServiceVars(started);
+  try {
+    const merged = mergeServiceVars(started);
 
-  // A service producing a binding the caller already supplied is the same
-  // "two owners, one value" defect `mergeServiceVars` refuses between services,
-  // and the consequence is identical: whichever wrote last is what the application
-  // talks to. It should be unreachable — a caller who supplied a complete
-  // configuration is the case where a service deliberately starts nothing — which
-  // is exactly why an unreachable branch is worth a loud one.
-  const contested = Object.keys(merged).filter((key) => callerFile[key] !== undefined);
-  if (contested.length > 0) {
-    await disposeServices(started);
-    throw new Error(
-      `A local service set ${contested.join(', ')}, which this run's caller already configured ` +
-        'in the file named by STARTER_DEV_VARS_PATH.\n' +
-        '  Refusing rather than picking one: the application would talk to whichever wrote last.\n' +
-        `  Caller file: ${callerVarsPath ?? '(none)'}\n` +
-        '  Remove the binding from one of them.',
-    );
+    // A service producing a binding the caller already supplied is the same
+    // "two owners, one value" defect `mergeServiceVars` refuses between services,
+    // and the consequence is identical: whichever wrote last is what the application
+    // talks to. It should be unreachable — a caller who supplied a complete
+    // configuration is the case where a service deliberately starts nothing — which
+    // is exactly why an unreachable branch is worth a loud one.
+    const contested = Object.keys(merged).filter((key) => callerFile[key] !== undefined);
+    if (contested.length > 0) {
+      throw new Error(
+        `A local service set ${contested.join(', ')}, which this run's caller already configured ` +
+          'in the file named by STARTER_DEV_VARS_PATH.\n' +
+          '  Refusing rather than picking one: the application would talk to whichever wrote last.\n' +
+          `  Caller file: ${callerVarsPath ?? '(none)'}\n` +
+          '  Remove the binding from one of them.',
+      );
+    }
+
+    const written = await writeOwnedVars(context.scope.dir, 'stack.dev.vars', {
+      ...callerFile,
+      // `DEPLOYMENT_ENV` and `APP_ORIGIN` describe the application, not any service,
+      // so they are added here rather than by whichever service happens to be first.
+      DEPLOYMENT_ENV: 'local',
+      APP_ORIGIN: origin,
+      ...merged,
+    });
+
+    return {
+      services: started,
+      varsPath: written.path,
+      varsContents: written.contents,
+      summary: started.flatMap((service) => [`${service.label}`, ...service.summary]),
+    };
+  } catch (error) {
+    await disposeServices(started).catch(() => {});
+    throw error;
   }
-
-  const written = await writeOwnedVars(context.scope.dir, 'stack.dev.vars', {
-    ...callerFile,
-    // `DEPLOYMENT_ENV` and `APP_ORIGIN` describe the application, not any service,
-    // so they are added here rather than by whichever service happens to be first.
-    DEPLOYMENT_ENV: 'local',
-    APP_ORIGIN: origin,
-    ...merged,
-  });
-
-  return {
-    services: started,
-    varsPath: written.path,
-    varsContents: written.contents,
-    summary: started.flatMap((service) => [`${service.label}`, ...service.summary]),
-  };
 };
 
 /**

@@ -30,6 +30,7 @@ export interface Refusal {
 export interface StripeClient {
   readonly apiBase: string;
   readonly secretKey: string;
+  get(path: string): Promise<unknown>;
   post(path: string, form: Record<string, string>): Promise<{ id: string; url?: string }>;
 }
 
@@ -47,6 +48,16 @@ export const createStripeClient = (
 ): StripeClient => ({
   apiBase: apiBase.replace(/\/$/, ''),
   secretKey,
+  async get(path) {
+    const response = await fetcher(`${apiBase.replace(/\/$/, '')}${path}`, {
+      headers: { authorization: `Bearer ${secretKey}` },
+      redirect: 'manual',
+    });
+    if (!response.ok) {
+      throw new Error(`Stripe rejected ${path} (HTTP ${response.status})`);
+    }
+    return await response.json();
+  },
   async post(path, form) {
     const response = await fetcher(`${apiBase.replace(/\/$/, '')}${path}`, {
       method: 'POST',
@@ -66,6 +77,36 @@ export const createStripeClient = (
     return (await response.json()) as { id: string; url?: string };
   },
 });
+
+/** A lookup key must identify exactly one active Stripe price before charging. */
+const resolvePriceId = async (
+  client: StripeClient,
+  lookupKey: string,
+): Promise<string | Refusal> => {
+  const list = (await client.get(
+    `/v1/prices?active=true&limit=100&lookup_keys[]=${encodeURIComponent(lookupKey)}`,
+  )) as {
+    data?: { id?: unknown; active?: unknown; lookup_key?: unknown }[];
+    has_more?: boolean;
+  } | null;
+  const matches = Array.isArray(list?.data)
+    ? list.data.filter(
+        (price) =>
+          price?.active === true &&
+          price.lookup_key === lookupKey &&
+          typeof price.id === 'string' &&
+          price.id.startsWith('price_'),
+      )
+    : [];
+  if (list?.has_more || matches.length !== 1) {
+    return {
+      ok: false,
+      problem: `Expected exactly one active Stripe price for "${lookupKey}".`,
+      remedy: 'Reconcile the Stripe catalogue before starting checkout.',
+    };
+  }
+  return matches[0]?.id as string;
+};
 
 /** Stripe counts in minor units; a negative or fractional amount is a defect. */
 const minorUnits = (value: number): string => String(Math.round(value));
@@ -97,10 +138,15 @@ export const createSubscriptionCheckout = async (
   request: CheckoutRequest,
   planId: string,
   interval: BillingInterval,
-): Promise<CheckoutResult | Refusal> => {
+): Promise<(CheckoutResult & { lookupKey: string }) | Refusal> => {
   const resolved = resolveSubscription(planId, interval);
   if (!resolved.ok) {
     return { ok: false, problem: resolved.problem, remedy: resolved.remedy };
+  }
+
+  const priceId = await resolvePriceId(client, resolved.lookupKey);
+  if (typeof priceId !== 'string') {
+    return priceId;
   }
 
   const session = await client.post('/v1/checkout/sessions', {
@@ -109,7 +155,7 @@ export const createSubscriptionCheckout = async (
     success_url: `${request.origin}/billing?checkout=success`,
     cancel_url: `${request.origin}/billing?checkout=cancelled`,
     client_reference_id: request.reference,
-    'line_items[0][price]': resolved.lookupKey,
+    'line_items[0][price]': priceId,
     'line_items[0][quantity]': '1',
     // Echoed back on the webhook so the session can be tied to the local record
     // without the webhook having to guess which session produced the event.
@@ -126,7 +172,7 @@ export const createSubscriptionCheckout = async (
       remedy: 'Check the API version this deployment pins against the Stripe dashboard.',
     };
   }
-  return { ok: true, url: session.url, sessionId: session.id };
+  return { ok: true, url: session.url, sessionId: session.id, lookupKey: resolved.lookupKey };
 };
 
 /**
@@ -141,10 +187,15 @@ export const createCreditPackCheckout = async (
   client: StripeClient,
   request: CheckoutRequest,
   packId: string,
-): Promise<CheckoutResult | Refusal> => {
+): Promise<(CheckoutResult & { lookupKey: string }) | Refusal> => {
   const resolved = resolveCreditPack(packId);
   if (!resolved.ok) {
     return { ok: false, problem: resolved.problem, remedy: resolved.remedy };
+  }
+
+  const priceId = await resolvePriceId(client, resolved.lookupKey);
+  if (typeof priceId !== 'string') {
+    return priceId;
   }
 
   const session = await client.post('/v1/checkout/sessions', {
@@ -153,7 +204,7 @@ export const createCreditPackCheckout = async (
     success_url: `${request.origin}/billing?checkout=success`,
     cancel_url: `${request.origin}/billing?checkout=cancelled`,
     client_reference_id: request.reference,
-    'line_items[0][price]': resolved.lookupKey,
+    'line_items[0][price]': priceId,
     'line_items[0][quantity]': '1',
     'metadata[pack_id]': resolved.pack.packId,
     'metadata[reference]': request.reference,
@@ -166,7 +217,7 @@ export const createCreditPackCheckout = async (
       remedy: 'Check the API version this deployment pins against the Stripe dashboard.',
     };
   }
-  return { ok: true, url: session.url, sessionId: session.id };
+  return { ok: true, url: session.url, sessionId: session.id, lookupKey: resolved.lookupKey };
 };
 
 /**

@@ -14,6 +14,7 @@ export interface SupabaseLocalAllocation {
   projectId: string;
   runId: string;
   ownerToken: string;
+  containerCommand?: string;
   root: string;
   ports: {
     api: number;
@@ -350,9 +351,9 @@ export const startSupabaseLocal = async (
   // Resolved through the shared probe so a host with Podman and no Docker is not
   // told to install Docker Engine. `DOCKER_BIN` still wins outright.
   const engine = resolveContainerRuntime();
-  requireContainerRuntime({ dockerPath: engine?.command });
+  const containerCommand = requireContainerRuntime({ dockerPath: engine?.command });
   await ensureSupabasePortsAvailable(allocation);
-  await persistSupabaseOwnership(allocation, options);
+  await persistSupabaseOwnership({ ...allocation, containerCommand }, options);
   const code = await runCli(allocation, ['start']);
   if (code !== 0) {
     throw new Error(`Supabase local start failed with exit ${code}.`);
@@ -418,7 +419,7 @@ export const stopSupabaseLocal = async (
   // lookup: on a Podman-only host the start probe found podman and this teardown
   // would have asked docker for the containers, reporting "cannot verify owned
   // containers" for a stack that stopped perfectly well.
-  const engine = requireContainerRuntime({ dockerPath: resolveContainerRuntime()?.command });
+  const engine = requireContainerRuntime({ dockerPath: owned.containerCommand });
   const runRuntime = (args: string[]) =>
     spawnSync(engine, args, {
       encoding: 'utf8',

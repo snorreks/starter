@@ -93,3 +93,17 @@ describe('the local development auto sign-in', () => {
     expect(DEV_SIGNED_OUT_COOKIE.length).toBeGreaterThan(0);
   });
 });
+
+for (const name of ['sb-local-auth-token', 'sb-local-auth-token.0', 'sb-local-auth-token.1']) {
+  test(`an existing ${name} cookie preserves the current account`, async () => {
+    const { applyDevAutoSignIn } = await import('./dev_auto_login.ts');
+    const container = { env: LOCAL, isLocal: true } as Parameters<typeof applyDevAutoSignIn>[0];
+    const cookies = {
+      get: () => undefined,
+      getAll: () => [{ name, value: 'existing-session' }],
+    } as unknown as Parameters<typeof applyDevAutoSignIn>[1];
+    expect(
+      await applyDevAutoSignIn(container, cookies, new Request('http://localhost/notes')),
+    ).toBe('existing-session');
+  });
+}

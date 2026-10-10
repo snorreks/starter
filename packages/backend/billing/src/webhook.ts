@@ -78,7 +78,7 @@ const sign = async (secret: string, payload: string): Promise<string> => {
  *
  * `rawBody` must be the bytes Stripe signed, not a re-serialisation. Parsing and
  * re-stringifying changes key order and whitespace, and the digest no longer
- * matches — which is why the route reads `request.text()` and hands the string
+ * matches — which is why the route reads bounded raw text and hands the string
  * straight through.
  *
  * Returns a rejection rather than throwing, because every rejection has a
@@ -118,8 +118,12 @@ export const verifyStripeEvent = async (options: {
     return { ok: false, reason: 'malformed-signature' };
   }
 
-  const timestamp = Number(timestamps[0]);
-  if (!Number.isFinite(timestamp)) {
+  const timestampText = timestamps[0] ?? '';
+  if (!/^\d+$/.test(timestampText)) {
+    return { ok: false, reason: 'malformed-signature' };
+  }
+  const timestamp = Number(timestampText);
+  if (!Number.isSafeInteger(timestamp)) {
     return { ok: false, reason: 'malformed-signature' };
   }
 
@@ -132,7 +136,7 @@ export const verifyStripeEvent = async (options: {
     return { ok: false, reason: 'stale-timestamp', ageSeconds };
   }
 
-  const expected = await sign(secret.trim(), `${timestamp}.${rawBody}`);
+  const expected = await sign(secret.trim(), `${timestampText}.${rawBody}`);
   // Every `v1` in the header is checked, not just the first. Stripe sends one per
   // key it holds during a secret rotation, and rejecting deliveries signed with the
   // older key during the overlap window is how a rotation takes an application
