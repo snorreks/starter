@@ -46,6 +46,7 @@
       "name": "@starter/e2e",
       "version": "0.1.0",
       "dependencies": {
+        "@starter/billing": "workspace:*",
         "@starter/fixtures": "workspace:*",
         "@starter/schemas": "workspace:*",
       },
@@ -64,6 +65,8 @@
         "@opentelemetry/api": "1.9.1",
         "@standard-schema/spec": "1.1.0",
         "@starter/auth": "workspace:*",
+        "@starter/billing": "workspace:*",
+        "@starter/billing-server": "workspace:*",
         "@starter/database": "workspace:*",
         "@starter/features": "workspace:*",
         "@starter/jobs": "workspace:*",
@@ -132,6 +135,13 @@
         "@supabase/ssr": "0.12.7",
       },
     },
+    "packages/backend/billing": {
+      "name": "@starter/billing-server",
+      "version": "0.1.0",
+      "dependencies": {
+        "@starter/billing": "workspace:*",
+      },
+    },
     "packages/backend/database": {
       "name": "@starter/database",
       "version": "0.1.0",
@@ -198,6 +208,10 @@
         "svelte": "5.57.1",
       },
     },
+    "packages/shared/billing": {
+      "name": "@starter/billing",
+      "version": "0.1.0",
+    },
     "packages/shared/fixtures": {
       "name": "@starter/fixtures",
       "version": "0.1.0",
@@ -214,6 +228,7 @@
       "version": "0.1.0",
       "dependencies": {
         "@standard-schema/spec": "1.1.0",
+        "@starter/billing": "workspace:*",
         "valibot": "1.5.0",
       },
     },
@@ -229,6 +244,7 @@
       "name": "@starter/scripts",
       "version": "0.1.0",
       "dependencies": {
+        "@starter/billing": "workspace:*",
         "@starter/fixtures": "workspace:*",
         "@starter/logger": "workspace:*",
         "@starter/schemas": "workspace:*",
@@ -635,6 +651,10 @@
     "@standard-schema/spec": ["@standard-schema/spec@1.1.0", "", {}, "sha512-l2aFy5jALhniG5HgqrD6jXLi/rUWrKvqN/qJx6yoJsgKhblVd+iqqU4RCXavm/jPityDo5TCvKMnpjKnOriy0w=="],
 
     "@starter/auth": ["@starter/auth@workspace:packages/backend/auth"],
+
+    "@starter/billing": ["@starter/billing@workspace:packages/shared/billing"],
+
+    "@starter/billing-server": ["@starter/billing-server@workspace:packages/backend/billing"],
 
     "@starter/client": ["@starter/client@workspace:apps/frontend/client"],
 

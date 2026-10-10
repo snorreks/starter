@@ -13,6 +13,8 @@ Start here. Nothing below is required reading before running a command — the
 | write or run tests, or understand local commit checks and CI feedback | [testing.md](testing.md) |
 | run local Supabase or review its SQL/RLS boundary | [supabase-local.md](supabase-local.md) |
 | review the Supabase web identity and request services | [supabase-web-backend.md](supabase-web-backend.md) |
+| sell something, or develop against Stripe locally | [billing.md](billing.md) |
+| choose what `bun run dev` starts | [billing.md](billing.md) |
 | configure and verify optional Cloud Run compute | [supabase-cloud-run-compute.md](supabase-cloud-run-compute.md) |
 | bootstrap a Herdr checkout and scope local settings | [worktrees.md](worktrees.md) |
 | understand a past decision | [first-round-review.md](first-round-review.md) |
@@ -25,6 +27,8 @@ Start here. Nothing below is required reading before running a command — the
 
 ## Guides
 
+- [billing.md](billing.md) — the plan catalogue as one source of truth, declaring it in Stripe, the local
+  emulator and its limits, webhook verification, and the `bun run dev` stacks
 - [testing.md](testing.md) — the unit, browser, Worker, E2E, database and compute lanes, why they are separate, and how each is
   verified
 - [worktrees.md](worktrees.md) — the shared terminal/agent bootstrap, environment sources, and per-run ownership

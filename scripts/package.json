@@ -8,7 +8,9 @@
   "exports": {
     ".": "./src/index.ts",
     "./process": "./src/shared/run_bounded.ts",
-    "./environment": "./src/shared/private_environment.ts"
+    "./environment": "./src/shared/private_environment.ts",
+    "./compute": "./src/local/media_image.ts",
+    "./local": "./src/local/service.ts"
   },
   "scripts": {
     "start": "bun run src/index.ts",
@@ -23,6 +25,7 @@
     "guard:whole-repo": "bun run src/cli.ts guard --whole-repo"
   },
   "dependencies": {
+    "@starter/billing": "workspace:*",
     "@starter/fixtures": "workspace:*",
     "@starter/logger": "workspace:*",
     "@starter/schemas": "workspace:*",

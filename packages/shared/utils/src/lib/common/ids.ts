@@ -25,6 +25,21 @@ const randomSuffix = (length: number): string => {
 export const createId = (prefix: string, length = 12): string =>
   `${prefix}_${randomSuffix(length)}`;
 
+/**
+ * Create a new prefixed **UUID**, e.g. `msg_6f1c...`.
+ *
+ * This exists because `createId` is base-36 and a `uuid` column refuses it. The
+ * two id kinds look interchangeable until Postgres answers
+ * `invalid input syntax for type uuid`, and they are not interchangeable: a text
+ * column wants the short sortable-enough id, a uuid column wants a UUID. Anything
+ * whose value is stored in a `uuid` column — or passed to a function whose
+ * parameter is `uuid` — has to mint its id here.
+ *
+ * `crypto.randomUUID` rather than a hand-rolled v4: it is the platform's, it is
+ * not guessable, and there is nothing to get wrong in it.
+ */
+export const createUuidId = (prefix: string): string => `${prefix}_${crypto.randomUUID()}`;
+
 /** Per-tab id, used to distinguish concurrent clients in one browser. */
 export const createClientId = (): string => createId('cli', 10);
 

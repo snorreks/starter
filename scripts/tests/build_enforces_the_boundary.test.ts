@@ -207,5 +207,8 @@ describe('the production build is a second gate', () => {
     } finally {
       writeFileSync(path, original ?? '', 'utf8');
     }
-  });
+    // The guard resolves the whole repository, which costs several seconds and
+    // grows with the tree. `BUILD_TIMEOUT_MS` is already above; this bound is the
+    // guard's own cost, and it is not a property of the assertion.
+  }, 60_000);
 });

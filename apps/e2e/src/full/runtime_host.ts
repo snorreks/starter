@@ -1,11 +1,13 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { convertV4MiniflareOptions, Miniflare } from 'miniflare';
+import { convertV4MiniflareOptions, Miniflare, type V4FetchHandler } from 'miniflare';
+import { buildMediaImage } from '../../../../scripts/src/local/media_image.ts';
 import { REPO_ROOT } from '../../../../scripts/src/shared/paths.ts';
 import { runBounded } from '../../../../scripts/src/shared/run_bounded.ts';
 import { runScope } from '../../../../scripts/src/shared/run_scope.ts';
 import { startGoogleFixture } from './google_fixture.ts';
 import { readRuntimeBindings } from './runtime_bindings.ts';
+import { startStripeFixture } from './stripe_fixture.ts';
 import { buildWorkerGraph, parseWranglerJsonc } from './worker_graph.ts';
 
 const CLIENT_ROOT = join(REPO_ROOT, 'apps/frontend/client');
@@ -45,33 +47,58 @@ const start = async (): Promise<void> => {
   await command('bun', ['run', 'build'], CLIENT_ROOT, 5 * 60_000);
   await command('bun', ['run', 'build'], JOBS_ROOT, 5 * 60_000);
   await command(process.env.DOCKER ?? 'docker', ['info'], REPO_ROOT, 15_000);
-  await command(
-    process.env.DOCKER ?? 'docker',
-    [
-      'build',
-      '--file',
-      'apps/backend/media/Dockerfile.job',
-      '--tag',
-      'starter-cloud-run-job:local',
-      '--build-arg',
-      `BUILD_GIT_REVISION=${process.env.GITHUB_SHA ?? 'local'}`,
-      'apps/backend/media',
-    ],
-    REPO_ROOT,
-    20 * 60_000,
+
+  // One definition of the image, shared with `bun run test:compute` and
+  // `bun run dev --stack container`, and reused when this checkout already built it
+  // from these exact sources.
+  //
+  // Reuse is right here and would be wrong in the compute lane. This lane needs the
+  // image to *exist* so it can dispatch an encode at it; `test:compute` needs to know
+  // the image is *correct*, which is what its `--no-cache` build is for. Reuse here
+  // is reported rather than silent, because a lane that skipped a build without
+  // saying so would be indistinguishable from one that ran it.
+  const image = await buildMediaImage({
+    engine: process.env.DOCKER ?? 'docker',
+    reuse: true,
+  });
+  process.stdout.write(
+    image.reused
+      ? `Finite runner image ${image.image} is current for these sources (${image.checksum.slice(0, 12)}); build skipped.\n`
+      : `Finite runner image ${image.image} built with ${image.rustTests} Rust tests passing.\n`,
   );
   let worker: Miniflare | undefined;
   let google: Awaited<ReturnType<typeof startGoogleFixture>> | undefined;
+  let stripe: ReturnType<typeof startStripeFixture> | undefined;
   try {
     const appUrl = `http://127.0.0.1:${appPort}`;
     google = await startGoogleFixture({ appOrigin: appUrl, runId });
+    stripe = startStripeFixture({ appOrigin: appUrl, runId });
+
+    // One outbound handler for both Workers, because Miniflare resolves `fetch`
+    // against a single service per worker and the two fixtures answer different
+    // hosts. Dispatching on the hostname — rather than trying one fixture first —
+    // is what keeps a Stripe request from being answered by the Google fixture's
+    // catch-all, which would return a 200 for an endpoint that does not exist.
+    const googleFixture = google;
+    const stripeFixture = stripe;
+    const outbound: V4FetchHandler = async (request, ...rest) => {
+      const { hostname } = new URL(request.url);
+      return hostname === 'api.stripe.com'
+        ? stripeFixture.outbound(request, ...rest)
+        : googleFixture.outbound(request, ...rest);
+    };
     const webConfig = parseWranglerJsonc(readFileSync(join(CLIENT_ROOT, 'wrangler.jsonc'), 'utf8'));
     const graph = buildWorkerGraph({
       client: webConfig,
       clientRoot: CLIENT_ROOT,
       testRunId: runId,
       appOrigin: appUrl,
-      compute: { jobsRoot: JOBS_ROOT, bindings: google.bindings, outbound: google.outbound },
+      compute: { jobsRoot: JOBS_ROOT, bindings: google.bindings, outbound },
+      stripe: {
+        apiBase: 'https://api.stripe.com',
+        secretKey: 'sk_test_fixture_key',
+        webhookSecret: stripe.webhookSecret,
+      },
       supabaseUrl: bindings.SUPABASE_URL,
       supabaseAnonKey: bindings.SUPABASE_ANON_KEY,
       supabaseServiceRoleKey: bindings.SUPABASE_SERVICE_ROLE_KEY,
@@ -109,7 +136,8 @@ const start = async (): Promise<void> => {
       );
     }
     process.stdout.write(
-      `Owned full E2E runtime ready: ${appUrl} (${runId}); real Supabase, Workflows, R2 and finite FFmpeg; hosted Google only is fixture-owned.\n`,
+      `Owned full E2E runtime ready: ${appUrl} (${runId}); real Supabase, Workflows, R2 and finite FFmpeg.\n` +
+        '  Hosted Google and Stripe are fixture-owned; the Stripe fixture is seeded from @starter/billing.\n',
     );
 
     await new Promise<void>((resolveDone) => {
@@ -124,6 +152,7 @@ const start = async (): Promise<void> => {
   } finally {
     try {
       await google?.dispose();
+      await stripe?.dispose();
     } finally {
       await worker?.dispose();
     }

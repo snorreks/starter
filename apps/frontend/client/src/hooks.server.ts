@@ -44,7 +44,8 @@ import { env } from 'cloudflare:workers';
 import type { RequestEvent } from '@sveltejs/kit';
 import type { Handle } from '@sveltejs/kit/hooks';
 import { type Container, getContainer } from '#lib/server/container.ts';
-import { jsonError, notConfigured } from '#lib/server/http.ts';
+import { applyDevAutoSignIn, type DevAutoSignInOutcome } from '#lib/server/dev_auto_login.ts';
+import { isApiPath, jsonError, notConfigured } from '#lib/server/http.ts';
 import {
   buildRequestContext,
   createServerRecordLogger,
@@ -114,8 +115,27 @@ const recordRequest = (
   }
 };
 
-const isApiPath = (pathname: string): boolean =>
-  pathname === '/api' || pathname.startsWith('/api/');
+/**
+ * Run the development auto sign-in without letting it decide the request.
+ *
+ * `applyDevAutoSignIn` already answers "no" for every reason not to; this exists
+ * so a *throw* from the auth provider is treated the same way as a refusal. The
+ * alternative — letting it reject — turns a missing seeded account into a 500 on
+ * every page, which is how a development convenience becomes an outage.
+ */
+const settleAutoSignIn = async (
+  container: Container,
+  event: RequestEvent,
+): Promise<DevAutoSignInOutcome> => {
+  try {
+    return await applyDevAutoSignIn(container, event.cookies, event.request);
+  } catch (error) {
+    startupLogger.error('dev.auto_sign_in_threw', {
+      message: error instanceof Error ? error.message : String(error),
+    });
+    return 'failed';
+  }
+};
 
 /**
  * The origin this request actually arrived on, for local origin derivation.
@@ -154,6 +174,18 @@ export const handle: Handle = async ({ event, resolve }) => {
   }
 
   event.locals.container = container;
+
+  // Local development only, and before the session is resolved: `bun run dev`
+  // seeds a synthetic account and names it in the bindings, so a reload lands on
+  // the developer's own notes instead of a sign-in form. A refusal and a failure
+  // are both logged and then ignored — neither may become a failed request.
+  const autoSignIn = await settleAutoSignIn(container, event);
+  if (autoSignIn === 'failed') {
+    startupLogger.warn('dev.auto_sign_in_failed', {
+      message:
+        'The seeded development account could not be signed in; this request continues signed out.',
+    });
+  }
 
   // One context, built once, for this request. The hook is the only place a session
   // is resolved: routes read `locals.context`, so a route cannot end up holding a

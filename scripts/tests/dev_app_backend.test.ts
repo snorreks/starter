@@ -5,6 +5,7 @@ import {
   buildTarget,
   callerSupabaseValues,
   type DevBackendDependencies,
+  devAutoSignInOffered,
   prepareDevBackend,
 } from '../src/dev-app.ts';
 
@@ -45,6 +46,10 @@ const recorder = () => {
         SUPABASE_MAIL_URL: 'http://127.0.0.1:54324',
       };
     }) as unknown as DevBackendDependencies['start'],
+    seed: mock(async (options: { root: string }) => {
+      calls.push(`seed:${options.root}`);
+      return { userId: '10000000-0000-4000-8000-000000000001', noteCount: 2 };
+    }) as unknown as DevBackendDependencies['seed'],
     writeVars: mock(
       async (_allocation: SupabaseLocalAllocation, values: Record<string, string>) => {
         calls.push('writeVars');
@@ -90,10 +95,16 @@ describe('the dev server has a backend to talk to', () => {
   test('an unset SUPABASE_URL starts the owned local stack and says so', async () => {
     const recorder_ = recorder();
     const backend = await prepareDevBackend('http://127.0.0.1:5173', recorder_.dependencies, {});
-    expect(recorder_.calls).toEqual(['allocate', 'start', 'writeVars']);
+    expect(recorder_.calls).toEqual([
+      'allocate',
+      'start',
+      'seed:/owned/run/supabase-project',
+      'writeVars',
+    ]);
     expect(backend.owned).toBe(true);
     expect(backend.summary.join('\n')).toContain('http://127.0.0.1:54321');
-    // The values the 503 used to name, plus the vars the dev server never forwarded.
+    // The values the 503 used to name, plus the vars the dev server never forwarded
+    // and the seeded account the application signs in as.
     expect(recorder_.written()).toEqual({
       SUPABASE_URL: 'http://127.0.0.1:54321',
       SUPABASE_ANON_KEY: 'local-anon',
@@ -101,7 +112,34 @@ describe('the dev server has a backend to talk to', () => {
       SUPABASE_MAIL_URL: 'http://127.0.0.1:54324',
       DEPLOYMENT_ENV: 'local',
       APP_ORIGIN: 'http://127.0.0.1:5173',
+      DEV_AUTO_LOGIN: 'seed',
+      DEV_AUTO_LOGIN_EMAIL: 'seed@example.invalid',
+      DEV_AUTO_LOGIN_PASSWORD: 'local-synthetic-seed-only',
     });
+    expect(backend.summary.join('\n')).toContain('seed@example.invalid');
+  });
+
+  // The seeder resolves the stack from the generated project directory's config,
+  // so the repository root would name a *different* stack: `bun run db:seed`
+  // reports "Start the checkout-owned stack first" for exactly this reason.
+  test('the stack it seeds is the one it started, not the repository project', async () => {
+    const recorder_ = recorder();
+    await prepareDevBackend('http://127.0.0.1:5173', recorder_.dependencies, {});
+    const seeded = recorder_.calls.find((call) => call.startsWith('seed:'));
+    expect(seeded).toBe('seed:/owned/run/supabase-project');
+  });
+
+  // A stack that came up but took no seed leaves the developer staring at an
+  // empty notes list that looks like a bug. It fails the command instead.
+  test('a stack that refuses the seed fails the command rather than serving nothing', async () => {
+    const recorder_ = recorder();
+    recorder_.dependencies.seed = (async () => {
+      throw new Error('Local Supabase seed request failed (500).');
+    }) as unknown as DevBackendDependencies['seed'];
+    await expect(
+      prepareDevBackend('http://127.0.0.1:5173', recorder_.dependencies, {}),
+    ).rejects.toThrow('Local Supabase seed request failed (500).');
+    expect(recorder_.calls).not.toContain('writeVars');
   });
 
   test('a caller who named a project keeps it: no container engine is touched', async () => {
@@ -158,6 +196,7 @@ describe('the dev server has a backend to talk to', () => {
     expect(recorder_.calls).toEqual([
       'allocate',
       'start',
+      'seed:/owned/run/supabase-project',
       'writeVars',
       'hasOwnership',
       'readOwnership',
@@ -222,5 +261,27 @@ describe('only a caller who named a project counts as having one', () => {
     expect(callerSupabaseValues({ SUPABASE_URL: 'https://abc.supabase.co' })).toEqual({
       SUPABASE_URL: 'https://abc.supabase.co',
     });
+  });
+});
+
+describe('the seeded account is offered to a developer, not to a harness', () => {
+  test('an ordinary dev run gets it', () => {
+    expect(devAutoSignInOffered({})).toBe(true);
+    expect(devAutoSignInOffered({ E2E_RUN_ID: '  ' })).toBe(true);
+  });
+
+  // The visual and browser lanes start this launcher to photograph and assert
+  // pages. Signing their requests in would change what they observe.
+  test('a run carrying a harness identity does not', () => {
+    expect(devAutoSignInOffered({ E2E_RUN_ID: 'e2e_2f1c' })).toBe(false);
+  });
+
+  test('and therefore a harness stack is seeded without the sign-in bindings', async () => {
+    const recorder_ = recorder();
+    await prepareDevBackend('http://127.0.0.1:5173', recorder_.dependencies, {
+      E2E_RUN_ID: 'e2e_2f1c',
+    });
+    expect(recorder_.calls).toContain('seed:/owned/run/supabase-project');
+    expect(recorder_.written().DEV_AUTO_LOGIN).toBeUndefined();
   });
 });

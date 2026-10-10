@@ -36,6 +36,7 @@ const COMMANDS: Record<string, CommandLoader> = {
   secrets: async () => (await import('./commands/secrets.ts')).secretsCommand,
   setup: async () => (await import('./commands/setup.ts')).setupCommand,
   smoke: async () => (await import('./commands/smoke.ts')).smokeCommand,
+  stripe: async () => (await import('./commands/stripe.ts')).stripeCommand,
   workflows: async () => (await import('./commands/workflows.ts')).workflowsCommand,
   worktree: async () => (await import('./commands/worktree.ts')).worktreeCommand,
   update: async () => (await import('./commands/update.ts')).updateCommand,

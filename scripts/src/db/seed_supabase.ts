@@ -1,22 +1,13 @@
+import { DEV_SEED_ACCOUNT, DEV_SEED_NOTES } from '@starter/fixtures';
 import { supabaseBin } from '../deploy/providers/supabase.ts';
 import { REPO_ROOT } from '../shared/paths.ts';
 import { runBoundedSync } from '../shared/run_bounded.ts';
 
-const USER_ID = '10000000-0000-4000-8000-000000000001';
-const NOTES = [
-  {
-    id: '20000000-0000-4000-8000-000000000001',
-    owner_id: USER_ID,
-    title: 'Welcome',
-    body: 'This note is synthetic local seed data.',
-  },
-  {
-    id: '20000000-0000-4000-8000-000000000002',
-    owner_id: USER_ID,
-    title: 'Delete me',
-    body: 'This synthetic note exists for local delete journeys.',
-  },
-] as const;
+// The account and its notes live in `@starter/fixtures` because `bun run dev`
+// seeds the same identity and then signs in as it. One definition, so the
+// password the seeder sets and the password auto sign-in presents cannot drift.
+const USER_ID = DEV_SEED_ACCOUNT.userId;
+const NOTES = DEV_SEED_NOTES;
 
 export type SeedFetch = (input: string | URL | Request, init?: RequestInit) => Promise<Response>;
 
@@ -96,10 +87,10 @@ export const seedSupabaseLocal = async (
       headers,
       body: JSON.stringify({
         id: USER_ID,
-        email: 'seed@example.invalid',
-        password: 'local-synthetic-seed-only',
+        email: DEV_SEED_ACCOUNT.email,
+        password: DEV_SEED_ACCOUNT.password,
         email_confirm: true,
-        user_metadata: { name: 'Seed User' },
+        user_metadata: { name: DEV_SEED_ACCOUNT.displayName },
       }),
       signal: AbortSignal.timeout(8_000),
     });

@@ -190,17 +190,31 @@ describe('guard command', () => {
     expect(code).toBe(EXIT.usage);
   });
 
-  test('a real --only operand runs that one guard', async () => {
-    const code = await quiet(() => guardCommand.run(['--only', 'architecture']));
-    expect(code).toBe(EXIT.ok);
-  });
+  // Both below run the architecture guard over the whole repository, which costs
+  // several seconds and grows with the tree. Bun's five-second default is not a
+  // property of these assertions, so the bound is stated. See
+  // WHOLE_REPO_TIMEOUT_MS in architecture_guards.test.ts for the same reasoning.
+  const WHOLE_REPO_TIMEOUT_MS = 60_000;
 
-  test('--whole-repo is accepted and says the scope is already the default', async () => {
-    // It used to be forwarded to `guardsMain`, which had no such mode and ignored
-    // it, so the caller believed the scope had narrowed.
-    const code = await quiet(() => guardCommand.run(['--whole-repo']));
-    expect(code).toBe(EXIT.ok);
-  });
+  test(
+    'a real --only operand runs that one guard',
+    async () => {
+      const code = await quiet(() => guardCommand.run(['--only', 'architecture']));
+      expect(code).toBe(EXIT.ok);
+    },
+    WHOLE_REPO_TIMEOUT_MS,
+  );
+
+  test(
+    '--whole-repo is accepted and says the scope is already the default',
+    async () => {
+      // It used to be forwarded to `guardsMain`, which had no such mode and ignored
+      // it, so the caller believed the scope had narrowed.
+      const code = await quiet(() => guardCommand.run(['--whole-repo']));
+      expect(code).toBe(EXIT.ok);
+    },
+    WHOLE_REPO_TIMEOUT_MS,
+  );
 });
 
 // ── secrets ───────────────────────────────────────────────────────────────────

@@ -46,6 +46,11 @@ projects:
   logger: 'packages/shared/logger'
   utils: 'packages/shared/utils'
   fixtures: 'packages/shared/fixtures'
+  # What this project sells. Portable because two planes must read it — the Worker
+  # validating a checkout, and `bun run stripe:setup` declaring the catalogue — and
+  # `MAY_REACH` forbids `node -> worker`, so a catalogue either side would be a
+  # second copy. See packages/shared/billing/README.md.
+  billing: 'packages/shared/billing'
 
   # Frontend packages: browser code. Shared only.
   #
@@ -73,6 +78,11 @@ projects:
   # PR H's jobs Worker has to run the maintenance sweep without importing the web
   # application — and the web app is the only thing that would drag SvelteKit in.
   jobs: 'packages/backend/jobs'
+  # Stripe checkout, portal and webhook verification. Worker-plane because it runs
+  # inside the Worker's request lifecycle and reaches Stripe over HTTPS; its prices
+  # come from the portable `@starter/billing` catalogue, which is what keeps the
+  # amount in one place across the Worker and `bun run stripe:setup`.
+  billing-server: 'packages/backend/billing'
 
   # Compute, in two projects that share a directory:
   #

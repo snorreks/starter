@@ -28,6 +28,12 @@ import {
 import { toAppError } from '@starter/utils';
 import { error, fail, redirect } from '@sveltejs/kit';
 import { submitAuthAction } from '#lib/server/auth_action.ts';
+import {
+  clearDevSignedOut,
+  DEV_AUTO_SIGN_IN_INTENT,
+  devAutoSignInEnabled,
+  devSignedOut,
+} from '#lib/server/dev_auto_login.ts';
 import type { Actions, PageServerLoad } from './$types';
 
 /**
@@ -38,13 +44,25 @@ import type { Actions, PageServerLoad } from './$types';
  * query so switching modes does not make someone retype it — the common path is "typed
  * an address, then realised it is not signed up yet".
  */
-export const load: PageServerLoad = async ({ url }) => {
+export const load: PageServerLoad = async ({ url, locals, cookies }) => {
   const mode = url.searchParams.get('mode');
   const email = url.searchParams.get('email') ?? '';
 
   return {
     mode: mode === 'sign-up' ? ('sign-up' as const) : ('sign-in' as const),
     email,
+    // Only when auto sign-in is configured *and* this browser asked to stay signed
+    // out. Without the second half the offer would never be reachable: the first
+    // page load would already have signed the developer in, and `/login` would
+    // redirect away from itself.
+    //
+    // The intent travels in the data rather than being written into the template,
+    // because `#lib/server/**` is the server plane and a client component may not
+    // import it — a literal here would be a second copy of a value the action owns.
+    seededAccount:
+      devAutoSignInEnabled(locals.container) && devSignedOut(cookies)
+        ? { intent: DEV_AUTO_SIGN_IN_INTENT }
+        : null,
   };
 };
 
@@ -67,6 +85,16 @@ export const actions: Actions = {
         303,
         `/login?mode=${next}${email.length > 0 ? `&email=${encodeURIComponent(email)}` : ''}`,
       );
+    }
+
+    // Hand the session back to the development auto sign-in. A separate intent, and
+    // not `sign-in` with the seeded password filled in, because the browser should
+    // not have to be told a credential to get back to where it started.
+    if (String(form.get('intent') ?? '') === DEV_AUTO_SIGN_IN_INTENT) {
+      clearDevSignedOut(cookies);
+      // `/` rather than `/notes`: the sign-in itself happens on the next request,
+      // and that request must be a page load the hook is allowed to sign in.
+      redirect(303, '/');
     }
 
     const email = String(form.get('email') ?? '').trim();

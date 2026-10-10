@@ -57,6 +57,7 @@ import {
 import { dirname, join } from 'node:path';
 import { parseEnv } from 'node:util';
 import { killTree } from '@starter/utils/process';
+import { seedSupabaseLocal } from './db/seed_supabase.ts';
 import {
   allocateSupabaseLocal,
   hasSupabaseOwnership,
@@ -66,10 +67,35 @@ import {
   stopSupabaseLocal,
   writeOwnedWorkerVars,
 } from './db/supabase_local.ts';
+import { startStack } from './dev-stack.ts';
+import { prepareContainerService } from './local/container_service.ts';
+import { prepareJobsService } from './local/jobs_service.ts';
+import {
+  disposeServices,
+  type LocalService,
+  type LocalServiceContext,
+  type LocalServiceId,
+  LocalServiceUnavailable,
+  mergeServiceVars,
+} from './local/service.ts';
+import { prepareStripeService } from './local/stripe_service.ts';
+import {
+  callerSupabaseValues,
+  devAutoSignInOffered,
+  prepareSupabaseService,
+} from './local/supabase_service.ts';
+import { removeOwnedVars, writeOwnedVars } from './local/vars_file.ts';
 import { EXIT, fail } from './shared/command.ts';
 import { CLIENT_DIR, REPO_ROOT } from './shared/paths.ts';
 import { runScope, worktreePort } from './shared/run_scope.ts';
 import { viteBin, wranglerBin } from './shared/tools.ts';
+
+// Re-exported from the service module that owns them, because these two names are
+// part of this file's published surface: `apps/e2e/scripts/run_e2e.ts`,
+// `apps/frontend/client/scripts/run_integration.ts` and `scripts/tests` import them
+// from here. Re-exporting rather than re-declaring keeps one implementation and one
+// set of tests for a rule the harnesses all depend on.
+export { callerSupabaseValues, devAutoSignInOffered };
 
 /**
  * The compiled Worker. This is the artifact a deploy ships, so `built` mode serves
@@ -87,6 +113,16 @@ const LOG_DIR =
   process.env.STARTER_LOG_DIR ?? E2E_SCOPE?.logDir ?? join(REPO_ROOT, '.wrangler', 'logs');
 const LOG_FILE = join(LOG_DIR, 'app.ndjson');
 const PIDFILE = join(STATE_DIR, 'dev.pid');
+
+/**
+ * The run id every local service in this launch shares.
+ *
+ * One id, not one per service: it is what ties a container name, a state directory
+ * and a teardown to the same invocation. A service that minted its own would leave
+ * resources this launcher cannot find to clean up, which is how a `docker ps`
+ * full of `starter-stripe-mock-*` accumulates.
+ */
+const DEV_STACK_RUN_ID = `dev_stack_${process.pid}`;
 
 /**
  * The port and host.
@@ -322,10 +358,17 @@ export interface DevBackend {
  * Injectable so the decision — provision or trust the caller's project — is testable
  * without a container engine. Defaults are the real ones; a test that swaps them is
  * testing this function's logic rather than Docker's availability.
+ *
+ * Eight fields rather than the six `SupabaseServiceDependencies` carries, because
+ * this is the wrapper's seam and it owns two things the service does not: writing
+ * the owned vars file, and reading the caller's file to decide whether the backend
+ * is already complete. The six are forwarded to the service unchanged, so there is
+ * one allocate/start/seed implementation behind both entry points.
  */
 export interface DevBackendDependencies {
   allocate: typeof allocateSupabaseLocal;
   start: typeof startSupabaseLocal;
+  seed: typeof seedSupabaseLocal;
   writeVars: typeof writeOwnedWorkerVars;
   /** Values may be absent: a dotenv file need not carry every binding. */
   readVars: (path: string) => Record<string, string | undefined>;
@@ -337,6 +380,7 @@ export interface DevBackendDependencies {
 const devBackendDependencies: DevBackendDependencies = {
   allocate: allocateSupabaseLocal,
   start: startSupabaseLocal,
+  seed: seedSupabaseLocal,
   writeVars: writeOwnedWorkerVars,
   readVars: (path: string): Record<string, string | undefined> =>
     parseEnv(readFileSync(path, 'utf8')),
@@ -344,21 +388,6 @@ const devBackendDependencies: DevBackendDependencies = {
   readOwnership: readSupabaseOwnership,
   stop: stopSupabaseLocal,
 };
-
-/** The three bindings the application refuses to start without. */
-const BACKEND_KEYS = ['SUPABASE_URL', 'SUPABASE_ANON_KEY', 'SUPABASE_SERVICE_ROLE_KEY'] as const;
-
-/** The Supabase values a caller has already placed in the environment, if any. */
-export const callerSupabaseValues = (
-  environment: NodeJS.ProcessEnv = process.env,
-): Record<string, string> => {
-  const present = BACKEND_KEYS.filter((name) => (environment[name] ?? '').trim().length > 0);
-  return Object.fromEntries(present.map((name) => [name, environment[name] as string]));
-};
-
-/** Missing keys of a partial backend, naming which ones rather than the count. */
-const missingKeys = (values: Record<string, string | undefined>): string[] =>
-  BACKEND_KEYS.filter((name) => (values[name] ?? '').trim().length === 0);
 
 export const prepareDevBackend = async (
   origin: string,
@@ -374,74 +403,61 @@ export const prepareDevBackend = async (
   const callerVarsPath = environment.STARTER_DEV_VARS_PATH;
   const callerFile: Record<string, string | undefined> =
     callerVarsPath === undefined ? {} : dependencies.readVars(callerVarsPath);
-  const inherited: Record<string, string | undefined> = {
-    ...callerFile,
-    ...callerSupabaseValues(environment),
-  };
-  const nothingToDo = { varsPath: callerVarsPath, owned: false, summary: [] as string[] };
 
-  if (missingKeys(inherited).length === 0) {
+  const service = await prepareSupabaseService({
+    origin,
+    callerVars: callerFile,
+    autoSignIn: devAutoSignInOffered(environment),
+    environment,
+    dependencies: {
+      allocate: dependencies.allocate,
+      start: dependencies.start,
+      seed: dependencies.seed,
+      hasOwnership: dependencies.hasOwnership,
+      readOwnership: dependencies.readOwnership,
+      stop: dependencies.stop,
+    },
+  });
+
+  // The caller already had a complete backend. Their own file stays in charge and
+  // this run writes nothing and owns nothing to tear down.
+  if (service.allocation === undefined) {
     return {
-      ...nothingToDo,
-      summary: [`Supabase project -> ${inherited.SUPABASE_URL ?? ''}`],
+      varsPath: callerVarsPath,
+      owned: false,
+      summary: [...service.summary],
       dispose: async () => [],
     };
   }
 
-  // A named project that is missing keys is a configuration error, not a request
-  // for a local stack: starting one here would silently serve a different database
-  // than the operator named.
-  if (inherited.SUPABASE_URL !== undefined) {
-    throw new Error(
-      `SUPABASE_URL is set but the backend is incomplete: ${missingKeys(inherited).join(', ')}. ` +
-        'Set every one of SUPABASE_URL, SUPABASE_ANON_KEY and SUPABASE_SERVICE_ROLE_KEY, ' +
-        'or unset SUPABASE_URL to run against a local stack.',
-    );
-  }
-
-  const allocation = dependencies.allocate(
-    REPO_ROOT,
-    `dev_${process.pid}_${crypto.randomUUID().slice(0, 8)}`,
-  );
-  // Email confirmations off: a developer's own loop should reach the app after
-  // sign-up. The verified-email flow is covered by the E2E lane, which turns
-  // confirmations on because it redeems real links.
-  const started = await dependencies.start(allocation, { emailConfirmations: false });
-  const summary = [
-    `Local Supabase (started by this run) -> ${started.SUPABASE_URL}`,
-    `  Studio -> ${allocation.urls.studio}`,
-  ];
-
-  // Both modes read this file: wrangler as `--env-file`, the Vite platform proxy
-  // through STARTER_RUNTIME_ENV_FILE. `DEPLOYMENT_ENV` and `APP_ORIGIN` are here
-  // because the dev server previously forwarded neither.
-  const vars = await dependencies.writeVars(allocation, {
-    ...started,
+  // Both dev modes read this file: wrangler as `--env-file`, the Vite platform proxy
+  // through STARTER_RUNTIME_ENV_FILE. `DEPLOYMENT_ENV` and `APP_ORIGIN` are added
+  // here rather than by the service because they describe the *application*, not
+  // the database — a second service must be able to set `DEPLOYMENT_ENV` without
+  // this merge being where the collision is discovered.
+  const vars = await dependencies.writeVars(service.allocation, {
+    ...service.vars,
     DEPLOYMENT_ENV: 'local',
     APP_ORIGIN: origin,
   });
 
   return {
     varsPath: vars.path,
-    owned: true,
-    summary,
+    owned: service.owned,
+    summary: [...service.summary],
     dispose: async () => {
-      // Independent steps: a failure removing the file must not skip stopping the
-      // stack, which would leave containers and ports bound after the dev server
-      // is gone. The first failure is reported; the child's exit status still wins.
+      // Independent steps, and both attempted. A failure removing the file must not
+      // skip stopping the stack, which would leave containers and ports bound after
+      // the dev server is gone; a failure stopping the stack must not skip removing
+      // the credentials. The first failure is reported; the child's exit status still
+      // wins.
       const failures: string[] = [];
       try {
         await removeOwnedWorkerVars(vars.path, vars.contents);
       } catch (error) {
         failures.push(error instanceof Error ? error.message : String(error));
       }
-      try {
-        if (await dependencies.hasOwnership(allocation)) {
-          await dependencies.stop(allocation, await dependencies.readOwnership(allocation));
-        }
-      } catch (error) {
-        failures.push(error instanceof Error ? error.message : String(error));
-      }
+      failures.push(...(await service.dispose()));
       return failures;
     },
   };
@@ -467,7 +483,212 @@ export const applyBackendVarsPath = (
   environment.STARTER_RUNTIME_ENV_FILE = varsPath;
 };
 
-export const main = async (mode: DevMode = 'app'): Promise<number> => {
+/**
+ * Start the services a stack names, and resolve the run-owned vars file they
+ * produced.
+ *
+ * Split from `main` so the stack composition is reachable without spawning a
+ * server, and so a test can assert which services ran in which order.
+ */
+/**
+ * The collaborators `prepareDevStack` uses.
+ *
+ * Injectable for the same reason `DevBackendDependencies` is: the decision this
+ * function makes — read the caller's two sources and decide whether a stack is
+ * needed — must be reachable from a test without a container engine. The default
+ * `createService` starts real services; a test that swaps it is testing this
+ * function's merge rather than Docker's availability.
+ */
+export interface DevStackDependencies {
+  /**
+   * The run id this stack's state is keyed by.
+   *
+   * Overridable so a test gets a fresh directory per call; the real launcher uses
+   * one id for the whole invocation.
+   */
+  runId: string;
+  readVars: (path: string) => Record<string, string | undefined>;
+  createService: (
+    id: LocalServiceId,
+    context: {
+      origin: string;
+      callerVars: Record<string, string | undefined>;
+      environment: NodeJS.ProcessEnv;
+      runId: string;
+    },
+  ) => Promise<LocalService>;
+}
+
+const devStackDependencies: DevStackDependencies = {
+  runId: DEV_STACK_RUN_ID,
+  readVars: (path: string): Record<string, string | undefined> =>
+    parseEnv(readFileSync(path, 'utf8')),
+  createService: async (id, context) => {
+    const localContext: LocalServiceContext = {
+      runId: context.runId,
+      scope: runScope(context.runId, REPO_ROOT),
+      origin: context.origin,
+      callerVars: context.callerVars,
+      environment: context.environment,
+    };
+    switch (id) {
+      case 'supabase':
+        return prepareSupabaseService({
+          origin: context.origin,
+          callerVars: context.callerVars,
+          autoSignIn: devAutoSignInOffered(context.environment),
+          environment: context.environment,
+        });
+      case 'stripe':
+        return prepareStripeService(localContext);
+      case 'container':
+        return prepareContainerService(localContext);
+      case 'jobs':
+        return prepareJobsService(localContext);
+      default:
+        // Unreachable through `LocalServiceId`, which is why the switch can be
+        // exhaustive. Named rather than defaulted so a fifth service cannot start
+        // nothing.
+        throw new Error(`No local service factory for "${String(id)}".`);
+    }
+  },
+};
+
+/**
+ * What one stack run produced, and everything needed to end it.
+ *
+ * `varsContents` is carried rather than re-read at teardown so the file can be
+ * removed only if it is still exactly what this run wrote — the same check
+ * `removeOwnedVars` makes, and the reason a run cannot delete a file it no longer
+ * owns.
+ */
+export interface DevStackRun {
+  readonly services: LocalService[];
+  /** The 0600 file the Worker is pointed at. Holds this run's credentials. */
+  readonly varsPath: string;
+  /** The exact contents written, so teardown can refuse to delete a changed file. */
+  readonly varsContents: string;
+  readonly summary: string[];
+}
+
+export const prepareDevStack = async (
+  services: readonly LocalServiceId[],
+  origin: string,
+  environment: NodeJS.ProcessEnv = process.env,
+  dependencies: Partial<DevStackDependencies> = {},
+): Promise<DevStackRun> => {
+  // The caller's configuration is spread across *two* places, and this merge is the
+  // reason. The E2E and integration harnesses pass `SUPABASE_URL` and the anon key
+  // in the environment and keep the service-role key in the vars file they own —
+  // `dev_app_backend.test.ts` calls this the E2E lane's shape. Reading only the
+  // environment calls that configuration incomplete and refuses, which is how
+  // `bun run e2e` failed with "SUPABASE_URL is set but the backend is incomplete"
+  // while every other check was green.
+  const { runId, readVars, createService } = { ...devStackDependencies, ...dependencies };
+  const callerVarsPath = environment.STARTER_DEV_VARS_PATH;
+  const callerFile: Record<string, string | undefined> =
+    callerVarsPath === undefined ? {} : readVars(callerVarsPath);
+
+  // Environment values that are *set* override the file. Empty strings are
+  // excluded, because an empty `SUPABASE_URL` in the environment must not shadow a
+  // real one in the file and turn a working configuration into a refusal.
+  const present = Object.fromEntries(
+    Object.entries(environment).filter(
+      ([, value]) => typeof value === 'string' && value.length > 0,
+    ),
+  );
+
+  const context: LocalServiceContext = {
+    runId,
+    scope: runScope(runId, REPO_ROOT),
+    origin,
+    callerVars: { ...callerFile, ...present },
+    environment,
+  };
+
+  const started = await startStack(services, (id) =>
+    createService(id, { origin, callerVars: context.callerVars, environment, runId }),
+  );
+
+  // One file, written once, carrying every service's bindings **and the caller's**.
+  //
+  // The caller's own file is the channel `wrangler dev --env-file` reads
+  // credentials from. The E2E lane starts its own Supabase, writes a 0600 file
+  // with the three Supabase bindings, points `STARTER_DEV_VARS_PATH` at it, and
+  // leaves the service-role key out of the environment on purpose. Its Supabase
+  // service therefore reports "already complete" and contributes nothing — and a
+  // stack file built only from services would then be pointed at the Worker
+  // *instead of* the caller's, so every binding vanished and the Worker answered
+  // 503 with "Supabase configuration is incomplete" for all three.
+  //
+  // So the caller's bindings are the base of this file, not a competitor to it. The
+  // caller's own file is never written to or removed; only what this run wrote is.
+  const merged = mergeServiceVars(started);
+
+  // A service producing a binding the caller already supplied is the same
+  // "two owners, one value" defect `mergeServiceVars` refuses between services,
+  // and the consequence is identical: whichever wrote last is what the application
+  // talks to. It should be unreachable — a caller who supplied a complete
+  // configuration is the case where a service deliberately starts nothing — which
+  // is exactly why an unreachable branch is worth a loud one.
+  const contested = Object.keys(merged).filter((key) => callerFile[key] !== undefined);
+  if (contested.length > 0) {
+    await disposeServices(started);
+    throw new Error(
+      `A local service set ${contested.join(', ')}, which this run's caller already configured ` +
+        'in the file named by STARTER_DEV_VARS_PATH.\n' +
+        '  Refusing rather than picking one: the application would talk to whichever wrote last.\n' +
+        `  Caller file: ${callerVarsPath ?? '(none)'}\n` +
+        '  Remove the binding from one of them.',
+    );
+  }
+
+  const written = await writeOwnedVars(context.scope.dir, 'stack.dev.vars', {
+    ...callerFile,
+    // `DEPLOYMENT_ENV` and `APP_ORIGIN` describe the application, not any service,
+    // so they are added here rather than by whichever service happens to be first.
+    DEPLOYMENT_ENV: 'local',
+    APP_ORIGIN: origin,
+    ...merged,
+  });
+
+  return {
+    services: started,
+    varsPath: written.path,
+    varsContents: written.contents,
+    summary: started.flatMap((service) => [`${service.label}`, ...service.summary]),
+  };
+};
+
+/**
+ * Stop every service a stack started, in reverse order.
+ *
+ * Exported for the harness: a test that starts a real stack has to be able to end
+ * it without reaching into `main`'s closure.
+ */
+export const disposeDevStack = async (run: DevStackRun): Promise<string[]> => {
+  // The file first, and independently of the services. It holds this run's
+  // credentials — a local Supabase service-role key, and a Stripe key when the
+  // emulator is running — and leaving it behind after Ctrl-C means a credential
+  // outlives the process that was entitled to it, sitting in `.wrangler/runs/`.
+  // `removeOwnedVars` refuses to delete a file whose contents changed, so a run
+  // that somehow no longer owns it leaves it for a human rather than destroying it.
+  const failures: string[] = [];
+  try {
+    await removeOwnedVars(run.varsPath, run.varsContents);
+  } catch (error) {
+    failures.push(error instanceof Error ? error.message : String(error));
+  }
+  // Services are stopped even when the removal failed: a container that will not
+  // stop is a different, more urgent problem than a leftover file.
+  failures.push(...(await disposeServices(run.services)));
+  return failures;
+};
+
+export const main = async (
+  mode: DevMode = 'app',
+  stack?: readonly LocalServiceId[],
+): Promise<number> => {
   const target = buildTarget(mode);
 
   if (target.bin === null) {
@@ -504,13 +725,22 @@ export const main = async (mode: DevMode = 'app'): Promise<number> => {
   const origin = process.env.APP_ORIGIN ?? `http://${HOST}:${PORT}`;
   process.env.APP_ORIGIN = origin;
 
-  let backend: DevBackend | undefined;
+  let stackRun: DevStackRun;
   try {
-    backend = await prepareDevBackend(origin);
+    stackRun = await prepareDevStack(stack ?? ['supabase'], origin);
   } catch (error) {
+    // A missing prerequisite is reported as itself, with its own remedy, because
+    // "your machine cannot run this" and "this code is broken" call for different
+    // responses and collapsing them makes a refusal read as a bug.
+    if (error instanceof LocalServiceUnavailable) {
+      return fail(
+        `The ${error.service} service is unavailable: ${error.prerequisite}.\n  ${error.remedy}`,
+        EXIT.unavailable,
+      );
+    }
     return fail(
-      `The dev backend could not start: ${error instanceof Error ? error.message : String(error)}\n` +
-        '  Local Supabase needs Docker or Podman. Run `bun run setup:doctor -- --profile database`,\n' +
+      `The dev stack could not be prepared: ${error instanceof Error ? error.message : String(error)}\n` +
+        '  Local services need Docker or Podman. Run `bun run setup:doctor -- --profile database`,\n' +
         '  or set SUPABASE_URL, SUPABASE_ANON_KEY and SUPABASE_SERVICE_ROLE_KEY to use a project instead.',
       EXIT.unavailable,
     );
@@ -518,8 +748,8 @@ export const main = async (mode: DevMode = 'app'): Promise<number> => {
 
   // The child reads the owned file: wrangler through `--env-file`, the Vite
   // platform proxy through this variable.
-  applyBackendVarsPath(backend.varsPath);
-  const server = buildTarget(mode, backend.varsPath);
+  applyBackendVarsPath(stackRun.varsPath);
+  const server = buildTarget(mode, stackRun.varsPath);
 
   // Truncate rather than append: a run that appends to the previous run's log
   // makes `bun run logs web --mode local` report events from a process that is gone.
@@ -529,7 +759,7 @@ export const main = async (mode: DevMode = 'app'): Promise<number> => {
 
   process.stdout.write(
     `${server.label} -> ${origin}\n` +
-      `${backend.summary.join('\n')}\n` +
+      `${stackRun.summary.join('\n')}\n` +
       `App log -> ${LOG_FILE}\n` +
       '  bun run logs web --mode local --follow\n\n',
   );
@@ -655,7 +885,7 @@ export const main = async (mode: DevMode = 'app'): Promise<number> => {
   // it while requests are in flight would fail them. A teardown failure is
   // reported and turns a clean stop into a failed one, but it never replaces the
   // child's own exit status.
-  const teardownFailures = await backend.dispose();
+  const teardownFailures = await disposeDevStack(stackRun);
   if (teardownFailures.length > 0) {
     for (const failure of teardownFailures) {
       process.stderr.write(`Dev backend teardown failed: ${failure}\n`);

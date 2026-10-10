@@ -4,6 +4,7 @@ import { AccountErrorCode, SignInInputSchema, SignUpInputSchema } from '@starter
 import { checkSchema } from '@starter/schemas/common';
 import { errorTypeForStatus } from '@starter/utils';
 import * as v from 'valibot';
+import { devAutoSignInEnabled, markDevSignedOut } from '#lib/server/dev_auto_login.ts';
 import { json, jsonError, readJsonBody } from '#lib/server/http.ts';
 import {
   applySupabaseResponseHeaders,
@@ -131,6 +132,12 @@ const handleSupabase = async (event: Parameters<RequestHandler>[0]): Promise<Res
       result = { user: USER_IDENTITY(user) };
     } else if (event.request.method === 'POST' && endpoint === 'sign-out') {
       await accounts.signOut();
+      // Only where auto sign-in would otherwise undo this on the next page load.
+      // The marker is what makes sign-out mean something during local development,
+      // and it is written nowhere else — a deployment has no auto sign-in to defeat.
+      if (devAutoSignInEnabled(event.locals.container)) {
+        markDevSignedOut(event.cookies);
+      }
       result = { success: true };
     } else if (event.request.method === 'POST' && endpoint === 'request-password-reset') {
       if (typeof body.email === 'string') {

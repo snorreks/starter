@@ -4,12 +4,15 @@ import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { buildMediaImage, MEDIA_IMAGE } from '@starter/scripts/compute';
 import { publicToolEnvironment } from '@starter/scripts/environment';
 import { runBounded } from '@starter/scripts/process';
 
 const root = fileURLToPath(new URL('../../../../', import.meta.url));
 const media = join(root, 'apps/backend/media');
-const image = 'starter-cloud-run-job:local';
+// The tag, the Dockerfile and the Rust-test assertion now have one owner, so this
+// lane and `bun run dev --stack container` cannot verify different images.
+const image = MEDIA_IMAGE;
 const fail = (message: string): never => {
   throw new Error(message);
 };
@@ -153,31 +156,20 @@ const run = async () => {
   }
   port = address.port;
   try {
-    const built = await execute(
-      [
-        'build',
-        '--no-cache',
-        '--file',
-        'apps/backend/media/Dockerfile.job',
-        '--tag',
-        image,
-        '--build-arg',
-        `BUILD_GIT_REVISION=${process.env.GITHUB_SHA ?? 'local'}`,
-        'apps/backend/media',
-      ],
-      20 * 60_000,
-    );
-    if (built.code !== 0) {
-      fail(`The finite Cloud Run job image failed to build.\n${built.output.slice(-4000)}`);
-    }
-    const rustTestCounts = [...built.output.matchAll(/test result: ok\. (\d+) passed/g)].map(
-      (match) => Number(match[1]),
-    );
-    const rustTests = rustTestCounts.reduce((total, count) => total + count, 0);
-    if (rustTests === 0) {
-      fail(
-        'The Rust image build discovered no passing Cargo tests; the compute lane requires ' +
-          'the real encode, cancellation and failure tests to run.',
+    // Reuse is sound here because the decision is content-addressed: the recorded
+    // build ran against this checksum, and a change to the Dockerfile, the lockfile
+    // or any source invalidates it. `--no-cache` still applies whenever a build
+    // actually happens, so a first run on a fresh checkout verifies for real rather
+    // than trusting a claim this checkout has never made.
+    const { rustTests, reused } = await buildMediaImage({
+      engine: 'docker',
+      noCache: true,
+      reuse: true,
+      execute: async (args) => execute(args, 20 * 60_000),
+    });
+    if (reused) {
+      process.stdout.write(
+        `Finite runner image is current for these sources; build reused (${rustTests} Cargo tests verified by the recorded build).\n`,
       );
     }
     const result = await execute(

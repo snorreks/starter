@@ -1,6 +1,6 @@
 import { REPO_ROOT } from '../../scripts/src/shared/paths.ts';
-import { runBounded } from '../../scripts/src/shared/run_bounded.ts';
 import { publicToolEnvironment } from '../../scripts/src/shared/private_environment.ts';
+import { runBounded } from '../../scripts/src/shared/run_bounded.ts';
 
 /** Discover only this run's labelled finite containers, including failed Docker supervision. */
 export const removeOwnedFullContainers = async (runId: string): Promise<void> => {

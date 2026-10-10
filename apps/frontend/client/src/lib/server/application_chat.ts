@@ -1,5 +1,5 @@
 import type { Conversation, ConversationCreate, Message } from '@starter/schemas/chat';
-import { createId } from '@starter/utils';
+import { createUuidId } from '@starter/utils';
 import type { ChatService } from './chat_service.ts';
 import type { ApplicationServices } from './supabase_context.ts';
 
@@ -46,7 +46,13 @@ export const createRequestChatService = (locals: {
     },
     async appendUserMessage(ownerId, conversationId, content, clientId) {
       owner(ownerId);
-      const userMessageId = createId('msg');
+      // `messages.id` is a uuid column and `admit_chat_generation` takes the id as
+      // `uuid`, so this has to be a prefixed *UUID*. `createId` produces base-36 and
+      // Postgres rejects it — the request died as a 500 at
+      // `invalid input syntax for type uuid`, with no test failing anywhere: the
+      // database lane mints its own uuid, and every other lane used a fake
+      // repository that accepted whatever it was given.
+      const userMessageId = createUuidId('msg');
       const fingerprint = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(content));
       const admission = await repository.admitGeneration({
         conversationId,
