@@ -50,3 +50,14 @@ export const NATIVE_DIR = at('../../../apps/frontend/native');
 export const E2E_DIR = at('../../../apps/e2e');
 export const DATABASE_DIR = at('../../../packages/backend/database');
 export const PI_DIR = at('../../../.pi');
+
+/**
+ * The private jobs Worker: Workflows dispatch, no public route.
+ *
+ * Kept here with the other application directories rather than beside
+ * `target.ts`'s `JOBS_DIR_RELATIVE`, because both the deploy target and the local
+ * service now need it and two constants that must agree are the shape this
+ * repository keeps failing on.
+ */
+export const JOBS_DIR = at('../../../apps/backend/jobs');
+export const JOBS_DIR_RELATIVE = 'apps/backend/jobs';

@@ -86,6 +86,23 @@ export interface AppEnv {
    * public.
    */
   MAIL_FROM?: string;
+  /**
+   * Stripe account key. A secret: read per request from the bindings and never
+   * logged, never in argv, and never written to the run-owned vars file.
+   */
+  STRIPE_SECRET_KEY?: string;
+  /**
+   * Stripe webhook endpoint signing secret.
+   *
+   * Optional here, and its absence is a refusal at the webhook route rather than
+   * a default: an endpoint that accepts an unverified body is an open one.
+   */
+  STRIPE_WEBHOOK_SECRET?: string;
+  /**
+   * Stripe API origin. Overridable so the local emulator can be pointed at;
+   * unset means the real API, which is the only correct default for a deployment.
+   */
+  STRIPE_API_BASE?: string;
   /** Minimum level a log event must meet to be stored. */
   LOG_LEVEL?: string;
   /** Build identifier attached to every log event. Injected by the deploy step. */
@@ -132,6 +149,20 @@ export interface AppEnv {
    * that spends money.
    */
   CHAT_MODEL_PROFILE?: string;
+  /**
+   * Local development auto sign-in, named by mode. `seed` is the only value that
+   * enables it, and `bun run dev` writes it only for a stack it started itself.
+   *
+   * Absent everywhere else — every test lane, every deployment — so the sign-in
+   * it authorises has no path to a project somebody cares about. The two values
+   * below are read *only* when this is `seed` and `SUPABASE_URL` is loopback;
+   * see `dev_auto_login.ts`.
+   */
+  DEV_AUTO_LOGIN?: string;
+  /** The synthetic account's address. Public by construction; loopback only. */
+  DEV_AUTO_LOGIN_EMAIL?: string;
+  /** The synthetic account's password. Never a real credential, never in argv. */
+  DEV_AUTO_LOGIN_PASSWORD?: string;
 }
 
 /** Require the public and administrative bindings used by the sole backend. */
@@ -163,6 +194,20 @@ export type JobsProfileName = (typeof JOBS_PROFILE_NAMES)[number];
 
 /** Hostnames that are unambiguously this machine. */
 const LOOPBACK_HOSTS = new Set(['127.0.0.1', 'localhost', '::1', '[::1]']);
+
+/**
+ * Whether this value is plain http on a loopback host.
+ *
+ * Structural, and both parts required: `http://` alone is not local, and a
+ * hostname containing `localhost` is not evidence of anything — which is the same
+ * reasoning `resolveDeploymentEnvironment` documents for refusing to infer
+ * locality from a URL. Exported so the rule that decides whether a development
+ * credential may be used has one definition rather than two.
+ */
+export const isLoopbackHttpUrl = (value: string): boolean => {
+  const parsed = parseAbsoluteHttpUrl(value);
+  return parsed.ok && parsed.url.protocol === 'http:' && LOOPBACK_HOSTS.has(parsed.url.hostname);
+};
 
 export type EnvironmentResolution =
   | { ok: true; environment: DeploymentEnvName; isLocal: boolean; baseUrl: string }
@@ -248,7 +293,7 @@ export const resolveDeploymentEnvironment = (
       };
     }
 
-    if (derived.url.protocol !== 'http:' || !LOOPBACK_HOSTS.has(derived.url.hostname)) {
+    if (!isLoopbackHttpUrl(derived.url.origin)) {
       return {
         ok: false,
         problem:

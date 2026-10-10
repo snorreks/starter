@@ -1,14 +1,14 @@
 import { generateKeyPairSync, randomBytes, sign, verify } from 'node:crypto';
 import { createServer, type IncomingMessage } from 'node:http';
 import {
-  fetch as miniflareFetch,
   Response as MiniflareResponse,
+  fetch as miniflareFetch,
   type V4FetchHandler,
 } from 'miniflare';
 import { REPO_ROOT } from '../../../../scripts/src/shared/paths.ts';
-import { removeOwnedFullContainers } from '../../full-global-teardown.ts';
 import { publicToolEnvironment } from '../../../../scripts/src/shared/private_environment.ts';
 import { runBounded } from '../../../../scripts/src/shared/run_bounded.ts';
+import { removeOwnedFullContainers } from '../../full-global-teardown.ts';
 
 const ACCOUNT = 'runner@e2e-fixture.iam.gserviceaccount.com';
 const DISPATCHER_ACCOUNT = 'dispatcher@e2e-fixture.iam.gserviceaccount.com';

@@ -8,6 +8,7 @@ import {
   assertSupabaseOwnership,
   ensureSupabasePortsAvailable,
   persistSupabaseOwnership,
+  readSupabaseOwnership,
   removeOwnedWorkerVars,
   requireContainerRuntime,
   resetSupabaseLocal,
@@ -151,4 +152,15 @@ describe('isolated local Supabase allocation', () => {
       await rm(root, { recursive: true, force: true });
     }
   });
+});
+
+test('the ownership record retains the selected engine command', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'supabase-engine-'));
+  const allocation = { ...allocateSupabaseLocal(root, 'engine-run'), root };
+  try {
+    await persistSupabaseOwnership({ ...allocation, containerCommand: '/fixture/podman' });
+    expect((await readSupabaseOwnership(allocation)).containerCommand).toBe('/fixture/podman');
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
 });

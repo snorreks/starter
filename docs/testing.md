@@ -16,6 +16,33 @@ bun run test:compute         # Docker runner image and real FFmpeg
 
 `test:all` deliberately excludes database and compute integration lanes; it contains unit, browser, Worker and E2E once each. `test:database` and `test:compute` require Docker or Podman. Worker/E2E require Node, Chromium and free checkout-owned ports. The Supabase harness allocates a unique local project and refuses to stop another run's stack.
 
+## The development server
+
+```bash
+bun run dev                 # prompts for a stack on a TTY
+bun run dev --stack client  # local seeded Supabase and the Vite client
+bun run dev:worker          # serves the built Worker in workerd; requires a build
+```
+
+Without an explicit stack, `bun run dev` prompts on a TTY and exits with
+`EXIT.usage` (2) without a TTY or when `CI=true`.
+
+`bun run dev --stack client` provisions a checkout-owned local Supabase stack when
+`SUPABASE_URL` is unset, seeds one synthetic account into it
+(`seed@example.invalid`, two notes), and writes that account into the run-owned
+Worker vars file so the first page load is already signed in. Stopping the server
+stops the stack and removes the file.
+
+Three properties keep that from reaching anything real:
+
+- **The bindings are written only for a stack the launcher started.** `SUPABASE_URL` set by the developer — and the E2E lane's own vars file — mean nothing is provisioned, seeded or signed in.
+- **The application refuses the bindings** unless `SUPABASE_URL` is plain http on loopback and the deployment was already classified local. That check is in `apps/frontend/client/src/lib/server/dev_auto_login.ts` and is what a deployment would depend on.
+- **A harness runtime does not get the offer.** A run carrying `E2E_RUN_ID` — the visual and browser lanes — seeds its stack and omits the sign-in bindings, so those lanes keep observing signed-out pages.
+
+Signing out is recorded in an `httpOnly` marker cookie, so signing out during local development means signed out; `/login` then offers the seeded account again as a one-button form. A seed failure fails the command: a dev server against an empty database, saying nothing, is the outcome this refuses.
+
+`bun run db:seed` is a separate, explicit operation against a stack started by other means. It reads `supabase/config.toml` at the repository root, which is a different project from the one a `bun run dev` run owns — that is why it answers `Local Supabase status failed with exit 1` while a dev server is up.
+
 ## Native
 
 ```bash

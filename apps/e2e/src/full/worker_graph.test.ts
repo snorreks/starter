@@ -50,6 +50,7 @@ test('full compute shares real R2 and cross-Worker Workflows, never a processor 
     client: config(),
     clientRoot: '/repo/apps/frontend/client',
     testRunId: 'full_compute',
+    stripe: { apiBase: 'https://stripe.test', secretKey: 'fixture', webhookSecret: 'fixture' },
     appOrigin: 'http://127.0.0.1:4183',
     supabaseUrl: 'http://127.0.0.1:54321',
     supabaseAnonKey: 'local-anon',
@@ -74,6 +75,9 @@ test('full compute shares real R2 and cross-Worker Workflows, never a processor 
     });
   }
   expect(web?.workflows).toEqual(jobs?.workflows);
+  expect(web?.bindings?.STRIPE_SECRET_KEY).toBe('fixture');
+  expect(jobs?.bindings?.STRIPE_SECRET_KEY).toBeUndefined();
+  expect(jobs?.bindings?.STRIPE_WEBHOOK_SECRET).toBeUndefined();
 });
 
 test('a web Worker with a legacy D1 application binding is refused', () => {
@@ -93,4 +97,31 @@ test('missing or enabled compute is refused in the web-only E2E fixture', () => 
   expect(() => graph(parseWranglerJsonc(configJson('encode')))).toThrow(
     'JOBS_PROFILE=disabled explicitly',
   );
+});
+
+test('Stripe bindings require all fields and also work without compute', () => {
+  const options = {
+    client: config(),
+    clientRoot: '/repo/apps/frontend/client',
+    testRunId: 'stripe',
+    appOrigin: 'http://127.0.0.1:4183',
+    supabaseUrl: 'http://127.0.0.1:54321',
+    supabaseAnonKey: 'anon',
+    supabaseServiceRoleKey: 'role',
+  };
+  expect(() =>
+    buildWorkerGraph({
+      ...options,
+      stripe: { apiBase: '', secretKey: ' ', webhookSecret: undefined } as never,
+    }),
+  ).toThrow('apiBase, secretKey, webhookSecret');
+  const result = buildWorkerGraph({
+    ...options,
+    stripe: { apiBase: 'https://stripe.test', secretKey: 'fixture', webhookSecret: 'fixture' },
+  });
+  expect(result.workers[0]?.bindings).toMatchObject({
+    STRIPE_API_BASE: 'https://stripe.test',
+    STRIPE_SECRET_KEY: 'fixture',
+    STRIPE_WEBHOOK_SECRET: 'fixture',
+  });
 });

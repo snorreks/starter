@@ -7,14 +7,15 @@
   "main": "./src/index.ts",
   "exports": {
     ".": "./src/index.ts",
-    "./logging": "./src/logging/index.ts",
-    "./notes": "./src/notes/index.ts",
-    "./chat": "./src/chat/index.ts",
     "./auth": "./src/auth/index.ts",
-    "./registry": "./src/registry/index.ts",
+    "./billing": "./src/billing/index.ts",
+    "./chat": "./src/chat/index.ts",
     "./common": "./src/common/index.ts",
     "./jobs": "./src/jobs/index.ts",
-    "./native": "./src/native.ts"
+    "./logging": "./src/logging/index.ts",
+    "./native": "./src/native.ts",
+    "./notes": "./src/notes/index.ts",
+    "./registry": "./src/registry/index.ts"
   },
   "scripts": {
     "lint": "biome lint src",
@@ -25,6 +26,7 @@
   },
   "dependencies": {
     "@standard-schema/spec": "1.1.0",
+    "@starter/billing": "workspace:*",
     "valibot": "1.5.0"
   }
 }

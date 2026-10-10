@@ -29,6 +29,41 @@ export const MOCK_NOTES = [
   },
 ] as const;
 
+/**
+ * The synthetic identity `bun run dev` seeds into the local Supabase stack.
+ *
+ * One authority, because two places holding this password is one place forgetting
+ * it: the seeder creates the account with these values, and the dev launcher's
+ * auto sign-in presents the same ones. Nothing outside a loopback stack may use
+ * it — the credential is public by construction, which is why every consumer
+ * refuses it unless `SUPABASE_URL` is unambiguously this machine.
+ *
+ * `MOCK_USER` above is the same *idea* for the component-level scenarios, which
+ * never reach an auth provider, so it keeps a readable id rather than a UUID.
+ */
+export const DEV_SEED_ACCOUNT = {
+  userId: '10000000-0000-4000-8000-000000000001',
+  email: 'seed@example.invalid',
+  password: 'local-synthetic-seed-only',
+  displayName: 'Seed User',
+} as const;
+
+/** The notes that land with `DEV_SEED_ACCOUNT`, owned by it. */
+export const DEV_SEED_NOTES = [
+  {
+    id: '20000000-0000-4000-8000-000000000001',
+    owner_id: DEV_SEED_ACCOUNT.userId,
+    title: 'Welcome',
+    body: 'This note is synthetic local seed data.',
+  },
+  {
+    id: '20000000-0000-4000-8000-000000000002',
+    owner_id: DEV_SEED_ACCOUNT.userId,
+    title: 'Delete me',
+    body: 'This synthetic note exists for local delete journeys.',
+  },
+] as const;
+
 /** Portable content scenarios shared by browser and visual journeys. */
 export const UI_SCENARIOS = {
   notes: {

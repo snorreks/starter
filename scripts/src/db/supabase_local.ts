@@ -3,6 +3,7 @@ import { createHash, randomBytes } from 'node:crypto';
 import { access, mkdir, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:net';
 import { join } from 'node:path';
+import { resolveContainerRuntime } from '../local/container_runtime.ts';
 import { DATABASE_DIR, REPO_ROOT } from '../shared/paths.ts';
 import { publicToolEnvironment } from '../shared/private_environment.ts';
 import { runBounded } from '../shared/run_bounded.ts';
@@ -13,6 +14,7 @@ export interface SupabaseLocalAllocation {
   projectId: string;
   runId: string;
   ownerToken: string;
+  containerCommand?: string;
   root: string;
   ports: {
     api: number;
@@ -162,6 +164,16 @@ export const assertSupabaseOwnership = (
 
 const projectDir = (allocation: SupabaseLocalAllocation): string =>
   join(allocation.root, 'supabase-project');
+
+/**
+ * The generated Supabase project directory for this run.
+ *
+ * Exported because the seed has to be pointed at *this* stack. `supabase status`
+ * reads the project id and ports out of the generated `config.toml` in here, so
+ * `--workdir` this directory is the only way to reach the stack this checkout
+ * owns rather than the repo-root project in `supabase/config.toml`.
+ */
+export const supabaseProjectDir = projectDir;
 const identityPath = (allocation: SupabaseLocalAllocation): string =>
   join(allocation.root, 'supabase-owner.json');
 
@@ -336,17 +348,12 @@ export const startSupabaseLocal = async (
   allocation: SupabaseLocalAllocation,
   options: { emailConfirmations?: boolean; jwtExpirySeconds?: number } = {},
 ): Promise<Record<string, string>> => {
-  const runtime = process.env.DOCKER_BIN ?? 'docker';
-  const probe = spawnSync(runtime, ['info'], {
-    stdio: 'ignore',
-    timeout: 10_000,
-    env: publicToolEnvironment(process.env),
-  });
-  requireContainerRuntime({
-    dockerPath: probe.error === undefined && probe.status === 0 ? runtime : undefined,
-  });
+  // Resolved through the shared probe so a host with Podman and no Docker is not
+  // told to install Docker Engine. `DOCKER_BIN` still wins outright.
+  const engine = resolveContainerRuntime();
+  const containerCommand = requireContainerRuntime({ dockerPath: engine?.command });
   await ensureSupabasePortsAvailable(allocation);
-  await persistSupabaseOwnership(allocation, options);
+  await persistSupabaseOwnership({ ...allocation, containerCommand }, options);
   const code = await runCli(allocation, ['start']);
   if (code !== 0) {
     throw new Error(`Supabase local start failed with exit ${code}.`);
@@ -408,9 +415,13 @@ export const stopSupabaseLocal = async (
     allocation.projectId,
     '--no-backup',
   ]);
-  const runtime = process.env.DOCKER_BIN ?? 'docker';
+  // The engine resolved to *start* the stack, not a fresh `DOCKER_BIN ?? 'docker'`
+  // lookup: on a Podman-only host the start probe found podman and this teardown
+  // would have asked docker for the containers, reporting "cannot verify owned
+  // containers" for a stack that stopped perfectly well.
+  const engine = requireContainerRuntime({ dockerPath: owned.containerCommand });
   const runRuntime = (args: string[]) =>
-    spawnSync(runtime, args, {
+    spawnSync(engine, args, {
       encoding: 'utf8',
       timeout: 30_000,
       env: publicToolEnvironment(process.env),

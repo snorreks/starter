@@ -42,8 +42,17 @@ bun run update --nix --yes               # flake inputs only
 bun run update --bun --yes               # Bun pin, verified runtime, mirrors + lock
 
 # Develop — one application, two ways to run it
-bun run dev                 # vite dev, Node, emulated bindings. Fast.
+bun run dev                 # asks what to start, on a terminal
+bun run dev --stack client  # vite dev + local Supabase. Node, emulated bindings.
+                             # Fast. Seeds the database and signs in as
+                             # seed@example.invalid unless SUPABASE_URL is set.
+bun run dev --stack full    # app, Supabase, stripe-mock, the finite runner image
+                             # and the jobs Worker in workerd
+bun run dev --stack supabase,stripe    # any combination, by service name
 bun run dev:worker          # the BUILT Worker in real workerd. Requires a build.
+
+# With no stack and no terminal, `dev` REFUSES (exit 2) rather than guessing:
+# starting everything would build a container on a laptop that only wanted a page.
 
 # Build
 bun run build               # vite build -> apps/frontend/client/.svelte-kit/cloudflare/
@@ -54,15 +63,20 @@ bun run test                # unit, every project
 bun run test:browser        # real Svelte in Chromium
 bun run test:worker         # build, then the built Worker in workerd + real local Supabase
 bun run e2e                 # built client + built Worker + real browser, one origin
+bun run e2e:full            # the full owned runtime, black box: real Postgres, Workflows,
+                            # R2 and a real FFmpeg container, with fixture-owned Google
+                            # and Stripe. Not in test:all; it builds a container image.
 bun run test:all            # all four, no duplicates
 bun run test:database       # local Supabase: real Postgres, Auth, Data API/RLS and concurrent RPCs.
                             # Needs Docker or Podman; not included in test:all.
 bun run db:types            # regenerate Supabase database.types.ts from reset local migrations.
 bun run db:types:check      # regenerate to a temporary file and compare without overwriting.
 bun run test:compute        # the finite Cloud Run runner: Docker, real FFmpeg, local grant fixtures.
-                            # Needs a Docker engine, is never cached, and is NOT in
-                            # test:all. Without Docker it fails with the missing
-                            # prerequisite named — it never skips.
+                            # Needs a Docker engine, is NOT in test:all. Without
+                            # Docker it fails with the missing prerequisite named.
+                            # The image is content-addressed and reused when its
+                            # sources are unchanged (33s to build, 0.16s to reuse),
+                            # and the reuse is reported. See docs/compute.md.
 bun run coverage            # merged lcov over the unit lane + one percentage.
                             # Reports only, never gates. No branch figure: Bun
                             # emits no BRDA. Names every project it did not
@@ -104,6 +118,11 @@ bun run deploy verify --env staging
 bun run native:doctor    # what this host can build. Exit 3 when a prerequisite is missing.
 bun run native:dev       # the static app plus the Tauri shell
 bun run native:build     # a release binary (unsigned; no installer, no store upload)
+
+# Billing — one catalogue, declared and developed against
+bun run stripe:setup                     # declare the plan catalogue in a Stripe account
+bun run stripe:setup -- --dry-run        # report what would change; write nothing
+bun run stripe:setup -- --webhook-url https://... --yes
 
 # Logs — one app; --source tells the two halves apart
 bun run logs web --mode local --follow
@@ -169,9 +188,10 @@ apps/backend/jobs        the private jobs Worker: Workflows dispatch optional
 apps/backend/media       finite Rust/FFmpeg CLI executed by Cloud Run
 apps/e2e                 Playwright specs + the harness that starts the server
 packages/shared/*        portable; no project dependencies
-packages/backend/*       Supabase database and auth — server only
+packages/backend/*       Supabase database and auth, Stripe — server only
 packages/frontend/*      ui, platform, features — browser only
-scripts                  one tooling workspace
+scripts                  one tooling workspace; scripts/src/local is the one
+                         local-service lifecycle
 .pi                      agent extensions, helpers, tests
 ```
 
@@ -211,6 +231,31 @@ Three directory rules that are *not* stylistic:
   ones this host has. A feature that imported `$app/navigation` or resolved a
   module singleton would work in a browser and nowhere else.
 
+- **A dev run is a named stack, and a stack is what you asked for plus what the
+  app needs.** `bun run dev --stack stripe` starts the database too, because the
+  app's `requires` in `scripts/src/registry/service_registry.ts` says so, not
+  because the database is hardcoded into the stack. Expansion is from *this* app,
+  never from the whole registry: expanding from the registry meant naming a Stripe
+  stack also started a container build, because the jobs Worker requires one.
+  A bare `bun run dev` asks on a terminal and **refuses** without one.
+- **One lifecycle for every local service.** `scripts/src/local/service.ts` owns
+  allocate, contribute bindings, and tear down in reverse; a service cannot invent
+  its own ownership story. Two services writing one binding is a refusal naming
+  both, not a last-writer-wins merge — which would leave the application talking
+  to whichever started last, holding the other's credential.
+- **An emulator that cannot do something says so before you wait for it.**
+  `stripe-mock` keeps no state and delivers no webhooks; Cloud Run has no local
+  emulator at all. `STRIPE_MOCK_LIMITS` is exported surface and is printed
+  wherever the emulator is offered. `bun run stripe:setup` against a local target
+  exits **4, refused** rather than 0 having provisioned nothing.
+- **A webhook is verified or it is refused.** An absent
+  `STRIPE_WEBHOOK_SECRET` does not fall back to parsing the body — an endpoint that
+  grants a subscription on an unverified POST is an open one, and "acceptable in
+  staging" is how that reaches production. See [docs/billing.md](docs/billing.md).
+- **A price lives in one file.** `packages/shared/billing` holds every amount, and
+  it is *portable* because `MAY_REACH` forbids `node -> worker` and two planes must
+  read it. A checkout request names a plan and an interval; no billing function
+  takes an amount, so no caller can choose what it pays.
 - **The native app is a client of the web Worker, not a second server.**
   `apps/frontend/native/src/lib/platform/**` is the only directory permitted to name
   `@tauri-apps/*`, and no module in the native app may reach server-only
@@ -233,6 +278,12 @@ Three directory rules that are *not* stylistic:
   put` takes the *name* in argv and the value on stdin; `secretInArgvProblem` refuses
   a value-shaped argument, and the Cloudflare API token is never a substitute for
   `SUPABASE_SERVICE_ROLE_KEY` or `RESEND_API_KEY`.
+- **A development credential only ever reaches loopback.** `bun run dev` seeds one
+  synthetic account and writes it into the run-owned vars file as `DEV_AUTO_LOGIN_*`;
+  `dev_auto_login.ts` refuses those bindings unless `SUPABASE_URL` is plain http on
+  loopback, the deployment is already local, and no harness identity (`E2E_RUN_ID`)
+  is in play. The password is public by construction, so every consumer refuses it
+  rather than trusting who set it. See [docs/testing.md](docs/testing.md).
 - **One authority decides what a command would change.** `scripts/src/deploy/target.ts`
   exports `resolveTarget(environment)`, and it covers the *whole* environment: web
   Worker, jobs Worker, both Workflow identities, Supabase project, private R2 bucket, image
@@ -316,6 +367,7 @@ bun run --cwd packages/backend/database db:generate
 | [docs/first-round-review.md](docs/first-round-review.md) | fixed and open findings |
 | [docs/architecture.md](docs/architecture.md) | boundaries and why |
 | [docs/auth.md](docs/auth.md) | Supabase identity, authorization, native sessions, and mail |
+| [docs/billing.md](docs/billing.md) | the plan catalogue, declaring it in Stripe, local Stripe emulation, webhook verification, and the `dev` stacks |
 | [docs/cloudflare.md](docs/cloudflare.md) | Workers, R2, credentials, and deployment modes |
 | [docs/deployment.md](docs/deployment.md) | the one deployment path: the resolved target, the CI variable model, provisioning, secret installation, the ordered pipeline, migrations, concurrency, health, rollback and image retention |
 | [docs/compute.md](docs/compute.md) | what the compute example does and does not do, the optional Cloud Run Jobs runner and its limits |

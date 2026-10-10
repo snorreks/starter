@@ -3,6 +3,14 @@ ARG RUST_IMAGE=docker.io/library/rust@sha256:dacc9e51f252243eb59d2fb4cb4ad8b0d3f
 ARG RUNTIME_IMAGE=docker.io/library/debian@sha256:3783cc01769c7b2b1b83a5c5ad96c815348e28ed7da68e2e3687004faa906251
 
 FROM ${RUST_IMAGE} AS build
+# `pipefail`, for one reason: the test log is captured through a pipe so it can be
+# both shown and counted, and without it a failing `cargo test` would be reported as
+# a successful `tee`. The default `/bin/sh` is dash, which has no `pipefail`.
+#
+# Inside the stage, not before the first `FROM`: a builder instruction there is
+# rejected outright ("stage 1 requires a FROM instruction"), so this placement is
+# load-bearing rather than stylistic.
+SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 WORKDIR /src
 RUN apt-get update && apt-get install -y --no-install-recommends \
       ffmpeg=7:5.1.9-0+deb12u1 \
@@ -15,11 +23,25 @@ COPY tests ./tests
 COPY fixtures ./fixtures
 ARG BUILD_GIT_REVISION=""
 ENV BUILD_GIT_REVISION=${BUILD_GIT_REVISION}
-RUN touch src/*.rs && cargo test --locked --offline \
+# The passing Cargo test count is written into the image rather than parsed out of
+# this build's console output.
+#
+# Console output is not a durable record: when the layer cache serves this step the
+# tests are not re-run, so their output is never produced, and a caller reading the
+# count from the build log sees zero and concludes that nothing verified the encode
+# path. That is not hypothetical — it is exactly what happened the first time this
+# was tried. A number stored *in the artifact* is the same whether the step ran or
+# came from cache, which is what makes it evidence rather than a transcript.
+RUN touch src/*.rs \
+    && cargo test --locked --offline 2>&1 | tee /tmp/cargo-test.log \
+    && PASSED="$(grep -oE 'test result: ok\. [0-9]+ passed' /tmp/cargo-test.log | awk '{s += $4} END {print s + 0}')" \
+    && test "$PASSED" -gt 0 \
     && cargo build --release --locked --offline \
     && cp target/release/starter-media /usr/local/bin/starter-media \
     && strip /usr/local/bin/starter-media \
-    && test -n "$(/usr/local/bin/starter-media --version)"
+    && test -n "$(/usr/local/bin/starter-media --version)" \
+    && mkdir -p /usr/local/share/starter-media \
+    && printf '%s\n' "$PASSED" > /usr/local/share/starter-media/rust-tests
 
 FROM ${RUNTIME_IMAGE}
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -29,6 +51,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && useradd --system --uid 10001 --gid runner --home-dir /nonexistent --shell /usr/sbin/nologin runner \
     && mkdir -p /var/tmp/media && chown runner:runner /var/tmp/media
 COPY --from=build /usr/local/bin/starter-media /usr/local/bin/starter-media
+# Carried forward so `buildMediaImage` reads the verified test count out of the
+# published artifact rather than out of a build transcript a cache hit omits.
+COPY --from=build /usr/local/share/starter-media /usr/local/share/starter-media
 COPY runner/runner.mjs /opt/starter/runner.mjs
 RUN test -n "$(/usr/local/bin/starter-media --version)" \
     && test "$(node --version)" = "v18.20.4" \

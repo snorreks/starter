@@ -109,4 +109,24 @@ type ActionData = {
 
 {#if data.user === null}
   <AuthView {viewModel} errors={viewModel.errors} progressive />
+
+  <!--
+    A separate form, not a second submitter inside AuthView's: that component owns
+    its form element, and the shared view should not grow a control that only one
+    host has. Posting to this route's default action is the same path the sign-in
+    form takes, so it also works with scripting off.
+  -->
+  {#if data.seededAccount}
+    <form method="POST" class="auth__secondary">
+      <button
+        type="submit"
+        class="auth__link"
+        name="intent"
+        value={data.seededAccount.intent}
+        data-testid="auth-use-seeded-account"
+      >
+        Sign in as the seeded development account
+      </button>
+    </form>
+  {/if}
 {/if}

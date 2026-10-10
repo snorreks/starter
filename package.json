@@ -83,6 +83,7 @@
     "secrets:decrypt": "bun run scripts/src/cli.ts secrets decrypt",
     "secrets:exec": "bun run scripts/src/cli.ts secrets exec",
     "secrets:update-recipients": "bun run scripts/src/cli.ts secrets update-recipients",
+    "stripe:setup": "bun run scripts/src/cli.ts stripe setup",
     "test:worker": "bun run scripts/src/cli.ts cached -- client:test-worker",
     "test:compute": "bun run --cwd apps/backend/jobs test:compute",
     "test:browser": "bun run scripts/src/cli.ts cached -- client:test-browser",

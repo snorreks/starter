@@ -1090,10 +1090,28 @@ describe('architecture: the guard command', () => {
 
 // ── the repository itself ───────────────────────────────────────────────────
 
+/**
+ * How long a whole-repository guard pass is allowed.
+ *
+ * This is not a property of correctness; it is the cost of resolving every module
+ * in the tree, and it grows with the repository. Bun's default per-test timeout is
+ * five seconds, which this exceeds on any host slower than the one it was written
+ * on — producing a red unit lane that says nothing about the architecture.
+ *
+ * Stated rather than left implicit for the same reason `BUILD_TIMEOUT_MS` is: a
+ * bound nobody wrote down is a bound that fails on someone else's machine and gets
+ * "fixed" by deleting the test.
+ */
+const WHOLE_REPO_TIMEOUT_MS = 60_000;
+
 describe('architecture: the live repository', () => {
-  test('currently satisfies every rule', () => {
-    // The fixture cases prove the rules; this proves they are met today. A failure here
-    // is a real violation in the tree, not a broken test.
-    expect(run(REPO_ROOT)).toEqual([]);
-  });
+  test(
+    'currently satisfies every rule',
+    () => {
+      // The fixture cases prove the rules; this proves they are met today. A failure here
+      // is a real violation in the tree, not a broken test.
+      expect(run(REPO_ROOT)).toEqual([]);
+    },
+    WHOLE_REPO_TIMEOUT_MS,
+  );
 });

@@ -43,6 +43,18 @@ export interface WorkerGraphOptions {
     bindings: Record<string, string>;
     outbound: V4FetchHandler;
   };
+  /**
+   * Stripe bindings for the full lane.
+   *
+   * Separate from `compute.bindings` because they belong to the web Worker only:
+   * the jobs Worker dispatches encodes and has no billing credentials, and giving
+   * it some would put a secret in a component that does not need it.
+   */
+  stripe?: {
+    apiBase: string;
+    secretKey: string;
+    webhookSecret: string;
+  };
 }
 
 export interface WorkerGraph {
@@ -102,15 +114,52 @@ export const buildWorkerGraph = (options: WorkerGraphOptions): WorkerGraph => {
       },
     },
   };
+
+  /**
+   * Stripe bindings, mapped from the option's field names to the Worker's.
+   *
+   * An explicit map rather than a spread, because spreading `apiBase` produces a
+   * binding named `apiBase` — and the application, quite correctly, looks for
+   * `STRIPE_API_BASE` and reports `stripe_not_configured`. That is exactly the
+   * failure the first run of this lane produced: a fixture that supplied Stripe,
+   * a route that refused to use it, and a green-looking graph.
+   *
+   * All-or-nothing on purpose. Half a configuration is worse than none: the
+   * checkout route checks for a key *and* a base, so one of them alone would look
+   * unconfigured while the other sat in the Worker unused.
+   */
+  const stripeBindings: Record<string, string> = {};
+  if (options.stripe !== undefined) {
+    const { apiBase, secretKey, webhookSecret } = options.stripe;
+    const missing = Object.entries({ apiBase, secretKey, webhookSecret })
+      .filter(([, value]) => typeof value !== 'string' || value.trim().length === 0)
+      .map(([name]) => name);
+    if (missing.length > 0) {
+      throw new Error(`Incomplete Stripe configuration: missing or blank ${missing.join(', ')}.`);
+    }
+    stripeBindings.STRIPE_API_BASE = apiBase;
+    stripeBindings.STRIPE_SECRET_KEY = secretKey;
+    stripeBindings.STRIPE_WEBHOOK_SECRET = webhookSecret;
+  }
+
   if (!options.compute) {
+    worker.bindings = { ...worker.bindings, ...stripeBindings };
     return { workers: [worker], workerName: name, assetsDirectory };
   }
+
   const jobsName = `${name}-jobs`;
+  // Shared: what both Workers need. The jobs Worker dispatches encodes and reads
+  // job state from Supabase; it has no billing surface, so a Stripe secret must not
+  // be in this object — a secret in a component that never uses it is a secret with
+  // an extra path out of it.
   const sharedBindings = {
-    ...worker.bindings,
+    ...(worker.bindings ?? {}),
     ...options.compute.bindings,
     JOBS_PROFILE: 'encode',
   };
+  // Web-only: the billing credentials, added for the Worker that does bill and
+  // withheld from the jobs Worker, which has no billing surface.
+  const webBindings = { ...sharedBindings, ...stripeBindings };
   const workflows = {
     ENCODE_WORKFLOW: { name: 'e2e-encode', className: 'EncodeWorkflow', scriptName: jobsName },
     MAINTENANCE_WORKFLOW: {
@@ -120,7 +169,7 @@ export const buildWorkerGraph = (options: WorkerGraphOptions): WorkerGraph => {
     },
   };
   const r2Buckets = { MEDIA: `e2e-media-${options.testRunId}` };
-  worker.bindings = sharedBindings;
+  worker.bindings = webBindings;
   worker.workflows = workflows;
   worker.r2Buckets = r2Buckets;
   worker.outboundService = options.compute.outbound;

@@ -29,6 +29,17 @@ export const json = (status: number, body: unknown): Response =>
   Response.json(body, { status, headers: JSON_HEADERS });
 
 /**
+ * Whether a pathname belongs to the API half of this one application.
+ *
+ * Shared rather than restated: the hook uses it to decide the unrouted-404
+ * response, the cache policy and whether a request may acquire a session, and
+ * three copies of one path rule is three chances for the API to grow a prefix
+ * that only two of them know about.
+ */
+export const isApiPath = (pathname: string): boolean =>
+  pathname === '/api' || pathname.startsWith('/api/');
+
+/**
  * 401 for an anonymous request. One place, so the shape cannot drift.
  */
 export const unauthorized = (): Response => jsonError(401, 'unauthorized', 'Sign in to continue.');
