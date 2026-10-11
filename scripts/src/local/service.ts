@@ -23,6 +23,7 @@
 // cannot run this" into a command that exits zero having done nothing — the one
 // outcome this repository treats as worse than an error.
 
+import type { Stepper } from '../shared/progress.ts';
 import type { RunScope } from '../shared/run_scope.ts';
 
 /**
@@ -62,6 +63,21 @@ export interface LocalServiceContext {
    */
   readonly callerVars: Readonly<Record<string, string | undefined>>;
   readonly environment: Readonly<NodeJS.ProcessEnv>;
+  /**
+   * Reports the slow parts of starting this service.
+   *
+   * Required, not optional. Every one of these services can spend minutes — a
+   * container boot, a cargo build, a wait for a port — and a service that starts
+   * one without being able to say so reproduces the defect `shared/progress.ts`
+   * exists to remove: a terminal that is silent for exactly as long as the work
+   * takes. An optional reporter is a silent one on every caller who forgets it.
+   *
+   * A `Stepper` rather than the whole `Progress`: services start concurrently, so
+   * a service that reached for the shared reporter could nest its steps under
+   * whichever other service was drawn last. This one only starts steps in *this*
+   * service's scope.
+   */
+  readonly progress: Stepper;
 }
 
 /**

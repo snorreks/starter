@@ -60,7 +60,10 @@ import { killTree } from '@starter/utils/process';
 import { seedSupabaseLocal } from './db/seed_supabase.ts';
 import {
   allocateSupabaseLocal,
+  discardSupabaseData,
   hasSupabaseOwnership,
+  preservedSupabaseVolumes,
+  probeRunningSupabase,
   readSupabaseOwnership,
   removeOwnedWorkerVars,
   startSupabaseLocal,
@@ -87,6 +90,7 @@ import {
 import { removeOwnedVars, writeOwnedVars } from './local/vars_file.ts';
 import { EXIT, fail } from './shared/command.ts';
 import { CLIENT_DIR, REPO_ROOT } from './shared/paths.ts';
+import { createProgress, type Progress, type Stepper } from './shared/progress.ts';
 import { runScope, worktreePort } from './shared/run_scope.ts';
 import { viteBin, wranglerBin } from './shared/tools.ts';
 
@@ -359,34 +363,57 @@ export interface DevBackend {
  * without a container engine. Defaults are the real ones; a test that swaps them is
  * testing this function's logic rather than Docker's availability.
  *
- * Eight fields rather than the six `SupabaseServiceDependencies` carries, because
+ * Ten fields rather than the ten `SupabaseServiceDependencies` carries, because
  * this is the wrapper's seam and it owns two things the service does not: writing
  * the owned vars file, and reading the caller's file to decide whether the backend
- * is already complete. The six are forwarded to the service unchanged, so there is
+ * is already complete. The rest are forwarded to the service unchanged, so there is
  * one allocate/start/seed implementation behind both entry points.
  */
 export interface DevBackendDependencies {
   allocate: typeof allocateSupabaseLocal;
   start: typeof startSupabaseLocal;
   seed: typeof seedSupabaseLocal;
+  /** Reads an already-running stack's bindings, or null. See `prepareSupabaseService`. */
+  probe: typeof probeRunningSupabase;
   writeVars: typeof writeOwnedWorkerVars;
   /** Values may be absent: a dotenv file need not carry every binding. */
   readVars: (path: string) => Record<string, string | undefined>;
   hasOwnership: typeof hasSupabaseOwnership;
   readOwnership: typeof readSupabaseOwnership;
   stop: typeof stopSupabaseLocal;
+  /**
+   * Reads and destroys this project's volumes.
+   *
+   * Forwarded rather than left to the service's own defaults, because the default
+   * is a `docker volume ls`: a harness test that reached the real one would need a
+   * container engine, and `prepareDevBackend`'s whole purpose is to be testable
+   * without one.
+   */
+  listVolumes: typeof preservedSupabaseVolumes;
+  discard: typeof discardSupabaseData;
+  /**
+   * Reports each slow step.
+   *
+   * A full `Progress`, not a `Stepper`: `prepareDevBackend` prepares the *whole*
+   * backend rather than one service in a stack, so its steps are the run's own.
+   * Swappable so a test can assert what was announced.
+   */
+  progress: Progress;
 }
 
-const devBackendDependencies: DevBackendDependencies = {
+const devBackendDependencies: Omit<DevBackendDependencies, 'progress'> = {
   allocate: allocateSupabaseLocal,
   start: startSupabaseLocal,
   seed: seedSupabaseLocal,
+  probe: probeRunningSupabase,
   writeVars: writeOwnedWorkerVars,
   readVars: (path: string): Record<string, string | undefined> =>
     parseEnv(readFileSync(path, 'utf8')),
   hasOwnership: hasSupabaseOwnership,
   readOwnership: readSupabaseOwnership,
   stop: stopSupabaseLocal,
+  listVolumes: preservedSupabaseVolumes,
+  discard: discardSupabaseData,
 };
 
 export const prepareDevBackend = async (
@@ -394,7 +421,11 @@ export const prepareDevBackend = async (
   overrides: Partial<DevBackendDependencies> = {},
   environment: NodeJS.ProcessEnv = process.env,
 ): Promise<DevBackend> => {
-  const dependencies = { ...devBackendDependencies, ...overrides };
+  const dependencies = {
+    ...devBackendDependencies,
+    ...overrides,
+    progress: overrides.progress ?? createProgress(),
+  };
 
   // The backend may already be complete across two places: the environment, and the
   // owned vars file a caller set. The E2E lane uses both — it passes the URL and
@@ -409,13 +440,17 @@ export const prepareDevBackend = async (
     callerVars: callerFile,
     autoSignIn: devAutoSignInOffered(environment),
     environment,
+    progress: dependencies.progress,
     dependencies: {
       allocate: dependencies.allocate,
       start: dependencies.start,
       seed: dependencies.seed,
+      probe: dependencies.probe,
       hasOwnership: dependencies.hasOwnership,
       readOwnership: dependencies.readOwnership,
       stop: dependencies.stop,
+      listVolumes: dependencies.listVolumes,
+      discard: dependencies.discard,
     },
   });
 
@@ -508,6 +543,24 @@ export interface DevStackDependencies {
    */
   runId: string;
   readVars: (path: string) => Record<string, string | undefined>;
+  /**
+   * Whether the database starts from nothing.
+   *
+   * Part of the stack rather than an argument to the Supabase factory alone,
+   * because the flag is the developer's and the stack is where a developer's
+   * decision is turned into a service's behaviour. Defaults to false in the real
+   * dependencies and is passed through the service context, so a harness that
+   * builds its own `createService` can read it and a test can assert it.
+   */
+  fresh: boolean;
+  /**
+   * Reports each service and each slow step within it.
+   *
+   * Part of the dependencies rather than a module-level singleton so a test can
+   * assert what was announced, and so two runs in one process do not share a
+   * reporter — the same reason the run id is here.
+   */
+  progress: Progress;
   createService: (
     id: LocalServiceId,
     context: {
@@ -515,12 +568,23 @@ export interface DevStackDependencies {
       callerVars: Record<string, string | undefined>;
       environment: NodeJS.ProcessEnv;
       runId: string;
+      /** Carried from `DevStackDependencies.fresh`, for the services that offer it. */
+      fresh: boolean;
+      /**
+       * This service's own reporter.
+       *
+       * A `Stepper`, not the whole `Progress`: services start concurrently, and a
+       * shared reporter would nest one service's steps under whichever service
+       * happened to be drawn last.
+       */
+      stepper: Stepper;
     },
   ) => Promise<LocalService>;
 }
 
-const devStackDependencies: DevStackDependencies = {
+const devStackDependencies: Omit<DevStackDependencies, 'progress'> = {
   runId: DEV_STACK_RUN_ID,
+  fresh: false,
   readVars: (path: string): Record<string, string | undefined> =>
     parseEnv(readFileSync(path, 'utf8')),
   createService: async (id, context) => {
@@ -530,6 +594,7 @@ const devStackDependencies: DevStackDependencies = {
       origin: context.origin,
       callerVars: context.callerVars,
       environment: context.environment,
+      progress: context.stepper,
     };
     switch (id) {
       case 'supabase':
@@ -538,6 +603,8 @@ const devStackDependencies: DevStackDependencies = {
           callerVars: context.callerVars,
           autoSignIn: devAutoSignInOffered(context.environment),
           environment: context.environment,
+          progress: context.stepper,
+          fresh: context.fresh,
         });
       case 'stripe':
         return prepareStripeService(localContext);
@@ -584,7 +651,11 @@ export const prepareDevStack = async (
   // environment calls that configuration incomplete and refuses, which is how
   // `bun run e2e` failed with "SUPABASE_URL is set but the backend is incomplete"
   // while every other check was green.
-  const { runId, readVars, createService } = { ...devStackDependencies, ...dependencies };
+  const { runId, readVars, createService, progress, fresh } = {
+    ...devStackDependencies,
+    ...dependencies,
+    progress: dependencies.progress ?? createProgress(),
+  };
   const callerVarsPath = environment.STARTER_DEV_VARS_PATH;
   const callerFile: Record<string, string | undefined> =
     callerVarsPath === undefined ? {} : readVars(callerVarsPath);
@@ -598,16 +669,20 @@ export const prepareDevStack = async (
     ),
   );
 
-  const context: LocalServiceContext = {
-    runId,
-    scope: runScope(runId, REPO_ROOT),
-    origin,
-    callerVars: { ...callerFile, ...present },
-    environment,
-  };
+  const callerVars: Record<string, string | undefined> = { ...callerFile, ...present };
 
-  const started = await startStack(services, (id) =>
-    createService(id, { origin, callerVars: context.callerVars, environment, runId }),
+  const started = await startStack(
+    services,
+    (id, stepper) =>
+      createService(id, {
+        origin,
+        callerVars,
+        environment,
+        runId,
+        fresh,
+        stepper,
+      }),
+    progress,
   );
 
   // One file, written once, carrying every service's bindings **and the caller's**.
@@ -643,7 +718,7 @@ export const prepareDevStack = async (
       );
     }
 
-    const written = await writeOwnedVars(context.scope.dir, 'stack.dev.vars', {
+    const written = await writeOwnedVars(runScope(runId, REPO_ROOT).dir, 'stack.dev.vars', {
       ...callerFile,
       // `DEPLOYMENT_ENV` and `APP_ORIGIN` describe the application, not any service,
       // so they are added here rather than by whichever service happens to be first.
@@ -689,9 +764,23 @@ export const disposeDevStack = async (run: DevStackRun): Promise<string[]> => {
   return failures;
 };
 
+/** What `bun run dev` was asked for beyond "run the app". */
+export interface DevRunOptions {
+  /**
+   * Start the database from nothing: stop whatever this checkout has, remove its
+   * volumes, replay the migrations and write the mock seed again.
+   *
+   * Named rather than inferred, because the alternative — a command that silently
+   * deletes a developer's local data — is the one thing this flag exists to make
+   * someone choose deliberately.
+   */
+  readonly fresh?: boolean;
+}
+
 export const main = async (
   mode: DevMode = 'app',
   stack?: readonly LocalServiceId[],
+  options: DevRunOptions = {},
 ): Promise<number> => {
   const target = buildTarget(mode);
 
@@ -729,10 +818,37 @@ export const main = async (
   const origin = process.env.APP_ORIGIN ?? `http://${HOST}:${PORT}`;
   process.env.APP_ORIGIN = origin;
 
+  // One reporter for this run, passed into the stack rather than created inside it.
+  //
+  // Not for tidiness: `main` is the only caller that can `stop()` it, and stopping
+  // is what guarantees no step is left live when this function returns — on the
+  // failure paths as much as on the successful one. A reporter that outlives the
+  // run would keep redrawing a line under whatever the next command printed.
+  const progress = createProgress();
+  const services = stack ?? ['supabase'];
+
+  // The plan, before the first service is touched. With `--stack full` the first
+  // service can hold the terminal for a minute, and "what is this doing" has to be
+  // answerable in the first second rather than after the first container is up.
+  //
+  // `--fresh` is on this line rather than only in the Supabase banner: it is the one
+  // flag that destroys something, and the line above the half-minute wait is where
+  // somebody can still read it and stop.
+  process.stdout.write(
+    `Local stack: ${services.join(', ')}${options.fresh === true ? ' (fresh database)' : ''}\n`,
+  );
+
   let stackRun: DevStackRun;
   try {
-    stackRun = await prepareDevStack(stack ?? ['supabase'], origin);
+    stackRun = await prepareDevStack(services, origin, process.env, {
+      progress,
+      fresh: options.fresh === true,
+    });
   } catch (error) {
+    // No step is left live: each one reports its own failure as it unwinds, and
+    // this covers a service that threw between announcing itself and finishing.
+    progress.stop();
+
     // A missing prerequisite is reported as itself, with its own remedy, because
     // "your machine cannot run this" and "this code is broken" call for different
     // responses and collapsing them makes a refusal read as a bug.
@@ -742,13 +858,23 @@ export const main = async (
         EXIT.unavailable,
       );
     }
+    // Whatever went wrong, the service that failed has already said what *it* needed.
+    // This line points at the check that would have said it, rather than asserting a
+    // cause: the previous text claimed Docker was missing on every failure, which
+    // sent a developer looking for a container engine when the real problem was a
+    // Stripe key in the wrong mode.
     return fail(
       `The dev stack could not be prepared: ${error instanceof Error ? error.message : String(error)}\n` +
-        '  Local services need Docker or Podman. Run `bun run setup:doctor -- --profile database`,\n' +
-        '  or set SUPABASE_URL, SUPABASE_ANON_KEY and SUPABASE_SERVICE_ROLE_KEY to use a project instead.',
+        '  Each service above names what it needed. To see what this host can provide:\n' +
+        '    bun run setup:doctor -- --profile database',
       EXIT.unavailable,
     );
   }
+
+  // Every step in the stack has reported itself by here; this releases the stream
+  // write guard if any service announced a step and never finished it, before the
+  // dev server takes the terminal over for the rest of the session.
+  progress.stop();
 
   // The child reads the owned file: wrangler through `--env-file`, the Vite
   // platform proxy through this variable.

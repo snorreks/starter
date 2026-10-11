@@ -23,8 +23,11 @@ import { join } from 'node:path';
 import { parseEnv } from 'node:util';
 import { type DevStackDependencies, disposeDevStack, prepareDevStack } from '../src/dev-app.ts';
 import type { LocalService, LocalServiceId } from '../src/local/service.ts';
+import { developerStripeConfig, prepareStripeService } from '../src/local/stripe_service.ts';
 import { prepareSupabaseService } from '../src/local/supabase_service.ts';
 import { REPO_ROOT } from '../src/shared/paths.ts';
+import type { Stepper } from '../src/shared/progress.ts';
+import { recordingProgress } from './fixtures/progress.ts';
 
 /**
  * The shape `apps/e2e/scripts/run_e2e.ts` produces, read from that file rather
@@ -83,19 +86,28 @@ const varsFile = async (contents: Record<string, string>): Promise<string> => {
  * that was wrong — and not about what a container does when it boots.
  */
 const recorder = () => {
-  const asked: { id: LocalServiceId; callerVars: Record<string, string | undefined> }[] = [];
+  const asked: {
+    id: LocalServiceId;
+    callerVars: Record<string, string | undefined>;
+    stepper: Stepper;
+  }[] = [];
+  const reported = recordingProgress();
   const dependencies: Partial<DevStackDependencies> = {
     // A fresh run id per call. The stack writes its vars file with `wx` into a
     // directory keyed by this, so a shared id fails the second call with `EEXIST` —
     // a real behaviour, and the reason the launcher suffixes its run id with entropy.
     runId: `stack_test_${crypto.randomUUID().slice(0, 8)}`,
+    // Not the real reporter: it draws to stdout, and these tests are about the
+    // merge. What was announced is asserted in progress.test.ts and dev_stack.test.ts.
+    progress: reported.progress,
     createService: async (id, context): Promise<LocalService> => {
-      asked.push({ id, callerVars: context.callerVars });
+      asked.push({ id, callerVars: context.callerVars, stepper: context.stepper });
       return { id, label: id, owned: false, vars: {}, summary: [], dispose: async () => [] };
     },
   };
   return {
     asked,
+    reported,
     dependencies,
     /** The run id handed out, so teardown can remove the state it wrote. */
     runId: dependencies.runId as string,
@@ -309,6 +321,7 @@ describe('a genuinely incomplete backend is still refused', () => {
         callerVars: { SUPABASE_URL: 'https://abc.supabase.co' },
         autoSignIn: false,
         environment: { SUPABASE_URL: 'https://abc.supabase.co' },
+        progress: recordingProgress().progress,
       }),
     ).rejects.toThrow('SUPABASE_ANON_KEY, SUPABASE_SERVICE_ROLE_KEY');
   });
@@ -347,3 +360,39 @@ for (const failure of ['merge', 'write'] as const) {
     expect(disposed).toEqual(['stripe', 'supabase']);
   });
 }
+
+test('dotenv Stripe credentials reach the owned Worker vars file', async () => {
+  const run = await prepareDevStack(
+    ['stripe'],
+    'http://127.0.0.1:5173',
+    {},
+    {
+      runId: `stripe_vars_${crypto.randomUUID()}`,
+      progress: recordingProgress().progress,
+      createService: (_id, context) =>
+        prepareStripeService(
+          {
+            ...context,
+            progress: context.stepper,
+            scope: { runId: context.runId, dir: '', stateDir: '', logDir: '', artifactDir: '' },
+          },
+          {
+            configure: (vars) =>
+              developerStripeConfig(vars, () => ({
+                STRIPE_API_BASE: 'https://api.stripe.com',
+                STRIPE_SECRET_KEY: 'sk_test_dotenv',
+              })),
+            verify: async () => ({ ok: true }),
+            bridgeStatus: () => ({ available: false, reason: 'fixture', remedy: 'fixture' }),
+          },
+        ),
+    },
+  );
+  try {
+    const written = parseEnv(readFileSync(run.varsPath, 'utf8'));
+    expect(written.STRIPE_API_BASE).toBe('https://api.stripe.com');
+    expect(written.STRIPE_SECRET_KEY).toBe('sk_test_dotenv');
+  } finally {
+    await disposeDevStack(run);
+  }
+});

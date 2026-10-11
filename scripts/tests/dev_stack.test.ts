@@ -14,6 +14,8 @@ import {
   startStack,
 } from '../src/dev-stack.ts';
 import type { LocalService, LocalServiceId } from '../src/local/service.ts';
+import type { Stepper } from '../src/shared/progress.ts';
+import { captureStderr, recordingProgress } from './fixtures/progress.ts';
 
 describe('a named stack resolves to services', () => {
   test('full is every service, in start order', () => {
@@ -83,7 +85,7 @@ describe('a stack always brings up what the application needs', () => {
 });
 
 describe('a stack that fails part-way leaves nothing behind', () => {
-  test('services already started are disposed in reverse before the error propagates', async () => {
+  test('services that came up are disposed in reverse declared order', async () => {
     const started: LocalServiceId[] = [];
     const stopped: LocalServiceId[] = [];
     const factory = async (id: LocalServiceId): Promise<LocalService> => {
@@ -104,14 +106,202 @@ describe('a stack that fails part-way leaves nothing behind', () => {
       };
     };
 
-    await expect(startStack(['supabase', 'stripe', 'container', 'jobs'], factory)).rejects.toThrow(
-      'no Rust toolchain',
-    );
+    await expect(
+      startStack(
+        ['supabase', 'stripe', 'container', 'jobs'],
+        factory,
+        recordingProgress().progress,
+      ),
+    ).rejects.toThrow('no Rust toolchain');
 
     // Two databases and a container behind a failed `bun run dev` is how a machine
     // ends up with orphaned stacks nobody can attribute to a port.
-    expect(started).toEqual(['supabase', 'stripe']);
-    expect(stopped).toEqual(['stripe', 'supabase']);
+    expect(started).toEqual(['supabase', 'stripe', 'jobs']);
+    // Reverse of the *declared* order, not of completion: services start together,
+    // so completion order is a race and would tear down the jobs Worker before the
+    // database it reads from whenever the database happened to boot faster.
+    expect(stopped).toEqual(['jobs', 'stripe', 'supabase']);
+  });
+
+  test('a service still starting is awaited before anything is torn down', async () => {
+    // The failure this prevents: unwinding while a sibling is mid-start leaves a
+    // container that finishes booting after the teardown has looked for it, and it
+    // holds its ports for the rest of the machine's afternoon.
+    let jobsFinishedStarting = false;
+    const factory = async (id: LocalServiceId): Promise<LocalService> => {
+      if (id === 'container') {
+        throw new Error('no Rust toolchain');
+      }
+      if (id === 'jobs') {
+        await new Promise((resolve) => setTimeout(resolve, 20));
+        jobsFinishedStarting = true;
+      }
+      return {
+        id,
+        label: id,
+        owned: true,
+        vars: {},
+        summary: [],
+        dispose: async () => {
+          // Asserted inside the dispose: at this point the sibling must be finished.
+          if (!jobsFinishedStarting) {
+            throw new Error('torn down while a sibling was still starting');
+          }
+          return [];
+        },
+      };
+    };
+
+    const outcomes = await Promise.allSettled([
+      startStack(['supabase', 'container', 'jobs'], factory, recordingProgress().progress),
+    ]);
+    expect(outcomes[0]?.status).toBe('rejected');
+  });
+
+  test('two services that both refuse report the same one on every run', async () => {
+    // Declared order decides, so the refusal a developer reads does not depend on
+    // which of the two lost the race — and the other one is printed, not lost.
+    const written = await captureStderr(async () => {
+      await expect(
+        startStack(
+          ['supabase', 'stripe'],
+          async (id) => {
+            throw new Error(`no engine for ${id}`);
+          },
+          recordingProgress().progress,
+        ),
+      ).rejects.toThrow('no engine for supabase');
+    });
+
+    // Declared order decides which refusal the caller sees, so this is the same on
+    // every run. The other is printed rather than lost.
+    expect(written.join('\n')).toContain('stripe: no engine for stripe');
+  });
+});
+
+describe('services start together, not one after another', () => {
+  test('a stack takes as long as its slowest service rather than the sum', async () => {
+    // Not a timing assertion — a scheduling one. Each factory waits for the others
+    // to arrive, so this only resolves if every service is *started* before any of
+    // them finishes. Started in sequence, the first would wait for three that had
+    // not been called.
+    let arrivals = 0;
+    let openTheBarrier: (() => void) | undefined;
+    const barrier = new Promise<void>((resolve) => {
+      openTheBarrier = resolve;
+    });
+
+    const factory = async (id: LocalServiceId): Promise<LocalService> => {
+      arrivals += 1;
+      if (arrivals === 4) {
+        openTheBarrier?.();
+      }
+      await barrier;
+      return { id, label: id, owned: false, vars: {}, summary: [], dispose: async () => [] };
+    };
+
+    // The barrier only opens once all four have been *called*, so this test fails
+    // by timing out rather than by asserting, if the stack goes back to sequential.
+    const services = await startStack(
+      ['supabase', 'stripe', 'container', 'jobs'],
+      factory,
+      recordingProgress().progress,
+    );
+    expect(arrivals).toBe(4);
+    // Declared order, which is what the banner prints and teardown reverses.
+    expect(services.map((service) => service.id)).toEqual([
+      'supabase',
+      'stripe',
+      'container',
+      'jobs',
+    ]);
+  });
+
+  test("a service's steps are labelled with its own name, not a sibling's", async () => {
+    // With two services live at once, nesting under "whatever started last" would
+    // print `supabase -> stripe`, naming neither service correctly.
+    const reported = recordingProgress();
+    const factory = async (id: LocalServiceId, stepper: Stepper): Promise<LocalService> => {
+      stepper.step(`${id} work`);
+      return { id, label: id, owned: false, vars: {}, summary: [], dispose: async () => [] };
+    };
+
+    await startStack(['supabase', 'stripe'], factory, reported.progress);
+    expect(reported.announced()).toEqual(
+      expect.arrayContaining(['supabase -> supabase work', 'stripe -> stripe work']),
+    );
+  });
+});
+
+describe('a service is announced before it is started, not after', () => {
+  // The defect this prevents: `bun run dev` printed nothing until the first
+  // container was already up, so a cold start looked identical to a hang and the
+  // developer's response to both was Ctrl-C.
+  test('the step is live while the factory is still running', async () => {
+    const reported = recordingProgress();
+    let liveDuringFactory: string[] = [];
+
+    const factory = async (id: LocalServiceId): Promise<LocalService> => {
+      liveDuringFactory = reported.live();
+      return { id, label: id, owned: false, vars: {}, summary: [], dispose: async () => [] };
+    };
+
+    await startStack(['supabase'], factory, reported.progress);
+    expect(liveDuringFactory).toEqual(['supabase']);
+    expect(reported.live()).toEqual([]);
+  });
+
+  test('a step belonging to a service is announced against that service', async () => {
+    const reported = recordingProgress();
+    const factory = async (id: LocalServiceId, stepper: Stepper): Promise<LocalService> => {
+      stepper.step(`${id} step`);
+      return { id, label: id, owned: false, vars: {}, summary: [], dispose: async () => [] };
+    };
+
+    await startStack(['supabase'], factory, reported.progress);
+    expect(reported.announced()).toContain('supabase -> supabase step');
+  });
+
+  test('every service in the stack is announced, in start order', async () => {
+    const reported = recordingProgress();
+    const factory = async (id: LocalServiceId): Promise<LocalService> => ({
+      id,
+      label: id,
+      owned: false,
+      vars: {},
+      summary: [],
+      dispose: async () => [],
+    });
+
+    await startStack(['supabase', 'stripe', 'container', 'jobs'], factory, reported.progress);
+    // The words a developer typed with `--stack`, in the order they will start.
+    expect(reported.announced()).toEqual(['supabase', 'stripe', 'container', 'jobs']);
+    expect(reported.steps.every((step) => step.outcome === 'done')).toBe(true);
+  });
+
+  test('a service that fails is reported as failed, naming the reason', async () => {
+    const reported = recordingProgress();
+    const failure = new Error(
+      'The container local service needs a container engine to build the finite runner image, which this host does not have.',
+    );
+    const factory = async (id: LocalServiceId): Promise<LocalService> => {
+      if (id === 'container') {
+        throw failure;
+      }
+      return { id, label: id, owned: false, vars: {}, summary: [], dispose: async () => [] };
+    };
+
+    await expect(startStack(['supabase', 'container'], factory, reported.progress)).rejects.toThrow(
+      failure.message,
+    );
+    // Announced and named, not silently skipped — a stack that printed nothing for
+    // the container and then reported a database is exactly what a bug looks like.
+    expect(reported.steps.at(-1)).toEqual({
+      service: null,
+      chain: 'container',
+      outcome: 'failed',
+      note: failure.message,
+    });
   });
 });
 

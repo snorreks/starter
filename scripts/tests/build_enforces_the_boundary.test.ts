@@ -6,33 +6,61 @@
 // The guard checks a resolved module graph. The framework checks what the bundler is
 // willing to put in a browser chunk. Both are gates, and the work that introduced this
 // file is explicit that one is not a substitute for the other — so this proves the
-// second gate is real, on the real build command, and then restores the tree.
+// second gate is real, on the real build, and the third case proves the first gate
+// rejects the same import with no bundler involved.
+//
+// **The fault goes into a copy, never the working tree.** The first version of this
+// file injected the import into the real `apps/frontend/client/src/routes/+page.svelte`
+// and restored it afterwards, with a manifest outside the repository so that a killed
+// run could be repaired on the next start. That worked, and it was still wrong: for the
+// several seconds a build takes, the repository on disk contained a browser component
+// importing a server module. A `vite dev` server watching that file reported
+// `server_only_import` — a real error, about a deliberate fault, for a file nobody had
+// broken — and an editor holding the same file open could write its buffer back
+// mid-build and turn the negative control into a false pass. AGENTS.md already says
+// which way this goes: "Do not assert against the repository — proving a guard fails
+// would otherwise mean breaking the repository." So the fault is injected into a
+// throwaway copy of the application and the working tree is never written to at all.
+// That also removed the need for `scripts/src/shared/fault_injection.ts`, whose entire
+// purpose was repairing a tree this test no longer breaks.
 //
 // Why not a test runner. A test runner resolves imports with its own resolver, and
 // whether the framework's server-only protection applies inside `bun test` depends on
 // that runner rather than on the build. Asserting "the build catches it" with anything
 // other than `vite build` would assert nothing.
 //
-// Why not `bun run build`. That is Moon's cached task, and the cache is the point: an
-// injected source change is not in its declared inputs, so the task returned a warm hit
-// and the build never ran. That is a real finding about the task graph rather than
-// something to work around silently, and this file drives `vite build` directly so the
-// assertion is about the bundler. Moon's task-graph inputs belong to a different change.
+// Why `vite build` rather than the client's `build` script. That script is
+// `vite build && bun ../../../scripts/src/artifacts/bundle_worker.ts`, and the second
+// step inspects the emitted artifact — a different property, asserted by
+// `bun run check:bundle` and by the build lane. The gate under test here is the
+// bundler's, and `vite build` is what raises `server_only_import`.
 //
-// Cost, stated plainly: this runs the production build twice, and that is most of the
-// wall clock of this lane. It is here because a gate never observed to close is a
-// belief rather than a gate.
+// Cost, stated plainly: this copies the application and runs the production build
+// twice, and that is most of the wall clock of this lane. It is here because a gate
+// never observed to close is a belief rather than a gate.
 //
 // Two details below were found by CI rather than by reading: the build's output goes to
 // files instead of pipes, and each build case carries an explicit timeout. See
 // `BUILD_TIMEOUT_MS` and the note on `build`.
 
-import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
-import { closeSync, existsSync, openSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { afterAll, describe, expect, test } from 'bun:test';
+import {
+  closeSync,
+  cpSync,
+  mkdtempSync,
+  openSync,
+  readFileSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 import { guardArchitecture } from '../src/guards/guard_architecture.ts';
 import { CLIENT_DIR_RELATIVE, REPO_ROOT } from '../src/shared/paths.ts';
+import { BASE_PROJECT, type Member, type Project, writeProject } from './fixtures/architecture.ts';
+
+const CLIENT_DIR = join(REPO_ROOT, CLIENT_DIR_RELATIVE);
 
 /**
  * The file a browser component will reach into.
@@ -41,19 +69,52 @@ import { CLIENT_DIR_RELATIVE, REPO_ROOT } from '../src/shared/paths.ts';
  * guard's own policy excludes it from the Worker half precisely so a component keeps
  * the browser-only permission set. That makes it the right place to inject.
  */
-const LANDING_PAGE = join(CLIENT_DIR_RELATIVE, 'src/routes/+page.svelte');
+const LANDING_PAGE = 'src/routes/+page.svelte';
 
 /**
  * A server module that a browser component must not reach.
  *
- * `getContainer` composes the Postgres handle and the Supabase Auth instance. It is the most
- * sensitive module in the application, which makes it the right subject: if the build
- * tolerates a component importing *this*, it tolerates anything.
+ * `getContainer` composes the Postgres handle and the Supabase Auth instance. It is the
+ * most sensitive module in the application, which makes it the right subject: if the
+ * build tolerates a component importing *this*, it tolerates anything.
  */
 const SERVER_MODULE = '#lib/server/container.ts';
 
-const path = join(REPO_ROOT, LANDING_PAGE);
-let original: string | undefined;
+/**
+ * Directories a build does not read, and that are large or belong to another lane.
+ *
+ * `node_modules` is excluded because it is symlinked back to the real one rather than
+ * copied. A copy would be hundreds of megabytes, and — worse — it would resolve
+ * `@starter/*` to a second copy of the workspace instead of to the source under test.
+ * `.svelte-kit` is generated by the build. `src-tauri` belongs to the native lane and
+ * is not read by this one.
+ */
+const NOT_COPIED = new Set(['node_modules', '.svelte-kit', 'src-tauri']);
+
+/** Every temporary directory this run made, so `afterAll` can remove them. */
+const created: string[] = [];
+
+/**
+ * A throwaway copy of the client application, with the real `node_modules` symlinked.
+ *
+ * The copy is what makes the fault invisible to everything outside this test: a
+ * `vite dev` server, an editor, a concurrent `bun run typecheck`. The symlink is what
+ * keeps the build honest — `@starter/*` and the toolchain still resolve to the
+ * workspace under test, so this is the real application built by the real bundler with
+ * the real configuration, in a different directory.
+ */
+const copyClientApp = (): string => {
+  const root = mkdtempSync(join(tmpdir(), 'starter-boundary-build-'));
+  created.push(root);
+
+  cpSync(CLIENT_DIR, root, {
+    recursive: true,
+    filter: (source) => !NOT_COPIED.has(basename(source)),
+  });
+  symlinkSync(join(CLIENT_DIR, 'node_modules'), join(root, 'node_modules'), 'dir');
+
+  return root;
+};
 
 /**
  * Insert the import into the component's existing `<script>` block.
@@ -80,7 +141,7 @@ interface BuildResult {
 }
 
 /**
- * The real production build, uncached, with its output on disk.
+ * The real production build, in the given copy, with its output on disk.
  *
  * Written to files rather than captured through pipes. A production build of this
  * application prints several kilobytes to stdout and as much to stderr, and the first
@@ -92,7 +153,7 @@ interface BuildResult {
  *
  * Paths are unique per call, so a concurrent run cannot read another run's log.
  */
-const build = (): BuildResult => {
+const build = (root: string): BuildResult => {
   const stamp = `${process.pid}-${Date.now()}`;
   const outPath = join(tmpdir(), `starter-build-${stamp}.out`);
   const errPath = join(tmpdir(), `starter-build-${stamp}.err`);
@@ -101,8 +162,10 @@ const build = (): BuildResult => {
 
   try {
     const result = Bun.spawnSync({
-      cmd: ['bun', 'run', 'build'],
-      cwd: join(REPO_ROOT, CLIENT_DIR_RELATIVE),
+      // The copy's own Vite, through the symlinked `node_modules`, so the version under
+      // test is the one this workspace pins rather than whatever a `bunx` would fetch.
+      cmd: [join(root, 'node_modules', '.bin', 'vite'), 'build'],
+      cwd: root,
       stdout: outFile,
       stderr: errFile,
       // Bounded: a build that hangs must fail this test rather than hang the lane.
@@ -120,18 +183,39 @@ const build = (): BuildResult => {
   }
 };
 
-beforeAll(() => {
-  if (!existsSync(path)) {
-    throw new Error(
-      `LANDING_PAGE (${LANDING_PAGE}) does not exist; update LANDING_PAGE when the file moves.`,
-    );
-  }
-  original = readFileSync(path, 'utf8');
+/**
+ * The scaffold with the landing page reaching into the server container.
+ *
+ * The same fault as the build case, expressed as a fixture rather than as a write to
+ * the repository. `container.ts` gains a value export because a type-only edge is
+ * erased: it would be judged by the type-boundary rule and never reach the
+ * reachability rule this case is about.
+ */
+const projectWithLandingPageImport = (): Project => ({
+  members: BASE_PROJECT.members.map(
+    (member): Member =>
+      member.dir === 'apps/frontend/client'
+        ? {
+            ...member,
+            files: {
+              ...member.files,
+              'src/lib/server/container.ts':
+                'export type Container = { db: unknown };\n' +
+                'export const getContainer = (): Container => ({ db: null });\n',
+              [LANDING_PAGE]:
+                `<script lang="ts">\n  import { getContainer } from '${SERVER_MODULE}';\n` +
+                '  const container = getContainer();\n</script>\n\n<p>{container.db}</p>\n',
+            },
+          }
+        : member,
+  ),
 });
 
 afterAll(() => {
-  if (original !== undefined) {
-    writeFileSync(path, original, 'utf8');
+  for (const root of created) {
+    // `rmSync` does not follow the `node_modules` symlink, so this removes the link
+    // rather than the workspace it points at.
+    rmSync(root, { recursive: true, force: true });
   }
 });
 
@@ -155,58 +239,55 @@ describe('the production build is a second gate', () => {
     () => {
       // The positive half, and it comes first on purpose. A test that only ever asserts
       // failure cannot tell a build that rejects a server import from a build that
-      // rejects everything, including the repository as committed.
-      const result = build();
-      expect(result.code, `build failed on a clean tree:\n${result.output}`).toBe(0);
+      // rejects everything, including the repository as committed. It also proves the
+      // copy is a faithful one: a missing config file would fail here rather than
+      // silently weakening the case below.
+      const result = build(copyClientApp());
+      expect(result.code, `build failed on a clean copy:\n${result.output}`).toBe(0);
     },
     BUILD_TIMEOUT_MS,
   );
 
   test(
-    'rejects browser access to a server module, and restores the tree',
+    'rejects browser access to a server module',
     () => {
-      writeFileSync(path, inject(original ?? ''), 'utf8');
+      const root = copyClientApp();
+      const page = join(root, LANDING_PAGE);
+      writeFileSync(page, inject(readFileSync(page, 'utf8')), 'utf8');
 
-      try {
-        const result = build();
+      const result = build(root);
 
-        expect(
-          result.code,
-          'the production build accepted a server import in the browser half',
-        ).not.toBe(0);
-        // The framework's own error code, not merely "the build failed". Asserting on the
-        // code is what distinguishes this from an unrelated breakage.
-        expect(result.output).toContain('server_only_import');
-        expect(result.output).toContain('container.ts');
-      } finally {
-        // Restored in a `finally`, so a failed assertion cannot leave a broken tree for
-        // the next test or the next run. The whole point of injecting a fault is to undo
-        // it.
-        writeFileSync(path, original ?? '', 'utf8');
-      }
+      expect(
+        result.code,
+        'the production build accepted a server import in the browser half',
+      ).not.toBe(0);
+      // The framework's own error code, not merely "the build failed". Asserting on the
+      // code is what distinguishes this from an unrelated breakage.
+      expect(result.output).toContain('server_only_import');
+      expect(result.output).toContain('container.ts');
     },
     BUILD_TIMEOUT_MS,
   );
 
-  test('the graph guard rejects the same import, on the same file, with no build', () => {
+  test('the graph guard rejects the same import, on a fixture, with no build', () => {
     // The two gates are independent, and this is why both exist. The guard catches it
     // from the source graph with no bundler involved; the build catches it from the
     // module its bundler resolved. Neither can stand in for the other.
     //
     // Same fault, same file, both gates in one place — so a reader can see they are not
-    // the same check wearing two hats.
-    writeFileSync(path, inject(original ?? ''), 'utf8');
-    try {
-      const forLanding = guardArchitecture(REPO_ROOT).violations.filter(
-        (violation) => violation.file === LANDING_PAGE.split('\\').join('/'),
-      );
-      const rules = forLanding.map((violation) => violation.rule);
+    // the same check wearing two hats. This half runs against a fixture tree rather
+    // than the repository, for the same reason the build half runs against a copy.
+    const root = mkdtempSync(join(tmpdir(), 'starter-boundary-guard-'));
+    created.push(root);
+    writeProject(root, projectWithLandingPageImport());
 
-      expect(rules).toContain('plane-reachability');
-      expect(forLanding.some((violation) => violation.message.includes('container.ts'))).toBe(true);
-    } finally {
-      writeFileSync(path, original ?? '', 'utf8');
-    }
+    const forLanding = guardArchitecture(root).violations.filter(
+      (violation) => violation.file === `apps/frontend/client/${LANDING_PAGE}`,
+    );
+    const rules = forLanding.map((violation) => violation.rule);
+
+    expect(rules).toContain('plane-reachability');
+    expect(forLanding.some((violation) => violation.message.includes('container.ts'))).toBe(true);
     // The guard resolves the whole repository, which costs several seconds and
     // grows with the tree. `BUILD_TIMEOUT_MS` is already above; this bound is the
     // guard's own cost, and it is not a property of the assertion.
