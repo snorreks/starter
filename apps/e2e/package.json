@@ -17,7 +17,7 @@
     "browsers:install": "playwright install --with-deps chromium",
     "capture-evidence": "bun run test:visual",
     "visual": "bun run test:visual",
-    "typecheck": "tsgo --noemit",
+    "typecheck": "bun check",
     "lint": "biome lint .",
     "format": "biome format .",
     "fix": "biome check --write . --error-on-warnings"

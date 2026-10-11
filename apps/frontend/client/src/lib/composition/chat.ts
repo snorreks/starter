@@ -10,6 +10,7 @@
 // can stream into the active screen without retaining a ViewModel between calls.
 
 import { ChatListViewModel, ChatService, ChatViewModel } from '@starter/features/chat';
+import { createPollingLiveUpdates, type LiveUpdates } from '@starter/live';
 import type { Navigation } from '@starter/platform';
 import type { Conversation, Message } from '@starter/schemas/chat';
 import { webTransport } from './transport.ts';
@@ -24,6 +25,8 @@ export interface ChatComposition {
   hasOlder?: boolean;
   /** Injected so a test drives deterministic client ids. */
   newClientId?: () => string;
+  /** How this host learns the conversation changed. Defaults to this host's transport. */
+  live?: LiveUpdates;
 }
 
 /**
@@ -33,6 +36,33 @@ export interface ChatComposition {
  * single instance cannot disagree with a second one.
  */
 const chatService = new ChatService({ transport: webTransport });
+
+/**
+ * How this host learns a conversation changed.
+ *
+ * Polling, and deliberately the only transport constructed here: the WebSocket
+ * hub is not built yet, and wiring the socket path now would mean shipping a
+ * feature flag whose off-branch nobody had exercised. When it lands it becomes a
+ * second implementation of the same interface chosen by configuration, and nothing
+ * above this file changes.
+ *
+ * Two host facts are injected rather than reached for:
+ *
+ *   - `isActive` reads `document.visibilityState`, which does not exist during SSR.
+ *     It is called only when a delay is scheduled, and scheduling happens from a
+ *     subscription, which happens in `initialize()` — after mount. A poll armed
+ *     during server rendering would be a timer on a screen nobody is looking at.
+ *   - The bounds are left at the package defaults. They are the package's
+ *     opinion, and a host that wants different ones passes them here rather than
+ *     the package growing per-host constants.
+ *
+ * One shared instance: backoff and tick notifications span all subscribers. A
+ * change reported by one screen resets polling for every screen, and a refresh
+ * from one screen triggers rereads on the others as well.
+ */
+const liveUpdates: LiveUpdates = createPollingLiveUpdates({
+  isActive: () => typeof document === 'undefined' || document.visibilityState === 'visible',
+});
 
 export const getChatService = (): ChatService => chatService;
 
@@ -44,6 +74,7 @@ export const getChatViewModel = (options: ChatComposition = {}): ChatViewModel =
     ...(options.olderCursor === undefined ? {} : { olderCursor: options.olderCursor }),
     ...(options.hasOlder === undefined ? {} : { hasOlder: options.hasOlder }),
     ...(options.newClientId === undefined ? {} : { newClientId: options.newClientId }),
+    live: options.live ?? liveUpdates,
   });
 
 export interface ChatListComposition extends ChatComposition {
@@ -66,4 +97,5 @@ export const getChatListViewModel = (options: ChatListComposition): ChatListView
     ...(options.initialConversations === undefined
       ? {}
       : { initialConversations: options.initialConversations }),
+    live: options.live ?? liveUpdates,
   });

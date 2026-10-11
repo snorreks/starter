@@ -100,7 +100,7 @@ permissions:
   contents: read
 
 env:
-  BUN_VERSION: '1.4.2'
+  BUN_VERSION: '1.4.3'
   # ── repository-scoped, nonsecret ────────────────────────────────────────────
   #
   # This is the whole nonsecret configuration a plan needs, and it is

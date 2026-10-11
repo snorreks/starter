@@ -1,0 +1,30 @@
+{
+  "name": "@starter/live-worker",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "license": "MIT",
+  "main": "./src/index.ts",
+  "scripts": {
+    "build": "bun run scripts/build.ts",
+    "lint": "biome lint src scripts",
+    "format": "biome format src scripts",
+    "fix": "biome check --write src scripts --error-on-warnings",
+    "typecheck": "bun check",
+    "test": "bun test src",
+    "check:config": "bun run scripts/check_config.ts"
+  },
+  "dependencies": {
+    "@starter/auth": "workspace:*",
+    "@starter/logger": "workspace:*",
+    "@starter/schemas": "workspace:*",
+    "@starter/utils": "workspace:*"
+  },
+  "devDependencies": {
+    "@starter/scripts": "workspace:*",
+    "@cloudflare/workers-types": "5.20261010.1",
+    "@types/bun": "1.4.2",
+    "typescript": "6.0.3",
+    "wrangler": "4.149.0"
+  }
+}

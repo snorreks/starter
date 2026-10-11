@@ -23,6 +23,7 @@
 
 import { parseDto, type StreamingTransport } from '@starter/platform';
 import {
+  CHAT_TURN_ALREADY_RUNNING,
   type Conversation,
   type ConversationCreate,
   ConversationListSchema,
@@ -61,6 +62,22 @@ export interface ChatServiceOptions {
   readonly onUpdate?: (update: ChatStreamUpdate) => void;
   readonly retainEvents?: boolean;
 }
+
+/**
+ * Is this refusal the "that turn is already running" one?
+ *
+ * Checked against the transport's own `cause` — the parsed 409 body the
+ * `AppError` carries — rather than against a status code, because the endpoint
+ * returns 409 for two refusals that mean opposite things and a client that cannot
+ * tell them apart will either re-send a stored message or report a failure for a
+ * turn that is about to succeed.
+ */
+const isAlreadyRunning = (error: unknown): boolean =>
+  error instanceof AppError &&
+  error.status === 409 &&
+  typeof error.cause === 'object' &&
+  error.cause !== null &&
+  (error.cause as { readonly code?: unknown }).code === CHAT_TURN_ALREADY_RUNNING;
 
 export class ChatService {
   readonly className: string;
@@ -126,11 +143,32 @@ export class ChatService {
     onUpdate?: (update: ChatStreamUpdate) => void,
   ): Promise<StreamTurnResult> {
     const path = `/api/chat/conversations/${encodeURIComponent(conversationId)}/messages`;
-    const response = await this.#transport.openStream(path, {
-      method: 'POST',
-      body: input,
-      ...(signal === undefined ? {} : { signal }),
-    });
+
+    let response: Response;
+    try {
+      response = await this.#transport.openStream(path, {
+        method: 'POST',
+        body: input,
+        ...(signal === undefined ? {} : { signal }),
+      });
+    } catch (error) {
+      // Resolved rather than thrown, because this is not a failure of the send:
+      // the user's row is stored and a generation is running on another
+      // connection. The caller keeps the message and waits for the reply to
+      // arrive through its own snapshot rather than queueing a duplicate that the
+      // server would refuse anyway.
+      if (isAlreadyRunning(error)) {
+        return {
+          events: [],
+          failure: {
+            code: CHAT_TURN_ALREADY_RUNNING,
+            message: 'That message is already being answered in another window.',
+          },
+        };
+      }
+      throw error;
+    }
+
     if (response.body === null) {
       throw new AppError('server', 'The server sent a reply with no body.');
     }

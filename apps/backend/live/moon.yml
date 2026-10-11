@@ -1,0 +1,124 @@
+$schema: 'https://moonrepo.dev/schemas/project.json'
+
+# apps/backend/live/moon.yml
+#
+# The live Worker: WebSocket connections and nothing else.
+#
+# It holds sockets, fans out invalidations, and stores no message. It exists
+# because SvelteKit cannot serve a WebSocket upgrade — see the note at the top of
+# src/index.ts — so this is a second Worker rather than a route.
+#
+# Task names are the jobs Worker's for the same reason: the root scripts select by
+# task name (`bun run test` is `:test`), so a task called something else would be
+# unreachable from the lane a developer runs. So:
+#
+#   test           unit lane (src/**/*.test.ts) — no network, no credentials
+#   build          the Worker bundle `wrangler deploy` would ship
+#   check-config   the binding and migration invariants, read from the committed config
+#
+# There is no `test-compute` here and there is no reason for one: this Worker runs
+# no container and opens no database. Its integration lane lives in the client,
+# where the built Worker is driven for real — see apps/frontend/client/tests/.
+
+layer: 'application'
+
+fileGroups:
+  sources:
+    - 'src/**/*'
+  configs:
+    - 'package.json'
+    - 'tsconfig*.json'
+    - 'moon.yml'
+    - 'wrangler.jsonc'
+  workspaceSources:
+    - '/packages/backend/auth/src/**/*'
+    - '/packages/shared/schemas/src/**/*'
+    - '/packages/shared/utils/src/**/*'
+    - '/packages/shared/logger/src/**/*'
+  tests:
+    - 'tests/**/*'
+    - 'scripts/**/*'
+
+toolchains:
+  bun:
+  javascript:
+
+dependsOn:
+  - auth
+  - schemas
+  - utils
+  - logger
+
+tasks:
+  build:
+    command: 'bun'
+    args: ['run', 'build']
+    inputs:
+      - '@group(sources)'
+      - '@group(configs)'
+      - '@group(workspaceSources)'
+    outputs:
+      - 'dist'
+
+  check-config:
+    command: 'bun'
+    args: ['run', 'check:config']
+    inputs:
+      - '@group(configs)'
+      - '@group(workspaceSources)'
+      - '@group(sources)'
+      - '@group(tests)'
+
+  typecheck:
+    command: 'bun'
+    args: ['run', 'typecheck']
+    inputs:
+      - '@group(sources)'
+      - '@group(tests)'
+      - '@group(configs)'
+      - '@group(workspaceSources)'
+
+  lint:
+    command: 'bun'
+    args: ['run', 'lint']
+    inputs:
+      - '@group(sources)'
+      - '@group(tests)'
+      - '@group(configs)'
+      - '@group(workspaceSources)'
+
+  format:
+    command: 'bun'
+    args: ['run', 'format']
+    inputs:
+      - '@group(sources)'
+      - '@group(tests)'
+      - '@group(configs)'
+      - '@group(workspaceSources)'
+
+  fix:
+    command: 'bun'
+    args: ['run', 'fix']
+    inputs:
+      - '@group(sources)'
+      - '@group(tests)'
+      - '@group(configs)'
+      - '@group(workspaceSources)'
+
+  # Unit lane. No Docker, no local runtime, no credentials: these tests assert
+  # the parts that are this repository's own — key derivation, refusal
+  # classification, protocol validation, schedule configuration.
+  test:
+    command: 'bun'
+    args: ['run', 'test']
+    inputs:
+      - '@group(sources)'
+      - '@group(configs)'
+      - '@group(workspaceSources)'
+
+  validate:
+    deps:
+      - '~:lint'
+      - '~:format'
+      - '~:typecheck'
+      - '~:check-config'

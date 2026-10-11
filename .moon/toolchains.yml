@@ -1,14 +1,26 @@
 # Toolchain resolution for Moon.
 #
-# `.bun-version` at the repository root is the single source of truth for the Bun
-# version. It is what `oven-sh/setup-bun` reads in CI and what a developer reads to
-# know what they need. `.github/workflows/ci.yml` pins the same value.
+# `config/toolchain.json` is the authority for the Bun version. `.bun-version`
+# at the repository root mirrors it for toolchain consumers, and the CI workflows
+# pin the same value. The version-mirrors guard checks that they agree.
 #
-# The `version` key is deliberately absent from the `bun` toolchain here.
+# The `version` key is deliberately absent from the `bun` toolchain here, and the
+# absence is not what keeps Proto away.
 #
-# Moon runs the Bun executable on PATH and does not require Proto when no version
-# is requested. `.bun-version` remains authoritative through Nix, CI, setup doctor
-# and the version-mirrors guard.
+# Moon resolves toolchains through protox. Declaring this toolchain is what makes
+# Moon ask a proto store for Bun, and it answers with the version that store has:
+# with `.bun-version` at 1.4.3 and no 1.4.3 installed, `moon run ui:lint` failed
+# with `proto::commands::run::missing_tool` naming this repository's own version
+# file, and with `.bun-version` removed it ran `~/.local/share/proto/tools/bun/
+# 1.1.31/bun` instead of the Bun on PATH.
+#
+# So every Moon invocation runs with MOON_TOOLCHAIN_FORCE_GLOBALS=1 — Moon's
+# documented switch for "use the globally installed tool instead of the
+# proto-managed one", which Moon also sets for itself inside Docker. The authority
+# is `moonToolchainEnvironment` in scripts/src/shared/tools.ts; flake.nix exports
+# it for a `moon` typed directly in a shell. `.bun-version` remains a mirror of
+# config/toolchain.json, authoritative through Nix, CI, setup doctor and the
+# version-mirrors guard. docs/toolchain.md records the measurement.
 
 bun: {}
 
