@@ -173,6 +173,34 @@ export const MessageCreateSchema = v.strictObject({
 
 export type MessageCreate = v.InferOutput<typeof MessageCreateSchema>;
 
+/**
+ * The refusal code for a turn whose idempotency key is already in flight.
+ *
+ * It is a distinct code rather than a bare 409 because the two 409s the endpoint
+ * can return mean opposite things to the client. `conflict` is terminal: the key
+ * was reused with different content and this submission will never be accepted.
+ * This one is not — the row *is* stored and a generation *is* running, just not on
+ * this connection — so a client that treats them alike either re-sends a message
+ * the server already has or reports a failure for a turn that is about to succeed.
+ */
+export const CHAT_TURN_ALREADY_RUNNING = 'running';
+
+/**
+ * The body of that refusal.
+ *
+ * `recoverable: true` is the server stating that waiting will produce the reply,
+ * which is what lets a client stay quiet rather than surface an error. It is
+ * declared here because the client branches on it and a shape that exists only in
+ * a route file is a shape nothing checks.
+ */
+export const ChatTurnRunningSchema = v.strictObject({
+  code: v.literal(CHAT_TURN_ALREADY_RUNNING),
+  generationId: v.string(),
+  recoverable: v.literal(true),
+});
+
+export type ChatTurnRunning = v.InferOutput<typeof ChatTurnRunningSchema>;
+
 // -----------------------------------------------------------------------------
 // The streaming protocol
 // -----------------------------------------------------------------------------

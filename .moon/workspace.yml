@@ -51,6 +51,11 @@ projects:
   # `MAY_REACH` forbids `node -> worker`, so a catalogue either side would be a
   # second copy. See packages/shared/billing/README.md.
   billing: 'packages/shared/billing'
+  # Liveness: the injectable interface a screen takes to learn its data moved, and
+  # the polling implementation that is always available. Portable and dependency-free
+  # so the web app, the native shell and any future application can adopt it — or
+  # adopt only the polling half. See packages/shared/live/README.md.
+  live: 'packages/shared/live'
 
   # Frontend packages: browser code. Shared only.
   #
@@ -100,6 +105,17 @@ projects:
   # from these keys, and `jobs` is already the id of the shared job *domain* package
   # above — two keys with one name is one of them silently unreachable by selector.
   jobs-worker: 'apps/backend/jobs'
+
+  # `live-worker` the WebSocket endpoint and its Durable Object. A separate Worker
+  #              because SvelteKit cannot serve an upgrade: adapter-cloudflare's
+  #              generated entry exports only `fetch` and keeps the SvelteKit server
+  #              private, so a socket cannot be a route in the web app. It holds
+  #              connections and fans out invalidations; it reads no message and
+  #              holds no Supabase credential.
+  #
+  # Two ids, `live` and `live-worker`, would collide for the reason the jobs pair
+  # below does: `live` is already the id of the shared `@starter/live` package.
+  live-worker: 'apps/backend/live'
   media: 'apps/backend/media'
 
 vcs:

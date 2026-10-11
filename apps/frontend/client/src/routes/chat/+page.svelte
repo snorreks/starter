@@ -35,6 +35,21 @@ const viewModel = getChatListViewModel({
 $effect(() => {
   viewModel.seed(data.conversations);
 });
+
+// Visibility, through the window's own document. See the note in
+// `chat/[id]/chat_screen.svelte`: a hidden tab missed every notification, and a
+// list ordered by `updated_at` is exactly the screen where being a minute behind
+// is visible — a conversation you just replied in stays where it was.
+$effect(() => {
+  const onVisibility = (): void => viewModel.refreshNow();
+
+  document.addEventListener('visibilitychange', onVisibility);
+  window.addEventListener('focus', onVisibility);
+  return () => {
+    document.removeEventListener('visibilitychange', onVisibility);
+    window.removeEventListener('focus', onVisibility);
+  };
+});
 </script>
 
 <svelte:head>

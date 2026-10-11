@@ -1,0 +1,29 @@
+{
+  "$schema": "../../../node_modules/wrangler/config-schema.json",
+  "name": "starter-live",
+  "compatibility_date": "2026-10-01",
+  "compatibility_flags": ["nodejs_compat"],
+  "main": "dist/index.js",
+  "observability": { "enabled": true },
+  "vars": { "DEPLOYMENT_ENV": "local" },
+
+  // One object per user, addressed by the verified identity rather than by a
+  // random id, so a user's sockets are always found by the name that identifies
+  // them. `new_sqlite_classes` rather than `new_classes`: SQLite-backed objects
+  // are the supported default, and the storage this uses is the runtime's own
+  // socket hibernation rather than anything written to that database.
+  "durable_objects": {
+    "bindings": [{ "binding": "LIVE_HUB", "class_name": "LiveHub" }]
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["LiveHub"] }],
+
+  // `LIVE_TICKET_SECRET` is deliberately absent. It is a secret, installed per
+  // environment by `deploy:provision`, and a committed value here would be a
+  // signing key in the repository — one that would verify against a deployed
+  // Worker. The Worker refuses every handshake when it is missing or too short,
+  // rather than falling back to something that looks like authentication.
+  "env": {
+    "staging": { "vars": { "DEPLOYMENT_ENV": "staging" } },
+    "production": { "vars": { "DEPLOYMENT_ENV": "production" } }
+  }
+}
