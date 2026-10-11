@@ -21,7 +21,7 @@
 //      one that is being written to is still re-read at the floor.
 //   3. **A removed subscriber is never called.** Unsubscribing inside a callback
 //      is the normal way a screen tears itself down, so the in-flight iteration is
-//      settled before the removal takes effect for the *next* one.
+//      checked for removals before each remaining callback is invoked.
 //   4. **Nothing fires after `close`.** A timer that outlives its owner is how a
 //      disposed screen writes into state nobody is rendering.
 
@@ -107,14 +107,15 @@ export const createPollingLiveUpdates = (options: PollingLiveUpdatesOptions = {}
         return;
       }
       delay = Math.min(maxMs, delay * backoff);
-      // Snapshot first: a listener that unsubscribes itself — which every screen
-      // does when it tears down — must not shorten this iteration, and must never
-      // be called again by a later one.
+      // Snapshot first so new subscriptions wait for the next tick; check
+      // membership before notifying in case an earlier callback removed one.
       for (const entry of [...entries]) {
         if (closed) {
           return;
         }
-        entry.notify();
+        if (entries.has(entry)) {
+          entry.notify();
+        }
       }
       schedule();
     }, delay);
@@ -173,7 +174,12 @@ export const createPollingLiveUpdates = (options: PollingLiveUpdatesOptions = {}
       }
       delay = baseMs;
       for (const entry of [...entries]) {
-        entry.notify();
+        if (closed) {
+          return;
+        }
+        if (entries.has(entry)) {
+          entry.notify();
+        }
       }
       schedule();
     },

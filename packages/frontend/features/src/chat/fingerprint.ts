@@ -17,10 +17,9 @@
  * compared in the order the screen holds them rather than sorted: a reordered list
  * *is* a change the user can see.
  *
- * The separator is a newline, which `MessageCreateSchema` rejects in a message
- * body. Two different rows cannot therefore produce the same string by shifting a
- * boundary, which is the only way this encoding could lie.
+ * JSON tuples escape embedded newlines and preserve field boundaries, so moving
+ * text between an id and its content cannot produce the same encoding.
  */
 export const fingerprint = (
   rows: readonly { readonly id: string; readonly content: string }[],
-): string => rows.map((row) => `${row.id}\n${row.content}`).join('\n\n');
+): string => rows.map((row) => JSON.stringify([row.id, row.content])).join('\n\n');

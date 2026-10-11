@@ -23,13 +23,11 @@
 // Nothing here reaches Postgres. A compromised live Worker leaks the fact that
 // somebody is online; it does not leak what they said.
 
-import {
-  LIVE_PROTOCOL,
-  liveAcceptProtocol,
-  type VerifyLiveTicketResult,
-  verifyLiveTicket,
-} from '@starter/auth/live';
+import { LIVE_PROTOCOL, type VerifyLiveTicketResult, verifyLiveTicket } from '@starter/auth/live';
 import { LiveHub } from './hub.ts';
+import { liveUpgradeHeaders } from './protocol.ts';
+
+export { liveUpgradeHeaders } from './protocol.ts';
 
 export { LiveHub };
 
@@ -114,16 +112,19 @@ export default {
     }
 
     const id = env.LIVE_HUB.idFromName(verdict.userId);
-    return env.LIVE_HUB.get(id).fetch('https://live.internal/attach', {
-      headers: { 'x-live-user': verdict.userId },
+    const response = await env.LIVE_HUB.get(id).fetch('https://live.internal/attach', {
+      headers: { upgrade: 'websocket', 'x-live-user': verdict.userId, ...liveUpgradeHeaders() },
     });
+    if (response.status !== 101) {
+      return response;
+    }
+    const headers = new Headers(response.headers);
+    for (const [name, value] of Object.entries(liveUpgradeHeaders())) {
+      headers.set(name, value);
+    }
+    return new Response(null, { status: 101, webSocket: response.webSocket, headers });
   },
 } satisfies ExportedHandler<LiveEnv>;
 
 /** Named so the application Worker's `wrangler.jsonc` binding can find it. */
 export const LIVE_WORKER_PROTOCOL = LIVE_PROTOCOL;
-
-/** The header the upgraded socket must carry back. */
-export const liveUpgradeHeaders = (): Record<string, string> => ({
-  'sec-websocket-protocol': liveAcceptProtocol(),
-});

@@ -56,9 +56,9 @@ const chatService = new ChatService({ transport: webTransport });
  *     opinion, and a host that wants different ones passes them here rather than
  *     the package growing per-host constants.
  *
- * One instance for the application, like the service above: it holds no per-screen
- * state, only subscriptions, and two screens on the same origin must not be able to
- * disagree about whether the app is live.
+ * One shared instance: backoff and tick notifications span all subscribers. A
+ * change reported by one screen resets polling for every screen, and a refresh
+ * from one screen triggers rereads on the others as well.
  */
 const liveUpdates: LiveUpdates = createPollingLiveUpdates({
   isActive: () => typeof document === 'undefined' || document.visibilityState === 'visible',

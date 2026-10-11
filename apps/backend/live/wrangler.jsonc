@@ -4,6 +4,7 @@
   "compatibility_date": "2026-10-01",
   "compatibility_flags": ["nodejs_compat"],
   "main": "dist/index.js",
+  "services": [{ "binding": "AUTHORIZE", "service": "starter-web" }],
   "observability": { "enabled": true },
   "vars": { "DEPLOYMENT_ENV": "local" },
 
@@ -23,7 +24,13 @@
   // Worker. The Worker refuses every handshake when it is missing or too short,
   // rather than falling back to something that looks like authentication.
   "env": {
-    "staging": { "vars": { "DEPLOYMENT_ENV": "staging" } },
-    "production": { "vars": { "DEPLOYMENT_ENV": "production" } }
+    "staging": {
+      "vars": { "DEPLOYMENT_ENV": "staging" },
+      "services": [{ "binding": "AUTHORIZE", "service": "starter-web-staging" }]
+    },
+    "production": {
+      "vars": { "DEPLOYMENT_ENV": "production" },
+      "services": [{ "binding": "AUTHORIZE", "service": "starter-web-production" }]
+    }
   }
 }

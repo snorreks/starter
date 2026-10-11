@@ -192,7 +192,13 @@ export const verifyLiveTicket = async (options: {
   if (decoded === null) {
     return { ok: false, reason: 'malformed' };
   }
-  const parsed = v.safeParse(TicketPayloadSchema, JSON.parse(new TextDecoder().decode(decoded)));
+  let payloadData: unknown;
+  try {
+    payloadData = JSON.parse(new TextDecoder().decode(decoded));
+  } catch {
+    return { ok: false, reason: 'malformed' };
+  }
+  const parsed = v.safeParse(TicketPayloadSchema, payloadData);
   if (!parsed.success) {
     return { ok: false, reason: 'malformed' };
   }

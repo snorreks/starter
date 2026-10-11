@@ -36,13 +36,16 @@ A fresh checkout needs nothing to build or test it. `bun install` is enough.
   value would be a signing key in the repository that verifies against a deployed
   Worker, so `bun run check:config` fails the build if one long enough to sign
   with appears there.
+- `AUTHORIZE` binds the application Worker that checks topic access. Service
+  bindings are declared for local, staging, and production because Wrangler does
+  not inherit them between environments.
 - `LIVE_HUB` and the `v1` migration are committed in `wrangler.jsonc`.
 - The Durable Object is SQLite-backed (`new_sqlite_classes`); the storage used is
   the runtime's own socket hibernation, not anything written to that database.
 
 ```bash
 bun run --cwd apps/backend/live test           # unit lane: the wire protocol
-bun run --cwd apps/backend/live check-config   # binding, migration, no committed key
+bun run --cwd apps/backend/live check:config   # binding, migration, no committed key
 bun run --cwd apps/backend/live build          # the bundle wrangler deploy ships
 bun run --cwd apps/backend/live typecheck
 bun run --cwd apps/backend/live lint
@@ -55,10 +58,9 @@ bun run --cwd apps/backend/live lint
   about where a frame's payload begins. It covers round-tripping, a
   colon-bearing topic surviving whole, the empty-topic refusal, the two frames
   staying distinguishable from each other, and a reader refusing a close or a
-  proxy payload rather than guessing. It asserts a count, so it cannot pass by
-  having stopped collecting anything.
-- **`bun run check-config`** — prints one line and exits nonzero on: a missing
-  `LIVE_HUB` binding, a binding naming a class other than `LiveHub`, a missing
+  proxy payload rather than guessing.
+- **`bun run check:config`** — prints one line and exits nonzero on: a missing
+  `LIVE_HUB` or `AUTHORIZE` binding, a binding naming a class other than `LiveHub`, a missing
   migration (whose real failure is an opaque upload error), or a committed signing
   key.
 - **`bun run build`** — emits `dist/index.js` and fails on an empty output. The

@@ -14,6 +14,7 @@
 import { ChatListView } from '@starter/features/chat';
 import { untrack } from 'svelte';
 import { getChatListViewModel } from '#lib/composition/chat.ts';
+import { refreshOnReturn } from '#lib/composition/refresh_on_return.ts';
 import { goto } from '$app/navigation';
 import type { PageData } from './$types';
 
@@ -40,16 +41,7 @@ $effect(() => {
 // `chat/[id]/chat_screen.svelte`: a hidden tab missed every notification, and a
 // list ordered by `updated_at` is exactly the screen where being a minute behind
 // is visible — a conversation you just replied in stays where it was.
-$effect(() => {
-  const onVisibility = (): void => viewModel.refreshNow();
-
-  document.addEventListener('visibilitychange', onVisibility);
-  window.addEventListener('focus', onVisibility);
-  return () => {
-    document.removeEventListener('visibilitychange', onVisibility);
-    window.removeEventListener('focus', onVisibility);
-  };
-});
+$effect(() => refreshOnReturn(() => viewModel.refreshNow(), document, window));
 </script>
 
 <svelte:head>

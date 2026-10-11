@@ -23,7 +23,9 @@ interface Config {
     readonly bindings?: readonly { binding: string; class_name: string }[];
   };
   readonly migrations?: readonly { tag: string; new_sqlite_classes?: readonly string[] }[];
+  readonly services?: readonly { binding: string; service: string }[];
   readonly vars?: Record<string, string>;
+  readonly env?: Record<string, Pick<Config, 'vars' | 'services'>>;
 }
 
 const fail = (message: string): never => {
@@ -33,14 +35,17 @@ const fail = (message: string): never => {
 
 const config = JSON.parse(withoutComments(readFileSync(CONFIG_PATH, 'utf8'))) as Config;
 
-const binding = config.durable_objects?.bindings?.find((entry) => entry.binding === 'LIVE_HUB');
-if (binding === undefined) {
-  // Narrowed by the exit above; the explicit throw keeps the checker honest
-  // without a non-null assertion.
-  throw new Error('LIVE_HUB has no Durable Object binding.');
-}
+const binding =
+  config.durable_objects?.bindings?.find((entry) => entry.binding === 'LIVE_HUB') ??
+  fail('LIVE_HUB has no Durable Object binding.');
 if (binding.class_name !== 'LiveHub') {
   fail(`LIVE_HUB names class "${binding.class_name}"; the exported class is LiveHub.`);
+}
+
+for (const scope of [config, ...Object.values(config.env ?? {})]) {
+  if (!scope.services?.some((entry) => entry.binding === 'AUTHORIZE' && entry.service.length > 0)) {
+    fail('AUTHORIZE has no application Worker service binding.');
+  }
 }
 
 const migration = config.migrations?.find((entry) => entry.new_sqlite_classes?.includes('LiveHub'));
@@ -53,13 +58,13 @@ if (migration === undefined) {
 // The decisive one: a committed signing key would verify against a deployed
 // Worker. A local placeholder that cannot satisfy the length check is refused at
 // runtime, which is the failure we want to be loud about.
-const secret = config.vars?.LIVE_TICKET_SECRET;
-if (secret !== undefined && secret.length >= 32) {
+const scopes = [config, ...Object.values(config.env ?? {})];
+if (scopes.some((scope) => (scope.vars?.LIVE_TICKET_SECRET?.length ?? 0) >= 32)) {
   fail(
     'wrangler.jsonc carries a LIVE_TICKET_SECRET long enough to sign with. That is a credential in the repository; install it with `deploy:provision` instead.',
   );
 }
 
 process.stdout.write(
-  'Live Worker configuration: LIVE_HUB bound to LiveHub, migration present, no committed signing key.\n',
+  'Live Worker configuration: LIVE_HUB bound to LiveHub, AUTHORIZE bound, migration present, no committed signing key.\n',
 );

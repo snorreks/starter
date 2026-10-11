@@ -12,7 +12,7 @@
     "fix": "biome check --write src scripts --error-on-warnings",
     "typecheck": "bun check",
     "test": "bun test src",
-    "check-config": "bun run scripts/check_config.ts"
+    "check:config": "bun run scripts/check_config.ts"
   },
   "dependencies": {
     "@starter/auth": "workspace:*",

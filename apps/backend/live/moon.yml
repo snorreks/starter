@@ -31,17 +31,13 @@ fileGroups:
     - 'moon.yml'
     - 'wrangler.jsonc'
   workspaceSources:
-    - '/packages/backend/jobs/src/**/*'
     - '/packages/backend/auth/src/**/*'
-    - '/packages/backend/database/src/supabase/**/*'
     - '/packages/shared/schemas/src/**/*'
     - '/packages/shared/utils/src/**/*'
     - '/packages/shared/logger/src/**/*'
   tests:
     - 'tests/**/*'
     - 'scripts/**/*'
-    - '/apps/backend/media/runner/**/*'
-    - '/apps/backend/media/Dockerfile.job'
 
 toolchains:
   bun:
@@ -52,7 +48,6 @@ dependsOn:
   - schemas
   - utils
   - logger
-  - scripts
 
 tasks:
   build:
@@ -121,8 +116,6 @@ tasks:
       - '@group(configs)'
       - '@group(workspaceSources)'
 
-  # The compute lane builds and runs the finite Cloud Run runner image in Docker
-  # with a real FFmpeg encode and local grant fixtures.
   validate:
     deps:
       - '~:lint'

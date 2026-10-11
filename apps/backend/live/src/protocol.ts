@@ -21,6 +21,8 @@
 // string this codebase composes, and a parser that can fail is a parser that
 // eventually will.
 
+import { liveAcceptProtocol } from '@starter/auth/live';
+
 /** Ask the hub to watch a topic. */
 export const SUBSCRIBE = '2';
 /** The hub telling a subscriber that a topic may have moved. */
@@ -58,9 +60,15 @@ export const readInvalidateFrame = (raw: string): string | null => {
   if (raw[0] !== INVALIDATE) {
     return null;
   }
-  return raw.slice(1);
+  const topic = raw.slice(INVALIDATE.length);
+  return topic.length === 0 ? null : topic;
 };
 
 /** Why a topic was refused, so the client can say so rather than subscribing to nothing. */
 export const topicRefusal = (topic: string): 'empty' | null =>
   topic.length === 0 ? 'empty' : null;
+
+/** The selected protocol, after the handshake has verified the client offered it. */
+export const liveUpgradeHeaders = (): Record<string, string> => ({
+  'sec-websocket-protocol': liveAcceptProtocol(),
+});

@@ -292,3 +292,38 @@ spec('the timing suite is still complete', () => {
   expect(registered.length).toBeGreaterThanOrEqual(11);
   expect(new Set(registered).size).toBe(registered.length);
 });
+
+for (const trigger of ['tick', 'refresh'] as const) {
+  spec(`${trigger} skips a subscriber removed by an earlier callback`, () => {
+    const time = harness();
+    const live = createPollingLiveUpdates({ scheduler: time.scheduler, baseMs: 1_000 });
+    let notified = 0;
+    live.subscribe('first', () => second.close());
+    const second = live.subscribe('second', () => {
+      notified += 1;
+    });
+    if (trigger === 'tick') {
+      time.advance(1_000);
+    } else {
+      live.refresh();
+    }
+    expect(notified).toBe(0);
+    live.close();
+  });
+  spec(`${trigger} stops when an earlier callback closes the transport`, () => {
+    const time = harness();
+    const live = createPollingLiveUpdates({ scheduler: time.scheduler, baseMs: 1_000 });
+    let notified = 0;
+    live.subscribe('first', () => live.close());
+    live.subscribe('second', () => {
+      notified += 1;
+    });
+    if (trigger === 'tick') {
+      time.advance(1_000);
+    } else {
+      live.refresh();
+    }
+    expect(notified).toBe(0);
+    expect(time.armed()).toBe(0);
+  });
+}

@@ -144,6 +144,7 @@ export class ChatViewModel implements ScreenOwner, ScreenGuards {
 
   #conversation: Conversation | null;
   #seeded = false;
+  readonly #storedPending = new Set<string>();
   #deferredSnapshot: readonly Message[] | null = null;
   olderCursor = $state<string | null>(null);
   hasOlder = $state(false);
@@ -291,6 +292,7 @@ export class ChatViewModel implements ScreenOwner, ScreenGuards {
       conversationId === null ||
       this.requests.cancelled ||
       this.isBusy ||
+      this.status.kind === 'loading' ||
       this.#liveSubscription === null
     ) {
       return;
@@ -707,8 +709,10 @@ export class ChatViewModel implements ScreenOwner, ScreenGuards {
 
   #applyServerSnapshot(messages: readonly Message[]): void {
     const serverIds = new Set(messages.map(({ id }) => id));
-    const local = this.messages.filter(
-      (entry) => entry.serverId === null || !serverIds.has(entry.serverId),
+    const local = this.messages.filter((entry) =>
+      entry.serverId === null
+        ? !this.#storedPending.has(entry.clientId)
+        : !serverIds.has(entry.serverId),
     );
     this.messages = [
       ...messages.map((message) => {
@@ -719,6 +723,7 @@ export class ChatViewModel implements ScreenOwner, ScreenGuards {
       }),
       ...local,
     ];
+    this.#storedPending.clear();
     this.status = { kind: 'ready' };
   }
 
@@ -758,6 +763,7 @@ export class ChatViewModel implements ScreenOwner, ScreenGuards {
    * later snapshot merge orphans the row. The next authoritative read supplies it.
    */
   #markPendingStored(clientId: string): void {
+    this.#storedPending.add(clientId);
     this.messages = this.messages.map((message) =>
       message.clientId === clientId && message.state === 'pending'
         ? { ...message, state: 'sent' }

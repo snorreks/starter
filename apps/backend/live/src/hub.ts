@@ -29,10 +29,11 @@
 // So a subscribe is forwarded and the object holds nothing until it is answered.
 
 import { DurableObject } from 'cloudflare:workers';
-import { invalidateFrame, readSubscribeFrame } from './protocol.ts';
+import { invalidateFrame, liveUpgradeHeaders, readSubscribeFrame } from './protocol.ts';
 
 /** The tag prefix on every socket this object owns. */
 const OWNER_TAG = 'owner';
+const MAX_TOPICS_PER_SOCKET = 64;
 
 export interface HubEnv {
   /**
@@ -82,7 +83,7 @@ export class LiveHub extends DurableObject<HubEnv> {
     this.ctx.acceptWebSocket(server, [OWNER_TAG, userId]);
     server.serializeAttachment({ userId, topics: [] as string[] });
 
-    return new Response(null, { status: 101, webSocket: client });
+    return new Response(null, { status: 101, webSocket: client, headers: liveUpgradeHeaders() });
   }
 
   /**
@@ -151,6 +152,10 @@ export class LiveHub extends DurableObject<HubEnv> {
       return;
     }
 
+    if (attachment.topics.includes(topic)) {
+      return;
+    }
+
     const decision = await this.#authorize(attachment.userId, topic);
     if (decision !== 'allow') {
       // 1008 is "policy violation". The client treats a close as "reconnect and
@@ -160,8 +165,18 @@ export class LiveHub extends DurableObject<HubEnv> {
       return;
     }
 
-    attachment.topics = [...attachment.topics, topic];
-    socket.serializeAttachment(attachment);
+    // Authorization yields: re-read so concurrent subscribes cannot lose topics
+    // or bypass the limit using an attachment captured before the await.
+    const current = socket.deserializeAttachment() as typeof attachment | null;
+    if (current === null || current.topics.includes(topic)) {
+      return;
+    }
+    if (current.topics.length >= MAX_TOPICS_PER_SOCKET) {
+      socket.close(1008, 'Too many subscribed topics.');
+      return;
+    }
+    current.topics = [...current.topics, topic];
+    socket.serializeAttachment(current);
   }
 
   /** A subscriber's topics are forgotten the moment it goes. */

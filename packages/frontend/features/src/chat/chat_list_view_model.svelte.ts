@@ -195,7 +195,12 @@ export class ChatListViewModel implements ScreenOwner, ScreenGuards {
    * worse screen than the one it replaced.
    */
   async #pullLatest(): Promise<void> {
-    if (this.requests.cancelled || this.isCreating || this.#liveSubscription === null) {
+    if (
+      this.status.kind === 'loading' ||
+      this.requests.cancelled ||
+      this.isCreating ||
+      this.#liveSubscription === null
+    ) {
       return;
     }
     const before = this.#fingerprint();

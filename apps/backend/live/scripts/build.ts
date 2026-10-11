@@ -53,9 +53,9 @@ if (!result.success) {
   process.exit(1);
 }
 
-const output = result.outputs[0];
-if (output === undefined) {
-  process.stderr.write('The bundler reported success but produced no output.\n');
+const output = result.outputs.find((entry) => entry.kind === 'entry-point');
+if (output === undefined || output.size === 0) {
+  process.stderr.write('The bundler reported success but produced no non-empty entry point.\n');
   process.exit(1);
 }
 

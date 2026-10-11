@@ -146,12 +146,28 @@ describe('a ticket that should not be honoured', () => {
 describe('minting', () => {
   test('refuses a secret too short to be a key', async () => {
     // A two-byte HMAC key is forgeable by anyone who has read the signer.
-    expect(mintLiveTicket({ secret: 'short', userId: USER, now: NOW })).rejects.toThrow(
+    await expect(mintLiveTicket({ secret: 'short', userId: USER, now: NOW })).rejects.toThrow(
       /at least 32 characters/,
     );
   });
 
   test('refuses an empty user, which would attach a socket to nobody', async () => {
-    expect(mintLiveTicket({ secret: SECRET, userId: '', now: NOW })).rejects.toThrow();
+    await expect(mintLiveTicket({ secret: SECRET, userId: '', now: NOW })).rejects.toThrow();
   });
+});
+
+test('a correctly signed payload with invalid JSON is malformed', async () => {
+  const payload = Buffer.from('{not json').toString('base64url');
+  const key = await crypto.subtle.importKey(
+    'raw',
+    new TextEncoder().encode(SECRET),
+    { name: 'HMAC', hash: 'SHA-256' },
+    false,
+    ['sign'],
+  );
+  const signature = await crypto.subtle.sign('HMAC', key, new TextEncoder().encode(payload));
+  const token = `${payload}.${Buffer.from(signature).toString('base64url')}`;
+  await expect(
+    verifyLiveTicket({ secret: SECRET, offeredProtocols: [LIVE_PROTOCOL, token], now: NOW }),
+  ).resolves.toEqual({ ok: false, reason: 'malformed' });
 });

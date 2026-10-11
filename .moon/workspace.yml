@@ -114,7 +114,7 @@ projects:
   #              holds no Supabase credential.
   #
   # Two ids, `live` and `live-worker`, would collide for the reason the jobs pair
-  # below does: `live` is already the id of the shared `@starter/live` package.
+  # above does: `live` is already the id of the shared `@starter/live` package.
   live-worker: 'apps/backend/live'
   media: 'apps/backend/media'
 

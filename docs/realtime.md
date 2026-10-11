@@ -66,7 +66,7 @@ bus:
   they cannot evict.
 
 Because a notification carries nothing, the client cannot render from it. It
-re-reads. That is also why `docs/…/chat/stream.ts` says the SSE turn carries no
+re-reads. That is also why [`stream.ts`](../packages/shared/schemas/src/chat/stream.ts) says the SSE turn carries no
 `id:` field: `Last-Event-ID` is only honoured if the server keeps a buffer, and
 this application does not, so a reconnect starts the turn again rather than
 resuming it.
@@ -131,28 +131,26 @@ Pay is required when any of these is true:
 
 - sustained handshakes or Durable Object requests exceed 100,000/day, which at one
   handshake per tab session means roughly 100,000 page visits a day;
-- more than three Durable Objects per account is needed — this design uses one per
-  user, so **this is the hard limit**: the Free plan allows 3, so it works for a
-  development or demonstration deployment and **does not scale past a handful of
-  concurrent users**;
-- WebSocket connection duration limits on the plan become the binding constraint
-  rather than the request budget.
+- the plan's Durable Object class limit or SQLite storage quotas are exceeded.
+  Class limits count definitions such as `LiveHub`, not instances or users. The
+  Free plan does not impose a three-instance or three-user ceiling.
 
-**The Durable Object count is the important one.** One object per user is the
-simplest design and it does not survive the Free plan. Moving to many objects per
-user — sharding by topic — is the change that makes this viable at scale, and it is
-a change to `idFromName` in `apps/backend/live/src/index.ts` and nothing else,
-which is why the identity is passed to the object as a header rather than inferred.
+One object per user can scale across many users on the Free plan, subject to
+request and storage budgets. Sharding by topic may help distribute a hot object's
+load, but it is not required to bypass an instance-count limit. It would also
+require changes to subscription routing and fan-out, beyond changing `idFromName`.
+See [Cloudflare's Durable Objects limits](https://developers.cloudflare.com/durable-objects/platform/limits/)
+for the current class, request, and storage constraints.
 
 ## What is verified, and what is not
 
 | | |
 |---|---|
-| Polling: stops, backs off, collapses, survives teardown | **verified**, 11 cases in `packages/shared/live` |
+| Polling: stops, backs off, collapses, survives teardown | **verified**, 15 cases in `packages/shared/live` |
 | Polling: mutating `close()` or `notifyChanged()` turns the suite red | **verified** |
-| The ticket: forgery, expiry, wrong secret, wrong handshake order | **verified**, 21 cases in `packages/backend/auth` |
+| The ticket: forgery, expiry, wrong secret, wrong handshake order | **verified**, 11 cases in `packages/backend/auth/src/live/ticket.test.ts` |
 | The wire protocol: round trip, colon-bearing topics, tag confusion | **verified**, 8 cases in `apps/backend/live` |
-| Screen reaction to an invalidation, both chat screens | **verified**, 16 cases in `packages/frontend/features` |
+| Screen reaction to an invalidation, both chat screens | **verified**, 18 cases in `packages/frontend/features/src/chat/chat_liveness.test.ts` |
 | The Durable Object in real workerd: hibernation, fan-out, per-subscription authorization | **NOT RUN** — the worker's integration lane has not been written |
 | The socket end to end against a deployed Worker | **NOT RUN** — nothing publishes to the hub yet |
 

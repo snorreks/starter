@@ -288,7 +288,7 @@ describe('what the screen claims about itself', () => {
     await vm.dispose();
   });
 
-  test('a polling host says polling, so a degradation is visible rather than silent', () => {
+  test('a polling host says polling, so a degradation is visible rather than silent', async () => {
     const backend = server();
     const vm = new ChatViewModel({
       chat: backend.service,
@@ -296,6 +296,7 @@ describe('what the screen claims about itself', () => {
       live: reportingLive('polling'),
     });
     expect(vm.liveMode).toBe('polling');
+    await vm.dispose();
   });
 });
 
@@ -523,6 +524,20 @@ describe('a turn that is already running on another connection', () => {
     expect(vm.transcript).toHaveLength(1);
     expect(vm.transcript[0]?.content).toBe('hi');
     expect(vm.transcript[0]?.state).toBe('sent');
+    vm.messages = [
+      ...vm.messages,
+      {
+        clientId: 'unrelated',
+        serverId: null,
+        role: 'user',
+        content: 'local draft',
+        state: 'pending',
+        createdAt: 0,
+      },
+    ];
+    vm.reconcileServerSnapshot([message({ id: 'server_copy', content: 'hi' })]);
+    expect(vm.transcript.map((row) => row.content)).toEqual(['hi', 'local draft']);
+    expect(vm.transcript[0]?.serverId).toBe('server_copy');
     await vm.dispose();
   });
 
@@ -570,3 +585,44 @@ describe('a turn that is already running on another connection', () => {
     await vm.dispose();
   });
 });
+
+for (const screen of ['list', 'conversation'] as const) {
+  test(`${screen} background invalidation cannot cancel an explicit load`, async () => {
+    let reads = 0;
+    let signal: AbortSignal | undefined;
+    const response = Promise.withResolvers<unknown>();
+    const chat = new ChatService({
+      transport: {
+        openStream: async () => {
+          throw new Error('This load must not open a stream.');
+        },
+        request: async <T>(_path: string, options?: TransportRequestOptions): Promise<T> => {
+          reads += 1;
+          signal = options?.signal;
+          return (await response.promise) as T;
+        },
+      },
+    });
+    const live = liveFake();
+    const vm =
+      screen === 'list'
+        ? new ChatListViewModel({
+            chat,
+            live: live.transport,
+            navigation: { go: async () => undefined },
+          })
+        : new ChatViewModel({ chat, live: live.transport, conversation: conversation() });
+    const loading = vm.initialize();
+    await live.fire(screen === 'list' ? 'conversations' : 'conversation:cnv_1');
+    expect(reads).toBe(1);
+    expect(signal?.aborted).toBe(false);
+    response.resolve(
+      screen === 'list'
+        ? { conversations: [conversation()], serverTime: 0 }
+        : { messages: [message()], serverTime: 0 },
+    );
+    await loading;
+    expect(vm.status.kind).toBe('ready');
+    await vm.dispose();
+  });
+}

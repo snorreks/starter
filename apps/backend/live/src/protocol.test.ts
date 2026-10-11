@@ -84,7 +84,7 @@ describe('being told a topic moved', () => {
   test('a reader given a close or a proxy payload says so rather than guessing', () => {
     // The case that matters: a socket that closed, or a proxy that injected a
     // message, must not be read as "your topic moved".
-    for (const raw of ['', 'error', `${SUBSCRIBE}conversations`, 'ping', 'undefined']) {
+    for (const raw of ['', INVALIDATE, 'error', `${SUBSCRIBE}conversations`, 'ping', 'undefined']) {
       expect(readInvalidateFrame(raw)).toBeNull();
     }
   });

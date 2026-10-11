@@ -1,8 +1,8 @@
 # Toolchain resolution for Moon.
 #
-# `.bun-version` at the repository root is the single source of truth for the Bun
-# version. It is what `oven-sh/setup-bun` reads in CI and what a developer reads to
-# know what they need. `.github/workflows/ci.yml` pins the same value.
+# `config/toolchain.json` is the authority for the Bun version. `.bun-version`
+# at the repository root mirrors it for toolchain consumers, and the CI workflows
+# pin the same value. The version-mirrors guard checks that they agree.
 #
 # The `version` key is deliberately absent from the `bun` toolchain here, and the
 # absence is not what keeps Proto away.
