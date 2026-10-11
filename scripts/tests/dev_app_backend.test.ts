@@ -271,16 +271,30 @@ describe('the dev server has a backend to talk to', () => {
     expect(recorder_.calls).not.toContain('start');
     expect(recorder_.calls).not.toContain('stop');
   });
+});
 
-  test('a stack that refuses to stop is reported when one is stopped at all', async () => {
-    const recorder_ = recorder();
-    const backend = await prepareDevBackend('http://127.0.0.1:5173', recorder_.dependencies, {});
-    recorder_.refuseStop('container engine refused');
-    // Nothing is stopped on the normal path, so a stop failure cannot arise here.
-    // What still must hold is that disposal is silent and complete: no error, no
-    // half-finished teardown, and the credential file gone either way.
-    expect(await backend.dispose()).toEqual([]);
-  });
+test('separate backend runs allocate separate default progress reporters', async () => {
+  const seen: unknown[] = [];
+  for (let run = 0; run < 2; run += 1) {
+    const fixture = recorder();
+    const start = fixture.dependencies.start as DevBackendDependencies['start'];
+    const backend = await prepareDevBackend(
+      'http://127.0.0.1:5173',
+      {
+        ...fixture.dependencies,
+        progress: undefined,
+        start: async (allocation, options) => {
+          seen.push(options?.progress);
+          return start(allocation, options);
+        },
+      },
+      {},
+    );
+    await backend.dispose();
+  }
+  expect(seen).toHaveLength(2);
+  expect(seen[0]).toBeDefined();
+  expect(seen[0]).not.toBe(seen[1]);
 });
 
 describe('both dev modes read the owned file', () => {

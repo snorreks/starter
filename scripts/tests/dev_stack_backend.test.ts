@@ -23,6 +23,7 @@ import { join } from 'node:path';
 import { parseEnv } from 'node:util';
 import { type DevStackDependencies, disposeDevStack, prepareDevStack } from '../src/dev-app.ts';
 import type { LocalService, LocalServiceId } from '../src/local/service.ts';
+import { developerStripeConfig, prepareStripeService } from '../src/local/stripe_service.ts';
 import { prepareSupabaseService } from '../src/local/supabase_service.ts';
 import { REPO_ROOT } from '../src/shared/paths.ts';
 import type { Stepper } from '../src/shared/progress.ts';
@@ -359,3 +360,39 @@ for (const failure of ['merge', 'write'] as const) {
     expect(disposed).toEqual(['stripe', 'supabase']);
   });
 }
+
+test('dotenv Stripe credentials reach the owned Worker vars file', async () => {
+  const run = await prepareDevStack(
+    ['stripe'],
+    'http://127.0.0.1:5173',
+    {},
+    {
+      runId: `stripe_vars_${crypto.randomUUID()}`,
+      progress: recordingProgress().progress,
+      createService: (_id, context) =>
+        prepareStripeService(
+          {
+            ...context,
+            progress: context.stepper,
+            scope: { runId: context.runId, dir: '', stateDir: '', logDir: '', artifactDir: '' },
+          },
+          {
+            configure: (vars) =>
+              developerStripeConfig(vars, () => ({
+                STRIPE_API_BASE: 'https://api.stripe.com',
+                STRIPE_SECRET_KEY: 'sk_test_dotenv',
+              })),
+            verify: async () => ({ ok: true }),
+            bridgeStatus: () => ({ available: false, reason: 'fixture', remedy: 'fixture' }),
+          },
+        ),
+    },
+  );
+  try {
+    const written = parseEnv(readFileSync(run.varsPath, 'utf8'));
+    expect(written.STRIPE_API_BASE).toBe('https://api.stripe.com');
+    expect(written.STRIPE_SECRET_KEY).toBe('sk_test_dotenv');
+  } finally {
+    await disposeDevStack(run);
+  }
+});

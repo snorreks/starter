@@ -410,9 +410,19 @@ export const probeRunningSupabase = async (
  */
 export const stopDevSupabaseLocal = async (
   root: string = REPO_ROOT,
+  options: { runtime?: SupabaseRuntime } = {},
 ): Promise<{ stopped: boolean; message: string }> => {
   const allocation = devSupabaseAllocation(root);
   if (!(await hasSupabaseOwnership(allocation))) {
+    const removed = removeProjectContainers(options.runtime ?? hostRuntime(), allocation);
+    if (removed.length > 0) {
+      return {
+        stopped: true,
+        message:
+          `Stopped the local development database (${allocation.projectId}) using project labels.\n` +
+          '  Its data was kept: `bun run dev` brings it back with your rows.',
+      };
+    }
     return {
       stopped: false,
       message:
@@ -424,7 +434,7 @@ export const stopDevSupabaseLocal = async (
   // The one caller that keeps the data. Stopping the containers frees the ports and
   // the memory, which is what somebody stopping a database wants; deleting the rows
   // is not, and the only way to get a pristine database is to ask for one.
-  await stopSupabaseLocal(allocation, owned, { preserveData: true });
+  await stopSupabaseLocal(allocation, owned, { ...options, preserveData: true });
   return {
     stopped: true,
     message:
@@ -645,6 +655,39 @@ const hostRuntime = (): SupabaseRuntime => {
   return spawnRuntime(requireContainerRuntime({ dockerPath: engine?.command }));
 };
 
+/** Remove and verify only containers carrying this project's label, even without a workdir. */
+const removeProjectContainers = (
+  runtime: SupabaseRuntime,
+  allocation: Pick<SupabaseLocalAllocation, 'projectId'>,
+): string[] => {
+  const containers = runtime.run([
+    'ps',
+    '-aq',
+    '--filter',
+    `label=com.supabase.cli.project=${allocation.projectId}`,
+  ]);
+  if (containers.status !== 0) {
+    throw new Error(`Cannot verify owned Supabase containers after stop: ${containers.stderr}`);
+  }
+  const containerIds = containers.stdout.trim().split('\n').filter(Boolean);
+  if (containerIds.length > 0) {
+    const removed = runtime.run(['rm', '-f', ...containerIds]);
+    if (removed.status !== 0) {
+      throw new Error(`Could not remove owned Supabase containers: ${removed.stderr}`);
+    }
+  }
+  const remaining = runtime.run([
+    'ps',
+    '-aq',
+    '--filter',
+    `label=com.supabase.cli.project=${allocation.projectId}`,
+  ]);
+  if (remaining.status !== 0 || remaining.stdout.trim() !== '') {
+    throw new Error('Supabase teardown left an owned container behind.');
+  }
+  return containerIds;
+};
+
 /**
  * This project's volumes, by label.
  *
@@ -709,9 +752,9 @@ export const preservedSupabaseVolumes = (
  * database rather than a restored one.
  *
  * The counterpart to {@link preservedSupabaseVolumes}, and the only way to throw
- * development data away on purpose. Containers must already be stopped: a volume in
- * use is refused by the engine, which would surface as "the fresh start failed" on
- * a host that is working perfectly well.
+ * development data away on purpose. Project-labeled containers are removed and
+ * verified first, including when their ownership file and CLI workdir are gone.
+ * A volume still in use must never be treated as successfully discarded.
  *
  * Returns the volume names it destroyed, so the banner can say what is gone.
  */
@@ -720,6 +763,7 @@ export const discardSupabaseData = (
   options: { runtime?: SupabaseRuntime } = {},
 ): string[] => {
   const runtime = options.runtime ?? hostRuntime();
+  removeProjectContainers(runtime, allocation);
   return removeVolumes(runtime, projectVolumes(runtime, allocation));
 };
 
@@ -764,22 +808,7 @@ export const stopSupabaseLocal = async (
   const recorded = options.runtime === undefined ? owned.containerCommand : options.runtime.command;
   const runtime =
     options.runtime ?? spawnRuntime(requireContainerRuntime({ dockerPath: recorded }));
-  const containers = runtime.run([
-    'ps',
-    '-aq',
-    '--filter',
-    `label=com.supabase.cli.project=${allocation.projectId}`,
-  ]);
-  if (containers.status !== 0) {
-    throw new Error(`Cannot verify owned Supabase containers after stop: ${containers.stderr}`);
-  }
-  const containerIds = containers.stdout.trim().split('\n').filter(Boolean);
-  if (containerIds.length > 0) {
-    const removed = runtime.run(['rm', '-f', ...containerIds]);
-    if (removed.status !== 0) {
-      throw new Error(`Could not remove owned Supabase containers: ${removed.stderr}`);
-    }
-  }
+  removeProjectContainers(runtime, allocation);
   const volumes = projectVolumes(runtime, allocation);
   if (options.preserveData === true) {
     // Said out loud, because the difference between this and the behaviour it
@@ -793,15 +822,6 @@ export const stopSupabaseLocal = async (
     );
   } else {
     removeVolumes(runtime, volumes);
-  }
-  const remaining = runtime.run([
-    'ps',
-    '-aq',
-    '--filter',
-    `label=com.supabase.cli.project=${allocation.projectId}`,
-  ]);
-  if (remaining.status !== 0 || remaining.stdout.trim() !== '') {
-    throw new Error('Supabase teardown left an owned container behind.');
   }
   if (code !== 0) {
     process.stderr.write(

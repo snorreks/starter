@@ -192,10 +192,8 @@ const discardPreviousData = async (
     ? await dependencies.readOwnership(allocation)
     : null;
 
-  // Probed rather than assumed: the ownership file records that a stack was
-  // started, not that it is still up, and stopping one that is not running would
-  // report a teardown failure for a database that was already gone.
-  if (owned !== null && (await dependencies.probe(allocation)) !== null) {
+  // An unhealthy stack can still hold containers and mounted volumes.
+  if (owned !== null) {
     await reportStep(progress, 'stopping the running database', () =>
       dependencies.stop(allocation, owned, { preserveData: false }),
     );

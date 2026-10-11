@@ -260,8 +260,9 @@ exactly one command:
 bun run db:stop   # refuses, rather than reporting success, when there is nothing to stop
 ```
 
-A *failed* start is still torn down. Leaving a healthy database behind is the
-feature; leaving a half-started one holding ports is the bug.
+A failed Supabase start attempts to tear down its partial resources. If Supabase
+has already started and another service fails, the database may remain running:
+`startStack` does not always stop it. Use `bun run db:stop` to stop it explicitly.
 
 ### Stopping keeps the data, and discarding it is a separate word
 

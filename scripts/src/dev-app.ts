@@ -401,7 +401,7 @@ export interface DevBackendDependencies {
   progress: Progress;
 }
 
-const devBackendDependencies: DevBackendDependencies = {
+const devBackendDependencies: Omit<DevBackendDependencies, 'progress'> = {
   allocate: allocateSupabaseLocal,
   start: startSupabaseLocal,
   seed: seedSupabaseLocal,
@@ -414,7 +414,6 @@ const devBackendDependencies: DevBackendDependencies = {
   stop: stopSupabaseLocal,
   listVolumes: preservedSupabaseVolumes,
   discard: discardSupabaseData,
-  progress: createProgress(),
 };
 
 export const prepareDevBackend = async (
@@ -422,7 +421,11 @@ export const prepareDevBackend = async (
   overrides: Partial<DevBackendDependencies> = {},
   environment: NodeJS.ProcessEnv = process.env,
 ): Promise<DevBackend> => {
-  const dependencies = { ...devBackendDependencies, ...overrides };
+  const dependencies = {
+    ...devBackendDependencies,
+    ...overrides,
+    progress: overrides.progress ?? createProgress(),
+  };
 
   // The backend may already be complete across two places: the environment, and the
   // owned vars file a caller set. The E2E lane uses both — it passes the URL and
@@ -579,12 +582,11 @@ export interface DevStackDependencies {
   ) => Promise<LocalService>;
 }
 
-const devStackDependencies: DevStackDependencies = {
+const devStackDependencies: Omit<DevStackDependencies, 'progress'> = {
   runId: DEV_STACK_RUN_ID,
   fresh: false,
   readVars: (path: string): Record<string, string | undefined> =>
     parseEnv(readFileSync(path, 'utf8')),
-  progress: createProgress(),
   createService: async (id, context) => {
     const localContext: LocalServiceContext = {
       runId: context.runId,
@@ -652,6 +654,7 @@ export const prepareDevStack = async (
   const { runId, readVars, createService, progress, fresh } = {
     ...devStackDependencies,
     ...dependencies,
+    progress: dependencies.progress ?? createProgress(),
   };
   const callerVarsPath = environment.STARTER_DEV_VARS_PATH;
   const callerFile: Record<string, string | undefined> =

@@ -211,6 +211,8 @@ export const parseDotenv = (contents: string): Record<string, string | undefined
       (value.startsWith("'") && value.endsWith("'") && value.length > 1)
     ) {
       value = value.slice(1, -1);
+    } else if (!value.startsWith('"') && !value.startsWith("'")) {
+      value = value.split('#', 1)[0]?.trimEnd() ?? '';
     }
     out[match[1] as string] = value;
   }
@@ -419,6 +421,15 @@ export const prepareStripeService = async (
     throw new Error(problem);
   }
 
+  // Carry dotenv credentials into the Worker file while leaving caller bindings
+  // under their existing ownership.
+  const vars = Object.fromEntries(
+    Object.entries({
+      STRIPE_API_BASE: configured.apiBase,
+      STRIPE_SECRET_KEY: configured.secretKey,
+    }).filter(([key]) => !context.callerVars[key]?.trim().length),
+  );
+
   // Only a real Stripe account is worth proving. A self-hosted emulator is a
   // different machine with its own ideas about which keys it accepts, and refusing a
   // key it would happily take would be this service guessing on its behalf.
@@ -427,9 +438,7 @@ export const prepareStripeService = async (
       id: 'stripe',
       label: 'Stripe (local emulator)',
       owned: false,
-      // The caller's own values are already the base of the run-owned vars file, so
-      // echoing them back would be a service contesting its caller's binding.
-      vars: {},
+      vars,
       summary: [
         `Stripe emulator (your own) -> ${configured.apiBase}`,
         ...STRIPE_MOCK_LIMITS.map((limit) => `  ${limit}`),
@@ -462,9 +471,7 @@ export const prepareStripeService = async (
     label: 'Stripe test mode',
     // Nothing was started, so nothing is torn down.
     owned: false,
-    // As above: the caller's bindings are already in the run-owned file. Repeating
-    // them here would look like two services writing one value.
-    vars: {},
+    vars,
     summary: [
       `Stripe test mode -> ${configured.apiBase}`,
       '  Real objects, real webhooks, no money: every object created here exists in your',

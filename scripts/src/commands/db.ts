@@ -70,10 +70,10 @@ export const dbCommand: Command = {
         // database does not stop it, so something has to say when it should go.
         return stopDevSupabaseLocal().then(
           (outcome) => {
+            if (!outcome.stopped) {
+              return fail(outcome.message, EXIT.refused);
+            }
             process.stdout.write(`${outcome.message}\n`);
-            // Nothing to stop is not a failure — it is the state the command was
-            // asked to reach — but it is reported rather than passed over in
-            // silence, because "exit 0" alone reads as "it stopped something".
             return EXIT.ok;
           },
           (error: unknown) =>

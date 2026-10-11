@@ -88,9 +88,9 @@ const resolveCredentials = (): StripeCredentials | { problem: string; remedy: st
     return {
       problem: 'No Stripe target is configured.',
       remedy:
-        '  Test account: bun run dev --stack stripe\n' +
-        '    It reads STRIPE_API_BASE and STRIPE_SECRET_KEY from apps/frontend/client/.env.local\n' +
-        '    and the run-owned vars file this command also reads. Create a key at\n' +
+        '  Test account: set STRIPE_API_BASE=https://api.stripe.com and STRIPE_SECRET_KEY\n' +
+        "    in this command's environment, or in a file selected by STARTER_DEV_VARS_PATH.\n" +
+        '    This command does not read apps/frontend/client/.env.local. Create a key at\n' +
         '    https://dashboard.stripe.com/test/apikeys — test mode, no money.\n' +
         '  Emulator:   run your own stripe-mock and point STRIPE_API_BASE at it.\n' +
         '    Refused as a target below: it keeps no state, so nothing this command creates\n' +

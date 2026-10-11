@@ -164,7 +164,6 @@ describe('the configuration is read from where the dev server reads it', () => {
 
   test('no key anywhere is reported as no configuration, not as a broken one', () => {
     expect(developerStripeConfig({}, read({}))).toBeNull();
-    expect(developerStripeConfig()).toBeNull();
   });
 
   test('dotenv quoting and comments do not end up inside the key', () => {
@@ -175,6 +174,14 @@ describe('the configuration is read from where the dev server reads it', () => {
     });
     expect(parseDotenv("export FOO='bar'\n")).toEqual({ FOO: 'bar' });
     expect(parseDotenv('NO_EQUALS_HERE\n')).toEqual({});
+    expect(parseDotenv('KEY=sk_test_x # dashboard link\nEMPTY=# comment')).toEqual({
+      KEY: 'sk_test_x',
+      EMPTY: '',
+    });
+    expect(parseDotenv(`DOUBLE="value # text"\nSINGLE='value#text'`)).toEqual({
+      DOUBLE: 'value # text',
+      SINGLE: 'value#text',
+    });
   });
 
   test('a loopback base URL is recognised as local, not as Stripe', () => {
@@ -280,14 +287,25 @@ describe('the stack refuses rather than running without Stripe', () => {
     expect(refusal.remedy).toContain('stripe-mock');
   });
 
-  test('the service starts nothing, so nothing is torn down and no binding is claimed', async () => {
+  test('the service contributes validated credentials without owning a process', async () => {
     const service = await prepareStripeService(context(), dependencies());
     expect(service.owned).toBe(false);
-    // The caller's bindings are already the base of the run-owned vars file;
-    // echoing them back would look like two services writing one value.
-    expect(service.vars).toEqual({});
+    expect(service.vars).toEqual({
+      STRIPE_API_BASE: STRIPE_API_BASE_DEFAULT,
+      STRIPE_SECRET_KEY: TEST_KEY,
+    });
     expect(await service.dispose()).toEqual([]);
   });
+});
+
+test('caller-owned Stripe bindings are preserved while missing bindings are contributed', async () => {
+  const callerVars = { STRIPE_SECRET_KEY: TEST_KEY };
+  const service = await prepareStripeService(
+    context({ callerVars }),
+    dependencies({ configure: (vars) => developerStripeConfig(vars, () => ({})) }),
+  );
+  expect(service.vars).toEqual({ STRIPE_API_BASE: STRIPE_API_BASE_DEFAULT });
+  expect(callerVars).toEqual({ STRIPE_SECRET_KEY: TEST_KEY });
 });
 
 describe('a self-hosted emulator is still allowed, and still says what it costs', async () => {
@@ -308,6 +326,10 @@ describe('a self-hosted emulator is still allowed, and still says what it costs'
       }),
     );
     expect(verified).toBe(false);
+    expect(service.vars).toEqual({
+      STRIPE_API_BASE: 'http://127.0.0.1:12111',
+      STRIPE_SECRET_KEY: TEST_KEY,
+    });
     for (const limit of STRIPE_MOCK_LIMITS) {
       expect(service.summary.join('\n')).toContain(limit);
     }

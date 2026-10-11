@@ -295,6 +295,7 @@ describe.skipIf(!canEncrypt)('secrets: a real round trip', () => {
       { cwd: repo.root, env: repo.env, encoding: 'utf8' },
     );
 
+    expect(seen.status, spawnReason(seen)).toBe(0);
     expect(
       seen.stdout.trim(),
       `decryptFile reported code ${seen.stdout.trim()}:${spawnReason(seen)}\n${seen.stderr}`,

@@ -25,13 +25,18 @@
 // is observed rather than assumed. No test here needs Docker.
 
 import { describe, expect, test } from 'bun:test';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { parseFreshFlag } from '../src/commands/dev.ts';
 import {
   type ContainerRun,
+  devSupabaseAllocation,
   discardSupabaseData,
   preservedSupabaseVolumes,
   type SupabaseLocalAllocation,
   type SupabaseRuntime,
+  stopDevSupabaseLocal,
   stopSupabaseLocal,
 } from '../src/db/supabase_local.ts';
 import { prepareSupabaseService } from '../src/local/supabase_service.ts';
@@ -46,9 +51,14 @@ const PROJECT = 'stpersisted00000000';
  * then assert whether the teardown removed it — which is the behaviour, rather than
  * a proxy for it.
  */
-const fakeEngine = (volumes: readonly string[] = []) => {
+const fakeEngine = (
+  volumes: readonly string[] = [],
+  containers: readonly string[] = [],
+  project = PROJECT,
+) => {
   const argv: string[][] = [];
   let held = [...volumes];
+  let running = [...containers];
 
   const run = (args: readonly string[]): ContainerRun => {
     argv.push([...args]);
@@ -60,8 +70,15 @@ const fakeEngine = (volumes: readonly string[] = []) => {
       held = held.filter((name) => !args.slice(2).includes(name));
       return { status: 0, stdout: '', stderr: '' };
     }
-    // `ps -aq` for this project: one container while a stack is up.
-    return { status: 0, stdout: args.includes('-aq') ? '' : '', stderr: '' };
+    if (verb === 'ps') {
+      expect(args).toEqual(['ps', '-aq', '--filter', `label=com.supabase.cli.project=${project}`]);
+      return { status: 0, stdout: running.join('\n'), stderr: '' };
+    }
+    if (verb === 'rm') {
+      running = running.filter((id) => !args.slice(2).includes(id));
+      return { status: 0, stdout: '', stderr: '' };
+    }
+    throw new Error(`Unexpected engine command: ${args.join(' ')}`);
   };
 
   const runtime: SupabaseRuntime = { command: 'fake-engine', run };
@@ -240,9 +257,7 @@ const freshService = (harness: ReturnType<typeof serviceHarness>) =>
 describe('a fresh start is a database with nothing of the last one in it', () => {
   test('it never adopts a running stack', async () => {
     // Adoption is the opposite of what was asked for. A fresh boot that reused the
-    // running database would report "fresh" and hold yesterday's rows. The probe
-    // that does run is a different question — "is something holding the volume, so
-    // it has to be stopped first" — and its answer cannot be used as an adoption.
+    // running database would report "fresh" and hold yesterday's rows.
     const harness = serviceHarness({ running: true });
     const prepared = await freshService(harness);
 
@@ -264,13 +279,22 @@ describe('a fresh start is a database with nothing of the last one in it', () =>
     expect(harness.calls).toEqual([
       'allocate',
       'hasOwnership',
-      'probe',
       'stop:{"preserveData":false}',
       'discard',
       'listVolumes',
       'start',
       'seed',
     ]);
+  });
+
+  test('an unhealthy owned stack is stopped before its volumes are discarded', async () => {
+    const harness = serviceHarness({ running: false });
+    await freshService(harness);
+    expect(harness.calls).not.toContain('probe');
+    expect(harness.calls.indexOf('stop:{"preserveData":false}')).toBeLessThan(
+      harness.calls.indexOf('discard'),
+    );
+    expect(harness.calls).toContain('stop:{"preserveData":false}');
   });
 
   test('it removes the volumes a previous db:stop kept', async () => {
@@ -285,8 +309,8 @@ describe('a fresh start is a database with nothing of the last one in it', () =>
   });
 
   test('a database this checkout never started is not stopped', async () => {
-    // No ownership record means nothing of this checkout's is running, and stopping
-    // it anyway would report a teardown failure for a database that was not there.
+    // With no ownership record, discard recovers containers by project label;
+    // the CLI stop must not run against a missing work directory.
     const harness = serviceHarness({ owned: false });
     await freshService(harness);
 
@@ -427,5 +451,53 @@ describe('--fresh is one flag with no value', () => {
     const parsed = parseFreshFlag(['--fresh=true']);
     expect(parsed.fresh).toBe(false);
     expect(parsed.problem).toContain('--fresh=true takes no value');
+  });
+});
+
+describe('missing ownership metadata is recovered using project labels', () => {
+  test('db:stop removes labeled containers, keeps volumes, and refuses a second stop', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'supabase-recovery-'));
+    try {
+      const project = devSupabaseAllocation(root).projectId;
+      const engine = fakeEngine([DB_VOLUME], ['owned-container'], project);
+      expect((await stopDevSupabaseLocal(root, { runtime: engine.runtime })).stopped).toBe(true);
+      expect(engine.argv).toContainEqual(['rm', '-f', 'owned-container']);
+      expect(engine.held()).toEqual([DB_VOLUME]);
+      expect((await stopDevSupabaseLocal(root, { runtime: engine.runtime })).stopped).toBe(false);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test('discard removes and verifies containers before touching volumes', () => {
+    const engine = fakeEngine([DB_VOLUME], ['owned-container']);
+    expect(discardSupabaseData(allocation(), { runtime: engine.runtime })).toEqual([DB_VOLUME]);
+    expect(engine.argv.map((args) => args.slice(0, 2))).toEqual([
+      ['ps', '-aq'],
+      ['rm', '-f'],
+      ['ps', '-aq'],
+      ['volume', 'ls'],
+      ['volume', 'rm'],
+    ]);
+    expect(engine.argv).toContainEqual(['rm', '-f', 'owned-container']);
+  });
+
+  test.each(['query', 'remove', 'verify'])('a failed %s prevents volume handling', (failure) => {
+    const calls: string[][] = [];
+    const runtime: SupabaseRuntime = {
+      command: 'fake-engine',
+      run: (args) => {
+        calls.push([...args]);
+        const fails =
+          (failure === 'query' && calls.length === 1) || (failure === 'remove' && args[0] === 'rm');
+        return {
+          status: fails ? 1 : 0,
+          stdout: args[0] === 'ps' ? 'owned-container' : '',
+          stderr: 'fixture refusal',
+        };
+      },
+    };
+    expect(() => discardSupabaseData(allocation(), { runtime })).toThrow();
+    expect(calls.some((args) => args[0] === 'volume')).toBe(false);
   });
 });
