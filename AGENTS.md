@@ -42,11 +42,16 @@ bun run update --nix --yes               # flake inputs only
 bun run update --bun --yes               # Bun pin, verified runtime, mirrors + lock
 
 # Develop — one application, two ways to run it
-bun run dev                 # asks what to start, on a terminal
+bun run dev                 # asks what to start, on a terminal. Services start
+                             # concurrently; each announces itself and its elapsed time.
 bun run dev --stack client  # vite dev + local Supabase. Node, emulated bindings.
                              # Fast. Seeds the database and signs in as
                              # seed@example.invalid unless SUPABASE_URL is set.
-bun run dev --stack full    # app, Supabase, stripe-mock, the finite runner image
+bun run dev --fresh         # the same, after discarding the local database's data:
+                             # volumes removed, migrations replayed, mock seed written.
+                             # The default keeps the data — across runs, across
+                             # `db:stop`, and across a reboot.
+bun run dev --stack full    # app, Supabase, the Stripe test account, the runner image
                              # and the jobs Worker in workerd
 bun run dev --stack supabase,stripe    # any combination, by service name
 bun run dev:worker          # the BUILT Worker in real workerd. Requires a build.
@@ -102,6 +107,12 @@ bun run db:migrate          # local
 bun run db:migrate:remote staging --yes    # requires an explicit environment
 bun run db:status
 bun run db:seed
+bun run db:stop              # stop the development database. `bun run dev` adopts a running
+                             # one rather than booting eight containers again (~1s vs ~32s),
+                             # so it outlives the run that started it. Only this stops it,
+                             # and it keeps the data — the volume survives, so the next
+                             # `bun run dev` starts on your rows. `bun run dev --fresh`
+                             # is the way to throw them away.
 
 # Deploy — local token in root .env.deploy (gitignored, chmod 600), never a Worker var
 # Remote Wrangler configs are derived under .starter/deploy; local config stays neutral.
@@ -243,11 +254,19 @@ Three directory rules that are *not* stylistic:
   its own ownership story. Two services writing one binding is a refusal naming
   both, not a last-writer-wins merge — which would leave the application talking
   to whichever started last, holding the other's credential.
-- **An emulator that cannot do something says so before you wait for it.**
-  `stripe-mock` keeps no state and delivers no webhooks; Cloud Run has no local
-  emulator at all. `STRIPE_MOCK_LIMITS` is exported surface and is printed
-  wherever the emulator is offered. `bun run stripe:setup` against a local target
-  exits **4, refused** rather than 0 having provisioned nothing.
+- **A local development target is the real thing, not an imitation of it.** The dev
+  stack points at Stripe's **test mode** — `https://api.stripe.com` with an `sk_test_`
+  key — rather than a `stripe-mock` container, because a stateless mock cannot
+  exercise the two things billing consists of: an object you created being there on
+  the next request, and a webhook arriving because something happened. A live-mode
+  `sk_live_` key is **refused, with no override**: a checkout click from a local run
+  would create a real invoice. The cost is that `--stack stripe` now needs
+  credentials, so it refuses and names the remedy rather than starting something
+  that looks like Stripe. Webhooks come from the Stripe CLI, which is detected in
+  three states (installed+authenticated / installed+unauthenticated / absent) and
+  never assumed. Cloud Run has no local emulator at all, and says so.
+  `bun run stripe:setup` against a local target exits **4, refused** rather than 0
+  having provisioned nothing. See [docs/billing.md](docs/billing.md).
 - **A webhook is verified or it is refused.** An absent
   `STRIPE_WEBHOOK_SECRET` does not fall back to parsing the body — an endpoint that
   grants a subscription on an unverified POST is an open one, and "acceptable in
@@ -309,6 +328,16 @@ bun run --cwd packages/backend/database db:generate
 ```
 
 `scripts/src/shared/tools.ts` does this in TypeScript for the tooling workspace.
+
+Moon is this rule plus one more, because Moon does not resolve a toolchain from
+`PATH`: it embeds protox and asks a proto store. A declared `bun` toolchain is
+therefore a request for whatever that store holds — observed as
+`moon bin bun` answering `~/.local/share/proto/tools/bun/1.1.31/bun`, and as
+`bun run fix` failing with `proto::commands::run::missing_tool` naming our own
+`.bun-version`. Every Moon spawn sets `MOON_TOOLCHAIN_FORCE_GLOBALS=1` through
+`moonToolchainEnvironment`, and `flake.nix` exports it for a `moon` typed in a
+shell, so the Bun Moon runs is the one Nix built. Proto is never installed and
+never needed. `docs/toolchain.md` has the measurement.
 
 ## Writing tests here
 

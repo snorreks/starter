@@ -17,7 +17,7 @@
     "lint": "biome lint src tests",
     "format": "biome format src tests",
     "fix": "biome check --write src tests --error-on-warnings",
-    "typecheck": "tsgo --noemit",
+    "typecheck": "bun check",
     "test": "bun run test:unit",
     "test:unit": "bun test --path-ignore-patterns='tests/browser_launch.test.ts'",
     "test:browser-launch": "bun test tests/browser_launch.test.ts",

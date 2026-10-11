@@ -25,6 +25,8 @@ import { type DevStackDependencies, disposeDevStack, prepareDevStack } from '../
 import type { LocalService, LocalServiceId } from '../src/local/service.ts';
 import { prepareSupabaseService } from '../src/local/supabase_service.ts';
 import { REPO_ROOT } from '../src/shared/paths.ts';
+import type { Stepper } from '../src/shared/progress.ts';
+import { recordingProgress } from './fixtures/progress.ts';
 
 /**
  * The shape `apps/e2e/scripts/run_e2e.ts` produces, read from that file rather
@@ -83,19 +85,28 @@ const varsFile = async (contents: Record<string, string>): Promise<string> => {
  * that was wrong — and not about what a container does when it boots.
  */
 const recorder = () => {
-  const asked: { id: LocalServiceId; callerVars: Record<string, string | undefined> }[] = [];
+  const asked: {
+    id: LocalServiceId;
+    callerVars: Record<string, string | undefined>;
+    stepper: Stepper;
+  }[] = [];
+  const reported = recordingProgress();
   const dependencies: Partial<DevStackDependencies> = {
     // A fresh run id per call. The stack writes its vars file with `wx` into a
     // directory keyed by this, so a shared id fails the second call with `EEXIST` —
     // a real behaviour, and the reason the launcher suffixes its run id with entropy.
     runId: `stack_test_${crypto.randomUUID().slice(0, 8)}`,
+    // Not the real reporter: it draws to stdout, and these tests are about the
+    // merge. What was announced is asserted in progress.test.ts and dev_stack.test.ts.
+    progress: reported.progress,
     createService: async (id, context): Promise<LocalService> => {
-      asked.push({ id, callerVars: context.callerVars });
+      asked.push({ id, callerVars: context.callerVars, stepper: context.stepper });
       return { id, label: id, owned: false, vars: {}, summary: [], dispose: async () => [] };
     },
   };
   return {
     asked,
+    reported,
     dependencies,
     /** The run id handed out, so teardown can remove the state it wrote. */
     runId: dependencies.runId as string,
@@ -309,6 +320,7 @@ describe('a genuinely incomplete backend is still refused', () => {
         callerVars: { SUPABASE_URL: 'https://abc.supabase.co' },
         autoSignIn: false,
         environment: { SUPABASE_URL: 'https://abc.supabase.co' },
+        progress: recordingProgress().progress,
       }),
     ).rejects.toThrow('SUPABASE_ANON_KEY, SUPABASE_SERVICE_ROLE_KEY');
   });

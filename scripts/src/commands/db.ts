@@ -7,13 +7,18 @@
 import { main as migrateMain } from '../db/migrate.ts';
 import { main as seedMain } from '../db/seed.ts';
 import { main as statusMain } from '../db/status.ts';
-import { runDatabaseIntegration, runDatabaseTypeCommand } from '../db/supabase_local.ts';
+import {
+  runDatabaseIntegration,
+  runDatabaseTypeCommand,
+  stopDevSupabaseLocal,
+} from '../db/supabase_local.ts';
 import { type Command, EXIT, fail, wantsHelp } from '../shared/command.ts';
 
 const USAGE = [
   'Usage: db migrate (--local | --remote <staging|production> [--yes]) [--dry-run]',
   '       db status',
   '       db seed',
+  '       db stop',
   '       db test:database',
   '       db types | types:check',
 ].join('\n');
@@ -57,6 +62,28 @@ export const dbCommand: Command = {
           return fail(`Unexpected arguments for db ${subcommand}.\n${USAGE}`, EXIT.usage);
         }
         return runDatabaseTypeCommand('db:types:check');
+      case 'stop':
+        if (rest.length > 0) {
+          return fail(`Unexpected arguments for db ${subcommand}.\n${USAGE}`, EXIT.usage);
+        }
+        // The counterpart to a stack `bun run dev` reused: a run that adopts a
+        // database does not stop it, so something has to say when it should go.
+        return stopDevSupabaseLocal().then(
+          (outcome) => {
+            process.stdout.write(`${outcome.message}\n`);
+            // Nothing to stop is not a failure — it is the state the command was
+            // asked to reach — but it is reported rather than passed over in
+            // silence, because "exit 0" alone reads as "it stopped something".
+            return EXIT.ok;
+          },
+          (error: unknown) =>
+            fail(
+              `The local development database did not stop: ${
+                error instanceof Error ? error.message : String(error)
+              }`,
+              EXIT.failed,
+            ),
+        );
       default:
         return fail(`Unknown db subcommand "${subcommand}".\n${USAGE}`, EXIT.usage);
     }

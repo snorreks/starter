@@ -26,6 +26,7 @@ import { type ChildProcess, spawn } from 'node:child_process';
 import { killTree } from '@starter/utils/process';
 import { JOBS_DIR, JOBS_DIR_RELATIVE, REPO_ROOT } from '../shared/paths.ts';
 import { publicToolEnvironment } from '../shared/private_environment.ts';
+import { reportStep } from '../shared/progress.ts';
 import { allocatePort, type PortAllocation } from '../shared/run_scope.ts';
 import { wranglerBin } from '../shared/tools.ts';
 import { type LocalService, type LocalServiceContext, LocalServiceUnavailable } from './service.ts';
@@ -196,7 +197,14 @@ export const prepareJobsService = async (
   });
 
   try {
-    await Promise.race([waitUntilServing(origin, READY_TIMEOUT_MS), exited]);
+    // Announced, because a workerd boot that never reaches its first request looks
+    // identical to a hang, and this is the one step here that can wait a minute.
+    await reportStep(
+      context.progress,
+      'waiting for the jobs Worker to serve',
+      () => Promise.race([waitUntilServing(origin, READY_TIMEOUT_MS), exited]),
+      () => `JOBS_PROFILE=${decision.profile}`,
+    );
   } catch (error) {
     if (child.pid !== undefined) {
       killTree(child.pid, { graceMs: 300, attempts: 10 });

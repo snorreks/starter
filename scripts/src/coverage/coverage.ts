@@ -34,6 +34,7 @@ import { join, relative } from 'node:path';
 import { readWorkspacePackages } from '../guards/module_graph.ts';
 import { REPO_ROOT } from '../shared/paths.ts';
 import { runBounded } from '../shared/run_bounded.ts';
+import { moonToolchainEnvironment } from '../shared/tools.ts';
 
 /** Where each project writes its report, relative to that project. */
 export const COVERAGE_DIR = 'coverage';
@@ -182,6 +183,10 @@ export const runCoverage = async (options: CoverageRunOptions): Promise<Coverage
       command: moon,
       args: ['run', '--cache', 'off', ':test', '--', ...COVERAGE_TEST_ARGS],
       cwd: root,
+      // Same reason as every other Moon spawn in this repository: Moon asks proto
+      // for Bun, and a lane that cannot find it reports a percentage over no test
+      // output at all.
+      env: moonToolchainEnvironment(process.env),
     });
     if (result.code !== 0) {
       // The lane failed. A coverage number computed over a half-run lane is a

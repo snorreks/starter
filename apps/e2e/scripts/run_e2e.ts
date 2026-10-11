@@ -9,6 +9,7 @@ import {
   writeOwnedWorkerVars,
 } from '../../../scripts/src/db/supabase_local.ts';
 import { publicToolEnvironment } from '../../../scripts/src/shared/private_environment.ts';
+import { createProgress } from '../../../scripts/src/shared/progress.ts';
 import { runBounded } from '../../../scripts/src/shared/run_bounded.ts';
 
 /** One bounded browser process; private keys reach only the owned Worker vars file. */
@@ -65,6 +66,9 @@ export const runE2E = async (
   try {
     const environment = await dependencies.startSupabaseLocal(allocation, {
       emailConfirmations: true,
+      // The lane boots the same stack `bun run dev` does, and a CI job that waits
+      // a minute in silence is a job nobody can tell apart from a stuck one.
+      progress: createProgress(),
     });
     const required = (name: 'SUPABASE_URL' | 'SUPABASE_ANON_KEY' | 'SUPABASE_SERVICE_ROLE_KEY') => {
       const value = environment[name];

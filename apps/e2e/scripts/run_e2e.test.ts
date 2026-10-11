@@ -58,7 +58,10 @@ test('full E2E provisions before Playwright and supplies runtime bindings throug
     const code = await runE2E(['--full', '--grep', 'fixture'], {
       allocateSupabaseLocal: () => allocation,
       startSupabaseLocal: async (_allocation, options) => {
-        expect(options).toEqual({ emailConfirmations: true });
+        // The reporter is not asserted here: what the lane passes is covered by
+        // scripts/tests/progress.test.ts, and the E2E value of an argument is
+        // that it turns email confirmations on.
+        expect(options.emailConfirmations).toBe(true);
         calls.push('provision');
         return bindings;
       },

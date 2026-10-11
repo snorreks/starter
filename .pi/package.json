@@ -7,7 +7,7 @@
     "lint": "biome lint extensions lib tests",
     "format": "biome format extensions lib tests",
     "fix": "biome check --write extensions lib tests --error-on-warnings",
-    "typecheck": "tsgo --noemit",
+    "typecheck": "bun check",
     "test": "bun test --path-ignore-patterns='tests/live/**' tests",
     "test:compute-facade": "bun test ./tests/live/compute_facade.test.ts",
     "test:visual-capture-facade": "bun test ./tests/live/visual_capture_facade.test.ts",

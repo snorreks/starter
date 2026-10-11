@@ -6,9 +6,9 @@ starts**.
 
 The link between them is a name. `@starter/billing` is the catalogue;
 `bun run stripe:setup` declares it in a Stripe account; `bun run dev --stack
-stripe` stands up a local emulator to develop against. If the catalogue and the
-emulator disagree, every layer above them inherits the disagreement, so neither is
-allowed a second copy of a price.
+stripe` points a development run at that same test account. If the catalogue and
+the account disagree, every layer above them inherits the disagreement, so neither
+is allowed a second copy of a price.
 
 ## The catalogue
 
@@ -78,7 +78,8 @@ through the deployment's channel.
 `stripe-mock` accepts writes and keeps nothing. Against it the API calls succeed
 and **no Stripe object exists as a result**, so the command says so and exits `4`
 (refused) rather than exiting `0` having achieved nothing. That is the whole
-reason `EXIT.refused` is separate from `EXIT.failed`.
+reason `EXIT.refused` is separate from `EXIT.failed`. The dev stack no longer ships
+an emulator, but a developer can still run one, so the refusal holds for them too.
 
 ## Developing against Stripe
 
@@ -86,34 +87,74 @@ reason `EXIT.refused` is separate from `EXIT.failed`.
 bun run dev --stack stripe
 ```
 
-Starts local Supabase and a `stripe-mock` container, and writes `STRIPE_API_BASE`,
-`STRIPE_SECRET_KEY` and the resolved target into the run-owned vars file.
+There is **no emulator**. The stack points the application at Stripe's own test mode,
+so a checkout session is a real object in a real account, and a webhook is a real
+event. Configure it once, in `apps/frontend/client/.env.local` (gitignored, and read
+by the dev server):
 
-### What stripe-mock does and does not do
+```bash
+STRIPE_API_BASE=https://api.stripe.com
+STRIPE_SECRET_KEY=sk_test_…        # https://dashboard.stripe.com/test/apikeys
+```
 
-Both facts are printed in the dev banner, from `STRIPE_MOCK_LIMITS`, because
-discovering either of them by waiting is how an afternoon disappears:
+Then declare the catalogue in that account:
 
-- **It keeps no state.** Created products and prices exist for the call that
-  created them. Ids it returns are synthetic.
-- **It delivers no webhooks.** Not one.
+```bash
+bun run stripe:setup -- --dry-run    # report what would change
+bun run stripe:setup                 # create it, idempotently
+```
+
+The service starts nothing, so it has three jobs instead, and each is a refusal or a
+report rather than a container:
+
+| | |
+|---|---|
+| **No key** | Refuses, naming `sk_test_`, where to get one, and the offline alternative |
+| **A live-mode key** | Refuses. `sk_live_` from a local run means a checkout click creates a real invoice |
+| **A restricted or unrecognised key** | Refuses, each for its own stated reason |
+| **A key that does not authenticate** | Refuses, having asked Stripe first — so it fails at startup rather than at the checkout button |
+| **A self-hosted emulator** | Allowed, with `STRIPE_MOCK_LIMITS` printed, because it still exists |
+
+### Why test mode and not a local mock
+
+A stateless mock cannot exercise the two things billing consists of: an object you
+created being there on the next request, and a webhook arriving because something
+happened. `stripe-mock` was honest about that — its limits were printed everywhere it
+was offered — and it was still the wrong default. Test mode costs a Stripe account
+and a network round trip, and returns real API-version fidelity instead.
+
+For genuinely offline work, run a `stripe-mock` container yourself and point
+`STRIPE_API_BASE` at it. `bun run stripe:setup` refuses against any local target
+(exit `4`), because "created 5 objects" against a stateless emulator would be true of
+the API calls and false of the account.
 
 ### Webhook delivery
 
-Getting an event from Stripe to a local process needs the Stripe CLI's
-`stripe listen`, which is a Go binary distributed through a package manager and
-not a workspace dependency. This repository pins what it can pin and does not
-shell out to whatever a machine happens to have, so the bridge is **detected, not
-assumed**, and its absence is one of three distinct answers:
+Webhooks come from the Stripe CLI, which subscribes to your test account directly —
+there is no endpoint to register in the dashboard:
+
+```bash
+stripe login                                                       # once
+stripe listen --forward-to http://127.0.0.1:5273/api/webhooks/stripe
+stripe trigger payment_intent.succeeded                            # in another terminal
+```
+
+`listen` prints a signing secret (`whsec_…`) on start. Put it in
+`STRIPE_WEBHOOK_SECRET` in `.env.local` and restart the run. **Until you do,
+deliveries are refused** — the endpoint verifies every signature and rejects an
+unverifiable one, by design.
+
+The CLI is a Go binary from a package manager, not a workspace dependency, so it is
+**detected, not assumed**, and its absence is one of three distinct answers:
 
 | State | What the banner says |
 |---|---|
-| Installed and authenticated | How to run `stripe listen --forward-to …` |
+| Installed and authenticated | The exact `stripe listen` command, and where its secret goes |
 | Installed, not authenticated | That `listen` would forward nothing, and to run `stripe login` |
 | Absent | That webhook delivery was **not run**, and how to install it |
 
-The middle case is the one that matters: `stripe version` succeeds without a
-login, so a green probe is not evidence that anything will be delivered.
+The middle case is the one that matters: `stripe version` succeeds without a login,
+so a green probe is not evidence that anything will be delivered.
 
 ## Webhook verification
 
@@ -161,7 +202,7 @@ bun run dev app --stack jobs         # with an explicit mode word
 |---|---|---|
 | `client` | `supabase` | the default; a database and the app |
 | `supabase` | `supabase` | a database only |
-| `stripe` | `supabase`, `stripe` | adds stripe-mock |
+| `stripe` | `supabase`, `stripe` | adds your Stripe test account; refuses without a key |
 | `container` | `supabase`, `container` | adds the finite runner image |
 | `jobs` | `supabase`, `container`, `jobs` | adds the jobs Worker in workerd |
 | `full` | all four | everything |
@@ -182,6 +223,143 @@ The prompt accepts a number or a name and, like `--stack`, answers with a
 combination: `2`, `supabase,stripe` and `1,stripe` all work. The point of that is
 that the answer you give at the prompt is the syntax you can paste into a script.
 
+## How long a start takes, and what makes the second one fast
+
+```bash
+bun run dev          # ~32s cold, ~1s warm
+bun run dev --fresh  # discard the data first, then start over with the mock seed
+bun run db:stop      # stop the development database, keeping its data
+```
+
+The local development database is **one per checkout, not one per process**. Its
+project id, ports and owner token are derived from the checkout path, so a second
+`bun run dev` finds the first one's stack and adopts it instead of booting eight
+containers again. `scripts/src/db/supabase_local.ts` derives them;
+`probeRunningSupabase` decides whether adopting is safe.
+
+Three rules make it safe rather than merely fast.
+
+**Nothing is adopted unless it is provably this checkout's own.** Adoption needs
+the 0600 ownership file this checkout wrote, `supabase status` reporting that same
+project id, and the API actually answering. Every one of those can say no — a
+leftover file beside stopped containers, a stack from another project, containers
+still booting — and every "no" means a full start, which is always available.
+
+**Only `bun run dev` shares.** E2E, `test:worker`, `test:database` and `db:types`
+each allocate a unique run id and are untouched; a shared database would let one
+run's rows into another's assertions. `DEV_SHARED_STACK_RUN_ID` documents the blast
+radius rather than becoming the allocator's default, because a default is what a
+caller would inherit by forgetting an argument.
+
+**A reused database outlives the run, and that is stated every time.** Ctrl-C stops
+the app, not the database — that is what makes the next run fast. It is one stack
+per checkout rather than one per run, always named in the banner, and stopped by
+exactly one command:
+
+```bash
+bun run db:stop   # refuses, rather than reporting success, when there is nothing to stop
+```
+
+A *failed* start is still torn down. Leaving a healthy database behind is the
+feature; leaving a half-started one holding ports is the bug.
+
+### Stopping keeps the data, and discarding it is a separate word
+
+`bun run db:stop` takes the containers down and leaves the Postgres volume. Those
+are different resources, and somebody stopping a database wants the ports and the
+memory back — not their local rows deleted, silently, by a command whose name says
+"stop". So the next `bun run dev` starts the stack against the same volume, and a
+developer who stopped the database last night has this morning's data.
+
+That is why the next boot is seconds rather than the half-minute an empty stack
+takes, so it is worth saying that this is a volume rather than a file: the data
+survives a reboot, a `docker system prune` would remove it, and nothing in
+`.wrangler` is involved. Whether it is there is decided by asking the engine
+(`preservedSupabaseVolumes`), not by a marker file recording what a previous run
+intended — and the banner names it, because yesterday's rows on the first screen
+otherwise read as a bug:
+
+```
+Local Supabase (started by this run) -> http://127.0.0.1:55609
+Restored the data from the volume kept by the last run.
+  Start over instead: bun run dev --fresh
+```
+
+Discarding is the explicit half:
+
+```bash
+bun run dev --fresh   # stop this checkout's database, remove its volumes, re-migrate, re-seed
+```
+
+Three things have to be true for that word to mean what it says, and all three are
+in `prepareSupabaseService` rather than in the command: it never adopts a running
+stack (it stops it first, without keeping anything), it removes the volumes a
+previous `db:stop` left (`supabase start` would otherwise reattach them), and it
+still seeds — a fresh database with no seeded account is not a fresh database, it
+is a login form.
+
+**Only `db:stop` keeps data, and it has to ask.** Every lane tears down through the
+same `stopSupabaseLocal` under a unique project id per run, so a `preserveData`
+default of `true` would leave one set of volumes per E2E run on the machine,
+forever. The default is therefore destructive and `db:stop` opts in by name.
+`scripts/tests/dev_supabase_persistence.test.ts` asserts both halves, against an
+injected container engine.
+
+### Services start together
+
+Supabase, the Stripe target check, the runner image and the jobs Worker have no
+ordering dependency on each other, so they start concurrently and the stack takes as
+long as its slowest service rather than the sum. Two things had to hold for that:
+
+- **The declared order is not an execution order and never becomes one.** The
+  returned list stays in declared order, because `describeStack` prints the banner
+  in it and `disposeServices` tears down in reverse of it. Reverse-of-completion
+  would stop the jobs Worker before the image it dispatches to.
+- **A service's steps are labelled with its own name.** With several live at once,
+  "the innermost running step" is ambiguous, so each service gets its own progress
+  scope — `scripts/src/shared/progress.ts` — and a step nests only inside its own.
+
+## What a run says while it starts
+
+A stack takes from seconds to minutes: `supabase start` pulls images and boots
+eight containers, and `--stack container` runs cargo inside a Docker build. Before
+this existed the terminal said **nothing** for that whole stretch, and a silent
+terminal is indistinguishable from a hung one — so the run gets killed by the only
+thing that was slow.
+
+```
+Local stack: supabase
+  ✓ supabase -> starting the local containers 31s
+  ✓ supabase -> replaying migrations 0s
+  ✓ supabase -> seeding the demo account 1s — 2 notes
+  ✓ supabase 32s
+Dev server (Node) -> http://127.0.0.1:5273
+```
+
+| | |
+|---|---|
+| `scripts/src/shared/progress.ts` | the reporter: one step at a time, with an elapsed time and an outcome |
+| `scripts/src/local/service.ts` | `LocalServiceContext.progress` — a service cannot start a slow thing silently |
+| `scripts/src/dev-stack.ts` | starts services concurrently, tears down in reverse declared order |
+| `scripts/src/db/supabase_local.ts` | the per-checkout database, the adoption probe, and `db:stop` |
+| `scripts/tests/dev_supabase_reuse.test.ts` | when a running database is adopted, and when it is refused |
+| `scripts/src/db/supabase_local.ts` | the four long steps of an owned stack |
+| `scripts/tests/progress.test.ts` | what the terminal shows, asserted without sleeping |
+
+Two rules, both deliberate.
+
+**A terminal and a pipe both get words; only a terminal gets motion.** The
+spinner is a terminal affordance. A pipe — CI, `| tee`, a bug report — gets one
+line per step, because a job that hangs with nothing in its log is the same defect
+in a different place.
+
+**The reporter owns one line and gives it up when it must.** Other modules print
+while steps run: the Supabase CLI's captured output arrives as one block, the dev
+server's stream arrives as chunks. A foreign write erases the live line, lands,
+and the line is redrawn under it. That write-through is the only global side
+effect in the tooling workspace; it exists only while a step is live, and the redraw
+timer is unreferenced so it can never be why a command fails to exit.
+
 ## Services, and what they will not do
 
 Each is one implementation of a single lifecycle (`scripts/src/local/service.ts`):
@@ -197,11 +375,11 @@ allocate/start/seed sequence has one implementation behind both entry points.
 
 ### `stripe`
 
-`stripe-mock` in a container, bound to loopback on two allocated ports. Readiness
-is verified before the run continues, and a service that never becomes ready is
-removed rather than left holding its port. Teardown re-checks the port, because a
-container that survived `rm --force` would otherwise present three commands later
-as a bind error nobody can trace.
+Nothing is started. The service resolves your test target from `.env`, `.env.local`
+and the run-owned vars file, refuses a live-mode key, proves the key authenticates,
+and reports what the Stripe CLI would do about webhooks. Two refusals are the whole
+of it — no key, and a key that does not work — and each names its remedy. There is
+no port, no image and no readiness wait, because there is nothing local to wait for.
 
 ### `container`
 
@@ -307,10 +485,10 @@ Stated here so nobody discovers it the expensive way.
 - **The customer id is derived**, `cus_<account id>`. Real deployments resolve it
   from a customers table.
 - **Google IAM is fixture-owned.** The jobs path is exercised; Cloud IAM is not.
-- **`stripe-mock` still delivers no webhooks**, and this lane does not change that.
-  Here the fixture *does* deliver, because the lane owns the signer — which is
+- **This lane owns its own Stripe fixture**, including the webhook signer. That is
   exactly the thing a real deployment does not have and must therefore configure
-  with a real endpoint secret.
+  with a real endpoint secret, which is why `--stack stripe` refuses to run the
+  E2E lane's fixture and demands a real key instead.
 
 ## What this does not do
 
@@ -318,12 +496,10 @@ Stated so nobody discovers it the expensive way.
 
 - **No local Cloud Run.** Encode dispatch reaches a real Google project or it does
   not happen.
-- **No webhook delivery from stripe-mock.** See above.
 - **No subscription persistence.** The webhook is verified and routed; nothing is
   written, and the response says `handled: false`.
-- **`stripe-mock` is not pinned to a digest.** The tag is overridable through
-  `STRIPE_MOCK_IMAGE` and the resolved image is printed in the banner, so a run's
-  provenance is visible. Pin it before a release.
+- **A self-hosted stripe-mock is not pinned to a digest.** The stack no longer runs
+  one, but a developer can, with `STRIPE_MOCK_IMAGE` overriding the tag.
 
 ## Where things are
 
@@ -332,7 +508,8 @@ Stated so nobody discovers it the expensive way.
 | `packages/shared/billing` | the catalogue: plans, packs, currency, events, resolvers |
 | `packages/backend/billing` | checkout, portal, webhook verification |
 | `scripts/src/local/service.ts` | the one lifecycle every local service implements |
-| `scripts/src/local/stripe_service.ts` | stripe-mock, and the webhook-bridge status |
+| `scripts/src/shared/progress.ts` | what a run says while a service starts |
+| `scripts/src/local/stripe_service.ts` | the test-mode target check, the live-key refusal, the webhook-bridge status |
 | `scripts/src/local/container_service.ts` | the finite runner image |
 | `scripts/src/local/jobs_service.ts` | the jobs Worker in workerd |
 | `scripts/src/local/media_image.ts` | the image's tag, Dockerfile, build and Rust-test assertion |
