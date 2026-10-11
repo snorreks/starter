@@ -554,6 +554,18 @@ export const PLANE_PLACEMENTS: readonly { readonly test: RegExp; readonly plane:
   // here for the same reason it is stated for that project above.
   { test: /^apps\/backend\/jobs\/(?:scripts|tests)\//, plane: 'node' },
   { test: /^apps\/backend\/jobs\//, plane: 'worker' },
+  // The live Worker: the socket endpoint and its Durable Object. Worker-plane
+  // because it is a Cloudflare Worker, alongside the jobs Worker rather than under
+  // it. Named individually for the same reason the jobs Worker is — a blanket
+  // `^apps/backend/` is how a new application under this root would be classified
+  // without anybody deciding what runtime it has.
+  //
+  // Its tooling runs outside both planes, exactly as the jobs Worker's does: the
+  // bundler and the config checker are Bun programs run from a terminal, and
+  // classifying them as `worker` would make `node:fs/promises` a runtime-capability
+  // violation in a file that is never shipped to workerd.
+  { test: /^apps\/backend\/live\/(?:scripts|tests)\//, plane: 'node' },
+  { test: /^apps\/backend\/live\//, plane: 'worker' },
   // The finite Node process packaged beside the media crate is a runner, not the
   // Worker plane that owns dispatch and grants.
   { test: /^apps\/backend\/media\/runner\//, plane: 'node' },
@@ -679,7 +691,7 @@ export const PLANE_OWNERS: Record<Plane, string> = {
   worker:
     'apps/frontend/client/src/lib/server/** or a route adapter (+server.ts, ' +
     '+page.server.ts, +layout.server.ts, hooks.server.ts), apps/backend/jobs/**, ' +
-    'packages/backend/*',
+    'apps/backend/live/**, packages/backend/*',
   node: 'scripts/** or .pi/** — code that runs outside both application planes',
 };
 
