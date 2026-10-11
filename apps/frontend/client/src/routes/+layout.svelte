@@ -74,6 +74,7 @@ async function signOut(): Promise<void> {
     <nav class="shell__nav" aria-label="Primary">
       {#if user}
         <a class="shell__link" href="/notes" data-testid="notes-link">Notes</a>
+        <a class="shell__link" href="/chat" data-testid="chat-link">Chat</a>
         <a class="shell__link" href="/jobs" data-testid="jobs-link">Jobs</a>
         <span class="shell__user" data-testid="current-user">{user.email}</span>
         <button type="button" class="ui-button ui-button--secondary" onclick={signOut}>

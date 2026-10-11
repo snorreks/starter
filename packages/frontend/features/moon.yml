@@ -13,6 +13,10 @@ fileGroups:
   workspaceSources:
     - '/packages/frontend/platform/src/**/*'
     - '/packages/shared/schemas/src/**/*'
+    # The liveness contract this screen takes as a constructor dependency. Listed so
+    # a change to the interface re-runs this project's checks rather than being
+    # served from cache against a stale build.
+    - '/packages/shared/live/src/**/*'
   configs:
     - 'package.json'
     - 'tsconfig*.json'
@@ -34,6 +38,7 @@ dependsOn:
   - schemas
   - ui
   - utils
+  - live
 
 tasks:
   typecheck:

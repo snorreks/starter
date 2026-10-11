@@ -37,6 +37,9 @@ Start here. Nothing below is required reading before running a command — the
 - [auth.md](auth.md) — the account lifecycle, the rate limiter, and mail
 - [cloudflare.md](cloudflare.md) — Workers, R2, credentials, and the Worker's
   deployment-mode binding
+- [realtime.md](realtime.md) — how a screen learns its data moved: polling, the
+  WebSocket hub in a separate Worker, the ticket, failure behaviour and Free-tier
+  limits
 - [deployment.md](deployment.md) — the one configuration and deployment path: the
   resolved target, the CI variable model, provisioning, secret installation, the
   ordered pipeline, migrations, concurrency, health, rollback and image retention

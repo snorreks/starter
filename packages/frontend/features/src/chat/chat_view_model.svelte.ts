@@ -26,7 +26,9 @@
 // holds the *messages*, each with the client id the server will dedupe on, so
 // flushing after reconnecting sends exactly what was written.
 
+import type { LiveMode, LiveSubscription, LiveUpdates } from '@starter/live';
 import type { Conversation, Message, MessageRole } from '@starter/schemas/chat';
+import { CHAT_TURN_ALREADY_RUNNING } from '@starter/schemas/chat';
 import {
   disposeScreen,
   type ScreenGuards,
@@ -35,6 +37,7 @@ import {
 } from '@starter/ui/screen';
 import { createClientId, toAppError } from '@starter/utils';
 import type { ChatService, ChatStreamUpdate, StreamTurnResult } from './chat_service.ts';
+import { fingerprint } from './fingerprint.ts';
 
 type ChatScreenService = Pick<ChatService, 'listMessages' | 'listMessagesPage' | 'streamTurn'>;
 
@@ -85,7 +88,22 @@ export interface ChatScreenOptions {
    * ids, which is a property of the generator and not of this class.
    */
   readonly newClientId?: () => string;
+  /**
+   * How this screen learns its conversation changed.
+   *
+   * Injected, never found: a screen that reached for an ambient transport could
+   * only ever run in one host, which is the same reason `chat` and `newClientId`
+   * are constructor dependencies rather than imports.
+   *
+   * Optional because a host may have none, and `undefined` is the honest answer
+   * for one — a screen with no liveness source still renders, and says nothing
+   * false about being current, because it never claimed to be.
+   */
+  readonly live?: LiveUpdates;
 }
+
+/** The topic a conversation's screen watches. Host-composed; this parses nothing. */
+const conversationTopic = (conversationId: string): string => `conversation:${conversationId}`;
 
 /** One failed send, held for a retry. */
 interface QueuedMessage {
@@ -119,6 +137,10 @@ export class ChatViewModel implements ScreenOwner, ScreenGuards {
 
   readonly #chat: ChatScreenService;
   readonly #newClientId: () => string;
+  readonly #live: LiveUpdates | undefined;
+  #liveSubscription: LiveSubscription | null = null;
+  /** The conversation id the live subscription was opened against. */
+  #liveTopic: string | null = null;
 
   #conversation: Conversation | null;
   #seeded = false;
@@ -133,6 +155,7 @@ export class ChatViewModel implements ScreenOwner, ScreenGuards {
     this.#chat = options.chat;
     this.#conversation = options.conversation;
     this.#newClientId = options.newClientId ?? createClientId;
+    this.#live = options.live;
     this.olderCursor = options.olderCursor ?? null;
     this.hasOlder = options.hasOlder ?? false;
     if (options.initialMessages !== undefined) {
@@ -194,10 +217,117 @@ export class ChatViewModel implements ScreenOwner, ScreenGuards {
   }
 
   async initialize(): Promise<void> {
+    this.#watch();
     if (this.#seeded) {
       return;
     }
     await this.reload();
+  }
+
+  /**
+   * How this screen is currently learning about change.
+   *
+   * `'disabled'` when no liveness source was injected. A screen that reports this
+   * is making no claim to be current, which is the honest position for a host that
+   * has not adopted live updates — and the reason the value is exposed at all
+   * rather than kept inside the transport.
+   */
+  get liveMode(): LiveMode {
+    return this.#live?.mode ?? 'disabled';
+  }
+
+  /**
+   * Re-read now, because the host says this window just became visible.
+   *
+   * The host owns that fact, so the host calls this. A window that was hidden
+   * missed every notification it would have been sent, so its transcript is behind
+   * by an unbounded amount and no steady-state behaviour catches up.
+   */
+  refreshNow(): void {
+    this.#watch();
+    this.#live?.refresh();
+  }
+
+  /**
+   * Watch the conversation for changes this screen did not make.
+   *
+   * Re-subscribes when the conversation changes, and does nothing when there is no
+   * conversation yet — there is no topic to watch, and subscribing to a topic
+   * derived from `undefined` would produce a screen polling a URL that cannot exist.
+   */
+  #watch(): void {
+    const conversationId = this.conversationId;
+    if (this.#live === undefined || conversationId === null) {
+      return;
+    }
+    const topic = conversationTopic(conversationId);
+    if (this.#liveTopic === topic) {
+      return;
+    }
+    this.#liveSubscription?.close();
+    this.#liveTopic = topic;
+    this.#liveSubscription = this.#live.subscribe(topic, () => {
+      void this.#pullLatest();
+    });
+  }
+
+  /**
+   * Re-read in the background because something said this conversation moved.
+   *
+   * Silent on failure, and that is the one place in this class where swallowing an
+   * error is right: a background read that failed leaves the transcript exactly as
+   * correct — and as stale — as it was, and the next interval tries again. Turning
+   * it into an error state would replace a readable transcript with an error
+   * because a poll timed out.
+   *
+   * Skipped entirely while this screen owns a turn. Its own SSE stream is
+   * authoritative then, and `reconcileServerSnapshot` would defer the answer into
+   * `#deferredSnapshot` only to apply it moments later — a read whose result is
+   * guaranteed to be stale by the time it lands.
+   */
+  async #pullLatest(): Promise<void> {
+    const conversationId = this.conversationId;
+    if (
+      conversationId === null ||
+      this.requests.cancelled ||
+      this.isBusy ||
+      this.#liveSubscription === null
+    ) {
+      return;
+    }
+
+    const before = this.#serverFingerprint();
+    const { token, signal } = this.requests.begin();
+    try {
+      const messages = await this.#chat.listMessages(conversationId, signal);
+      if (!this.requests.isCurrent(token)) {
+        return;
+      }
+      if (fingerprint(messages) !== before) {
+        // Reported so a polling transport collapses its backoff. Without it, a
+        // conversation being actively written to would be re-read at the widest
+        // interval, which is backwards.
+        this.#liveSubscription.notifyChanged();
+      }
+      this.reconcileServerSnapshot(messages);
+    } catch {
+      /* see the note above: a failed background read leaves the screen as it was */
+    }
+  }
+
+  /**
+   * What the server's view of this conversation currently amounts to.
+   *
+   * Only rows the server has acknowledged. An optimistic row has no server id, so
+   * counting one here would make every poll look like a change and hold the
+   * transport at its floor for the whole time a message is in flight.
+   */
+  #serverFingerprint(): string {
+    return fingerprint(
+      this.messages
+        .filter((message) => message.serverId !== null)
+        .map((message) => ({ id: message.serverId as string, content: message.content })),
+    );
   }
 
   /** Re-read the history, discarding the answer if a newer read started. */
@@ -394,6 +524,11 @@ export class ChatViewModel implements ScreenOwner, ScreenGuards {
     this.#turn?.abort();
     this.#turn = null;
     this.#inFlight = 0;
+    // Before `disposeScreen`, so a notification that arrives during teardown finds
+    // a closed subscription rather than a live one writing into disposed state.
+    this.#liveSubscription?.close();
+    this.#liveSubscription = null;
+    this.#liveTopic = null;
     await disposeScreen(this);
   }
 
@@ -465,6 +600,16 @@ export class ChatViewModel implements ScreenOwner, ScreenGuards {
 
       this.#reconcile(result);
       if (!delivered) {
+        // The one refusal that is not a failed send. The server has the row and is
+        // answering it on another connection; queueing this would re-submit a
+        // message that is already stored, and the server would refuse it again.
+        // The message stays on screen as sent, and its reply arrives through the
+        // screen's own snapshot — which is why this is only correct once the screen
+        // re-reads on its own.
+        if (result.failure?.code === CHAT_TURN_ALREADY_RUNNING) {
+          this.#markPendingStored(clientId);
+          return 'turn-failed';
+        }
         return unsent(result.failure?.message ?? 'The message was not acknowledged.');
       }
       return result.failure === undefined ? 'delivered' : 'turn-failed';
@@ -602,6 +747,22 @@ export class ChatViewModel implements ScreenOwner, ScreenGuards {
 
   #removeOptimistic(clientId: string): void {
     this.messages = this.messages.filter((message) => message.clientId !== clientId);
+  }
+
+  /**
+   * Mark an optimistic row as stored, when the server confirmed it by refusing a
+   * duplicate rather than by streaming it.
+   *
+   * `serverId` deliberately stays `null`: the client was told a generation is
+   * running, not which row the server kept, and inventing an id here is how a
+   * later snapshot merge orphans the row. The next authoritative read supplies it.
+   */
+  #markPendingStored(clientId: string): void {
+    this.messages = this.messages.map((message) =>
+      message.clientId === clientId && message.state === 'pending'
+        ? { ...message, state: 'sent' }
+        : message,
+    );
   }
 
   /**
