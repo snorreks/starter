@@ -111,6 +111,16 @@
                 packages = extraPackages;
 
                 shellHook = ''
+                  # Moon resolves every toolchain through protox, not through
+                  # PATH, so a plain `moon run` in this shell asked a proto
+                  # store for Bun and answered
+                  # `proto::commands::run::missing_tool` naming this
+                  # repository's own `.bun-version`. With the switch Moon uses
+                  # the Bun above, the one config/toolchain.json pins and
+                  # `setup:doctor` verifies. Every lane in scripts/ sets it for
+                  # itself, so a host that never runs `nix develop` is covered.
+                  export MOON_TOOLCHAIN_FORCE_GLOBALS="1"
+
                   # Two variables, and they are not interchangeable. Conflating them
                   # is what kept the browser lane failing on this host.
                   #

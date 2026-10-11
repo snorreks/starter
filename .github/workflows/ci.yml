@@ -65,7 +65,7 @@ env:
   # reasons that have nothing to do with the change under review. `.bun-version`
   # holds the same value and the `version-mirrors` guard keeps them in agreement;
   # GitHub Actions cannot read a file into `env:` at the workflow level.
-  BUN_VERSION: '1.4.2'
+  BUN_VERSION: '1.4.3'
 
   # Every lane's "this many tests passed" check, in one place.
   #

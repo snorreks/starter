@@ -5,7 +5,7 @@
 //
 // `config/toolchain.json` is written by hand and read by the Nix flake, by
 // `doctor`, and by a guard. Everything else that states a version is a *mirror*:
-// `.bun-version` for `oven-sh/setup-bun` and proto, `flake.lock` for Nix.
+// `.bun-version` for `oven-sh/setup-bun`, `flake.lock` for Nix.
 //
 // The reason this is centralised rather than left to convention: the two files
 // drifted, `.bun-version` said 1.4.0 while CI pinned 1.4.2, and the symptom was

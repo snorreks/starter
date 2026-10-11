@@ -35,6 +35,7 @@
     "test": "bun test --preload ./src/test_setup.ts"
   },
   "dependencies": {
+    "@starter/live": "workspace:*",
     "@starter/platform": "workspace:*",
     "@starter/schemas": "workspace:*",
     "@starter/ui": "workspace:*",

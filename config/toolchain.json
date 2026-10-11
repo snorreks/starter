@@ -33,11 +33,11 @@
     "outside the scripts project and Moon cannot hash them, so a cached guard",
     "would report `ok` on real drift."
   ],
-  "bun": "1.4.2",
+  "bun": "1.4.3",
   "bunSources": {
-    "x86_64-linux": "sha256-xngEDxT+BEDrg503y9DOTAUaMtpygGrJfeamqra/co8=",
-    "aarch64-linux": "sha256-VDKLvC2cjgyfiSxUTWbFeoO4QTnjSQnl7oF1jxrI/ac=",
-    "aarch64-darwin": "sha256-kJh6OhbX21VtiGrD1VHnttPt8KHPQ6yu1iLoZ2vh0S8="
+    "x86_64-linux": "sha256-H8LtrIQxApCeOhvh2NmALMYHHPB05n6IIx9P/g+LOXs=",
+    "aarch64-linux": "sha256-76mBPaXtckI7+Ef5FujSxHwNd2rdlyNUAmp14Q2pqiE=",
+    "aarch64-darwin": "sha256-gK/UwGm0am+o8+xSC+vHUKeEPkqNW5WD0prUNsAKNAM="
   },
   "//toolchain": [
     "What else is pinned, and why, is written in docs/toolchain.md rather than",
@@ -68,8 +68,6 @@
       "`error while loading shared libraries: libgbm.so.1`, which Playwright",
       "reports as `Target page, context or browser has been closed`."
     ],
-    "browsers": [
-      "chromium"
-    ]
+    "browsers": ["chromium"]
   }
 }

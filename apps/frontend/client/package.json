@@ -35,6 +35,7 @@
     "@starter/database": "workspace:*",
     "@starter/features": "workspace:*",
     "@starter/jobs": "workspace:*",
+    "@starter/live": "workspace:*",
     "@starter/logger": "workspace:*",
     "@starter/platform": "workspace:*",
     "@starter/schemas": "workspace:*",
@@ -47,7 +48,7 @@
     "valibot": "1.5.0"
   },
   "devDependencies": {
-    "@cloudflare/workers-types": "5.20261009.1",
+    "@cloudflare/workers-types": "5.20261010.1",
     "@sveltejs/adapter-cloudflare": "8.0.0",
     "@sveltejs/kit": "3.0.1",
     "@sveltejs/vite-plugin-svelte": "7.3.1",
