@@ -18,8 +18,11 @@
 import { DEV_SEED_ACCOUNT } from '@starter/fixtures';
 import { seedSupabaseLocal } from '../db/seed_supabase.ts';
 import {
-  allocateSupabaseLocal,
+  devSupabaseAllocation,
+  discardSupabaseData,
   hasSupabaseOwnership,
+  preservedSupabaseVolumes,
+  probeRunningSupabase,
   readSupabaseOwnership,
   type SupabaseLocalAllocation,
   startSupabaseLocal,
@@ -28,6 +31,7 @@ import {
 } from '../db/supabase_local.ts';
 import { supabaseBin } from '../deploy/providers/supabase.ts';
 import { REPO_ROOT } from '../shared/paths.ts';
+import { reportStep, type Stepper } from '../shared/progress.ts';
 import type { LocalService } from './service.ts';
 
 /** The three bindings the application refuses to start without. */
@@ -42,21 +46,37 @@ const BACKEND_KEYS = ['SUPABASE_URL', 'SUPABASE_ANON_KEY', 'SUPABASE_SERVICE_ROL
  * rather than Docker's availability.
  */
 export interface SupabaseServiceDependencies {
-  allocate: typeof allocateSupabaseLocal;
+  /**
+   * The per-checkout allocation this service starts a database under.
+   *
+   * One entry, deliberately, and it is the shared one: a pid-derived allocation
+   * would make every run compute a different project id, so nothing could ever be
+   * adopted. The id's blast radius is documented on `DEV_SHARED_STACK_RUN_ID`.
+   */
+  allocate: typeof devSupabaseAllocation;
   start: typeof startSupabaseLocal;
   seed: typeof seedSupabaseLocal;
+  /** Reads an already-running stack's bindings, or null. */
+  probe: typeof probeRunningSupabase;
   hasOwnership: typeof hasSupabaseOwnership;
   readOwnership: typeof readSupabaseOwnership;
   stop: typeof stopSupabaseLocal;
+  /** This project's volumes, stopped or not. How "your data came back" is decided. */
+  listVolumes: typeof preservedSupabaseVolumes;
+  /** Removes those volumes. Only `--fresh` calls this. */
+  discard: typeof discardSupabaseData;
 }
 
 const defaultDependencies: SupabaseServiceDependencies = {
-  allocate: allocateSupabaseLocal,
+  allocate: devSupabaseAllocation,
   start: startSupabaseLocal,
   seed: seedSupabaseLocal,
+  probe: probeRunningSupabase,
   hasOwnership: hasSupabaseOwnership,
   readOwnership: readSupabaseOwnership,
   stop: stopSupabaseLocal,
+  listVolumes: preservedSupabaseVolumes,
+  discard: discardSupabaseData,
 };
 
 export interface PrepareSupabaseOptions {
@@ -71,6 +91,44 @@ export interface PrepareSupabaseOptions {
   readonly callerVars?: Readonly<Record<string, string | undefined>>;
   /** Whether this run may sign requests in as the seeded account. */
   readonly autoSignIn: boolean;
+  /**
+   * Whether an already-running database from an earlier run may be adopted.
+   *
+   * Defaults to true, because that is what makes the second `bun run dev` fast, and
+   * the adoption is guarded rather than optimistic: the stack is only used when it
+   * is this checkout's own project id *and* its API answers.
+   *
+   * Set false to force a clean one. A caller that needs a database it can be certain
+   * is pristine — a lane comparing row counts, anything asserting on seeded state —
+   * sets it rather than relying on there happening to be nothing running.
+   */
+  readonly reuse?: boolean;
+  /**
+   * Throw this checkout's development data away and start over.
+   *
+   * Two things have to be true for this to mean what it says, and both are here
+   * rather than in the caller:
+   *
+   *   * **No adoption.** A running stack is not adopted, and is stopped first —
+   *     otherwise "fresh" would be a database with last run's rows in it, which is
+   *     the one thing the word is meant to exclude.
+   *   * **No restoration.** The volumes a previous `db:stop` kept are removed before
+   *     the start, because a preserved volume is reattached automatically and would
+   *     otherwise hand the fresh boot the previous database.
+   *
+   * What it leaves behind is a database with this checkout's migrations replayed
+   * and the mock seed in it, which is the only honest reading of "fresh".
+   */
+  readonly fresh?: boolean;
+  /**
+   * Reports each slow step of starting and seeding this stack.
+   *
+   * Required, for the reason `LocalServiceContext.progress` states: this service
+   * spends the longest silent stretch in the whole workspace, and it is the one a
+   * developer is most likely to interrupt. A `Stepper` scoped to this service, so
+   * its steps are not nested under a service starting beside it.
+   */
+  readonly progress: Stepper;
   readonly dependencies?: Partial<SupabaseServiceDependencies>;
   readonly environment?: Readonly<NodeJS.ProcessEnv>;
 }
@@ -112,6 +170,45 @@ const missingKeys = (values: Record<string, string | undefined>): string[] =>
 export const devAutoSignInOffered = (environment: NodeJS.ProcessEnv = process.env): boolean =>
   (environment.E2E_RUN_ID ?? '').trim().length === 0;
 
+/**
+ * Remove everything a previous run left of this checkout's database.
+ *
+ * Two steps, and the order is load-bearing. A running stack's volumes are mounted,
+ * and the engine refuses to remove a volume in use — so stopping it first is what
+ * keeps `--fresh` from failing with a container error on a host that is working
+ * perfectly well. The volumes that follow are the ones `bun run db:stop` kept, and
+ * which `supabase start` would otherwise reattach: leaving them would make "fresh"
+ * a database with the previous run's rows still in it.
+ *
+ * A failure here throws, and the caller lets it. A `--fresh` that started on top of
+ * data it failed to remove would report a fresh database and be lying.
+ */
+const discardPreviousData = async (
+  allocation: SupabaseLocalAllocation,
+  dependencies: SupabaseServiceDependencies,
+  progress: Stepper,
+): Promise<void> => {
+  const owned = (await dependencies.hasOwnership(allocation))
+    ? await dependencies.readOwnership(allocation)
+    : null;
+
+  // Probed rather than assumed: the ownership file records that a stack was
+  // started, not that it is still up, and stopping one that is not running would
+  // report a teardown failure for a database that was already gone.
+  if (owned !== null && (await dependencies.probe(allocation)) !== null) {
+    await reportStep(progress, 'stopping the running database', () =>
+      dependencies.stop(allocation, owned, { preserveData: false }),
+    );
+  }
+
+  await reportStep(
+    progress,
+    'discarding the previous development data',
+    () => Promise.resolve(dependencies.discard(allocation)),
+    (removed) => (removed.length === 0 ? 'nothing to discard' : removed.join(', ')),
+  );
+};
+
 export const prepareSupabaseService = async (
   options: PrepareSupabaseOptions,
 ): Promise<SupabaseServiceResult> => {
@@ -148,10 +245,81 @@ export const prepareSupabaseService = async (
     );
   }
 
-  const allocation = dependencies.allocate(
-    REPO_ROOT,
-    `dev_${process.pid}_${crypto.randomUUID().slice(0, 8)}`,
-  );
+  // The per-checkout allocation, not a per-run one. This is the line that makes
+  // reuse reachable at all: with a pid-derived id, every run computed a different
+  // project id, so the probe below looked for a stack that had never existed and
+  // the next run booted its own. `DEV_SHARED_STACK_RUN_ID` states the blast radius —
+  // this service and nothing else — and the lanes that need a pristine database
+  // allocate their own.
+  const allocation = dependencies.allocate(REPO_ROOT);
+
+  const fresh = options.fresh === true;
+
+  if (fresh) {
+    await discardPreviousData(allocation, dependencies, options.progress);
+  }
+
+  // A development run adopts the database an earlier one already started, and this
+  // is the only reason the second `bun run dev` is quick.
+  //
+  // The adoption is one-way on purpose. A reused stack outlives the run that
+  // started it, so `owned` is `false` for it and teardown never stops it — a stack
+  // this run did not start is not this run's to take down, which is the same rule
+  // that stops `bun run dev` killing a database a developer started by other means.
+  // What stops it is `bun run db:stop`, or the next full boot, and both are explicit.
+  const reused =
+    fresh || options.reuse === false
+      ? null
+      : await reportStep(
+          options.progress,
+          'looking for a database already running',
+          () => dependencies.probe(allocation),
+          (found) => (found === null ? undefined : 'adopted'),
+        );
+
+  if (reused !== null) {
+    return {
+      id: 'supabase',
+      label: 'Local Supabase (reused)',
+      owned: false,
+      allocation,
+      vars: {
+        ...reused,
+        // Only for a developer's own run. A harness reusing this stack must not be
+        // signed in as the seeded account — `devAutoSignInOffered` is what decides,
+        // and it is decided once rather than per-binding here.
+        ...(options.autoSignIn
+          ? {
+              DEV_AUTO_LOGIN: 'seed',
+              DEV_AUTO_LOGIN_EMAIL: DEV_SEED_ACCOUNT.email,
+              DEV_AUTO_LOGIN_PASSWORD: DEV_SEED_ACCOUNT.password,
+            }
+          : {}),
+      },
+      summary: [
+        `Local Supabase (already running) -> ${reused.SUPABASE_URL}`,
+        `  Studio -> ${allocation.urls.studio}`,
+        ...(options.autoSignIn
+          ? [
+              `Signed in automatically as ${DEV_SEED_ACCOUNT.email}. ` +
+                'Sign out on /notes to use the sign-in form instead.',
+            ]
+          : []),
+        '  Left running: Ctrl-C stops the app, not this. Stop it with `bun run db:stop`.',
+      ],
+      dispose: async () => [],
+    };
+  }
+
+  // The volumes this checkout's database still holds, read at the last moment
+  // before the start makes the question unanswerable.
+  //
+  // `supabase start` reattaches a kept volume, so afterwards the engine would report
+  // volumes whether or not there had been any — and this boot would claim to have
+  // "restored" a database it had just created. It is also *after* the reuse probe
+  // rather than before it: a run that adopts a running stack does not need to know,
+  // and asking anyway would spend a `docker volume ls` on the fast path.
+  const volumesBefore = dependencies.listVolumes(allocation);
 
   // Email confirmations off: a developer's own loop should reach the app after
   // sign-up. The verified-email flow is covered by the E2E lane, which turns
@@ -159,7 +327,10 @@ export const prepareSupabaseService = async (
   let started: Awaited<ReturnType<SupabaseServiceDependencies['start']>>;
   let seeded: Awaited<ReturnType<SupabaseServiceDependencies['seed']>>;
   try {
-    started = await dependencies.start(allocation, { emailConfirmations: false });
+    started = await dependencies.start(allocation, {
+      emailConfirmations: false,
+      progress: options.progress,
+    });
 
     // Seed the stack this run started, so the developer's first page shows their own
     // notes rather than an empty list they have to type into. `--workdir` the
@@ -170,15 +341,26 @@ export const prepareSupabaseService = async (
     // A failure here fails the command. A dev server that starts against an empty
     // database and says nothing is the failure mode this repository treats as worse
     // than an error.
-    seeded = await dependencies.seed({
-      root: supabaseProjectDir(allocation),
-      // The run directory has no manifest of its own, so the binary is resolved from
-      // the checkout that declares it rather than from the directory being seeded.
-      binary: supabaseBin() ?? undefined,
-    });
+    seeded = await reportStep(
+      options.progress,
+      'seeding the demo account',
+      () =>
+        dependencies.seed({
+          root: supabaseProjectDir(allocation),
+          // The run directory has no manifest of its own, so the binary is resolved
+          // from the checkout that declares it rather than from the directory being
+          // seeded.
+          binary: supabaseBin() ?? undefined,
+        }),
+      (result) => `${result.noteCount} notes`,
+    );
   } catch (error) {
     try {
       if (await dependencies.hasOwnership(allocation)) {
+        // `preserveData` is not passed, and that is the point: a stack that failed
+        // to start must not leave a volume behind for the next run to restore. The
+        // data it would preserve is the previous run's, and this stack never reached
+        // a state where anyone could rely on either.
         await dependencies.stop(allocation, await dependencies.readOwnership(allocation));
       }
     } catch {
@@ -200,8 +382,20 @@ export const prepareSupabaseService = async (
   }
 
   const summary = [
-    `Local Supabase (started by this run) -> ${started.SUPABASE_URL}`,
+    fresh
+      ? `Local Supabase (fresh database, started by this run) -> ${started.SUPABASE_URL}`
+      : `Local Supabase (started by this run) -> ${started.SUPABASE_URL}`,
     `  Studio -> ${allocation.urls.studio}`,
+    // Said rather than inferred. A developer who stopped the database yesterday and
+    // has today's rows on their first screen needs to know *why*, and the alternative
+    // — silently reusing a volume — is indistinguishable from a bug report about
+    // deleted notes coming back.
+    ...(volumesBefore.length > 0
+      ? [
+          `Restored the data from ${volumesBefore.length === 1 ? 'the volume kept by the last run' : `${volumesBefore.length} volumes kept by earlier runs`}.`,
+          '  Start over instead: bun run dev --fresh',
+        ]
+      : []),
     `Seeded account -> ${DEV_SEED_ACCOUNT.email} (${seeded.noteCount} notes)`,
     ...(options.autoSignIn
       ? [
@@ -209,28 +403,35 @@ export const prepareSupabaseService = async (
             'Sign out on /notes to use the sign-in form instead.',
         ]
       : []),
+    // Said here rather than left to be discovered: this run is about to end and the
+    // database is about to still be here.
+    '  Left running for the next `bun run dev`. Stop it with `bun run db:stop`.',
   ];
 
   return {
     id: 'supabase',
     label: 'Local Supabase',
+    // Owned, and *not* stopped at teardown.
+    //
+    // This is the one place `owned` and "will be torn down" come apart, so it is
+    // worth being explicit about why. The database is a property of the checkout,
+    // not of the run: the next `bun run dev` adopts it and starts in about a second
+    // instead of thirty. Stopping it on Ctrl-C would make the second run pay the
+    // full boot again and make reuse unreachable, which is the whole point of
+    // starting it.
+    //
+    // The cost is eight containers outliving the command that started them, which
+    // this repository otherwise treats as a defect — so the cost is bounded and
+    // named: one per checkout, keyed by a fixed id rather than a pid, always
+    // reported in the banner, and stopped by exactly one command. `db:stop` refuses
+    // rather than reporting success when there is nothing to stop.
+    //
+    // `db stop` and the failure path above are the ways it does get stopped, so a
+    // stack that is failing to start is still cleaned up.
     owned: true,
     allocation,
     vars,
     summary,
-    dispose: async () => {
-      // Independent steps, and both attempted. A failure to stop must not leave
-      // the stack running because the vars file happened to be stuck, and vice
-      // versa; the caller turns the returned list into a failed exit.
-      const failures: string[] = [];
-      try {
-        if (await dependencies.hasOwnership(allocation)) {
-          await dependencies.stop(allocation, await dependencies.readOwnership(allocation));
-        }
-      } catch (error) {
-        failures.push(error instanceof Error ? error.message : String(error));
-      }
-      return failures;
-    },
+    dispose: async () => [],
   };
 };

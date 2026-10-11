@@ -105,6 +105,35 @@ const makeRepo = (): {
 const run = (script: string, env: NodeJS.ProcessEnv, root: string): string =>
   execFileSync('bun', ['-e', script], { cwd: root, env, encoding: 'utf8' });
 
+/**
+ * Ask the child for its exit code *and* its reason, without changing a passing run.
+ *
+ * `run` reads stdout, which answers "did this succeed" and nothing else. The reason a
+ * `RunResult` came back non-zero is always in its `stderr`, and both of these children
+ * were printing the code and dropping that — so a tool that could not start read as
+ * `Expected: 0, Received: 3`. The number is the same whether `sops` was never spawned
+ * or it ran and disagreed, and only one of those is a bug in the operation under test.
+ *
+ * So the child prints the code on the stream the assertions already read and the reason
+ * on the *other* one, gated on the code being non-zero. Gating matters twice: a
+ * successful `decryptFile` has a non-empty `stderr` ("Wrote … (mode 600)."), so gating
+ * on the reason's presence would corrupt every passing run. A passing run's bytes are
+ * unchanged, every assertion below stays strict, and a failing one carries its cause
+ * into the message instead of leaving it to be guessed at.
+ *
+ * `codeOn` names the stream each test asserts the code on, so the reason never lands
+ * where a byte-exact assertion is waiting for it.
+ */
+const withReason = (script: string, codeOn: 'stdout' | 'stderr'): string =>
+  `${script}\nif (r.code !== 0) process.stderr.write(String(r.stderr));\n${
+    codeOn === 'stdout' ? 'console.log(r.code);' : 'console.error(r.code);'
+  }`;
+
+/** The spawn's own error, when the child never ran at all. Named, because it is the
+ * one failure a `RunResult` cannot describe — there was no result to describe it. */
+const spawnReason = (result: { error?: Error }): string =>
+  result.error === undefined ? '' : `\n${result.error.message}`;
+
 describe('secrets: refusals that need no tools', () => {
   test('isGitIgnored asks git, so a tracked file is reported as tracked', () => {
     const root = mkdtempSync(join(tmpdir(), 'starter-ignore-'));
@@ -251,13 +280,25 @@ describe.skipIf(!canEncrypt)('secrets: a real round trip', () => {
     const outside = mkdtempSync(join(tmpdir(), 'starter-secret-output-'));
     created.push(outside);
     const output = join(outside, 'plain.env');
-    const result = run(
-      `const { decryptFile } = await import('${SOPTS}');\n` +
-        `const r = decryptFile('app.enc.env', ${JSON.stringify(output)}, process.cwd());\nconsole.log(r.code);`,
-      repo.env,
-      repo.root,
+    // `spawnSync` rather than `run`, because the reason has to survive to the
+    // assertion: `run` reads stdout, and stdout is where the code is asserted.
+    const seen = spawnSync(
+      'bun',
+      [
+        '-e',
+        withReason(
+          `const { decryptFile } = await import('${SOPTS}');\n` +
+            `const r = decryptFile('app.enc.env', ${JSON.stringify(output)}, process.cwd());`,
+          'stdout',
+        ),
+      ],
+      { cwd: repo.root, env: repo.env, encoding: 'utf8' },
     );
-    expect(result.trim()).toBe('0');
+
+    expect(
+      seen.stdout.trim(),
+      `decryptFile reported code ${seen.stdout.trim()}:${spawnReason(seen)}\n${seen.stderr}`,
+    ).toBe('0');
     expect(readFileSync(output, 'utf8')).toBe('A=1\n');
   });
 
@@ -279,14 +320,23 @@ describe.skipIf(!canEncrypt)('secrets: a real round trip', () => {
       'bun',
       [
         '-e',
-        `const { execWithSecrets } = await import('${SOPTS}');\n` +
-          `const r = execWithSecrets(['sh', '-c', 'printf "%s" "$API_TOKEN"'], { API_TOKEN: ${JSON.stringify(ciphertext)} }, process.cwd()); console.error(r.code);`,
+        withReason(
+          `const { execWithSecrets } = await import('${SOPTS}');\n` +
+            `const r = execWithSecrets(['sh', '-c', 'printf "%s" "$API_TOKEN"'], { API_TOKEN: ${JSON.stringify(ciphertext)} }, process.cwd());`,
+          // stderr, because the spawned command inherits stdout and writes the secret
+          // there; the code cannot go where the secret goes without corrupting the
+          // assertion that reads it.
+          'stderr',
+        ),
       ],
       { cwd: repo.root, env: repo.env, encoding: 'utf8' },
     );
 
-    expect(seen.status).toBe(0);
-    expect(seen.stderr.trim()).toBe('0');
+    expect(seen.status, `the child never exited cleanly:${spawnReason(seen)}`).toBe(0);
+    expect(
+      seen.stderr.trim(),
+      `execWithSecrets reported code ${seen.stderr.trim()}:${spawnReason(seen)}\n${seen.stdout}`,
+    ).toBe('0');
     expect(seen.stdout).toBe('exec-secret-value');
   });
 

@@ -11,12 +11,17 @@
 //
 // Fixtures, not the live tree: the point is to make the Windows and Linux answers
 // differ on purpose.
+//
+// The last block is the other half of the same module: the environment Moon is
+// spawned in. That one is not a fixture — it is the measured fact that Moon
+// resolves toolchains through protox, so `bun run fix` failed with
+// `proto::commands::run::missing_tool` while the Nix-built Bun sat on `PATH`.
 
 import { afterAll, describe, expect, test } from 'bun:test';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { resolveWorkspaceBin } from '../src/shared/tools.ts';
+import { moonToolchainEnvironment, resolveWorkspaceBin } from '../src/shared/tools.ts';
 
 /** A tree with `node_modules/.bin` entries, written the way a package manager would. */
 const fixture = (entries: Readonly<Record<string, readonly string[]>>): string => {
@@ -105,5 +110,32 @@ describe('resolveWorkspaceBin', () => {
     const root = tree({});
 
     expect(resolveWorkspaceBin('tauri', ['apps/frontend/native'], root)).toBeNull();
+  });
+});
+
+describe('the environment Moon runs in', () => {
+  test('asks Moon for the Bun on PATH instead of a proto-managed one', () => {
+    // The failure this exists for: Moon embeds protox and resolves `bun` through
+    // the proto store, so a lane ran a Bun this repository never pinned, or
+    // failed with `proto::commands::run::missing_tool` naming our own
+    // `.bun-version`. docs/toolchain.md records the measurement.
+    expect(moonToolchainEnvironment({}).MOON_TOOLCHAIN_FORCE_GLOBALS).toBe('1');
+  });
+
+  test('keeps the rest of the environment, PATH above all', () => {
+    // The Bun this switch selects *is* the one on PATH. An environment that
+    // dropped PATH would resolve a different Bun than the one doctor verified.
+    const env = moonToolchainEnvironment({ PATH: '/nix/store/bun/bin', HOME: '/home/dev' });
+
+    expect(env.PATH).toBe('/nix/store/bun/bin');
+    expect(env.HOME).toBe('/home/dev');
+  });
+
+  test('overrides an inherited 0 rather than deferring to it', () => {
+    // A shell, a CI runner or an agent exporting the variable to turn proto back
+    // on must not be able to do it for a lane in this repository.
+    expect(
+      moonToolchainEnvironment({ MOON_TOOLCHAIN_FORCE_GLOBALS: '0' }).MOON_TOOLCHAIN_FORCE_GLOBALS,
+    ).toBe('1');
   });
 });

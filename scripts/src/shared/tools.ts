@@ -89,6 +89,49 @@ export const resolveWorkspaceBin = (
 };
 
 /**
+ * The environment Moon has to run in, for the Bun this repository supplies.
+ *
+ * Moon does not resolve a toolchain from `PATH`. It embeds protox, and protox
+ * asks the proto store for the pinned version — measured here with
+ * `@moonrepo/cli` 2.6.1, `.bun-version` at 1.4.3 and no 1.4.3 in that store:
+ *
+ *     $ moon bin bun
+ *     × Process proto failed: exit code 1
+ *
+ *     ui:lint | {"code":"proto::commands::run::missing_tool","message":"This
+ *     project requires Bun 1.4.3 (detected from …/.bun-version), but this
+ *     version has not been installed. Install it with proto install bun 1.4.3"}
+ *
+ * Deleting `.bun-version` does not produce "use the Bun on PATH" either. With
+ * the file gone, `moon bin bun` answered with
+ * `~/.local/share/proto/tools/bun/1.1.31/bun` — the version pinned in the
+ * *global* `~/.local/share/proto/.prototools`. So a repository that declares a
+ * `bun` toolchain and does not want proto does not get a different Bun; it gets
+ * whatever a version manager it never installed happened to pin.
+ *
+ * `MOON_TOOLCHAIN_FORCE_GLOBALS` is Moon's own documented switch for this
+ * ("Force toolchains to use globally installed tools instead of proto-managed
+ * versions", the one Moon sets for itself inside Docker). With it, the same
+ * `moon run ui:lint` ran the Nix-provided Bun while `.bun-version` named a
+ * version the proto store did not have; without it, that task failed.
+ *
+ * Every spawn of Moon in this repository goes through this function:
+ * `scripts/src/commands/cached.ts` (every `bun run test|lint|format|fix|
+ * typecheck|e2e|build`), `scripts/src/coverage/coverage.ts` and
+ * `scripts/src/hooks/pre_commit.ts`. `flake.nix` exports the same variable so a
+ * Moon typed directly in the developer's shell — and every agent process that
+ * shells out to one — gets the same Bun the lane validated.
+ *
+ * It is set unconditionally rather than only when absent: an inherited
+ * `MOON_TOOLCHAIN_FORCE_GLOBALS=0` from an outer environment would otherwise
+ * reintroduce proto on a machine that has one.
+ */
+export const moonToolchainEnvironment = (env: NodeJS.ProcessEnv): NodeJS.ProcessEnv => ({
+  ...env,
+  MOON_TOOLCHAIN_FORCE_GLOBALS: '1',
+});
+
+/**
  * Wrangler, as pinned by `apps/frontend/client` (the package that deploys) and
  * `scripts`.
  */

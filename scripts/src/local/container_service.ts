@@ -18,6 +18,7 @@
 // something teardown must remove: deleting a layer-cached Rust build on Ctrl-C
 // would make the next `bun run dev` pay twenty minutes to prove the same thing.
 
+import { reportStep } from '../shared/progress.ts';
 import { containerRuntimeRemedy, resolveContainerRuntime } from './container_runtime.ts';
 import { buildMediaImage } from './media_image.ts';
 import { type LocalService, type LocalServiceContext, LocalServiceUnavailable } from './service.ts';
@@ -58,7 +59,18 @@ export const prepareContainerService = async (
   // asserting that the image is correct, which is what `bun run test:compute`'s
   // uncached build is for. Both reports are explicit, because a stack that quietly
   // skipped a build would look identical to one that ran it.
-  const built = await dependencies.buildImage({ engine: engine.command, reuse: true });
+  const built = await reportStep(
+    context.progress,
+    'building the finite runner image',
+    () => dependencies.buildImage({ engine: engine.command, reuse: true }),
+    // The one step here that can take minutes has to say which of the two things
+    // it did, because "the image is ready" and "the image was already there" lead
+    // to opposite conclusions about whether the sources are what ran.
+    (image) =>
+      image.reused
+        ? 'reused: already built from these sources'
+        : `${image.rustTests} Rust tests passed`,
+  );
 
   const summary = built.reused
     ? [

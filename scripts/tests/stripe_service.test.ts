@@ -1,18 +1,34 @@
 // scripts/tests/stripe_service.test.ts
 //
-// The Stripe emulator service. Two things are load-bearing and both are asserted
-// here: a caller who already configured Stripe is never silently given an emulator,
-// and the emulator's missing capabilities are stated rather than discovered.
+// The Stripe service. It starts nothing, so every assertion here is about a
+// *refusal* or about what the developer is told — which is the entire content of
+// the service now that the emulator is gone.
+//
+// The failures being prevented:
+//   * a development stack that accepts a live-mode key and creates real invoices
+//   * a `--stack stripe` that reports success with no Stripe configured
+//   * a credential check that disagrees with what the dev server would actually load
+//   * webhook delivery described as available when `stripe listen` would forward nothing
 
 import { describe, expect, test } from 'bun:test';
 import type { LocalServiceContext } from '../src/local/service.ts';
+import { LocalServiceUnavailable } from '../src/local/service.ts';
 import {
-  callerStripeValues,
+  developerStripeConfig,
+  isLocalStripeTarget,
+  parseDotenv,
   prepareStripeService,
+  STRIPE_API_BASE_DEFAULT,
   STRIPE_MOCK_LIMITS,
+  type StripeBridgeStatus,
   type StripeServiceDependencies,
   stripeBridgeStatus,
+  stripeKeyMode,
+  stripeTargetProblem,
+  verifyStripeCredentials,
+  webhookBridgeInstructions,
 } from '../src/local/stripe_service.ts';
+import { recordingProgress } from './fixtures/progress.ts';
 
 const context = (overrides: Partial<LocalServiceContext> = {}): LocalServiceContext => ({
   runId: 'dev_test',
@@ -26,177 +42,335 @@ const context = (overrides: Partial<LocalServiceContext> = {}): LocalServiceCont
   origin: 'http://127.0.0.1:5173',
   callerVars: {},
   environment: {},
+  progress: recordingProgress().progress,
   ...overrides,
 });
 
-/** A service whose engine, ports and containers are all observable without Docker. */
-const recorder = () => {
-  const calls: string[] = [];
-  const removed: string[] = [];
-  let readyFail: string | undefined;
-  const dependencies: Partial<StripeServiceDependencies> = {
-    resolveRuntime: (() => ({ command: 'podman', version: 'podman 5.0' })) as never,
-    allocatePort: (async (_purpose: string) => ({
-      port: 4300 + calls.length,
-      rejected: [],
-    })) as never,
-    isPortBusy: (async () => false) as never,
-    runContainer: async (engine, args) => {
-      calls.push(`run:${engine}:${args[args.length - 1] ?? ''}`);
-      return 'container-abc';
-    },
-    removeContainer: async (_engine, name) => {
-      removed.push(name);
-    },
-    waitForHttp: async () => {
-      if (readyFail !== undefined) {
-        throw new Error(readyFail);
-      }
-      calls.push('ready');
-    },
-    bridgeStatus: () => ({ available: true, command: 'stripe' }),
-  };
-  return {
-    calls,
-    removed,
-    dependencies,
-    refuseReady: (message: string) => {
-      readyFail = message;
-    },
-  };
+const TEST_KEY = 'sk_test_51Hxxxxxx';
+
+const NO_BRIDGE: StripeBridgeStatus = {
+  available: false,
+  reason: 'The Stripe CLI is not on PATH.',
+  remedy: 'Install it.',
 };
 
-describe('a caller who configured Stripe keeps it', () => {
-  test('both halves are required before an emulator is considered', () => {
-    // A base URL with no key means the SDK is pointed at a real account through
-    // its default host. Starting an emulator underneath that would bill a live
-    // test account through a stack the developer believes is local.
-    expect(callerStripeValues({})).toBeNull();
-    expect(callerStripeValues({ STRIPE_API_BASE: 'https://api.stripe.com' })).toBeNull();
-    expect(callerStripeValues({ STRIPE_SECRET_KEY: 'sk_test_1' })).toBeNull();
-    expect(callerStripeValues({ STRIPE_API_BASE: ' ', STRIPE_SECRET_KEY: 'sk_test_1' })).toBeNull();
-    expect(
-      callerStripeValues({
-        STRIPE_API_BASE: 'https://api.stripe.com',
-        STRIPE_SECRET_KEY: 'sk_test_1',
-      }),
-    ).toEqual({ apiBase: 'https://api.stripe.com', secretKey: 'sk_test_1' });
+const dependencies = (
+  overrides: Partial<StripeServiceDependencies> = {},
+): Partial<StripeServiceDependencies> => ({
+  configure: () => ({ apiBase: STRIPE_API_BASE_DEFAULT, secretKey: TEST_KEY }),
+  verify: async () => ({ ok: true }),
+  bridgeStatus: () => NO_BRIDGE,
+  ...overrides,
+});
+
+describe('a live-mode key is refused before anything else is judged', () => {
+  test('a live secret key names itself and says what to use instead', () => {
+    // The failure this prevents: a local development stack pointed at live mode,
+    // where one click on a checkout button creates a real subscription and a real
+    // invoice. There is no override — Stripe's test mode is a complete environment.
+    const problem = stripeTargetProblem({
+      apiBase: STRIPE_API_BASE_DEFAULT,
+      secretKey: 'sk_live_51Hxxxxxx',
+    });
+    expect(problem).toContain('sk_live_');
+    expect(problem).toContain('Refusing');
+    expect(problem).toContain('sk_test_');
   });
 
-  test('no container engine is touched when the configuration is complete', async () => {
-    const rec = recorder();
-    const service = await prepareStripeService(
-      context({
-        callerVars: { STRIPE_API_BASE: 'https://api.stripe.com', STRIPE_SECRET_KEY: 'sk_test_1' },
-      }),
-      rec.dependencies,
-    );
+  test('a restricted key is refused for a different, stated reason', () => {
+    // `rk_` keys cannot sign SDK requests at all, so the failure would otherwise
+    // surface as an opaque 401 at the checkout button rather than here.
+    const problem = stripeTargetProblem({
+      apiBase: STRIPE_API_BASE_DEFAULT,
+      secretKey: 'rk_test_51Hxxxxxx',
+    });
+    expect(problem).toContain('rk_');
+    expect(problem).toContain('cannot');
+  });
 
+  test('an unrecognised key is refused rather than tried', () => {
+    // A typo, or a publishable key pasted where the secret goes. Guessing would
+    // mean a request to Stripe with something that should never have left the box.
+    for (const key of ['pk_test_51H', 'nonsense', '']) {
+      expect(stripeTargetProblem({ apiBase: STRIPE_API_BASE_DEFAULT, secretKey: key })).toContain(
+        'sk_test_',
+      );
+    }
+  });
+
+  test('a secret key sent over plaintext is refused', () => {
+    const problem = stripeTargetProblem({
+      apiBase: 'http://api.stripe.example.com',
+      secretKey: TEST_KEY,
+    });
+    expect(problem).toContain('HTTPS');
+  });
+
+  test('a test key against Stripe is accepted', () => {
+    expect(
+      stripeTargetProblem({ apiBase: STRIPE_API_BASE_DEFAULT, secretKey: TEST_KEY }),
+    ).toBeNull();
+  });
+
+  test('the mode of a key is read from its prefix', () => {
+    expect(stripeKeyMode('sk_test_1')).toBe('test');
+    expect(stripeKeyMode('sk_live_1')).toBe('live');
+    expect(stripeKeyMode('rk_test_1')).toBe('restricted');
+    expect(stripeKeyMode('whsec_1')).toBe('unknown');
+  });
+});
+
+describe('the configuration is read from where the dev server reads it', () => {
+  // Keyed by file name, because the real paths are absolute and machine-specific.
+  const read = (files: Record<string, Record<string, string>>) => (path: string) => {
+    const name = path.split('/').pop() ?? path;
+    return files[name] ?? {};
+  };
+
+  test('a key in .env.local is found, which is where a developer puts one', () => {
+    // The service used to look only at the environment and the run-owned vars file.
+    // A developer who put their key in `.env.local` — the obvious place, and one vite
+    // loads — would have been refused by a check the app itself disagreed with.
+    const found = developerStripeConfig(
+      {},
+      read({ '.env.local': { STRIPE_SECRET_KEY: TEST_KEY } }),
+    );
+    expect(found).toEqual({ apiBase: STRIPE_API_BASE_DEFAULT, secretKey: TEST_KEY });
+  });
+
+  test("the caller's own configuration beats a dotenv file", () => {
+    // `.env.local` is a default; a configured binding is a decision, and the run-owned
+    // vars file is what a lane sets deliberately.
+    const found = developerStripeConfig(
+      { STRIPE_SECRET_KEY: TEST_KEY, STRIPE_API_BASE: 'https://api.stripe.example.com' },
+      read({
+        '.env.local': { STRIPE_SECRET_KEY: 'sk_test_dotenv', STRIPE_API_BASE: 'https://old' },
+      }),
+    );
+    expect(found?.secretKey).toBe(TEST_KEY);
+    expect(found?.apiBase).toBe('https://api.stripe.example.com');
+  });
+
+  test('.env.local beats .env, matching the order vite loads them', () => {
+    const found = developerStripeConfig(
+      {},
+      read({
+        '.env': { STRIPE_SECRET_KEY: 'sk_test_base' },
+        '.env.local': { STRIPE_SECRET_KEY: TEST_KEY },
+      }),
+    );
+    expect(found?.secretKey).toBe(TEST_KEY);
+  });
+
+  test('no key anywhere is reported as no configuration, not as a broken one', () => {
+    expect(developerStripeConfig({}, read({}))).toBeNull();
+    expect(developerStripeConfig()).toBeNull();
+  });
+
+  test('dotenv quoting and comments do not end up inside the key', () => {
+    // A stray quote in a dotenv file is the kind of thing that turns a working key
+    // into an opaque 401 at the checkout button, an hour later.
+    expect(parseDotenv('# a comment\nSTRIPE_SECRET_KEY="sk_test_x"\n')).toEqual({
+      STRIPE_SECRET_KEY: 'sk_test_x',
+    });
+    expect(parseDotenv("export FOO='bar'\n")).toEqual({ FOO: 'bar' });
+    expect(parseDotenv('NO_EQUALS_HERE\n')).toEqual({});
+  });
+
+  test('a loopback base URL is recognised as local, not as Stripe', () => {
+    expect(isLocalStripeTarget('http://127.0.0.1:12111')).toBe(true);
+    expect(isLocalStripeTarget(STRIPE_API_BASE_DEFAULT)).toBe(false);
+  });
+});
+
+describe('credentials are proved before the developer needs them', () => {
+  test('a 401 says the key was rejected and does not suggest retrying', async () => {
+    const result = await verifyStripeCredentials(
+      { apiBase: STRIPE_API_BASE_DEFAULT, secretKey: TEST_KEY },
+      { fetch: async () => new Response('', { status: 401 }) },
+    );
+    expect(result.ok).toBe(false);
+    if (result.ok) {
+      throw new Error('a rejected key reported success');
+    }
+    expect(result.problem).toContain('401');
+    expect(result.remedy).toContain('test/apikeys');
+  });
+
+  test('an unreachable Stripe is named as a network problem, not a bad key', async () => {
+    // These have opposite fixes. Reporting one as the other sends the developer to
+    // rotate a key that is fine.
+    const result = await verifyStripeCredentials(
+      { apiBase: STRIPE_API_BASE_DEFAULT, secretKey: TEST_KEY },
+      {
+        fetch: async () => {
+          throw new Error('getaddrinfo ENOTFOUND');
+        },
+      },
+    );
+    expect(result.ok).toBe(false);
+    if (result.ok) {
+      throw new Error('an unreachable Stripe reported success');
+    }
+    expect(result.problem).toContain('ENOTFOUND');
+    expect(result.remedy).toContain('network');
+  });
+
+  test('the key travels in a header, never in the URL', async () => {
+    let seen = '';
+    await verifyStripeCredentials(
+      { apiBase: STRIPE_API_BASE_DEFAULT, secretKey: TEST_KEY },
+      {
+        fetch: async (input) => {
+          seen = String(input);
+          return new Response('{}', { status: 200 });
+        },
+      },
+    );
+    expect(seen).not.toContain(TEST_KEY);
+    expect(seen).toContain('/v1/products');
+  });
+
+  test('a rejected key fails the run, and says which part was wrong', async () => {
+    // A `--stack stripe` that starts and then 503s every checkout has wasted the
+    // developer in the least recoverable way.
+    await expect(
+      prepareStripeService(
+        context(),
+        dependencies({
+          verify: async () => ({
+            ok: false,
+            problem: 'Stripe rejected the key (401).',
+            remedy: 'Check it.',
+          }),
+        }),
+      ),
+    ).rejects.toThrow('Stripe rejected the key (401).');
+  });
+
+  test('a working key is reported as working', async () => {
+    const service = await prepareStripeService(context(), dependencies());
+    expect(service.summary.join('\n')).toContain(STRIPE_API_BASE_DEFAULT);
+    expect(service.label).toBe('Stripe test mode');
+  });
+});
+
+describe('the stack refuses rather than running without Stripe', () => {
+  test('no key is an unavailability naming the key and where to get it', async () => {
+    // The zero-credential fallback went away with the emulator. What is left is a
+    // refusal, and it has to carry the remedy — a `--stack stripe` that exits with
+    // "unavailable" and no instructions is the outcome this repository treats as
+    // worse than an error. The remedy is a separate field from the message, and both
+    // are printed by the caller, so both are asserted.
+    let caught: unknown;
+    try {
+      await prepareStripeService(context(), dependencies({ configure: () => null }));
+    } catch (error) {
+      caught = error;
+    }
+
+    expect(caught).toBeInstanceOf(LocalServiceUnavailable);
+    const refusal = caught as LocalServiceUnavailable;
+    expect(refusal.service).toBe('stripe');
+    expect(refusal.prerequisite).toContain('test secret key');
+    expect(refusal.remedy).toContain('.env.local');
+    expect(refusal.remedy).toContain('sk_test_');
+    // The offline alternative is named too: "no credentials" is not the only way to
+    // want Stripe locally, and the emulator still exists.
+    expect(refusal.remedy).toContain('stripe-mock');
+  });
+
+  test('the service starts nothing, so nothing is torn down and no binding is claimed', async () => {
+    const service = await prepareStripeService(context(), dependencies());
     expect(service.owned).toBe(false);
-    expect(service.vars.STRIPE_API_BASE).toBe('https://api.stripe.com');
-    expect(rec.calls).toEqual([]);
-    // Nothing was started, so nothing may be stopped: tearing down a developer's
-    // own Stripe configuration on the way out would be indefensible.
+    // The caller's bindings are already the base of the run-owned vars file;
+    // echoing them back would look like two services writing one value.
+    expect(service.vars).toEqual({});
     expect(await service.dispose()).toEqual([]);
   });
 });
 
-describe('the emulator starts, is verified, and cleans up after itself', () => {
-  test('a successful start reports what the emulator cannot do', async () => {
-    const rec = recorder();
-    const service = await prepareStripeService(context(), rec.dependencies);
-
-    expect(service.owned).toBe(true);
-    expect(service.vars.STRIPE_API_BASE).toMatch(/^http:\/\/127\.0\.0\.1:\d+$/);
-    expect(rec.calls).toContain('ready');
-
-    // The two facts that otherwise cost an afternoon each.
-    const banner = service.summary.join('\n');
-    for (const limit of STRIPE_MOCK_LIMITS) {
-      expect(banner).toContain(limit);
-    }
-  });
-
-  test('a service that never becomes ready is removed, not left holding its port', async () => {
-    const rec = recorder();
-    rec.refuseReady('connection refused');
-
-    await expect(prepareStripeService(context(), rec.dependencies)).rejects.toThrow(
-      'connection refused',
-    );
-    // Leaving it would mean the next run's probe fails on a port this run bound.
-    expect(rec.removed).toHaveLength(1);
-  });
-
-  test('teardown names a container that survived removal', async () => {
-    const rec = recorder();
-    const service = await prepareStripeService(context(), {
-      ...rec.dependencies,
-      // `rm --force` reported success and the port is still bound. Reporting
-      // nothing here means the next run fails on a bind error nobody can trace.
-      isPortBusy: (async () => true) as never,
-    });
-
-    const failures = await service.dispose();
-    expect(failures).toHaveLength(1);
-    expect(failures[0]).toContain('still bound');
-  });
-});
-
-describe('the webhook bridge is a separate question from the emulator', () => {
-  // Answers by argv, not by binary name: that is what the probe branches on.
-  const stub =
-    (answers: Record<string, number>) =>
-    (_command: string, args: readonly string[]): number | null =>
-      answers[args.join(' ')] ?? null;
-
-  test('absent, unauthenticated and ready are three different answers', () => {
-    // `stripe version` succeeds without a login, so a green probe is not evidence
-    // that `stripe listen` will forward anything. Collapsing the middle case into
-    // "available" is how an afternoon disappears.
-    // `{}` means the binary does not run at all: no probe answers.
-    expect(stripeBridgeStatus({}, stub({}))).toMatchObject({
-      available: false,
-      reason: expect.stringContaining('not on PATH'),
-    });
-
-    expect(stripeBridgeStatus({}, stub({ version: 0, 'config --list': 1 }))).toMatchObject({
-      available: false,
-      reason: expect.stringContaining('not authenticated'),
-    });
-
-    expect(stripeBridgeStatus({}, stub({ version: 0, 'config --list': 0 }))).toEqual({
-      available: true,
-      command: 'stripe',
-    });
-  });
-
-  test('an explicit STRIPE_CLI_BIN that does not run is reported, not silently replaced', () => {
-    // Falling back to whatever is on PATH would ignore a developer pointing at a
-    // specific installation — a Homebrew path, a mise shim.
-    expect(stripeBridgeStatus({ STRIPE_CLI_BIN: '/opt/stripe' }, () => null)).toMatchObject({
-      available: false,
-      reason: expect.stringContaining('/opt/stripe'),
-    });
-  });
-
-  test('every unavailable answer carries a remedy', () => {
-    for (const answers of [{} as Record<string, number>, { version: 0, 'config --list': 1 }]) {
-      const status = stripeBridgeStatus({}, stub(answers));
-      expect(status.available).toBe(false);
-      if (!status.available) {
-        expect(status.remedy.length).toBeGreaterThan(0);
-      }
-    }
-  });
-});
-
-describe('a host without a container engine is a named failure', () => {
-  test('the refusal names the engine and what to install', async () => {
-    await expect(
-      prepareStripeService(context(), {
-        resolveRuntime: (() => null) as never,
+describe('a self-hosted emulator is still allowed, and still says what it costs', async () => {
+  test('a loopback target skips the credential check and prints the limits', async () => {
+    // Removing stripe-mock from the stack did not make it stop existing: a
+    // developer can still run one. The check that would prove the key is refused for
+    // a target that may well accept a placeholder, and the limits are printed
+    // because that target is stateless.
+    let verified = false;
+    const service = await prepareStripeService(
+      context(),
+      dependencies({
+        configure: () => ({ apiBase: 'http://127.0.0.1:12111', secretKey: TEST_KEY }),
+        verify: async () => {
+          verified = true;
+          return { ok: true };
+        },
       }),
-    ).rejects.toThrow(/container engine/);
+    );
+    expect(verified).toBe(false);
+    for (const limit of STRIPE_MOCK_LIMITS) {
+      expect(service.summary.join('\n')).toContain(limit);
+    }
+  });
+});
+
+describe('webhook delivery is described by what is actually true', () => {
+  const origin = 'http://127.0.0.1:5173';
+
+  test('an installed, authenticated CLI gets the exact forwarding command', () => {
+    const lines = webhookBridgeInstructions(origin, { available: true, command: 'stripe' }).join(
+      '\n',
+    );
+    expect(lines).toContain(`stripe listen --forward-to ${origin}/api/webhooks/stripe`);
+    // The secret has to go somewhere, and the endpoint refuses without it. Saying
+    // where is the difference between a working bridge and an afternoon.
+    expect(lines).toContain('STRIPE_WEBHOOK_SECRET');
+    expect(lines).toContain('stripe trigger');
+  });
+
+  test('a missing CLI says delivery was NOT RUN, rather than omitting it', () => {
+    const lines = webhookBridgeInstructions(origin, NO_BRIDGE).join('\n');
+    expect(lines).toContain('NOT RUN');
+    expect(lines).not.toContain('listen --forward-to');
+  });
+
+  test('an installed but unauthenticated CLI is called out separately', () => {
+    // `stripe version` succeeds without a login, so a naive probe says ready and
+    // `stripe listen` forwards nothing. This is the case worth three states.
+    const status = stripeBridgeStatus({}, (command, args) => {
+      if (args[0] === 'config') {
+        return 1;
+      }
+      return command === 'stripe' ? 0 : null;
+    });
+    expect(status.available).toBe(false);
+    if (status.available) {
+      throw new Error('an unauthenticated CLI reported available');
+    }
+    expect(status.reason).toContain('not authenticated');
+  });
+
+  test('an absent CLI names the install', () => {
+    const status = stripeBridgeStatus({}, () => null);
+    expect(status.available).toBe(false);
+    if (status.available) {
+      throw new Error('an absent CLI reported available');
+    }
+    expect(status.remedy).toContain('stripe-cli');
+  });
+
+  test('an authenticated CLI is reported ready, and the override path is honoured', () => {
+    const ready = stripeBridgeStatus({}, () => 0);
+    expect(ready).toEqual({ available: true, command: 'stripe' });
+
+    // `STRIPE_CLI_BIN` is how a developer points at a Homebrew or mise install this
+    // probe cannot find on PATH.
+    const overridden = stripeBridgeStatus({ STRIPE_CLI_BIN: '/opt/homebrew/bin/stripe' }, () => 0);
+    expect(overridden).toEqual({ available: true, command: '/opt/homebrew/bin/stripe' });
+
+    // A configured path that does not run is reported, not assumed.
+    expect(stripeBridgeStatus({ STRIPE_CLI_BIN: '/nope/stripe' }, () => null).available).toBe(
+      false,
+    );
   });
 });

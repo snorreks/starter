@@ -28,8 +28,8 @@ const STACK_CHOICES = stackChoices().map((choice) => ({
 }));
 
 const USAGE = [
-  'Usage: bun run dev [--stack <name|services>]',
-  '       bun run dev app|built [--stack <name|services>]',
+  'Usage: bun run dev [--stack <name|services>] [--fresh]',
+  '       bun run dev app|built [--stack <name|services>] [--fresh]',
   '',
   'Runs the application and the local services it needs, and captures the',
   "application's log stream to .wrangler/logs/app.ndjson inside this checkout.",
@@ -50,10 +50,41 @@ const USAGE = [
   '  built   the compiled .svelte-kit/cloudflare/_worker.js in real workerd. Slower,',
   '          and the only mode that can see a bundling mistake. Requires a build.',
   '',
+  'Database data:',
+  '  The local database keeps its data between runs, and across `bun run db:stop`',
+  '  and a reboot. The next `bun run dev` starts it again on the same data.',
+  '',
+  '  --fresh  throw that data away first. Any database this checkout started is',
+  '           stopped, its volumes are removed, the migrations are replayed and the',
+  '           mock seed is written again. Use it when debugging something whose',
+  '           answer depends on the rows being there — or on them not being.',
+  '',
   'With no arguments and no terminal this refuses rather than guessing a stack:',
   'a stack that silently started everything would build a container on a laptop',
   'that was only trying to look at a page. Use:  bun run dev --stack client',
 ].join('\n');
+
+/**
+ * `--fresh`, as a boolean.
+ *
+ * Split out from {@link parseStackFlag} because the two flags answer different
+ * questions and one loop handling both would have to work out which flag an
+ * argument was from its name, in the one place where a typo must not pass as
+ * something else. `--fresh` takes no value, so `--fresh=true` is a usage error
+ * rather than a truthy string nobody wrote on purpose — and it is an error that
+ * *names itself*, because falling through to "unknown dev target" would send
+ * somebody looking for a missing mode word.
+ */
+export const parseFreshFlag = (
+  argv: readonly string[],
+): { fresh: boolean; problem?: string; rest: string[] } => {
+  const problem = argv.find((arg) => arg.startsWith('--fresh='));
+  if (problem !== undefined) {
+    return { fresh: false, problem: `${problem} takes no value.`, rest: [...argv] };
+  }
+  const rest = argv.filter((arg) => arg !== '--fresh');
+  return { fresh: rest.length !== argv.length, rest };
+};
 
 const parseStackFlag = (argv: readonly string[]): { spec?: string; rest: string[] } => {
   const rest: string[] = [];
@@ -89,7 +120,12 @@ export const devCommand: Command = {
       return EXIT.ok;
     }
 
-    const { spec, rest } = parseStackFlag(argv);
+    const parsedStack = parseStackFlag(argv);
+    const freshFlags = parseFreshFlag(parsedStack.rest);
+    if (freshFlags.problem !== undefined) {
+      return fail(`${freshFlags.problem}\n  Write \`--fresh\` on its own.\n${USAGE}`, EXIT.usage);
+    }
+    const { fresh, rest } = freshFlags;
     const [target] = rest;
     if (target !== undefined && target !== 'app' && target !== 'built') {
       return fail(`Unknown dev target "${target}".\n${USAGE}`, EXIT.usage);
@@ -98,7 +134,7 @@ export const devCommand: Command = {
     // A mode word means the caller was specific. Without one, the stack is the
     // question, and the question is asked — or refused.
     const mode = target === 'built' ? 'built' : 'app';
-    let stackSpec = spec;
+    let stackSpec = parsedStack.spec;
 
     if (stackSpec === undefined) {
       if (target !== undefined) {
@@ -132,6 +168,6 @@ export const devCommand: Command = {
       return fail(`${resolved.problem}\n  ${resolved.remedy}`, EXIT.usage);
     }
 
-    return devAppMain(mode, resolved.services);
+    return devAppMain(mode, resolved.services, { fresh });
   },
 };

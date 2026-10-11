@@ -38,6 +38,19 @@ import { invokeStarterAgent, responseToolResult } from '../lib/workflow_bridge.t
 // exist, and the tool fails from the wrong working directory.
 const REPO_ROOT = fileURLToPath(new URL('../../', import.meta.url));
 
+// Moon resolves toolchains through protox rather than through `PATH`, so without
+// this switch the task below asks a proto store for Bun and reports
+// `proto::commands::run::missing_tool` naming the repository's own `.bun-version`
+// instead of running. The authority is `moonToolchainEnvironment`
+// (scripts/src/shared/tools.ts); `.pi` is outside both planes and may not import
+// it, so the same literal is stated here. `flake.nix` exports the variable too, so
+// a shell that ran `nix develop` — including the one this process was started
+// from — already carries it, and this line is what covers the rest.
+const MOON_TOOLCHAIN_ENVIRONMENT: NodeJS.ProcessEnv = {
+  ...process.env,
+  MOON_TOOLCHAIN_FORCE_GLOBALS: '1',
+};
+
 /**
  * Bounds. Both are real ceilings, and both are stated in the tool description so
  * a model that hits one is not surprised by it.
@@ -180,6 +193,7 @@ export default function repoTaskExtension(pi: ExtensionAPI): void {
             cwd: REPO_ROOT,
             timeoutMs: LIMITS.runTimeoutMs,
             maxBytes: LIMITS.runMaxBytes,
+            env: MOON_TOOLCHAIN_ENVIRONMENT,
           });
 
           const notices: string[] = [];

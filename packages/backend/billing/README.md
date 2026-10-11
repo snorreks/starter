@@ -35,7 +35,7 @@ STRIPE_API_BASE        https://api.stripe.com
 ```
 
 Locally, `bun run dev --stack stripe` writes STRIPE_API_BASE and STRIPE_SECRET_KEY into the run-owned 0600
-vars file, pointing at stripe-mock.
+vars file, pointing at your Stripe test account.
 For `stripe listen` deliveries, set STRIPE_WEBHOOK_SECRET to the signing secret
 reported by the listener.
 

@@ -31,6 +31,7 @@ import {
   mergeServiceVars,
 } from './local/service.ts';
 import { requiredLocalServices } from './registry/service_registry.ts';
+import { failureReason, type Progress, type Stepper } from './shared/progress.ts';
 
 /**
  * Named stacks.
@@ -55,7 +56,7 @@ export const DEV_STACKS = {
   supabase: { services: ['supabase'], detail: 'a local database only, no Stripe or containers' },
   stripe: {
     services: ['supabase', 'stripe'],
-    detail: 'adds stripe-mock; holds no state and delivers no webhooks',
+    detail: 'points at your Stripe test account; refuses without a test key',
   },
   container: {
     services: ['supabase', 'container'],
@@ -199,32 +200,102 @@ export const resolveStack = (
   };
 };
 
-export type StackFactory = (id: LocalServiceId) => Promise<LocalService>;
+/**
+ * Start one service.
+ *
+ * `stepper` is that service's own reporter, so its internal steps are labelled with
+ * the service they belong to. With several services starting at once, a shared
+ * reporter would nest `stripe`'s work under `supabase` — the two are concurrent, so
+ * "the innermost live step" is not a thing any more.
+ */
+export type StackFactory = (id: LocalServiceId, stepper: Stepper) => Promise<LocalService>;
 
 /**
  * Start a stack and hand back everything the caller needs.
  *
- * Failure part-way through disposes what already started, in reverse, before
- * rethrowing. Leaving a database running behind a failed `bun run dev` is how a
- * developer ends up with three orphaned stacks and no idea which port is theirs.
+ * **Concurrently, because nothing here depends on anything else here.** Supabase
+ * takes 30-odd seconds to boot its containers, the finite-runner image takes a
+ * cargo build inside Docker, and neither reads the other's bindings — `stripe`,
+ * `jobs` and `container` are independent of the database. Started in sequence, a
+ * stack took the *sum* of its services; started together it takes the slowest one.
+ *
+ * **The order in the list is not an execution order, and never becomes one.** It
+ * stays the *declaration* of what the run is, and the returned array is in declared
+ * order regardless of which service finished first, because two things read that
+ * order as meaning something: `describeStack` prints the banner in it, and
+ * `disposeServices` tears down in reverse of it. A teardown in reverse-*of-completion*
+ * would stop the jobs Worker before the image it dispatches to on a slow boot, and
+ * stop the database before a Stripe container that was still starting against it.
+ *
+ * **Failure part-way through disposes what did start, in reverse declared order,
+ * and waits for the rest to settle first.** Two things have to be true at once: no
+ * service is still starting while another is being torn down, and no failure is
+ * lost. `allSettled` gives both — the losers finish their own startup before the
+ * unwind begins, and every reason is reported, with the declared order deciding
+ * which one is thrown when more than one failed.
+ *
+ * Each service is started inside its own announced scope, before its factory runs.
+ * That is not decoration: the first service can take a minute before it prints
+ * anything at all, and a run that is about to wait that long says which service it
+ * is waiting for. Naming it *before* the factory is called is the whole point —
+ * announcing afterwards would be a summary of a silence the developer already sat
+ * through.
  */
 export const startStack = async (
   services: readonly LocalServiceId[],
   factory: StackFactory,
+  progress: Progress,
 ): Promise<LocalService[]> => {
+  const attempts = services.map((id) => {
+    const scope = progress.service(id);
+    return async (): Promise<LocalService> => {
+      try {
+        const service = await factory(id, scope);
+        scope.done();
+        return service;
+      } catch (error) {
+        scope.fail(failureReason(error));
+        throw error;
+      }
+    };
+  });
+
+  const settled = await Promise.allSettled(attempts.map((attempt) => attempt()));
+
+  // Declared order, not completion order: see the note above. Sifting the settled
+  // results positionally is what makes that true rather than incidental.
   const started: LocalService[] = [];
-  try {
-    for (const id of services) {
-      started.push(await factory(id));
+  const problems: { index: number; reason: unknown }[] = [];
+  settled.forEach((outcome, index) => {
+    if (outcome.status === 'fulfilled') {
+      started.push(outcome.value);
+    } else {
+      problems.push({ index, reason: outcome.reason });
     }
-  } catch (error) {
-    const failures = await disposeServices(started);
-    for (const failure of failures) {
-      process.stderr.write(`  while unwinding: ${failure}\n`);
-    }
-    throw error;
+  });
+
+  if (problems.length === 0) {
+    return started;
   }
-  return started;
+
+  // Wait for everything to have settled before unwinding — `allSettled` above has
+  // already done that, which is the point of using it here.
+  const failures = await disposeServices(started);
+  for (const failure of failures) {
+    process.stderr.write(`  while unwinding: ${failure}\n`);
+  }
+
+  // Declared order decides which failure the caller sees, so two services that
+  // both refuse report the same one on every run rather than whichever lost the
+  // race. The rest are printed, because "the jobs Worker is missing a binding" is
+  // not information a developer can afford to lose to "the database did not start".
+  const thrown = problems[0] as { index: number; reason: unknown };
+  for (const problem of problems.slice(1)) {
+    process.stderr.write(
+      `  also failed while starting: ${services[problem.index]}: ${failureReason(problem.reason)}\n`,
+    );
+  }
+  throw thrown.reason;
 };
 
 /** The banner lines, in start order, plus the merged bindings. */
