@@ -6,6 +6,7 @@ import { join } from 'node:path';
 import { resolveContainerRuntime } from '../local/container_runtime.ts';
 import { DATABASE_DIR, REPO_ROOT } from '../shared/paths.ts';
 import { publicToolEnvironment } from '../shared/private_environment.ts';
+import { createProgress, reportStep, type Stepper } from '../shared/progress.ts';
 import { runBounded } from '../shared/run_bounded.ts';
 import { runScope } from '../shared/run_scope.ts';
 import { resolveWorkspaceBin } from '../shared/tools.ts';
@@ -102,6 +103,44 @@ export const allocateSupabaseLocal = (
     ports,
     urls: urlsForPorts(ports),
   };
+};
+
+/**
+ * The one run id the local development database is shared under.
+ *
+ * **Why this is stable and every other allocation is not.** A per-run id makes the
+ * project id and the port block a function of the pid, so every `bun run dev`
+ * computes a *different* database and a different set of ports, boots eight
+ * containers, and leaves the previous set behind — thirty-odd seconds to get a
+ * database that was already running. Deriving it from the checkout instead means
+ * the second run can find the first run's stack and adopt it.
+ *
+ * **Only `bun run dev` gets this.** Every lane that needs a clean database — E2E,
+ * `test:worker`, `test:database`, `db:types` — allocates a unique run id and is
+ * unaffected, because a shared database would let one run's rows and one run's
+ * migrations leak into another's assertions. That isolation is the reason this is a
+ * named constant here rather than a default argument on the allocator: making it the
+ * default would hand a shared database to every caller that forgets to pass an id.
+ */
+export const DEV_SHARED_STACK_RUN_ID = 'dev_local';
+
+/**
+ * The allocation for the local development database, identical on every run of this
+ * checkout.
+ *
+ * The `ownerToken` is derived rather than random, and that is deliberate. It is
+ * checked by {@link assertSupabaseOwnership} before anything is stopped or removed,
+ * so a random one would make a reused stack impossible to recognise: the next run
+ * would be looking for a stack whose recorded owner is a token nobody can reproduce.
+ * It is an ownership *identity*, not a credential — the file it is written to is
+ * 0600 inside this checkout, and the value grants nothing beyond "stop this
+ * checkout's own containers".
+ */
+export const devSupabaseAllocation = (root: string = REPO_ROOT): SupabaseLocalAllocation => {
+  const ownerToken = createHash('sha256')
+    .update(`owner\0${root}\0${DEV_SHARED_STACK_RUN_ID}`)
+    .digest('hex');
+  return allocateSupabaseLocal(root, DEV_SHARED_STACK_RUN_ID, ownerToken);
 };
 
 const canBind = (port: number): Promise<boolean> =>
@@ -269,11 +308,147 @@ const captureCli = async (allocation: SupabaseLocalAllocation, args: string[]): 
   return result.stdout;
 };
 
+/**
+ * Read an already-running stack's bindings, or `null` if there isn't one.
+ *
+ * **This is the whole of reuse.** A stack is only adopted when the ownership file
+ * this checkout wrote is present *and* the CLI reports that same project id and the
+ * API answers — a leftover file beside stopped containers must not be mistaken for
+ * a running database, because the alternative is a dev server pointed at a port
+ * with nothing behind it, which 503s on every request with no explanation.
+ *
+ * Returns bindings only. Nothing here migrates or seeds: an adopted stack has
+ * already had that done by whichever run started it, and re-running migrations
+ * against a database another process may be using is not this function's decision
+ * to make.
+ */
+export const probeRunningSupabase = async (
+  allocation: SupabaseLocalAllocation,
+): Promise<Record<string, string> | null> => {
+  // The ownership file first, because it records the ports this stack was actually
+  // started on. The allocation's own ports are the *first* candidate block: a
+  // previous run may have moved to another because the block was occupied, and
+  // probing the wrong port would report a healthy stack as absent.
+  if (!(await hasSupabaseOwnership(allocation))) {
+    return null;
+  }
+  let owned: SupabaseLocalAllocation;
+  try {
+    owned = await readSupabaseOwnership(allocation);
+  } catch {
+    // A file that does not parse, or an identity that does not match, is not a
+    // stack to adopt. Starting a fresh one is always available.
+    return null;
+  }
+
+  let status: Record<string, unknown>;
+  try {
+    status = JSON.parse(await captureCli(owned, ['status', '--output', 'json'])) as Record<
+      string,
+      unknown
+    >;
+  } catch {
+    // `supabase status` exits nonzero when nothing is running under that project
+    // id. That is the ordinary answer here, not an error worth reporting.
+    return null;
+  }
+
+  const api = status.API_URL ?? status.SUPABASE_URL ?? status.api_url;
+  const anon = status.ANON_KEY ?? status.anon_key;
+  const serviceRole = status.SERVICE_ROLE_KEY ?? status.service_role_key;
+  if (typeof api !== 'string' || typeof anon !== 'string' || typeof serviceRole !== 'string') {
+    return null;
+  }
+  if (api !== owned.urls.api) {
+    // The CLI is reporting a different project's stack. Refusing to adopt it is the
+    // same identity rule `startSupabaseLocal` applies before running anything
+    // against a stack.
+    return null;
+  }
+
+  // The CLI's idea and an actual request agreeing is what makes this adoption safe.
+  // A status that lists containers which have not finished booting reports URLs
+  // happily, and a dev server pointed at one answers connection-refused rather than
+  // anything diagnosable.
+  try {
+    const health = await fetch(`${owned.urls.api}/auth/v1/health`, {
+      signal: AbortSignal.timeout(5_000),
+    });
+    if (!health.ok) {
+      return null;
+    }
+  } catch {
+    return null;
+  }
+
+  return {
+    ...supabaseAllocationEnvironment(owned),
+    SUPABASE_ANON_KEY: anon,
+    SUPABASE_SERVICE_ROLE_KEY: serviceRole,
+  };
+};
+
+/**
+ * Stop this checkout's shared development database.
+ *
+ * The counterpart to reuse. A stack adopted by `bun run dev` is deliberately not
+ * torn down when that run ends, which is right while the next run is about to adopt
+ * it and wrong if the last run has already gone — so the leaving is explicit rather
+ * than automatic, and this is the command that does it.
+ *
+ * **The containers go; the data stays.** They are different resources, and a
+ * developer stopping a database wants the ports and the memory back, not their rows
+ * deleted. The Postgres volume is left in place and the next `bun run dev` starts
+ * the stack against it, which is why the next boot is seconds rather than the
+ * half-minute an empty stack takes. Discarding it is a separate, explicit request —
+ * `bun run dev --fresh` — because the alternative is a `db:stop` that silently
+ * throws away whatever was not backed up anywhere else.
+ *
+ * Refuses when there is nothing of this checkout's to stop, and says so, rather than
+ * reporting success having done nothing. The ownership record goes with the
+ * containers, which is what keeps that refusal honest: the volumes survive it.
+ */
+export const stopDevSupabaseLocal = async (
+  root: string = REPO_ROOT,
+  options: { runtime?: SupabaseRuntime } = {},
+): Promise<{ stopped: boolean; message: string }> => {
+  const allocation = devSupabaseAllocation(root);
+  if (!(await hasSupabaseOwnership(allocation))) {
+    const removed = removeProjectContainers(options.runtime ?? hostRuntime(), allocation);
+    if (removed.length > 0) {
+      return {
+        stopped: true,
+        message:
+          `Stopped the local development database (${allocation.projectId}) using project labels.\n` +
+          '  Its data was kept: `bun run dev` brings it back with your rows.',
+      };
+    }
+    return {
+      stopped: false,
+      message:
+        `No local development database is recorded for this checkout.\n` +
+        `  It is created by \`bun run dev\` and lives under ${runScope(DEV_SHARED_STACK_RUN_ID, root).dir}.`,
+    };
+  }
+  const owned = await readSupabaseOwnership(allocation);
+  // The one caller that keeps the data. Stopping the containers frees the ports and
+  // the memory, which is what somebody stopping a database wants; deleting the rows
+  // is not, and the only way to get a pristine database is to ask for one.
+  await stopSupabaseLocal(allocation, owned, { ...options, preserveData: true });
+  return {
+    stopped: true,
+    message:
+      `Stopped the local development database (${allocation.projectId}) on ${owned.urls.api}.\n` +
+      '  Its data was kept: `bun run dev` brings it back with your rows, and ' +
+      '`bun run dev --fresh` starts over with the mock seed.',
+  };
+};
+
 export const runDatabaseIntegration = async (): Promise<number> => {
   const allocation = allocateSupabaseLocal(REPO_ROOT, `database_${crypto.randomUUID()}`);
   let exitCode = 1;
   try {
-    const environment = await startSupabaseLocal(allocation);
+    const environment = await startSupabaseLocal(allocation, { progress: createProgress() });
     const result = await runBounded({
       command: 'bun',
       args: ['run', '--cwd', DATABASE_DIR, 'test:integration'],
@@ -313,7 +488,7 @@ export const runDatabaseTypeCommand = async (
   const allocation = allocateSupabaseLocal(REPO_ROOT, `types_${crypto.randomUUID()}`);
   let exitCode = 1;
   try {
-    await startSupabaseLocal(allocation);
+    await startSupabaseLocal(allocation, { progress: createProgress() });
     const result = await runBounded({
       command: 'bun',
       args: ['run', '--cwd', DATABASE_DIR, command],
@@ -344,9 +519,31 @@ export const runDatabaseTypeCommand = async (
   return exitCode;
 };
 
+/**
+ * Start an owned local stack.
+ *
+ * Four steps, announced, because this is the longest silent stretch in the
+ * repository: pulling images, booting eight containers, replaying migrations and
+ * waiting for Auth to answer takes from seconds to minutes depending on the
+ * machine's cache. Every caller passes a `progress`, so no caller can inherit the
+ * silence — including the lanes (`test:database`, `db:types`, `e2e`) that start
+ * the same stack and are exactly where a hang is hardest to diagnose.
+ */
 export const startSupabaseLocal = async (
   allocation: SupabaseLocalAllocation,
-  options: { emailConfirmations?: boolean; jwtExpirySeconds?: number } = {},
+  options: {
+    emailConfirmations?: boolean;
+    jwtExpirySeconds?: number;
+    /**
+     * A reporter scoped to this stack's start.
+     *
+     * A `Stepper`, not the whole `Progress`: this is called from lanes that report
+     * nothing else, and from a dev stack where several services start at once and a
+     * shared reporter would nest this one's steps under whichever service was
+     * drawn last.
+     */
+    progress: Stepper;
+  },
 ): Promise<Record<string, string>> => {
   // Resolved through the shared probe so a host with Podman and no Docker is not
   // told to install Docker Engine. `DOCKER_BIN` still wins outright.
@@ -354,23 +551,28 @@ export const startSupabaseLocal = async (
   const containerCommand = requireContainerRuntime({ dockerPath: engine?.command });
   await ensureSupabasePortsAvailable(allocation);
   await persistSupabaseOwnership({ ...allocation, containerCommand }, options);
-  const code = await runCli(allocation, ['start']);
+  const code = await reportStep(options.progress, 'starting the local containers', () =>
+    runCli(allocation, ['start']),
+  );
   if (code !== 0) {
     throw new Error(`Supabase local start failed with exit ${code}.`);
   }
-  const reset = await runCli(allocation, [
-    'migration',
-    'up',
-    '--db-url',
-    `${allocation.urls.postgres}?sslmode=disable`,
-  ]);
+  const reset = await reportStep(options.progress, 'replaying migrations', () =>
+    runCli(allocation, [
+      'migration',
+      'up',
+      '--db-url',
+      `${allocation.urls.postgres}?sslmode=disable`,
+    ]),
+  );
   if (reset !== 0) {
     throw new Error(`Supabase local migration replay failed with exit ${reset}.`);
   }
-  const status = JSON.parse(await captureCli(allocation, ['status', '--output', 'json'])) as Record<
-    string,
-    unknown
-  >;
+  const status = JSON.parse(
+    await reportStep(options.progress, 'reading the stack status', () =>
+      captureCli(allocation, ['status', '--output', 'json']),
+    ),
+  ) as Record<string, unknown>;
   const api = status.API_URL ?? status.SUPABASE_URL ?? status.api_url;
   const database = status.DB_URL ?? status.db_url;
   const studio = status.STUDIO_URL ?? status.studio_url;
@@ -389,14 +591,16 @@ export const startSupabaseLocal = async (
       `Supabase readiness identity mismatch for ${allocation.projectId}; refusing to run tests against another stack.`,
     );
   }
-  const health = await fetch(`${allocation.urls.api}/auth/v1/health`, {
-    signal: AbortSignal.timeout(10_000),
+  await reportStep(options.progress, 'waiting for Auth to answer', async () => {
+    const health = await fetch(`${allocation.urls.api}/auth/v1/health`, {
+      signal: AbortSignal.timeout(10_000),
+    });
+    if (!health.ok) {
+      throw new Error(
+        `Supabase Auth readiness failed for ${allocation.projectId}: HTTP ${health.status}.`,
+      );
+    }
   });
-  if (!health.ok) {
-    throw new Error(
-      `Supabase Auth readiness failed for ${allocation.projectId}: HTTP ${health.status}.`,
-    );
-  }
   return {
     ...supabaseAllocationEnvironment(allocation),
     SUPABASE_ANON_KEY: anon,
@@ -404,29 +608,59 @@ export const startSupabaseLocal = async (
   };
 };
 
-export const stopSupabaseLocal = async (
-  allocation: SupabaseLocalAllocation,
-  owned: SupabaseLocalAllocation,
-): Promise<void> => {
-  assertSupabaseOwnership(allocation, owned);
-  const code = await runCli(allocation, [
-    'stop',
-    '--project-id',
-    allocation.projectId,
-    '--no-backup',
-  ]);
-  // The engine resolved to *start* the stack, not a fresh `DOCKER_BIN ?? 'docker'`
-  // lookup: on a Podman-only host the start probe found podman and this teardown
-  // would have asked docker for the containers, reporting "cannot verify owned
-  // containers" for a stack that stopped perfectly well.
-  const engine = requireContainerRuntime({ dockerPath: owned.containerCommand });
-  const runRuntime = (args: string[]) =>
-    spawnSync(engine, args, {
+/** What one container-engine invocation returned. */
+export interface ContainerRun {
+  readonly status: number | null;
+  readonly stdout: string;
+  readonly stderr: string;
+}
+
+/**
+ * The engine this stack is torn down with, and how to call it.
+ *
+ * A parameter rather than a `spawnSync` at each call site, because "which volumes
+ * survived" is the whole of the persistence decision and it cannot be tested
+ * against a real daemon without a database and a boot. Injecting it is what lets
+ * a test assert that a stop *kept* a volume by reading the recorded argv, rather
+ * than by trusting the implementation.
+ */
+export interface SupabaseRuntime {
+  readonly command: string;
+  run(args: readonly string[]): ContainerRun;
+}
+
+const RUNTIME_TIMEOUT_MS = 30_000;
+
+const spawnRuntime = (command: string): SupabaseRuntime => ({
+  command,
+  run: (args) => {
+    const result = spawnSync(command, [...args], {
       encoding: 'utf8',
-      timeout: 30_000,
+      timeout: RUNTIME_TIMEOUT_MS,
       env: publicToolEnvironment(process.env),
     });
-  const containers = runRuntime([
+    return { status: result.status, stdout: result.stdout, stderr: result.stderr };
+  },
+});
+
+/**
+ * The engine to use when there is no recorded one.
+ *
+ * A probe rather than `DOCKER_BIN ?? 'docker'`, for the reason `container_runtime.ts`
+ * gives: a Podman-only host must not be asked for `docker` and then told its
+ * volumes cannot be verified.
+ */
+const hostRuntime = (): SupabaseRuntime => {
+  const engine = resolveContainerRuntime();
+  return spawnRuntime(requireContainerRuntime({ dockerPath: engine?.command }));
+};
+
+/** Remove and verify only containers carrying this project's label, even without a workdir. */
+const removeProjectContainers = (
+  runtime: SupabaseRuntime,
+  allocation: Pick<SupabaseLocalAllocation, 'projectId'>,
+): string[] => {
+  const containers = runtime.run([
     'ps',
     '-aq',
     '--filter',
@@ -437,29 +671,12 @@ export const stopSupabaseLocal = async (
   }
   const containerIds = containers.stdout.trim().split('\n').filter(Boolean);
   if (containerIds.length > 0) {
-    const removed = runRuntime(['rm', '-f', ...containerIds]);
+    const removed = runtime.run(['rm', '-f', ...containerIds]);
     if (removed.status !== 0) {
       throw new Error(`Could not remove owned Supabase containers: ${removed.stderr}`);
     }
   }
-  const volumes = runRuntime([
-    'volume',
-    'ls',
-    '-q',
-    '--filter',
-    `label=com.supabase.cli.project=${allocation.projectId}`,
-  ]);
-  if (volumes.status !== 0) {
-    throw new Error(`Cannot verify owned Supabase volumes after stop: ${volumes.stderr}`);
-  }
-  const volumeNames = volumes.stdout.trim().split('\n').filter(Boolean);
-  if (volumeNames.length > 0) {
-    const removed = runRuntime(['volume', 'rm', ...volumeNames]);
-    if (removed.status !== 0) {
-      throw new Error(`Could not remove owned Supabase volumes: ${removed.stderr}`);
-    }
-  }
-  const remaining = runRuntime([
+  const remaining = runtime.run([
     'ps',
     '-aq',
     '--filter',
@@ -467,6 +684,144 @@ export const stopSupabaseLocal = async (
   ]);
   if (remaining.status !== 0 || remaining.stdout.trim() !== '') {
     throw new Error('Supabase teardown left an owned container behind.');
+  }
+  return containerIds;
+};
+
+/**
+ * This project's volumes, by label.
+ *
+ * The label is the identity: the project id is a hash of the checkout root and the
+ * run id, so the filter names this checkout's volumes and cannot name another's.
+ */
+const projectVolumes = (
+  runtime: SupabaseRuntime,
+  allocation: Pick<SupabaseLocalAllocation, 'projectId'>,
+): string[] => {
+  const listed = runtime.run([
+    'volume',
+    'ls',
+    '-q',
+    '--filter',
+    `label=com.supabase.cli.project=${allocation.projectId}`,
+  ]);
+  if (listed.status !== 0) {
+    throw new Error(`Cannot verify owned Supabase volumes: ${listed.stderr}`);
+  }
+  return listed.stdout
+    .split('\n')
+    .map((line) => line.trim())
+    .filter((name) => name.length > 0);
+};
+
+/** Names in, names out: the caller reports exactly what was destroyed. */
+const removeVolumes = (runtime: SupabaseRuntime, names: readonly string[]): string[] => {
+  if (names.length === 0) {
+    return [];
+  }
+  const removed = runtime.run(['volume', 'rm', ...names]);
+  if (removed.status !== 0) {
+    throw new Error(`Could not remove owned Supabase volumes: ${removed.stderr}`);
+  }
+  return [...names];
+};
+
+/**
+ * Volumes this checkout's database still holds, whether or not it is running.
+ *
+ * **This is how "the data came back" is decided, and it is decided by asking the
+ * engine rather than by a file this repository writes.** A marker file would record
+ * what a previous run intended; the volume list is what is actually there, which is
+ * the only version of the answer that survives a reboot, a `docker system prune` or
+ * somebody deleting `.wrangler`.
+ *
+ * There is no owner-token assertion here, because the identity file a stopped
+ * stack's owner would be checked against no longer exists — `stopSupabaseLocal`
+ * removes it, which is what makes a second `db:stop` refuse rather than claim to
+ * have stopped something. The volume *label* carries the project id instead, and the
+ * project id is a hash of the checkout root, so this cannot remove another
+ * checkout's data.
+ */
+export const preservedSupabaseVolumes = (
+  allocation: Pick<SupabaseLocalAllocation, 'projectId'>,
+  options: { runtime?: SupabaseRuntime } = {},
+): string[] => projectVolumes(options.runtime ?? hostRuntime(), allocation);
+
+/**
+ * Remove this checkout's database volumes, so the next start is a genuinely empty
+ * database rather than a restored one.
+ *
+ * The counterpart to {@link preservedSupabaseVolumes}, and the only way to throw
+ * development data away on purpose. Project-labeled containers are removed and
+ * verified first, including when their ownership file and CLI workdir are gone.
+ * A volume still in use must never be treated as successfully discarded.
+ *
+ * Returns the volume names it destroyed, so the banner can say what is gone.
+ */
+export const discardSupabaseData = (
+  allocation: Pick<SupabaseLocalAllocation, 'projectId'>,
+  options: { runtime?: SupabaseRuntime } = {},
+): string[] => {
+  const runtime = options.runtime ?? hostRuntime();
+  removeProjectContainers(runtime, allocation);
+  return removeVolumes(runtime, projectVolumes(runtime, allocation));
+};
+
+export interface StopSupabaseOptions {
+  /**
+   * Keep the database's volumes after the containers are gone.
+   *
+   * **Default false, and the default matters.** Every lane that starts a stack of
+   * its own — E2E, `test:worker`, `test:database`, `db:types` — tears it down
+   * through this function under a unique project id per run, so a `true` default
+   * would leave one set of volumes behind per lane run, forever, with nothing to
+   * report them. Persistence is therefore something a caller asks for by name, and
+   * `bun run db:stop` is the one that asks.
+   *
+   * A stack that failed to start asks for the opposite: keeping a half-started
+   * stack's volume would let the next run restore a database nobody ever reached.
+   */
+  readonly preserveData?: boolean;
+  /**
+   * The engine to tear down with.
+   *
+   * Defaults to the one this stack recorded when it started, because the same
+   * engine has to be asked about the same stack's containers: on a Podman-only host
+   * a fresh `docker` lookup would report "cannot verify owned containers" for a
+   * stack that stopped perfectly well.
+   */
+  readonly runtime?: SupabaseRuntime;
+}
+
+export const stopSupabaseLocal = async (
+  allocation: SupabaseLocalAllocation,
+  owned: SupabaseLocalAllocation,
+  options: StopSupabaseOptions = {},
+): Promise<void> => {
+  assertSupabaseOwnership(allocation, owned);
+  const code = await runCli(allocation, [
+    'stop',
+    '--project-id',
+    allocation.projectId,
+    '--no-backup',
+  ]);
+  const recorded = options.runtime === undefined ? owned.containerCommand : options.runtime.command;
+  const runtime =
+    options.runtime ?? spawnRuntime(requireContainerRuntime({ dockerPath: recorded }));
+  removeProjectContainers(runtime, allocation);
+  const volumes = projectVolumes(runtime, allocation);
+  if (options.preserveData === true) {
+    // Said out loud, because the difference between this and the behaviour it
+    // replaced is invisible from the terminal otherwise: the developer stopped
+    // eight containers and their rows are still in a volume they did not know about.
+    process.stdout.write(
+      volumes.length === 0
+        ? 'No database volumes to keep.\n'
+        : `Kept ${volumes.length === 1 ? 'volume' : 'volumes'}: ${volumes.join(', ')}\n` +
+            '  The next `bun run dev` restores this database from them.\n',
+    );
+  } else {
+    removeVolumes(runtime, volumes);
   }
   if (code !== 0) {
     process.stderr.write(

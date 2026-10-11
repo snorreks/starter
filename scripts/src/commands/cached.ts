@@ -20,7 +20,7 @@ import { EXIT, fail, wantsHelp } from '../shared/command.ts';
 import { REPO_ROOT } from '../shared/paths.ts';
 import { publicToolEnvironment } from '../shared/private_environment.ts';
 import { runBounded } from '../shared/run_bounded.ts';
-import { resolveWorkspaceBin } from '../shared/tools.ts';
+import { moonToolchainEnvironment, resolveWorkspaceBin } from '../shared/tools.ts';
 
 const USAGE = `cached [--] <moon targets...>
 
@@ -129,8 +129,26 @@ const run = async (args: readonly string[]): Promise<number> => {
     });
     return result.code;
   };
-  return invoke(publicToolEnvironment(process.env));
+  return invoke(moonLaneEnvironment(process.env));
 };
+
+/**
+ * The environment every root lane hands to Moon.
+ *
+ * Two decisions, in this order. Credentials are removed first, because this is
+ * the environment every `bun run test|lint|format|fix|typecheck|e2e|build` lane
+ * spawns Moon with. Then the Bun is pointed at the executable on `PATH` rather
+ * than at a proto store: Moon resolves toolchains through protox, so without
+ * `MOON_TOOLCHAIN_FORCE_GLOBALS` a lane runs whichever Bun a version manager
+ * this repository does not use happened to install, or fails with
+ * `proto::commands::run::missing_tool` before the first test runs.
+ * `moonToolchainEnvironment` documents the measurement.
+ *
+ * Exported so `scripts/tests/cached.test.ts` asserts the composition every root
+ * script fans out through, rather than trusting one call site to keep it.
+ */
+export const moonLaneEnvironment = (env: NodeJS.ProcessEnv): NodeJS.ProcessEnv =>
+  moonToolchainEnvironment(publicToolEnvironment(env));
 
 export const cachedCommand: Command = {
   name: 'cached',

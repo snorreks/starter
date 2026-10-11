@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { prepareJobsService } from '../src/local/jobs_service.ts';
 import { runScope } from '../src/shared/run_scope.ts';
+import { recordingProgress } from './fixtures/progress.ts';
 
 test('a jobs process that fails to start removes its owned credential file', async () => {
   const root = await mkdtemp(join(tmpdir(), 'jobs-start-failure-'));
@@ -17,6 +18,7 @@ test('a jobs process that fails to start removes its owned credential file', asy
           origin: 'http://127.0.0.1:5173',
           callerVars: {},
           environment: { GOOGLE_DISPATCHER_CREDENTIAL: 'synthetic-fixture' },
+          progress: recordingProgress().progress,
         },
         { wranglerBin: () => join(root, 'missing-wrangler') },
       ),

@@ -235,6 +235,27 @@ test('the lane runs uncached, because a cached hit writes no report', async () =
   expect(args).toContain('--coverage-reporter=lcov');
 });
 
+test('the lane runs against the Bun on PATH, not a proto-managed one', async () => {
+  // A lane Moon cannot start writes no lcov, and the merge that follows then
+  // reports a percentage over reports left by an earlier tree. The switch is
+  // what keeps Moon from resolving Bun through the proto store.
+  const root = fixture();
+  mkdirSync(join(root, 'node_modules', '.bin'), { recursive: true });
+  writeFileSync(join(root, 'node_modules', '.bin', 'moon'), '#!/bin/sh\nexit 0\n');
+  writeReport(root, 'packages/shared/logger', ['src/x.ts']);
+  const environments: (NodeJS.ProcessEnv | undefined)[] = [];
+  await runCoverage({
+    root,
+    runTests: true,
+    write: () => {},
+    run: async (options) => {
+      environments.push(options.env);
+      return { code: 0, stdout: '', stderr: '' };
+    },
+  });
+  expect(environments.at(0)?.MOON_TOOLCHAIN_FORCE_GLOBALS).toBe('1');
+});
+
 test('a missing moon is a named prerequisite, not a crash', async () => {
   const root = fixture();
   const said: string[] = [];

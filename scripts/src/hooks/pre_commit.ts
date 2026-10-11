@@ -1,7 +1,7 @@
 import { execFileSync } from 'node:child_process';
 import { publicToolEnvironment } from '../shared/private_environment.ts';
 import { runBounded } from '../shared/run_bounded.ts';
-import { resolveWorkspaceBin } from '../shared/tools.ts';
+import { moonToolchainEnvironment, resolveWorkspaceBin } from '../shared/tools.ts';
 
 const MAX_BYTES = 16 * 1024 * 1024;
 
@@ -23,7 +23,10 @@ export const runPreCommit = async (cwd = process.cwd()): Promise<number> => {
     );
     return 0;
   }
-  const env = publicToolEnvironment(process.env);
+  // One environment for every child, and the Moon at the end of it needs the
+  // toolchain switch: Moon resolves Bun through protox, and without it the
+  // typecheck lane this hook ends with is the one command a commit cannot skip.
+  const env = moonToolchainEnvironment(publicToolEnvironment(process.env));
   const run = async (
     command: string,
     args: string[],

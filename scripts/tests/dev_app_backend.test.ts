@@ -8,6 +8,7 @@ import {
   devAutoSignInOffered,
   prepareDevBackend,
 } from '../src/dev-app.ts';
+import { recordingProgress } from './fixtures/progress.ts';
 
 const allocation = {
   projectId: 'devproject',
@@ -32,11 +33,22 @@ const recorder = () => {
     calls.push('readVars');
     return {};
   });
+  // Null is "no stack is running", which is the ordinary answer and the one these
+  // tests mostly need. `withRunningStack` swaps it for a stack to adopt.
+  const probeMock = mock(async (): Promise<Record<string, string> | null> => {
+    calls.push('probe');
+    return null;
+  });
+  const reported = recordingProgress();
   const dependencies: Partial<DevBackendDependencies> = {
+    // The real reporter draws to stdout, and a unit test that paints the terminal
+    // is a test nobody can read. The recording one is asserted in progress.test.ts.
+    progress: reported.progress,
     allocate: mock(() => {
       calls.push('allocate');
       return allocation;
     }) as unknown as DevBackendDependencies['allocate'],
+    probe: probeMock as unknown as DevBackendDependencies['probe'],
     start: mock(async () => {
       calls.push('start');
       return {
@@ -62,6 +74,18 @@ const recorder = () => {
       calls.push('hasOwnership');
       return true;
     }) as unknown as DevBackendDependencies['hasOwnership'],
+    // No volumes by default, because these tests are about the wrapper's file
+    // handling. Left to the real collaborators this would shell out to
+    // `docker volume ls`, and a unit test that needs a container engine is a unit
+    // test nobody runs. `dev_supabase_persistence.test.ts` covers these two.
+    listVolumes: mock((): string[] => {
+      calls.push('listVolumes');
+      return [];
+    }) as unknown as DevBackendDependencies['listVolumes'],
+    discard: mock((): string[] => {
+      calls.push('discard');
+      return [];
+    }) as unknown as DevBackendDependencies['discard'],
     readOwnership: mock(async () => {
       calls.push('readOwnership');
       return {} as never;
@@ -76,12 +100,29 @@ const recorder = () => {
   return {
     calls,
     dependencies,
+    reported,
+    progress: reported.progress,
     written: () => written,
     /** Pretend an existing owned file already carries these bindings. */
     withExistingFile: (values: Record<string, string>) => {
       readVarsMock.mockImplementation(() => {
         calls.push('readVars');
         return values;
+      });
+    },
+    /** Pretend a stack from an earlier run is up and answering. */
+    withRunningStack: () => {
+      probeMock.mockImplementation(async () => {
+        // Recorded here as well: replacing the implementation replaces the
+        // recording with it, and a call log that silently loses an entry is worse
+        // than no log.
+        calls.push('probe');
+        return {
+          SUPABASE_URL: 'http://127.0.0.1:54321',
+          SUPABASE_ANON_KEY: 'already-running-anon',
+          SUPABASE_SERVICE_ROLE_KEY: 'already-running-service-role',
+          SUPABASE_MAIL_URL: 'http://127.0.0.1:54324',
+        };
       });
     },
     /** Make the engine refuse the stop, without reaching for a mock's own type. */
@@ -95,8 +136,14 @@ describe('the dev server has a backend to talk to', () => {
   test('an unset SUPABASE_URL starts the owned local stack and says so', async () => {
     const recorder_ = recorder();
     const backend = await prepareDevBackend('http://127.0.0.1:5173', recorder_.dependencies, {});
+    // `listVolumes` sits between the probe and the start because it is what decides
+    // whether this boot is starting on top of an earlier run's data, and the banner
+    // then says so. Read before the start, or it would read the volumes this very
+    // start just created.
     expect(recorder_.calls).toEqual([
       'allocate',
+      'probe',
+      'listVolumes',
       'start',
       'seed:/owned/run/supabase-project',
       'writeVars',
@@ -189,29 +236,65 @@ describe('the dev server has a backend to talk to', () => {
     expect(recorder_.calls).toEqual([]);
   });
 
-  test('disposing stops the stack it started', async () => {
+  test('disposing removes the owned credential file and leaves the database up', async () => {
     const recorder_ = recorder();
     const backend = await prepareDevBackend('http://127.0.0.1:5173', recorder_.dependencies, {});
     expect(await backend.dispose()).toEqual([]);
+
+    // The file goes: it carries a local service-role key, and a credential must not
+    // outlive the process entitled to it. The database stays, because the next
+    // `bun run dev` adopts it — see `dev_supabase_reuse.test.ts` for why, and
+    // `bun run db:stop` for the way out.
+    // `listVolumes` sits between the probe and the start because it is what decides
+    // whether this boot is starting on top of an earlier run's data, and the banner
+    // then says so. Read before the start, or it would read the volumes this very
+    // start just created.
     expect(recorder_.calls).toEqual([
       'allocate',
+      'probe',
+      'listVolumes',
       'start',
       'seed:/owned/run/supabase-project',
       'writeVars',
-      'hasOwnership',
-      'readOwnership',
-      'stop',
     ]);
+    expect(recorder_.calls).not.toContain('stop');
   });
 
-  test('a stack that refuses to stop is reported, and the file is still removed', async () => {
+  test('a run that adopted a database stops nothing, because it started nothing', async () => {
     const recorder_ = recorder();
+    recorder_.withRunningStack();
     const backend = await prepareDevBackend('http://127.0.0.1:5173', recorder_.dependencies, {});
-    recorder_.refuseStop('container engine refused');
-    expect(await backend.dispose()).toEqual(['container engine refused']);
-    // The stack was still attempted: a refusal to stop must not skip the attempt.
-    expect(recorder_.calls).toContain('stop');
+    expect(await backend.dispose()).toEqual([]);
+    // Tearing down a database this run did not start is how `bun run dev` used to
+    // kill a developer's long-running stack on the way out.
+    expect(recorder_.calls).toContain('probe');
+    expect(recorder_.calls).not.toContain('start');
+    expect(recorder_.calls).not.toContain('stop');
   });
+});
+
+test('separate backend runs allocate separate default progress reporters', async () => {
+  const seen: unknown[] = [];
+  for (let run = 0; run < 2; run += 1) {
+    const fixture = recorder();
+    const start = fixture.dependencies.start as DevBackendDependencies['start'];
+    const backend = await prepareDevBackend(
+      'http://127.0.0.1:5173',
+      {
+        ...fixture.dependencies,
+        progress: undefined,
+        start: async (allocation, options) => {
+          seen.push(options?.progress);
+          return start(allocation, options);
+        },
+      },
+      {},
+    );
+    await backend.dispose();
+  }
+  expect(seen).toHaveLength(2);
+  expect(seen[0]).toBeDefined();
+  expect(seen[0]).not.toBe(seen[1]);
 });
 
 describe('both dev modes read the owned file', () => {
@@ -298,6 +381,7 @@ for (const stage of ['start', 'seed'] as const) {
           callerVars: {},
           autoSignIn: false,
           environment: {},
+          progress: rec.progress,
           dependencies: {
             ...rec.dependencies,
             [stage]: async () => {

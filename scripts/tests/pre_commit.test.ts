@@ -185,7 +185,10 @@ test.each([false, true])(
     const bin = join(root, 'node_modules/.bin');
     writeFileSync(join(bin, 'bun'), '#!/bin/sh\nprintf "%s\\n" "$@" > guard-args.txt\nexit 0\n');
     chmodSync(join(bin, 'bun'), 0o755);
-    writeFileSync(join(bin, 'moon'), '#!/bin/sh\nprintf "%s\\n" "$@" > moon-args.txt\nexit 27\n');
+    writeFileSync(
+      join(bin, 'moon'),
+      '#!/bin/sh\nprintf "%s\\n" "$@" > moon-args.txt\nprintf "%s" "$MOON_TOOLCHAIN_FORCE_GLOBALS" > moon-env.txt\nexit 27\n',
+    );
     chmodSync(join(bin, 'moon'), 0o755);
     const result = spawnSync(process.execPath, [source], {
       cwd: root,
@@ -200,6 +203,9 @@ test.each([false, true])(
     expect(args).toStartWith('run\n:typecheck\n');
     expect(args).toContain('--cache\noff\n');
     expect(args).toContain('--concurrency\n4\n');
+    // The real thing this hook hit: Moon resolves `bun` through protox, and the
+    // typecheck lane it ends with is the one command a commit cannot skip.
+    expect(readFileSync(join(root, 'moon-env.txt'), 'utf8')).toBe('1');
     if (broad) {
       expect(args).not.toContain('--affected');
       expect(args).not.toContain('--status');

@@ -14,7 +14,10 @@
 //   * **Report success against an emulator.** stripe-mock accepts writes and keeps
 //     nothing, so "created 5 objects" against it would be true of the API calls
 //     and false of the account. When the target is local this says so in the
-//     summary line rather than leaving it to be discovered later.
+//     summary line rather than leaving it to be discovered later. The dev stack no
+//     longer ships an emulator — `bun run dev --stack stripe` points at a real test
+//     account — but a developer can still start one, and the refusal has to hold
+//     for them too.
 
 import { readFileSync } from 'node:fs';
 import { STRIPE_MOCK_LIMITS } from '../local/stripe_service.ts';
@@ -37,7 +40,11 @@ const USAGE = [
   '  1. STRIPE_API_BASE + STRIPE_SECRET_KEY in the environment',
   '  2. the same two in STARTER_DEV_VARS_PATH, which `bun run dev --stack stripe`',
   '     writes — so `bun run dev --stack stripe` in one terminal and this in',
-  '     another provision the emulator together',
+  '     another provision the same test account',
+  '',
+  'A live-mode key (sk_live_…) is refused, by `bun run dev --stack stripe` and here:',
+  '  a local run that could create a real invoice from a checkout click is a mistake',
+  '  waiting to happen, and Stripe test mode is a complete environment for it.',
   '',
   'The secret key is read from a variable or a 0600 file and sent in a header. It',
   'is never an argument, never printed, and never written back to disk.',
@@ -81,10 +88,13 @@ const resolveCredentials = (): StripeCredentials | { problem: string; remedy: st
     return {
       problem: 'No Stripe target is configured.',
       remedy:
-        '  Local:    bun run dev --stack stripe    (then re-run this in another terminal)\n' +
-        '  Real:     export STRIPE_API_BASE=https://api.stripe.com\n' +
-        '            export STRIPE_SECRET_KEY=sk_test_…\n' +
-        '            bun run setup:secrets           to place it through the supported channel',
+        '  Test account: set STRIPE_API_BASE=https://api.stripe.com and STRIPE_SECRET_KEY\n' +
+        "    in this command's environment, or in a file selected by STARTER_DEV_VARS_PATH.\n" +
+        '    This command does not read apps/frontend/client/.env.local. Create a key at\n' +
+        '    https://dashboard.stripe.com/test/apikeys — test mode, no money.\n' +
+        '  Emulator:   run your own stripe-mock and point STRIPE_API_BASE at it.\n' +
+        '    Refused as a target below: it keeps no state, so nothing this command creates\n' +
+        '    would exist afterwards.',
     };
   }
   return { apiBase, secretKey };
@@ -191,7 +201,8 @@ export const stripeCommand: Command = {
         'Target is a local emulator. The API calls above succeeded, but stripe-mock keeps\n' +
           'nothing, so no Stripe object exists as a result of this run.\n' +
           `${STRIPE_MOCK_LIMITS.map((limit) => `  ${limit}\n`).join('')}` +
-          'Run against a real test account to provision anything.\n',
+          'Run against a Stripe test account to provision anything:\n' +
+          '  https://dashboard.stripe.com/test/apikeys, then bun run dev --stack stripe.\n',
       );
     } else if (dryRun) {
       process.stdout.write('Dry run complete. Nothing was written.\n');
