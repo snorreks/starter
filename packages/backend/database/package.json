@@ -18,7 +18,7 @@
     "lint": "biome lint src tools tests",
     "format": "biome format src tools tests",
     "fix": "biome check --write src tools tests --error-on-warnings",
-    "typecheck": "tsgo --noemit",
+    "typecheck": "bun check",
     "test": "bun test src"
   },
   "dependencies": {

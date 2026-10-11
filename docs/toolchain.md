@@ -30,19 +30,49 @@ grep A 'BUN_VERSION' .github/workflows/ci.yml
 
 ## Moon and Proto
 
-Proto is **not required** by this repository's supported Moon configuration.
-`.moon/toolchains.yml` declares `bun: {}` without a version, and Moon runs the Bun
-already on `PATH`. We verified `moon run scripts:test` with `HOME` and
-`PROTO_HOME` pointed at empty directories and no Proto executable on `PATH`; Moon
-started the task and discovered the test suite. This repository neither reads
-`PROTO_HOME` nor relies on Proto for Moon tasks.
+Moon resolves toolchains through **protox**, not through `PATH`. Declaring a
+`bun` toolchain is what makes Moon ask a proto store for Bun, so this repository
+runs every Moon invocation with `MOON_TOOLCHAIN_FORCE_GLOBALS=1` — Moon's own
+documented switch ("force toolchains to use globally installed tools instead of
+proto-managed versions", the one it sets for itself inside Docker). The Bun is
+then the one `nix develop` supplies and `bun run setup:doctor` verifies. **Proto
+is not required, and no `proto install` is ever needed.**
 
-`.bun-version` remains a mirror of `config/toolchain.json`. CI uses a separate
-`BUN_VERSION` literal in its workflows, as documented in `config/toolchain.json`
-and checked by `version-mirrors`. `nix develop` supplies the configured version,
-and setup doctor plus `bun run guard` check the runtime and mirrors. Do not remove
-the pin to change Moon resolution; use the supported shell or install the version
-named by `config/toolchain.json`.
+Measured on `@moonrepo/cli` 2.6.1 with `.bun-version` at 1.4.3:
+
+```bash
+$ moon bin bun
+  × Process proto failed: exit code 1                       # without the switch
+
+$ bun run fix                                              # bun run test, lint, …
+  ui:fix | × This project requires Bun 1.4.3 (detected from …/.bun-version), but
+  │      this version has not been installed. Install it with proto install bun 1.4.3
+
+$ MOON_TOOLCHAIN_FORCE_GLOBALS=1 moon bin …                 # the same lane passes
+```
+
+Removing `.bun-version` does **not** buy "use the Bun on PATH". With the file
+gone, `moon bin bun` answered with
+`~/.local/share/proto/tools/bun/1.1.31/bun` — the version pinned in the *global*
+`~/.local/share/proto/.prototools`. A repository that wants Nix's Bun has to say
+so to Moon; it does not get it by declining to name a version.
+
+| Where the switch is set | What it covers |
+|---|---|
+| `scripts/src/shared/tools.ts` → `moonToolchainEnvironment` | the one authority, with the measurement above |
+| `scripts/src/commands/cached.ts` | every root lane: `test`, `lint`, `format`, `fix`, `typecheck`, `validate`, `build`, `e2e` |
+| `scripts/src/coverage/coverage.ts` | the coverage lane's uncached test run |
+| `scripts/src/hooks/pre_commit.ts` | the typecheck run a commit cannot skip |
+| `.pi/extensions/repo_task.ts` | the agent's own `moon run` — stated as a literal because `.pi` may not import `scripts/` |
+| `flake.nix` (`shellHook`) | a `moon` typed directly in a Nix shell, and every agent process that shells out to one |
+
+`.moon/toolchains.yml` still declares `bun: {}` with no `version`: the toolchain
+is enabled, and its executable is chosen by the switch above rather than by a
+version Moon would fetch. `.bun-version` remains a mirror of
+`config/toolchain.json`; CI uses a separate `BUN_VERSION` literal in its
+workflows, as documented in `config/toolchain.json` and checked by
+`version-mirrors`. Do not remove the pin to change Moon resolution — use the
+supported shell or install the version named by `config/toolchain.json`.
 
 ## The TypeScript compiler: `tsc`, not `tsgo`
 
