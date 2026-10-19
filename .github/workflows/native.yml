@@ -208,7 +208,7 @@ jobs:
           echo "sha256 $digest"
 
       - name: Upload the unsigned binary
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           # Target, revision and the word "unsigned" are in the name on purpose: an
           # artifact that cannot be mistaken for a release is not mistaken for one.
@@ -407,7 +407,7 @@ jobs:
             --revision "$GITHUB_SHA" --platform android
 
       - name: Upload the unsigned Android packages
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: starter-android-${{ github.sha }}-unsigned
           path: ${{ steps.artifact.outputs.dist }}
