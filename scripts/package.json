@@ -35,7 +35,7 @@
     "yaml": "2.9.1"
   },
   "devDependencies": {
-    "svelte": "5.57.2",
+    "svelte": "5.57.3",
     "typescript": "6.0.3",
     "wrangler": "4.149.0"
   }
